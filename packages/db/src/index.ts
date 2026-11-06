@@ -127,6 +127,15 @@ export {
   type CollaboratorAccessChangeAction,
 } from "./collaboratorAccessChanges.js";
 export {
+  ensureSchemaLabelEditsTable,
+  insertSchemaLabelEdit,
+  listSchemaLabelEdits,
+  deleteSchemaLabelEditsForProject,
+  SCHEMA_LABEL_EDITS_RETENTION_LIMIT,
+  type SchemaLabelEdit,
+  type SchemaLabelEditAction,
+} from "./schemaLabelEdits.js";
+export {
   ensureIdempotencyKeysTable,
   getIdempotencyRecord,
   insertIdempotencyRecord,

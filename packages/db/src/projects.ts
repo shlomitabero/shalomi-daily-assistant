@@ -9,6 +9,7 @@ import { deleteWhatsAppData } from "./whatsapp.js";
 import { deleteAutomationRulesForProject } from "./automations.js";
 import { deleteRecordDeletionsForProject } from "./recordDeletions.js";
 import { deleteCollaboratorAccessChangesForProject } from "./collaboratorAccessChanges.js";
+import { deleteSchemaLabelEditsForProject } from "./schemaLabelEdits.js";
 
 export function ensureProjectsTable(db: ForgeDatabase): void {
   db.exec(`
@@ -409,6 +410,7 @@ export function deleteProject(db: ForgeDatabase, projectId: string): void {
   deleteAutomationRulesForProject(db, projectId);
   deleteRecordDeletionsForProject(db, projectId);
   deleteCollaboratorAccessChangesForProject(db, projectId);
+  deleteSchemaLabelEditsForProject(db, projectId);
   db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
 }
 

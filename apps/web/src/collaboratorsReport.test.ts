@@ -116,3 +116,70 @@ test("formatCollaboratorsReport falls back to the unknown-actor translation when
   ]);
   assert.ok(result.includes("yossi@example.com was removed from the project by Unknown"));
 });
+
+/**
+ * Round 1639: the sibling report section to accessChanges above, for
+ * entity/field label renames -- docs/security.md's own "Section 40" note
+ * still named this as the one sub-gap this audit-trail family left open.
+ */
+test("formatCollaboratorsReport includes a schema-label-edits section listing an entity rename and a field rename, each with the actor and date, but omits the section entirely when there are none", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const withoutEdits = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], []);
+  assert.ok(!withoutEdits.includes("Recent display-name changes:"), "the section must not appear at all when there are no schema label edits");
+
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [
+    {
+      action: "entity_renamed",
+      entityName: "Customer",
+      fieldName: null,
+      changedByEmail: "owner@example.com",
+      previousLabel: "Customers",
+      newLabel: "Clients",
+      changedAt: "2024-02-01T10:00:00.000Z",
+    },
+    {
+      action: "field_renamed",
+      entityName: "Customer",
+      fieldName: "phone",
+      changedByEmail: "dana@example.com",
+      previousLabel: "Phone",
+      newLabel: "Mobile",
+      changedAt: "2024-02-02T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Recent display-name changes:"));
+  assert.ok(result.includes("\"Customer\"'s display name was changed from \"Customers\" to \"Clients\" by owner@example.com"));
+  assert.ok(result.includes("\"phone\" field's display name on \"Customer\" was changed from \"Phone\" to \"Mobile\" by dana@example.com"));
+});
+
+test("formatCollaboratorsReport in Hebrew renders the schema-label-edits section", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "he", t, [], [], [
+    {
+      action: "entity_renamed",
+      entityName: "Customer",
+      fieldName: null,
+      changedByEmail: "owner@example.com",
+      previousLabel: "Customers",
+      newLabel: "Clients",
+      changedAt: "2024-02-01T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("שינויי שמות תצוגה אחרונים:"));
+});
+
+test("formatCollaboratorsReport falls back to the unknown-actor translation when a schema label edit's changedByEmail is null", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [
+    {
+      action: "entity_renamed",
+      entityName: "Customer",
+      fieldName: null,
+      changedByEmail: null,
+      previousLabel: "Customers",
+      newLabel: "Clients",
+      changedAt: "2024-02-01T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("by Unknown"));
+});

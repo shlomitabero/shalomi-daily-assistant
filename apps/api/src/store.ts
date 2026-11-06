@@ -15,6 +15,7 @@ import {
   ensureAutomationRulesTable,
   ensureRecordDeletionsTable,
   ensureCollaboratorAccessChangesTable,
+  ensureSchemaLabelEditsTable,
   type ForgeDatabase,
 } from "@forge/db";
 
@@ -36,5 +37,6 @@ export function createStore(path: string): ForgeDatabase {
   ensureAutomationRulesTable(db);
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
+  ensureSchemaLabelEditsTable(db);
   return db;
 }

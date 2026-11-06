@@ -7,6 +7,7 @@ import {
   listCollaborators,
   listCollaboratorAccessChanges,
   listRecordDeletions,
+  listSchemaLabelEdits,
   regenerateCalendarFeedToken,
   regenerateInboundWebhookToken,
   removeCollaborator,
@@ -15,6 +16,7 @@ import {
   type CollaboratorAccessChange,
   type ProjectOwnerInfo,
   type RecordDeletion,
+  type SchemaLabelEdit,
 } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
@@ -107,6 +109,11 @@ export function CollaboratorsPanel({
   // contract, for the same reason (Copy/Download-report-only data, never a
   // hard dependency of opening this panel at all).
   const [accessChanges, setAccessChanges] = useState<CollaboratorAccessChange[]>([]);
+  // Round 1639: the sibling fetch to accessChanges above, for the
+  // entity/field label-rename audit log -- same silent-on-failure
+  // contract, for the same reason (Copy/Download-report-only data, never a
+  // hard dependency of opening this panel at all).
+  const [schemaLabelEdits, setSchemaLabelEdits] = useState<SchemaLabelEdit[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Distinct from the error above (shared by invite/remove/leave failures,
   // each of which already has its own clear recovery path): specifically
@@ -162,6 +169,11 @@ export function CollaboratorsPanel({
     // listRecordDeletions above, for the same reason.
     listCollaboratorAccessChanges(projectId)
       .then(({ changes }) => setAccessChanges(changes))
+      .catch(() => {});
+    // Round 1639: same independent, silently-failing fetch pattern as
+    // listCollaboratorAccessChanges above, for the same reason.
+    listSchemaLabelEdits(projectId)
+      .then(({ edits }) => setSchemaLabelEdits(edits))
       .catch(() => {});
   }
 
@@ -569,9 +581,35 @@ export function CollaboratorsPanel({
     }));
   }
 
+  // Round 1639: mirrors accessChangesForReport's own email-resolution
+  // pattern exactly, for the sibling schema-label-edit log.
+  function schemaLabelEditsForReport() {
+    const emails: Record<string, string> = {};
+    if (owner) emails[owner.userId] = owner.email;
+    for (const c of collaborators ?? []) emails[c.userId] = c.email;
+    return schemaLabelEdits.map((e) => ({
+      action: e.action,
+      entityName: e.entityName,
+      fieldName: e.fieldName,
+      changedByEmail: e.changedByUserId ? emails[e.changedByUserId] ?? null : null,
+      previousLabel: e.previousLabel,
+      newLabel: e.newLabel,
+      changedAt: e.changedAt,
+    }));
+  }
+
   function handleDownload() {
     downloadCollaboratorsReport(
-      formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport(), accessChangesForReport()),
+      formatCollaboratorsReport(
+        owner,
+        collaborators ?? [],
+        projectName,
+        lang,
+        t,
+        deletionsForReport(),
+        accessChangesForReport(),
+        schemaLabelEditsForReport(),
+      ),
       projectName,
     );
   }
@@ -587,7 +625,16 @@ export function CollaboratorsPanel({
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(
-        formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport(), accessChangesForReport()),
+        formatCollaboratorsReport(
+          owner,
+          collaborators ?? [],
+          projectName,
+          lang,
+          t,
+          deletionsForReport(),
+          accessChangesForReport(),
+          schemaLabelEditsForReport(),
+        ),
       );
       setCopyStatus("copied");
     } catch {

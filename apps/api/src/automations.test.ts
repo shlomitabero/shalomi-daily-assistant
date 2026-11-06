@@ -24,6 +24,7 @@ import {
   openDatabase,
   ensureRecordDeletionsTable,
   ensureCollaboratorAccessChangesTable,
+  ensureSchemaLabelEditsTable,
   updateAutomationRule,
   WEBHOOK_TIMEOUT_ERROR,
   WEBHOOK_UNREACHABLE_ERROR,
@@ -2893,6 +2894,7 @@ test("runAutomationsForRecordChange's webhook action never resurrects an automat
   ensureProjectCollaboratorsTable(db);
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
+  ensureSchemaLabelEditsTable(db);
   const rule = insertAutomationRule(db, {
     projectId: project.id,
     entityName: "Order",
@@ -3810,6 +3812,7 @@ test("runAutomationsForRecordChange's send_email action never resurrects an auto
   ensureProjectCollaboratorsTable(db);
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
+  ensureSchemaLabelEditsTable(db);
   const rule = insertAutomationRule(db, {
     projectId: project.id,
     entityName: "Order",

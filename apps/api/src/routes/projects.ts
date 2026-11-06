@@ -66,6 +66,8 @@ import {
   listRecordDeletions,
   insertCollaboratorAccessChange,
   listCollaboratorAccessChanges,
+  insertSchemaLabelEdit,
+  listSchemaLabelEdits,
   type ForgeDatabase,
   type AutomationTrigger,
   type AutomationToMode,
@@ -3224,6 +3226,22 @@ export function createProjectsRouter(
   );
 
   /**
+   * Round 1639: the sibling read endpoint for the audit trail the two
+   * .../label PATCH routes above now write to -- mirrors GET
+   * .../collaborator-access-log exactly (same requireProjectAccess, same
+   * rate limiter, any collaborator can read it, not just the owner), for
+   * the same reason: this is a read, not a write.
+   */
+  router.get(
+    "/projects/:id/schema-label-edits",
+    checkpointRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ edits: listSchemaLabelEdits(db, project.id) });
+    }),
+  );
+
+  /**
    * Round 956: same withIdempotency() extension, and the same reason, as
    * deleteCheckpoint's own fix just above (round 944) -- but the actual
    * hazard here is subtler than a 404. Restore reads project.spec, computes
@@ -4320,11 +4338,32 @@ export function createProjectsRouter(
         `PATCH /projects/${project.id}/entities/${req.params.entityName}/label`,
         async () => {
           const entity = findEntity(project, req.params.entityName);
+          const previousLabel = entity.label ?? entity.name;
           const nextSpec = {
             ...project.spec,
             entities: project.spec.entities.map((e) => (e.name === entity.name ? { ...e, label: parsed.data.label } : e)),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1639: docs/security.md's own "Section 40" note still named
+          // this exact gap -- an entity/field label rename is a live,
+          // post-build edit that overwrote the previous label in place with
+          // no "who did this" trail. Unlike round 1636's collaborator
+          // role-change log (which logs a no-op resubmit too, since even an
+          // unchanged role still represents a real access decision), a
+          // resubmit of the exact same label is never a rename at all --
+          // logging it would just add noise to a log whose entire purpose
+          // is "what changed," so only a genuine label change is recorded.
+          if (previousLabel !== parsed.data.label) {
+            insertSchemaLabelEdit(db, {
+              projectId: project.id,
+              changedByUserId: req.userId!,
+              action: "entity_renamed",
+              entityName: entity.name,
+              fieldName: null,
+              previousLabel,
+              newLabel: parsed.data.label,
+            });
+          }
           return { status: 200, body: { project: updated } };
         },
       );
@@ -4366,6 +4405,7 @@ export function createProjectsRouter(
         async () => {
           const entity = findEntity(project, req.params.entityName);
           const field = findField(entity, req.params.fieldName);
+          const previousLabel = field.label ?? field.name;
           const nextSpec = {
             ...project.spec,
             entities: project.spec.entities.map((e) =>
@@ -4375,6 +4415,20 @@ export function createProjectsRouter(
             ),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1639: the field-rename sibling of the entity-rename log
+          // just above -- see its own doc comment for why a genuine
+          // no-op (same label) is never logged.
+          if (previousLabel !== parsed.data.label) {
+            insertSchemaLabelEdit(db, {
+              projectId: project.id,
+              changedByUserId: req.userId!,
+              action: "field_renamed",
+              entityName: entity.name,
+              fieldName: field.name,
+              previousLabel,
+              newLabel: parsed.data.label,
+            });
+          }
           return { status: 200, body: { project: updated } };
         },
       );

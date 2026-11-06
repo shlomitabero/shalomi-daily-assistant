@@ -1391,6 +1391,29 @@ export function listCollaboratorAccessChanges(projectId: string): Promise<{ chan
   return request(`/projects/${projectId}/collaborator-access-log`);
 }
 
+/**
+ * Round 1639: the sibling audit log for entity/field label renames --
+ * docs/security.md's own "Section 40" note named this as the one
+ * sub-gap the audit-trail family (role changes, record deletions,
+ * restores) left open. `changedByUserId` is a raw userId for the same
+ * reason CollaboratorAccessChange's own fields are: CollaboratorsPanel.tsx
+ * already has owner/collaborators loaded and resolves it itself.
+ */
+export interface SchemaLabelEdit {
+  id: number;
+  changedByUserId: string | null;
+  action: "entity_renamed" | "field_renamed";
+  entityName: string;
+  fieldName: string | null;
+  previousLabel: string;
+  newLabel: string;
+  changedAt: string;
+}
+
+export function listSchemaLabelEdits(projectId: string): Promise<{ edits: SchemaLabelEdit[] }> {
+  return request(`/projects/${projectId}/schema-label-edits`);
+}
+
 /** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */
 export interface ProjectOwnerInfo {
   userId: string;

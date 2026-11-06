@@ -8015,6 +8015,129 @@ test("renaming an entity's label rejects an empty or whitespace-only value", asy
 });
 
 /**
+ * Round 1639: docs/security.md's own "Section 40" note still named this
+ * exact gap explicitly -- "entity/field schema edits outside a build...
+ * still carry no 'who did this' trail", the one sub-item the audit-trail
+ * family (rounds 1567/1568/1632/1636) left open. Confirms both the
+ * entity-label and field-label PATCH routes each record a real entry
+ * (who made the change, the entity/field affected, and the before/after
+ * label), and that both the owner and a collaborator can read the
+ * combined log via the new GET route -- same access level as
+ * GET .../collaborator-access-log.
+ */
+test("PATCH .../entities/:entityName/label and PATCH .../fields/:fieldName/label both record who made the change, readable via GET .../schema-label-edits", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-schema-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-schema-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; label?: string; fields: { name: string; label?: string }[] }[] } };
+    };
+    const entity = project.spec.entities[0];
+    const fieldName = entity.fields[0].name;
+    const originalEntityLabel = entity.label ?? entity.name;
+    const originalFieldLabel = entity.fields[0].label ?? fieldName;
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const entityRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/label`, {
+      method: "PATCH",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ label: "לקוחות VIP" }),
+    });
+    assert.equal(entityRes.status, 200);
+
+    const fieldRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/fields/${fieldName}/label`, {
+      method: "PATCH",
+      headers: { ...authHeaders(collabToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ label: "שם מלא" }),
+    });
+    assert.equal(fieldRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/schema-label-edits`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { edits } = (await listRes.json()) as {
+      edits: {
+        action: string;
+        entityName: string;
+        fieldName: string | null;
+        changedByUserId: string | null;
+        previousLabel: string;
+        newLabel: string;
+      }[];
+    };
+
+    const entityEdit = edits.find((e) => e.action === "entity_renamed")!;
+    assert.ok(entityEdit, "the entity label rename must have been logged");
+    assert.equal(entityEdit.entityName, entity.name);
+    assert.equal(entityEdit.fieldName, null, "an entity rename has no field name");
+    assert.equal(entityEdit.changedByUserId, ownerUser.id);
+    assert.equal(entityEdit.previousLabel, originalEntityLabel);
+    assert.equal(entityEdit.newLabel, "לקוחות VIP");
+
+    const fieldEdit = edits.find((e) => e.action === "field_renamed")!;
+    assert.ok(fieldEdit, "the field label rename must have been logged");
+    assert.equal(fieldEdit.entityName, entity.name);
+    assert.equal(fieldEdit.fieldName, fieldName);
+    assert.equal(fieldEdit.changedByUserId, collabUser.id);
+    assert.equal(fieldEdit.previousLabel, originalFieldLabel);
+    assert.equal(fieldEdit.newLabel, "שם מלא");
+
+    // A collaborator can read the same audit trail -- same access level
+    // GET .../collaborator-access-log already grants (round 1636's own comment).
+    const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/schema-label-edits`, { headers: authHeaders(collabToken) });
+    assert.equal(collabListRes.status, 200);
+  });
+});
+
+/**
+ * Round 1639: unlike round 1636's collaborator-role-change log (which
+ * deliberately logs a no-op resubmit too, since even an unchanged role
+ * still represents a real access decision), resubmitting the exact same
+ * label is never a rename at all -- logging it would just add noise to a
+ * log whose entire purpose is "what changed."
+ */
+test("PATCH .../entities/:entityName/label does not log an entry when resubmitting the exact same label", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, `schema-audit-noop-${randomUUID()}@example.com`);
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string; label?: string }[] } } };
+    const entity = project.spec.entities[0];
+    const sameLabel = entity.label ?? entity.name;
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/label`, {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ label: sameLabel }),
+    });
+    assert.equal(res.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/schema-label-edits`, { headers: authHeaders(token) });
+    assert.equal(listRes.status, 200);
+    const { edits } = (await listRes.json()) as { edits: unknown[] };
+    assert.equal(edits.length, 0, "a resubmit of the exact same label must not be logged as a rename");
+  });
+});
+
+/**
  * Round 960: same withIdempotency gap, and the same fix, as the roles/
  * assumptions/personas PATCH routes (round 943) -- this route reads
  * project.spec and writes it back with no protection at all. A response

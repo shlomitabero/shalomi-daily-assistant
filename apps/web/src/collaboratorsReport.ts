@@ -43,6 +43,23 @@ export interface CollaboratorAccessChangeForReport {
 }
 
 /**
+ * Round 1639: the sibling of CollaboratorAccessChangeForReport above, for
+ * entity/field label renames -- docs/security.md's own "Section 40" note
+ * named this as the one sub-gap this audit-trail family left open.
+ * `changedByEmail` is already resolved by the caller (CollaboratorsPanel.tsx),
+ * same reason as the sibling report types' own *Email fields.
+ */
+export interface SchemaLabelEditForReport {
+  action: "entity_renamed" | "field_renamed";
+  entityName: string;
+  fieldName: string | null;
+  changedByEmail: string | null;
+  previousLabel: string;
+  newLabel: string;
+  changedAt: string;
+}
+
+/**
  * Renders the Collaborators panel's own already-fetched owner + collaborator
  * list as a plain, shareable text snapshot -- the same gap every other
  * read-heavy "list of real data" overlay panel in this app (Business Twin,
@@ -59,6 +76,7 @@ export function formatCollaboratorsReport(
   t: (key: string, params?: Record<string, string | number>) => string,
   recordDeletions: RecordDeletionForReport[] = [],
   accessChanges: CollaboratorAccessChangeForReport[] = [],
+  schemaLabelEdits: SchemaLabelEditForReport[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`${t("collab.title")} — ${projectName}`);
@@ -118,6 +136,35 @@ export function formatCollaboratorsReport(
             who: c.targetEmail,
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
             date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      }
+    }
+  }
+
+  if (schemaLabelEdits.length > 0) {
+    lines.push("");
+    lines.push(t("collab.report.schemaLabelEditsHeading"));
+    for (const e of schemaLabelEdits) {
+      if (e.action === "entity_renamed") {
+        lines.push(
+          t("collab.report.entityRenamedEntry", {
+            entity: e.entityName,
+            from: e.previousLabel,
+            to: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else {
+        lines.push(
+          t("collab.report.fieldRenamedEntry", {
+            field: e.fieldName ?? "",
+            entity: e.entityName,
+            from: e.previousLabel,
+            to: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
           }),
         );
       }
