@@ -224,7 +224,17 @@ export default function OpportunityDetail() {
           <h3>פרסום</h3>
           <p className="hint">מצב נוכחי: {settings?.mode === 'research' ? 'מחקר בלבד — לא יפרסם' : settings?.mode === 'approve' ? 'דורש אישור' : 'אוטומטי מוגבל'}</p>
           {settings?.mode === 'approve' && (
-            <button className="btn btn-ghost" onClick={onApprove} disabled={busy}>אשר פרסום</button>
+            hasPublishApproval ? (
+              // Before this, clicking "אשר פרסום" gave no feedback at all -
+              // the button just stayed there, identical to before the
+              // click, and the only sign anything happened was the publish
+              // button below silently becoming enabled. Easy to miss, and
+              // nothing told the owner they could now go ahead and
+              // actually publish.
+              <p className="hint positive" style={{ margin: '0 0 10px' }}>✅ הפרסום אושר — אפשר ללחוץ "פרסם מוצר" למטה כדי לבצע בפועל.</p>
+            ) : (
+              <button className="btn btn-ghost" onClick={onApprove} disabled={busy}>אשר פרסום</button>
+            )
           )}
           <button
             className="btn btn-primary"
