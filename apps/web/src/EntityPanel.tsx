@@ -1848,6 +1848,15 @@ export function EntityPanel({
   /** Round 1571: which of this entity's own records this user has pinned to the top -- mirrors pinnedProjects.ts's own per-user Set<id>, one level down. */
   const [pinnedIds, setPinnedIds] = useState<Set<number>>(() => getPinnedRecordIds(projectId, entity.name, userId));
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
+  // Round 1646: mirrors FieldInput's own relationFilter state (round 1636) --
+  // that fix only ever capped/filtered the relation <select> inside the
+  // add/edit record form; this toolbar filter-by-relation-value dropdown,
+  // built from the exact same unsliced relatedRecords[relationTo] array,
+  // was left with no cap and no way to narrow it at all (round 1638/1639's
+  // own survey notes flagged this exact gap twice and deferred it both
+  // times). Keyed by field name since a single entity can have more than
+  // one filterable relation field, each needing its own independent draft.
+  const [relationFilterToolbarDrafts, setRelationFilterToolbarDrafts] = useState<Record<string, string>>({});
   const [groupFieldName, setGroupFieldName] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [collapsedBoardColumns, setCollapsedBoardColumns] = useState<Set<string>>(new Set());
@@ -5380,9 +5389,36 @@ export function EntityPanel({
                 f.type === "enum" && currentFilterValue && !knownEnumFilterValues.includes(currentFilterValue)
                   ? [currentFilterValue, ...knownEnumFilterValues]
                   : knownEnumFilterValues;
-              return (
+              // Round 1646: mirrors FieldInput's own relationFilter+cap pair
+              // (round 1636/1637) exactly, just reading the per-field draft
+              // from relationFilterToolbarDrafts above instead of a single
+              // local useState, since this one <select> is one of several
+              // rendered from the same .map() iteration.
+              const relationTargetEntity =
+                f.type === "relation" ? allEntities.find((e) => e.name.toLowerCase() === f.relationTo!.toLowerCase()) : undefined;
+              const relationFilterDraft = relationFilterToolbarDrafts[f.name] ?? "";
+              const trimmedRelationFilter = relationFilterDraft.trim().toLowerCase();
+              const filteredRelationRecords =
+                trimmedRelationFilter === "" || !relationTargetEntity
+                  ? knownRelationRecords
+                  : knownRelationRecords.filter(
+                      (r) =>
+                        String(r.id) === currentFilterValue ||
+                        recordDisplayLabel(relationTargetEntity, r, lang).toLowerCase().includes(trimmedRelationFilter),
+                    );
+              const isRelationFilterTruncated = filteredRelationRecords.length > RELATION_PICKER_OPTION_CAP;
+              let displayedRelationRecords = filteredRelationRecords;
+              if (isRelationFilterTruncated) {
+                const cappedRelationSlice = filteredRelationRecords.slice(0, RELATION_PICKER_OPTION_CAP);
+                const currentRelationRecord = filteredRelationRecords.find((r) => String(r.id) === currentFilterValue);
+                displayedRelationRecords =
+                  currentRelationRecord && !cappedRelationSlice.includes(currentRelationRecord)
+                    ? [currentRelationRecord, ...cappedRelationSlice]
+                    : cappedRelationSlice;
+              }
+              const select = (
                 <select
-                  key={f.name}
+                  key={f.type === "relation" ? undefined : f.name}
                   className="entity-status-filter"
                   aria-label={t("entity.filter.byField", { field: fieldDisplayLabel(f, filterableFieldLabelOccurrences) })}
                   value={currentFilterValue}
@@ -5408,7 +5444,7 @@ export function EntityPanel({
                   ) : f.type === "relation" ? (
                     <>
                       {!hasCurrentRelationOption && <option value={currentFilterValue}>{`#${currentFilterValue}`}</option>}
-                      {knownRelationRecords.map((r) => (
+                      {displayedRelationRecords.map((r) => (
                         <option key={r.id as number} value={String(r.id)}>
                           {/* Round 1178: case-insensitive -- findFilterableFields above now lets a
                               case-mismatched relation field reach this branch, so this lookup must
@@ -5425,6 +5461,27 @@ export function EntityPanel({
                     ))
                   )}
                 </select>
+              );
+              if (f.type !== "relation") return select;
+              return (
+                <div className="entity-status-filter-relation" key={f.name}>
+                  {knownRelationRecords.length > 5 && (
+                    <input
+                      type="text"
+                      className="relation-filter-input"
+                      value={relationFilterDraft}
+                      onChange={(e) => setRelationFilterToolbarDrafts((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                      placeholder={t("entity.relation.filterPlaceholder")}
+                      aria-label={t("entity.relation.filterPlaceholder")}
+                    />
+                  )}
+                  {isRelationFilterTruncated && (
+                    <p className="relation-filter-truncated-hint">
+                      {t("entity.relation.optionCapHint", { shown: displayedRelationRecords.length, total: filteredRelationRecords.length })}
+                    </p>
+                  )}
+                  {select}
+                </div>
               );
             })}
             {filterableFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (

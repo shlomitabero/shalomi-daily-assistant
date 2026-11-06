@@ -5066,7 +5066,10 @@ test("the exported EntityView's filter dropdown also covers a relation field, on
   );
   assert.match(
     entityViewJsx,
-    /knownRelationRecords\.map\(\(r\) =>[\s\S]{0,150}recordDisplayLabel\(ALL_ENTITIES\.find/,
+    // Round 1646: the real rendered <option> list is now displayedRelationRecords
+    // (the cap-applied slice of knownRelationRecords, see the option-cap test
+    // below), not knownRelationRecords directly.
+    /displayedRelationRecords\.map\(\(r\) =>[\s\S]{0,150}recordDisplayLabel\(ALL_ENTITIES\.find/,
     "the real option-rendering branch must resolve each option's label via recordDisplayLabel, not a raw id",
   );
 });
@@ -24856,6 +24859,121 @@ test("the exported EntityView's relation filter select keeps a stale persisted i
         "a synthetic '#10' option for the deleted-but-still-filtered courier must exist so the browser can actually display it as selected",
       );
       secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1646: the toolbar's own filter-by-relation-value dropdown is built
+ * from the exact same unsliced relatedRecords[relationTo] array as
+ * FieldInput's own relation <select> (just below, round 698's own fix) --
+ * but that cap+filter fix was never ported to this toolbar dropdown.
+ * Confirms the exported app's own generated EntityView now caps its
+ * rendered options, offers a narrowing text input once there are enough
+ * related records, and -- mirroring FieldInput's own guard -- never loses
+ * a persisted-but-past-the-cap filter value's own option, pre-seeded here
+ * via localStorage (forge_field_filters) the same way setPersistedFieldFilters
+ * itself would write it.
+ */
+test("the exported EntityView's toolbar filter-by-relation dropdown caps its rendered options for a very large related entity and offers a filter input", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const courierRecords: EntityRecord[] = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, name: `Courier ${i + 1}` }));
+  const store: EntityRecord[] = [{ id: 1, item: "Pizza", courierId: 1 }];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      // Pre-seeds the toolbar's own already-applied filter to the LAST
+      // related record (id 250) -- guaranteed to fall outside any naive
+      // first-N slice -- mirroring the exact shape setPersistedFieldFilters
+      // itself writes, the same way a real page reload would restore a
+      // filter a user set before navigating away.
+      localStorage.setItem("forge_field_filters", JSON.stringify({ Order: { courierId: "250" } }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      let filterSelect: HTMLSelectElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        filterSelect = container.querySelector(".entity-status-filter") as HTMLSelectElement | null;
+        if (filterSelect !== null && filterSelect.querySelectorAll("option").length > 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(filterSelect, "expected a real relation filter select");
+
+      const wrapper = container.querySelector(".entity-status-filter-relation");
+      assert.ok(wrapper, "the relation toolbar filter must be wrapped alongside its own filter input and hint");
+      const filterInput = wrapper!.querySelector(".relation-filter-input") as HTMLInputElement;
+      assert.ok(filterInput, "expected a filter input once there are more than a handful of related records");
+
+      // Blank "All" + 200 capped options + the pre-seeded filter value's
+      // own option prepended past the cap = 202, never the full 251.
+      assert.equal(filterSelect!.querySelectorAll("option").length, 202, "the rendered option count must be capped, not one per related record");
+      assert.equal(filterSelect!.value, "250", "the pre-seeded filter value must remain the select's real value");
+      assert.ok(
+        Array.from(filterSelect!.options).some((o) => o.textContent === "Courier 250"),
+        "the pre-seeded filter value's own option must stay present even though it falls past the cap slice",
+      );
+
+      const hint = wrapper!.querySelector(".relation-filter-truncated-hint");
+      assert.ok(hint, "a hint must explain the list is truncated");
+      assert.ok(hint?.textContent?.includes("201"), "the hint must name how many options are actually shown (200 capped + 1 for the filter value)");
+      assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+
+      await act(async () => {
+        // "Courier 123" (not "Courier 7") so the substring match is
+        // unambiguous -- "7" would also match "Courier 70".."79".
+        fireEvent.change(filterInput!, { target: { value: "Courier 123" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (filterSelect!.querySelectorAll("option").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      // 3, not 2: the blank "All" option, "Courier 123" (matches the filter
+      // text), and "Courier 250" -- the pre-seeded filter value, which the
+      // filter text does NOT match, but must stay in the list regardless.
+      assert.equal(filterSelect!.querySelectorAll("option").length, 3);
+      const narrowedLabels = Array.from(filterSelect!.options).map((o) => o.textContent);
+      assert.ok(narrowedLabels.includes("Courier 123"), "the filter must keep the one matching record's option");
+      assert.ok(narrowedLabels.includes("Courier 250"), "the pre-seeded filter value's own option must stay visible even though the filter text doesn't match it");
+      assert.equal(filterSelect!.value, "250", "the pre-seeded filter value must remain selected while filtered");
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -5666,6 +5666,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   const [search, setSearch] = useState("");
   const [recentSearches, setRecentSearches] = useState(() => getEntityRecentSearches(entity.name));
   const [fieldFilters, setFieldFilters] = useState(() => sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields));
+  // Round 1646: mirrors FieldInput's own relationFilter state above -- the
+  // toolbar's filter-by-relation-value dropdown below reads from the exact
+  // same unsliced relatedRecords[relationTo] array FieldInput's own relation
+  // <select> was already capped+filtered for (RELATION_PICKER_OPTION_CAP
+  // above), but this toolbar dropdown was left with no cap and no way to
+  // narrow it at all. Keyed by field name since an entity can have more
+  // than one filterable relation field, each needing its own draft.
+  const [relationFilterToolbarDrafts, setRelationFilterToolbarDrafts] = useState({});
   const [groupFieldName, setGroupFieldName] = useState(() => {
     const loaded = getPersistedGroupField(entity.name);
     if (!loaded) return loaded;
@@ -8038,9 +8046,32 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               const knownRelationRecords = f.type === "relation" ? relatedRecords[f.relationTo] || [] : [];
               const hasCurrentRelationOption =
                 f.type !== "relation" || currentFilterValue === "" || knownRelationRecords.some((r) => String(r.id) === currentFilterValue);
-              return (
+              // Round 1646: mirrors FieldInput's own relationFilter+cap pair
+              // above exactly, just reading the per-field draft from
+              // relationFilterToolbarDrafts since this one <select> is one
+              // of several rendered from the same .map() iteration.
+              const relationTargetEntity = f.type === "relation" ? ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) : undefined;
+              const relationFilterDraft = relationFilterToolbarDrafts[f.name] || "";
+              const trimmedRelationFilter = relationFilterDraft.trim().toLowerCase();
+              const filteredRelationRecords =
+                trimmedRelationFilter === "" || !relationTargetEntity
+                  ? knownRelationRecords
+                  : knownRelationRecords.filter(
+                      (r) => String(r.id) === currentFilterValue || recordDisplayLabel(relationTargetEntity, r).toLowerCase().includes(trimmedRelationFilter),
+                    );
+              const isRelationFilterTruncated = filteredRelationRecords.length > RELATION_PICKER_OPTION_CAP;
+              let displayedRelationRecords = filteredRelationRecords;
+              if (isRelationFilterTruncated) {
+                const cappedRelationSlice = filteredRelationRecords.slice(0, RELATION_PICKER_OPTION_CAP);
+                const currentRelationRecord = filteredRelationRecords.find((r) => String(r.id) === currentFilterValue);
+                displayedRelationRecords =
+                  currentRelationRecord && !cappedRelationSlice.includes(currentRelationRecord)
+                    ? [currentRelationRecord, ...cappedRelationSlice]
+                    : cappedRelationSlice;
+              }
+              const select = (
               <select
-                key={f.name}
+                key={f.type === "relation" ? undefined : f.name}
                 className="entity-status-filter"
                 aria-label={"Filter by " + fieldDisplayLabel(f, filterableFieldLabelOccurrences)}
                 value={currentFilterValue}
@@ -8066,7 +8097,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 ) : f.type === "relation" ? (
                   <>
                     {!hasCurrentRelationOption && <option value={currentFilterValue}>{\`#\${currentFilterValue}\`}</option>}
-                    {knownRelationRecords.map((r) => (
+                    {displayedRelationRecords.map((r) => (
                       <option key={r.id} value={String(r.id)}>
                         {recordDisplayLabel(ALL_ENTITIES.find((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()), r)}
                       </option>
@@ -8080,6 +8111,25 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                   ))
                 )}
               </select>
+              );
+              if (f.type !== "relation") return select;
+              return (
+                <div className="entity-status-filter-relation" key={f.name}>
+                  {knownRelationRecords.length > 5 && (
+                    <input
+                      type="text"
+                      className="relation-filter-input"
+                      value={relationFilterDraft}
+                      onChange={(e) => setRelationFilterToolbarDrafts((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                      placeholder="Search…"
+                      aria-label="Search…"
+                    />
+                  )}
+                  {isRelationFilterTruncated && (
+                    <p className="relation-filter-truncated-hint">{\`Showing \${displayedRelationRecords.length} of \${filteredRelationRecords.length} records -- type to search for a specific one.\`}</p>
+                  )}
+                  {select}
+                </div>
               );
             })}
             {filterableFields.length > 0 && Object.values(fieldFilters).some(Boolean) && (
@@ -10172,6 +10222,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .chip-remove { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: none; border-radius: 999px; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; }
 .chip-remove:hover { background: var(--surface-muted); color: var(--text); }
 .entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
+.entity-status-filter-relation { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.entity-status-filter-relation .entity-status-filter, .entity-status-filter-relation .relation-filter-input { max-width: 200px; margin-bottom: 0; }
 .entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
 .entity-group-totals-row td { background: var(--surface-subtle); border-bottom: 1px solid var(--border); font-weight: 600; }
 .entity-group-toggle { background: none; border: none; cursor: pointer; padding: 0 4px; font-size: 12px; color: inherit; }

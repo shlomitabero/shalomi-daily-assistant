@@ -14586,6 +14586,91 @@ test("EntityPanel's relation field caps the number of rendered options for a ver
 });
 
 /**
+ * Round 1646: this toolbar filter-by-relation-value dropdown is built from
+ * the exact same unsliced relatedRecords[relationTo] array round 1637 fixed
+ * for FieldInput's own record-form relation <select> -- but that fix was
+ * never ported here (flagged and deferred twice, rounds 1638/1639). Confirms
+ * the toolbar <select> now caps its rendered options, offers a narrowing
+ * text input once there are enough related records, shows a truncation
+ * hint naming shown/total, and -- mirroring round 1637's own guard exactly --
+ * never loses the currently-applied filter value's own option even when its
+ * position in the full list falls past the cap, pre-seeded here via the
+ * persisted fieldFiltersPreference the same way a real page reload would
+ * restore it.
+ */
+test("EntityPanel's toolbar filter-by-relation dropdown caps its rendered options for a very large related entity, offers a filter input, and keeps the already-applied filter value's own option past the cap", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, createdAt: "x", name: `Courier ${i + 1}` }));
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 1 }];
+    // Pre-seeds the toolbar's own already-applied filter value to the LAST
+    // related record (id 250) -- guaranteed to fall outside any naive
+    // first-N slice -- the same way a real page reload restores a filter a
+    // user set before navigating away, without needing to click through a
+    // <select> whose target <option> doesn't exist in the DOM yet.
+    setFieldFilters("proj1", "Order", "user1", { courierId: "250" });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelector(".entity-status-filter") !== null);
+
+      const wrapper = document.querySelector(".entity-status-filter-relation");
+      assert.ok(wrapper, "the relation toolbar filter must be wrapped alongside its own filter input and hint, mirroring FieldInput's layout");
+      const filterInput = wrapper!.querySelector(".relation-filter-input") as HTMLInputElement;
+      assert.ok(filterInput, "expected a filter input once there are more than a handful of related records");
+
+      const select = wrapper!.querySelector(".entity-status-filter") as HTMLSelectElement;
+      await waitForCondition(() => select.querySelectorAll("option").length > 1);
+      // Blank "All" + 200 capped options + the pre-seeded selected record's
+      // own option prepended past the cap = 202, never the full 251.
+      assert.equal(select.querySelectorAll("option").length, 202, "the rendered option count must be capped, not one per related record");
+      assert.equal(select.value, "250", "the pre-seeded filter value must remain the select's real value");
+      const optionLabels = Array.from(select.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Courier 250"), "the already-applied filter value's own option must stay present even though it falls past the cap slice");
+
+      const hint = wrapper!.querySelector(".relation-filter-truncated-hint");
+      assert.ok(hint, "a hint must explain the list is truncated");
+      assert.ok(hint?.textContent?.includes("201"), "the hint must name how many options are actually shown (200 capped + 1 for the selected value)");
+      assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+
+      // "Courier 123" (not "Courier 7") so the substring match is
+      // unambiguous -- "7" would also match "Courier 70".."79".
+      fireEvent.change(filterInput, { target: { value: "Courier 123" } });
+      // 3, not 2: the blank "All" option, "Courier 123" (matches the filter
+      // text), and "Courier 250" -- the already-applied filter value, which
+      // the filter text does NOT match, but must stay in the list regardless
+      // so the controlled select never loses its real current value.
+      await waitForCondition(() => select.querySelectorAll("option").length === 3);
+      const narrowedLabels = Array.from(select.options).map((o) => o.textContent);
+      assert.ok(narrowedLabels.includes("Courier 123"), "the filter must keep the one matching record's option");
+      assert.ok(narrowedLabels.includes("Courier 250"), "the already-applied filter value's own option must stay visible even though the filter text doesn't match it");
+      assert.ok(!narrowedLabels.includes("Courier 15"), "a non-matching, non-selected record's option must be filtered out");
+      assert.equal(select.value, "250", "the already-applied filter value must remain selected while filtered");
+    } finally {
+      globalThis.fetch = originalFetch;
+      setFieldFilters("proj1", "Order", "user1", {});
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via

@@ -1542,6 +1542,24 @@ tbody tr:hover {
   flex-shrink: 0;
 }
 
+/* Round 1646: wraps a relation-type toolbar filter's <select> together with
+   its own narrowing text input and truncation hint (mirrors FieldInput's
+   own .relation-field-input layout) -- without this, the wrapper div would
+   otherwise stretch to fill the .entity-toolbar flex row's remaining space
+   instead of sizing to its own content like every sibling filter control. */
+.entity-status-filter-relation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.entity-status-filter-relation .entity-status-filter,
+.entity-status-filter-relation .relation-filter-input {
+  max-width: 200px;
+  margin-bottom: 0;
+}
+
 .entity-group-header-row td {
   background: var(--surface-subtle);
   font-weight: 600;
