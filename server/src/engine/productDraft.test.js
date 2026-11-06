@@ -27,8 +27,24 @@ test('isValidDraftShape rejects an empty salesBullets array', () => {
   assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesBullets: [] }), false);
 });
 
+test('isValidDraftShape rejects salesBullets containing a non-string or blank entry', () => {
+  // The .every() check on each bullet was never actually exercised with a
+  // bad element - every existing test either used a fully valid array or
+  // replaced the whole thing with a non-array. ProductPage.jsx renders each
+  // bullet as plain text with no guard, so a non-string entry here would
+  // reach a real customer's screen instead of being caught at draft time.
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesBullets: ['יתרון 1', 42, 'יתרון 3'] }), false);
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesBullets: ['יתרון 1', '   ', 'יתרון 3'] }), false);
+});
+
 test('isValidDraftShape rejects a blank title', () => {
   assert.equal(isValidDraftShape({ ...VALID_DRAFT, title: '   ' }), false);
+});
+
+test('isValidDraftShape rejects a blank guide, salesHeadline, or salesParagraph', () => {
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, guide: '' }), false);
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesHeadline: '   ' }), false);
+  assert.equal(isValidDraftShape({ ...VALID_DRAFT, salesParagraph: '' }), false);
 });
 
 test('isValidDraftShape rejects null/undefined input', () => {
