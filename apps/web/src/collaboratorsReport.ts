@@ -9,6 +9,23 @@ function roleLabel(role: CollaboratorRole, t: (key: string, params?: Record<stri
 }
 
 /**
+ * Round 1632: the deletion half of the createdByUserId/updatedByUserId
+ * audit-trail pair (rounds 1613/1617), which the live record table itself
+ * has no natural place to show (the row is gone) -- this report is the one
+ * surface a collaborator can already reach for "what happened on this
+ * project," so it's the natural home for "who deleted what." `email` is
+ * already resolved by the caller (CollaboratorsPanel.tsx, using the exact
+ * owner+collaborators data this same report already renders above), not
+ * the raw `deletedByUserId` -- this module has no access to that lookup.
+ */
+export interface RecordDeletionForReport {
+  entityName: string;
+  recordLabel: string;
+  deletedByEmail: string | null;
+  deletedAt: string;
+}
+
+/**
  * Renders the Collaborators panel's own already-fetched owner + collaborator
  * list as a plain, shareable text snapshot -- the same gap every other
  * read-heavy "list of real data" overlay panel in this app (Business Twin,
@@ -23,6 +40,7 @@ export function formatCollaboratorsReport(
   projectName: string,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
+  recordDeletions: RecordDeletionForReport[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`${t("collab.title")} — ${projectName}`);
@@ -45,6 +63,21 @@ export function formatCollaboratorsReport(
   // independent of owner.
   if (collaborators.length === 0) {
     lines.push(t("collab.empty"));
+  }
+
+  if (recordDeletions.length > 0) {
+    lines.push("");
+    lines.push(t("collab.report.recordDeletionsHeading"));
+    for (const d of recordDeletions) {
+      lines.push(
+        t("collab.report.recordDeletedEntry", {
+          label: d.recordLabel,
+          entity: d.entityName,
+          who: d.deletedByEmail ?? t("collab.report.unknownActor"),
+          date: new Date(d.deletedAt).toLocaleString(LOCALE[lang]),
+        }),
+      );
+    }
   }
 
   return lines.join("\n").trimEnd();

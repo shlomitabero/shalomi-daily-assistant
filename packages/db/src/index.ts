@@ -109,6 +109,14 @@ export {
   type WhatsAppMessageStatus,
 } from "./whatsapp.js";
 export {
+  ensureRecordDeletionsTable,
+  insertRecordDeletion,
+  listRecordDeletions,
+  deleteRecordDeletionsForProject,
+  RECORD_DELETIONS_RETENTION_LIMIT,
+  type RecordDeletion,
+} from "./recordDeletions.js";
+export {
   ensureIdempotencyKeysTable,
   getIdempotencyRecord,
   insertIdempotencyRecord,

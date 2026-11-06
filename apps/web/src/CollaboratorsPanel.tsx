@@ -5,12 +5,14 @@ import {
   getCalendarFeedToken,
   getInboundWebhookToken,
   listCollaborators,
+  listRecordDeletions,
   regenerateCalendarFeedToken,
   regenerateInboundWebhookToken,
   removeCollaborator,
   transferProjectOwnership,
   updateCollaboratorRole,
   type ProjectOwnerInfo,
+  type RecordDeletion,
 } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
@@ -90,6 +92,14 @@ export function CollaboratorsPanel({
   const { t, lang } = useTranslation();
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[] | null>(null);
   const [owner, setOwner] = useState<ProjectOwnerInfo | null>(null);
+  // Round 1632: fetched alongside collaborators (not gated behind any
+  // explicit user action) purely for the Copy/Download report below --
+  // never rendered in the on-screen list itself, so a load failure here
+  // is deliberately silent (stays []) rather than surfacing its own error
+  // state, the same way the report's own data has always just been
+  // "whatever's currently in memory," never a hard dependency of opening
+  // this panel at all.
+  const [recordDeletions, setRecordDeletions] = useState<RecordDeletion[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Distinct from the error above (shared by invite/remove/leave failures,
   // each of which already has its own clear recovery path): specifically
@@ -135,6 +145,12 @@ export function CollaboratorsPanel({
         setOwner(owner);
       })
       .catch((err) => setLoadError((err as Error).message));
+    // Round 1632: deliberately a separate, independent call -- a failure
+    // here must never block or error out the real collaborator list above
+    // (see recordDeletions' own state comment for why this stays silent).
+    listRecordDeletions(projectId)
+      .then(({ deletions }) => setRecordDeletions(deletions))
+      .catch(() => {});
   }
 
   useEffect(() => {
@@ -509,8 +525,21 @@ export function CollaboratorsPanel({
     return () => clearTimeout(timer);
   }, [subscribeAllStatus]);
 
+  // Round 1632: resolves each deletion's raw deletedByUserId into a display
+  // email using the exact same owner+collaborators data this panel already
+  // loaded for its own list -- mirrors the server-side collaboratorEmails
+  // pattern (GET .../checkpoints, GET .../entities/:entityName) but built
+  // client-side here, since there's no reason to duplicate that lookup in
+  // a dedicated route response just for this one report.
+  function deletionsForReport() {
+    const emails: Record<string, string> = {};
+    if (owner) emails[owner.userId] = owner.email;
+    for (const c of collaborators ?? []) emails[c.userId] = c.email;
+    return recordDeletions.map((d) => ({ ...d, deletedByEmail: d.deletedByUserId ? emails[d.deletedByUserId] ?? null : null }));
+  }
+
   function handleDownload() {
-    downloadCollaboratorsReport(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t), projectName);
+    downloadCollaboratorsReport(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport()), projectName);
   }
 
   /**
@@ -523,7 +552,7 @@ export function CollaboratorsPanel({
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t));
+      await navigator.clipboard.writeText(formatCollaboratorsReport(owner, collaborators ?? [], projectName, lang, t, deletionsForReport()));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

@@ -1347,6 +1347,27 @@ export function deleteRecord(projectId: string, entityName: string, recordId: nu
   });
 }
 
+/**
+ * Round 1632: the delete half of the createdByUserId/updatedByUserId
+ * audit-trail pair (rounds 1613/1617) -- a deleted record has nowhere left
+ * to carry a column, so this reads from a small separate server-side log
+ * instead. `deletedByUserId` is the raw userId (not a resolved email) --
+ * CollaboratorsPanel.tsx, the one caller, already has owner/collaborators
+ * loaded from its own listCollaborators() call and resolves it itself.
+ */
+export interface RecordDeletion {
+  id: number;
+  entityName: string;
+  recordId: number;
+  recordLabel: string;
+  deletedByUserId: string | null;
+  deletedAt: string;
+}
+
+export function listRecordDeletions(projectId: string): Promise<{ deletions: RecordDeletion[] }> {
+  return request(`/projects/${projectId}/record-deletions`);
+}
+
 /** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */
 export interface ProjectOwnerInfo {
   userId: string;

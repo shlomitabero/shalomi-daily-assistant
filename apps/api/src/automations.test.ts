@@ -22,6 +22,7 @@ import {
   listWhatsAppMessages,
   markProjectBuilt,
   openDatabase,
+  ensureRecordDeletionsTable,
   updateAutomationRule,
   WEBHOOK_TIMEOUT_ERROR,
   WEBHOOK_UNREACHABLE_ERROR,
@@ -2889,6 +2890,7 @@ test("runAutomationsForRecordChange's webhook action never resurrects an automat
   // to actually call deleteProject.
   ensureCheckpointsTable(db);
   ensureProjectCollaboratorsTable(db);
+  ensureRecordDeletionsTable(db);
   const rule = insertAutomationRule(db, {
     projectId: project.id,
     entityName: "Order",
@@ -3804,6 +3806,7 @@ test("runAutomationsForRecordChange's send_email action never resurrects an auto
   const { db, project } = setupProject();
   ensureCheckpointsTable(db);
   ensureProjectCollaboratorsTable(db);
+  ensureRecordDeletionsTable(db);
   const rule = insertAutomationRule(db, {
     projectId: project.id,
     entityName: "Order",

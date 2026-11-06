@@ -62,6 +62,8 @@ import {
   getLastInboundWebhookFailure,
   isValidDateString,
   NotFoundError,
+  insertRecordDeletion,
+  listRecordDeletions,
   type ForgeDatabase,
   type AutomationTrigger,
   type AutomationToMode,
@@ -82,6 +84,7 @@ import { computeBusinessTwin } from "../twin.js";
 import { deleteUploadedFile, isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord } from "../whatsapp.js";
+import { recordDisplayLabel } from "../displayField.js";
 import { fireRule, fireScheduledRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 import type { EmailSender } from "../email.js";
 
@@ -3130,6 +3133,25 @@ export function createProjectsRouter(
   );
 
   /**
+   * Round 1632: the read side of the record-deletion audit trail -- any
+   * collaborator (including a read-only viewer, same access level as
+   * GET .../checkpoints above) can see who deleted what and when. Returns
+   * the raw deletedByUserId rather than a resolved collaboratorEmails map
+   * (unlike GET .../entities/:entityName's own createdByUserId resolution)
+   * since the one caller (CollaboratorsPanel.tsx) already has owner/
+   * collaborators loaded from its own listCollaborators call and can
+   * resolve the email itself -- no reason to duplicate that lookup here.
+   */
+  router.get(
+    "/projects/:id/record-deletions",
+    checkpointRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ deletions: listRecordDeletions(db, project.id) });
+    }),
+  );
+
+  /**
    * Round 956: same withIdempotency() extension, and the same reason, as
    * deleteCheckpoint's own fix just above (round 944) -- but the actual
    * hazard here is subtler than a 404. Restore reads project.spec, computes
@@ -5441,6 +5463,23 @@ export function createProjectsRouter(
               );
             }
             throw err;
+          }
+          // Round 1632: the delete half of the createdByUserId/updatedByUserId
+          // audit-trail pair (rounds 1613/1617) -- a deleted row has nowhere
+          // left to carry a column, so this writes to a small separate log
+          // table instead, using the same `before` snapshot already read
+          // above (the row itself is already gone by this point). Computed
+          // from `before`, not re-read, for the same reason the
+          // "record_deleted" automation trigger just below reads `before`
+          // too -- there's no other state a deleted row has left.
+          if (before) {
+            insertRecordDeletion(db, {
+              projectId: project.id,
+              entityName: entity.name,
+              recordId,
+              recordLabel: recordDisplayLabel(entity, before, isHebrewText(project.description) ? "he" : "en"),
+              deletedByUserId: req.userId!,
+            });
           }
           // Round 969: "record_deleted" rules fire here, off the same
           // `before` snapshot just used for file cleanup below -- it's the

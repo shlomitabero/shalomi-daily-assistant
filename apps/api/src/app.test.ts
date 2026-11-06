@@ -3325,6 +3325,89 @@ test("POST .../entities/:entityName attaches the authenticated caller's own user
 });
 
 /**
+ * Round 1632: the delete half of the createdByUserId/updatedByUserId
+ * audit-trail pair (rounds 1613/1617) -- round 1613's own closing note
+ * explicitly deferred record-delete actor-tracking "for a future round."
+ * Since a deleted row has nowhere left to carry a column, this is a
+ * separate small log (record_deletions, packages/db/src/recordDeletions.ts)
+ * instead, surfaced via a new GET .../record-deletions route.
+ */
+test("DELETE .../entities/:entityName/:recordId records who deleted a record, and GET .../record-deletions returns it for both the owner and a collaborator", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-delete-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-delete-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: ownerUser.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const createOwnerRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ name: "Dana Levi" }),
+    });
+    const { record: ownerRecord } = (await createOwnerRes.json()) as { record: { id: number } };
+
+    const createCollabRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ name: "Yossi Cohen" }),
+    });
+    const { record: collabRecord } = (await createCollabRes.json()) as { record: { id: number } };
+
+    const ownerDeleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${ownerRecord.id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(ownerDeleteRes.status, 204);
+
+    const collabDeleteRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${collabRecord.id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(collabToken), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(collabDeleteRes.status, 204);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/record-deletions`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { deletions } = (await listRes.json()) as {
+      deletions: { entityName: string; recordLabel: string; deletedByUserId: string | null }[];
+    };
+
+    const ownerDeletion = deletions.find((d) => d.recordLabel === "Dana Levi")!;
+    const collabDeletion = deletions.find((d) => d.recordLabel === "Yossi Cohen")!;
+    assert.equal(ownerDeletion.entityName, "Customer");
+    assert.equal(ownerDeletion.deletedByUserId, ownerUser.id);
+    assert.equal(collabDeletion.deletedByUserId, collabUser.id);
+
+    // A viewer-collaborator can read the same audit trail -- transparency,
+    // the same access level GET .../checkpoints already grants.
+    const viewerListRes = await fetch(`${baseUrl}/api/projects/${projectId}/record-deletions`, { headers: authHeaders(collabToken) });
+    assert.equal(viewerListRes.status, 200);
+  });
+});
+
+/**
  * Round 595's Explore survey found that an automation rule's field_equals
  * trigger accepted ANY free-text fieldValue with no validation against the
  * chosen field's actual possible values. matchesTrigger (automations.ts)
