@@ -185,6 +185,25 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * doc comment) rather than importing CSV import's stricter ambiguity-
  * rejection. A value that already parses as a number, or matches no
  * record, falls through unchanged to today's existing behavior.
+ *
+ * Round 1644: that "already parses as a number" short-circuit, above, was
+ * itself wrong -- it skipped the label lookup entirely for any
+ * numeric-looking value, silently treating it as this app's own internal
+ * record id instead. A huge fraction of real-world display labels are
+ * themselves numeric-looking (a membership number, invoice number, room
+ * number, SKU), and buildImportRecords' own sibling resolution
+ * (entityFormatting.ts, quoted in its own doc comment there) never makes
+ * that mistake: a label match always wins first there, and a bare number
+ * is never treated as an id at all -- only the literal "#<digits>"
+ * shorthand is, and only as the last resort when no label matches. Without
+ * this, a webhook payload referencing a Customer by a numeric membership
+ * code (e.g. `{"customer": "2024"}`) that happens to collide with a
+ * *different* Customer record's real internal id of 2024 silently attaches
+ * the new record to the wrong customer -- a silent cross-record data
+ * corruption, not just a rejected request. Now the label lookup always
+ * runs first, matching this route's own existing case-insensitive
+ * precedent (round 1512); only when no record's label matches does the
+ * raw value fall through to be treated as a literal id, same as before.
  */
 const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
@@ -223,13 +242,11 @@ function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: 
     const value = raw.trim();
     if (field.type === "relation" && field.relationTo) {
       normalized[field.name] = value;
-      if (!Number.isFinite(Number(value))) {
-        const targetEntity =
-          allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
-        if (targetEntity) {
-          const match = listRecords(db, projectId, targetEntity).find((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === value.toLowerCase());
-          if (match) normalized[field.name] = String(match.id);
-        }
+      const targetEntity =
+        allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+      if (targetEntity) {
+        const match = listRecords(db, projectId, targetEntity).find((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === value.toLowerCase());
+        if (match) normalized[field.name] = String(match.id);
       }
     } else if (field.type === "date") {
       normalized[field.name] = value;

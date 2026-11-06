@@ -22522,6 +22522,72 @@ test("POST /public/webhook-in/:projectId/:entityName still rejects a relation va
   });
 });
 
+// Round 1644: the relation branch used to skip the label lookup entirely
+// whenever the raw value parsed as a finite number, treating it as this
+// app's own internal record id instead -- the exact ambiguity CSV import's
+// own buildImportRecords (entityFormatting.ts) already resolves by always
+// trying the label match first, regardless of whether the string happens
+// to look numeric. A membership number, invoice number, or SKU is exactly
+// as likely to be a record's real display label as any other text.
+test("POST /public/webhook-in/:projectId/:entityName resolves a numeric-looking relation value against a matching record's own display label, even when a DIFFERENT record's real internal id happens to equal that same number", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-numeric-label-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    // Four filler records so the fifth insert below lands on a real
+    // internal id (5) that is NOT the record whose own display label is
+    // the string "5" -- that's the sixth insert, landing on id 6.
+    for (let i = 0; i < 4; i++) insertRecord(db, projectId, spec.entities[0], { name: `Filler ${i}` });
+    const wrongTarget = insertRecord(db, projectId, spec.entities[0], { name: "Not This One" });
+    const labeledFive = insertRecord(db, projectId, spec.entities[0], { name: "5" });
+    assert.equal(String(wrongTarget.id), "5", "test setup: the filler record must land on internal id 5");
+    assert.equal(String(labeledFive.id), "6", "test setup: the record labeled \"5\" must land on a DIFFERENT internal id (6)");
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: "5" }),
+    });
+    assert.equal(webhookRes.status, 201);
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; item: string; customer: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(
+      created!.customer,
+      Number(labeledFive.id),
+      "a relation value that matches a record's own display label must resolve to THAT record, not to whichever different record happens to have that number as its internal id",
+    );
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;
