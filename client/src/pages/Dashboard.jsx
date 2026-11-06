@@ -97,6 +97,16 @@ export default function Dashboard() {
     };
   } else if (opportunities.length === 0) {
     nextStep = { text: 'עדיין אין אף הזדמנות. אפשר לסרוק אוטומטית או ליצור מוצר דיגיטלי ידנית.', to: '/opportunities', cta: 'להזדמנויות' };
+  } else if (activeOpportunities.length >= 5) {
+    // Matches server/src/services/opportunities.js's MAX_PENDING_DRAFTS -
+    // runAutonomousScan logs this as a silent 'skipped' result with
+    // nothing in the UI explaining why the scan stopped producing
+    // anything new. This was the most likely real explanation for "the
+    // scanner isn't finding anything" once a backlog piles up unreviewed.
+    nextStep = {
+      text: `${activeOpportunities.length} הזדמנויות ממתינות לסקירה שלך — הסריקה האוטומטית משהה את עצמה עד שתסקור או תדחה חלק מהן.`,
+      to: '/opportunities', cta: 'להזדמנויות',
+    };
   } else if (pendingApprovals.length > 0 && settings.mode === 'approve') {
     nextStep = { text: `${pendingApprovals.length} פעולות ממתינות לאישור שלך ולא יתבצעו בלעדיו.`, to: '/approvals', cta: 'לאישורים' };
   } else if (!settings.budgetConfigured) {
