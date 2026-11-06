@@ -1615,6 +1615,20 @@ export function WhatsAppPanel({
                     <LinkifiedBody text={m.body} query={search} />
                   </span>
                   <span className="whatsapp-log-time muted small">{new Date(m.createdAt).toLocaleString(LOCALE[lang])}</span>
+                  {/* Round 1634: delivered/read -- the delivery-status
+                      lifecycle Baileys' own "messages.update" event now
+                      reports beyond plain sent/failed (see
+                      handleMessageUpdates/markWhatsAppMessageDeliveryStatus),
+                      the gray/blue double-checkmark equivalent WhatsApp's
+                      own native client shows. mergeFreshMessages already
+                      reconciles any status change generically (round 1626),
+                      so this needed no further plumbing beyond a render
+                      branch. */}
+                  {(m.status === "delivered" || m.status === "read") && (
+                    <span className={m.status === "read" ? "badge badge-positive" : "badge badge-neutral"}>
+                      {m.status === "read" ? t("whatsapp.log.read") : t("whatsapp.log.delivered")}
+                    </span>
+                  )}
                   {m.status === "failed" && (
                     <>
                       <span className="badge badge-negative">{t("whatsapp.log.failed")}</span>

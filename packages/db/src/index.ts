@@ -99,6 +99,7 @@ export {
   ensureWhatsAppMessagesTable,
   insertWhatsAppMessage,
   markWhatsAppMessageDeliveryFailed,
+  markWhatsAppMessageDeliveryStatus,
   listWhatsAppMessages,
   clearWhatsAppMessages,
   deleteWhatsAppMessage,

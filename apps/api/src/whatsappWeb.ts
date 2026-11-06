@@ -4,7 +4,7 @@ import {
   getProject,
   getWhatsAppConnection,
   insertWhatsAppMessage,
-  markWhatsAppMessageDeliveryFailed,
+  markWhatsAppMessageDeliveryStatus,
   recordWhatsAppConnected,
   recordWhatsAppDisconnected,
   type ForgeDatabase,
@@ -195,9 +195,12 @@ export interface BaileysMessagesUpsert {
  * `messages.upsert` above: this one reports a message's own delivery-status
  * LIFECYCLE (did it reach the server? the recipient? was it read?), not its
  * content. `update.status` is `proto.WebMessageInfo.Status`
- * (ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, READ=4, PLAYED=5) --
- * only `ERROR` is ever acted on below (see handleMessageUpdates), since
- * this app has no read-receipt UI to update for the others.
+ * (ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, READ=4, PLAYED=5).
+ * Round 1634: DELIVERY_ACK/READ/PLAYED are now acted on too (see
+ * handleMessageUpdates), mapped to this app's own "delivered"/"read" log
+ * statuses -- PENDING/SERVER_ACK stay no-ops, since neither is forward
+ * progress a user watching the log would recognize as distinct from
+ * plain "sent" (the message hasn't left WhatsApp's own server yet).
  */
 export interface BaileysMessageUpdate {
   key: { id?: string | null };
@@ -1259,12 +1262,16 @@ export class WhatsAppWebManager {
     if (this.sessions.get(projectId) !== session) return;
 
     for (const { key, update } of updates) {
-      // 0 is proto.WebMessageInfo.Status.ERROR (see BaileysMessageUpdate's
-      // own doc comment) -- every other status (PENDING/SERVER_ACK/
-      // DELIVERY_ACK/READ/PLAYED) is forward progress on a message that
-      // already sent successfully, not a failure to reconcile.
-      if (update.status !== 0 || !key.id) continue;
-      markWhatsAppMessageDeliveryFailed(this.db, projectId, key.id);
+      if (!key.id) continue;
+      // 0 is ERROR, 3 is DELIVERY_ACK, 4/5 are READ/PLAYED (see
+      // BaileysMessageUpdate's own doc comment) -- PLAYED (a voice note
+      // actually played) is treated the same as READ, since both mean the
+      // recipient genuinely consumed the message, the same bar this app's
+      // own "read" status represents. PENDING (1) and SERVER_ACK (2) stay
+      // no-ops: neither is progress a user watching the log could tell
+      // apart from plain "sent".
+      const status = update.status === 0 ? "failed" : update.status === 3 ? "delivered" : update.status === 4 || update.status === 5 ? "read" : null;
+      if (status) markWhatsAppMessageDeliveryStatus(this.db, projectId, key.id, status);
     }
   }
 

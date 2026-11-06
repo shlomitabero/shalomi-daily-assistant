@@ -389,7 +389,13 @@ test("a 'messages.update' delivery-failure event (status ERROR) flips the matchi
   assert.equal(messages[0].status, "failed", "the log row for this exact waMessageId must flip from sent to failed");
 });
 
-test("a 'messages.update' event with a non-ERROR status (e.g. DELIVERY_ACK) leaves the message log row untouched", async () => {
+/**
+ * Round 1634: DELIVERY_ACK/READ are no longer no-ops -- they advance the
+ * log row's own status, the delivery-lifecycle equivalent of WhatsApp's
+ * own native gray/blue double-checkmarks, closing the gap this exact test
+ * (pre-round-1634) deliberately left as the then-current scope.
+ */
+test("a 'messages.update' event with status DELIVERY_ACK advances the message log row to delivered", async () => {
   const { manager, db, createdSockets } = setupManager();
   await manager.connect("proj1");
   createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
@@ -411,7 +417,92 @@ test("a 'messages.update' event with a non-ERROR status (e.g. DELIVERY_ACK) leav
   await new Promise((resolve) => setImmediate(resolve));
 
   const { messages } = listWhatsAppMessages(db, "proj1");
-  assert.equal(messages[0].status, "sent", "forward delivery progress (DELIVERY_ACK) is not a failure to reconcile");
+  assert.equal(messages[0].status, "delivered", "DELIVERY_ACK must advance the row from sent to delivered");
+});
+
+test("a 'messages.update' event with status READ advances the message log row to read, including straight from sent (skipping delivered)", async () => {
+  const { manager, db, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "hello");
+  const waMessageId = result.waMessageId!;
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972509998888",
+    body: "hello",
+    status: "sent",
+    waMessageId,
+  });
+
+  // Real WhatsApp traffic can skip straight from sent to read (e.g. the
+  // recipient opens the chat before a separate DELIVERY_ACK is observed).
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 4 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "read", "READ must advance the row to read even without an observed intermediate DELIVERY_ACK");
+});
+
+test("a 'messages.update' event with status READ never downgrades an already-delivered row, and a later DELIVERY_ACK never downgrades an already-read row", async () => {
+  const { manager, db, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "hello");
+  const waMessageId = result.waMessageId!;
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972509998888",
+    body: "hello",
+    status: "sent",
+    waMessageId,
+  });
+
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 4 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  let { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "read");
+
+  // A stale/out-of-order DELIVERY_ACK arriving after READ must never
+  // downgrade the row -- see markWhatsAppMessageDeliveryStatus's own doc
+  // comment on DELIVERY_STATUS_ALLOWED_FROM for why.
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 3 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  ({ messages } = listWhatsAppMessages(db, "proj1"));
+  assert.equal(messages[0].status, "read", "a late DELIVERY_ACK must never downgrade an already-read row");
+});
+
+test("a 'messages.update' event with status PENDING or SERVER_ACK leaves the message log row untouched", async () => {
+  const { manager, db, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "972509998888", "hello");
+  const waMessageId = result.waMessageId!;
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972509998888",
+    body: "hello",
+    status: "sent",
+    waMessageId,
+  });
+
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 1 } }]);
+  createdSockets[0].emitMessagesUpdate([{ key: { id: waMessageId }, update: { status: 2 } }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const { messages } = listWhatsAppMessages(db, "proj1");
+  assert.equal(messages[0].status, "sent", "PENDING/SERVER_ACK are not forward progress a user could tell apart from plain sent");
 });
 
 test("a 'messages.update' delivery-failure event for an id this project never sent is a harmless no-op, not a crash", async () => {

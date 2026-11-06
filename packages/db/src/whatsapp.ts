@@ -79,7 +79,7 @@ export function recordWhatsAppDisconnected(db: ForgeDatabase, projectId: string)
 }
 
 export type WhatsAppMessageDirection = "in" | "out";
-export type WhatsAppMessageStatus = "received" | "sent" | "failed";
+export type WhatsAppMessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
 
 export interface WhatsAppMessage {
   id: string;
@@ -268,24 +268,61 @@ export function insertWhatsAppMessage(
 }
 
 /**
- * Flips a "sent" outgoing message row to "failed" once WhatsApp's own
- * server later reports (via Baileys' `"messages.update"` event, status
- * ERROR) that the send didn't really go through -- see
- * WhatsAppMessage.waMessageId's own doc comment for why performSend's
- * immediate resolve alone can't know this. Scoped to direction "out" AND
- * status "sent" (not just projectId + waMessageId) so this can never
- * overwrite an incoming message that happens to share a random UUID
- * collision-free waMessageId column value by coincidence, or re-flip a
- * row some other path already marked "failed". Returns whether a row was
- * actually updated, so the caller can tell a real reconciliation apart
- * from a stale/unknown id (e.g. the row predates this column, or belongs
- * to a message this app never sent).
+ * Round 1634: the statuses this row's "delivery lifecycle" can advance to
+ * once it's been sent, and which prior status each one is reachable from.
+ * `markWhatsAppMessageDeliveryStatus` below only ever applies a transition
+ * listed here, so a late/out-of-order Baileys event can never downgrade a
+ * row -- e.g. a DELIVERY_ACK arriving after a READ already landed (a real
+ * possibility: WhatsApp's own server can replay delivery receipts) must
+ * never flip "read" back to "delivered". "failed" is reachable only from
+ * "sent": once a message is known delivered or read, it unambiguously did
+ * reach the recipient, so a late ERROR for that same id (if it ever
+ * happened) would be describing something else, not a reason to revert a
+ * status this app already confirmed.
  */
-export function markWhatsAppMessageDeliveryFailed(db: ForgeDatabase, projectId: string, waMessageId: string): boolean {
+const DELIVERY_STATUS_ALLOWED_FROM: Record<"delivered" | "read" | "failed", WhatsAppMessageStatus[]> = {
+  delivered: ["sent"],
+  read: ["sent", "delivered"],
+  failed: ["sent"],
+};
+
+/**
+ * Advances a "sent" (or, for "read", already-"delivered") outgoing message
+ * row to a later point in its delivery lifecycle once WhatsApp's own
+ * server reports it (via Baileys' `"messages.update"` event -- see
+ * BaileysMessageUpdate's own doc comment in whatsappWeb.ts for the status
+ * codes this maps from) -- see WhatsAppMessage.waMessageId's own doc
+ * comment for why performSend's immediate resolve alone can't know any of
+ * this. Scoped to direction "out" AND the allowed prior status(es) for the
+ * given target (never just projectId + waMessageId), so this can never
+ * overwrite an incoming message that happens to share a waMessageId column
+ * value by coincidence, re-flip a row some other path already marked
+ * "failed", or apply a transition DELIVERY_STATUS_ALLOWED_FROM doesn't
+ * list (see its own doc comment on why out-of-order events must never
+ * downgrade a row). Returns whether a row was actually updated, so the
+ * caller can tell a real reconciliation apart from a stale/unknown id
+ * (e.g. the row predates this column, or belongs to a message this app
+ * never sent) or a transition this status can't legally come from.
+ */
+export function markWhatsAppMessageDeliveryStatus(
+  db: ForgeDatabase,
+  projectId: string,
+  waMessageId: string,
+  status: "delivered" | "read" | "failed",
+): boolean {
+  const fromStatuses = DELIVERY_STATUS_ALLOWED_FROM[status];
+  const placeholders = fromStatuses.map(() => "?").join(", ");
   const result = db
-    .prepare(`UPDATE whatsapp_messages SET status = 'failed' WHERE projectId = ? AND waMessageId = ? AND direction = 'out' AND status = 'sent'`)
-    .run(projectId, waMessageId);
+    .prepare(
+      `UPDATE whatsapp_messages SET status = ? WHERE projectId = ? AND waMessageId = ? AND direction = 'out' AND status IN (${placeholders})`,
+    )
+    .run(status, projectId, waMessageId, ...fromStatuses);
   return result.changes > 0;
+}
+
+/** Thin, pre-round-1634 convenience wrapper over markWhatsAppMessageDeliveryStatus(..., "failed") -- kept so existing call sites/tests naming this exact scenario don't need to change. */
+export function markWhatsAppMessageDeliveryFailed(db: ForgeDatabase, projectId: string, waMessageId: string): boolean {
+  return markWhatsAppMessageDeliveryStatus(db, projectId, waMessageId, "failed");
 }
 
 /**

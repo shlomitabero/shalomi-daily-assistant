@@ -11,6 +11,7 @@ import {
   insertWhatsAppMessage,
   listWhatsAppMessages,
   markWhatsAppMessageDeliveryFailed,
+  markWhatsAppMessageDeliveryStatus,
   recordWhatsAppConnected,
   recordWhatsAppDisconnected,
   WHATSAPP_MESSAGES_RETENTION_LIMIT,
@@ -552,6 +553,110 @@ test("markWhatsAppMessageDeliveryFailed never re-flips a message some other path
   });
 
   assert.equal(markWhatsAppMessageDeliveryFailed(db, "proj1", "3EB0ABC123"), false, "an already-failed row has nothing left to flip");
+
+  const proj2Messages = listWhatsAppMessages(db, "proj2").messages;
+  assert.equal(proj2Messages[0].status, "sent", "a lookup scoped to proj1 must never touch proj2's own row");
+});
+
+/**
+ * Round 1634: surfaces WhatsApp's own delivery-status lifecycle
+ * (delivered/read), the gap round 1618's own doc comment explicitly named
+ * as out of scope ("this app has no read-receipt UI to update for the
+ * others"). markWhatsAppMessageDeliveryStatus generalizes
+ * markWhatsAppMessageDeliveryFailed to any of the DELIVERY_STATUS_ALLOWED_FROM
+ * transitions.
+ */
+test("markWhatsAppMessageDeliveryStatus advances a sent row to delivered, and a delivered row to read", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "3EB0ABC123", "delivered"), true);
+  assert.equal(listWhatsAppMessages(db, "proj1").messages[0].status, "delivered");
+
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "3EB0ABC123", "read"), true);
+  assert.equal(listWhatsAppMessages(db, "proj1").messages[0].status, "read");
+});
+
+test("markWhatsAppMessageDeliveryStatus advances a sent row straight to read, skipping delivered", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "3EB0ABC123", "read"), true, "read must be reachable directly from sent");
+  assert.equal(listWhatsAppMessages(db, "proj1").messages[0].status, "read");
+});
+
+test("markWhatsAppMessageDeliveryStatus never downgrades an already-read row back to delivered, and never flips an already-failed row", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "read",
+    waMessageId: "already-read",
+  });
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "hello",
+    status: "failed",
+    waMessageId: "already-failed",
+  });
+
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "already-read", "delivered"), false, "a stale/out-of-order DELIVERY_ACK must never downgrade a read row");
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "already-failed", "delivered"), false, "a failed row has nothing left to advance");
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "already-failed", "read"), false, "a failed row has nothing left to advance");
+
+  const messages = listWhatsAppMessages(db, "proj1", 10).messages;
+  assert.equal(messages.find((m) => m.waMessageId === "already-read")!.status, "read");
+  assert.equal(messages.find((m) => m.waMessageId === "already-failed")!.status, "failed");
+});
+
+test("markWhatsAppMessageDeliveryStatus never flips an incoming message, even if it somehow shares the given waMessageId, and is scoped to the given project", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972521112233",
+    toNumber: "972501234567",
+    body: "an incoming message",
+    status: "received",
+    waMessageId: "3EB0ABC123",
+  });
+  insertWhatsAppMessage(db, {
+    projectId: "proj2",
+    direction: "out",
+    fromNumber: "972501234567",
+    toNumber: "972521112233",
+    body: "a different project's own message, same id by coincidence",
+    status: "sent",
+    waMessageId: "3EB0ABC123",
+  });
+
+  assert.equal(markWhatsAppMessageDeliveryStatus(db, "proj1", "3EB0ABC123", "delivered"), false, "an incoming message must never be flipped");
 
   const proj2Messages = listWhatsAppMessages(db, "proj2").messages;
   assert.equal(proj2Messages[0].status, "sent", "a lookup scoped to proj1 must never touch proj2's own row");

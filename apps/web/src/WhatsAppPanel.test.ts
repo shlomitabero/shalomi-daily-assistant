@@ -4645,6 +4645,76 @@ test("WhatsAppPanel's direction filter narrows the real rendered log to incoming
 });
 
 /**
+ * Round 1634: a "delivered"/"read" row (Baileys' own DELIVERY_ACK/READ,
+ * reconciled server-side via markWhatsAppMessageDeliveryStatus) must now
+ * render its own badge, the same way a "failed" row already did -- the
+ * gap round 1618's own doc comment explicitly named as out of scope.
+ */
+test("WhatsAppPanel shows a delivered badge for a delivered message and a read badge for a read message, neither of which gets the failed badge or a Retry button", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const makeMessage = (id: string, overrides: Partial<WhatsAppMessageLogEntry>): WhatsAppMessageLogEntry => ({
+      id,
+      direction: "out",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "הודעה",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "sent",
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    });
+    const messages = [
+      makeMessage("m1", { status: "delivered", body: "נמסרה" }),
+      makeMessage("m2", { status: "read", body: "נקראה" }),
+      makeMessage("m3", { status: "sent", body: "נשלחה" }),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Flower Shop", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 3);
+
+      const rows = Array.from(document.querySelectorAll(".whatsapp-log-list li"));
+      const deliveredRow = rows.find((r) => /נמסרה/.test(r.textContent ?? ""))!;
+      const readRow = rows.find((r) => /נקראה/.test(r.textContent ?? ""))!;
+      const sentRow = rows.find((r) => /נשלחה/.test(r.textContent ?? ""))!;
+
+      assert.ok(deliveredRow.querySelector(".badge-neutral"), "a delivered row must show the delivered badge");
+      assert.equal(deliveredRow.querySelectorAll(".badge-negative").length, 0, "a delivered row must never also show the failed badge");
+      assert.ok(!Array.from(deliveredRow.querySelectorAll("button")).some((b) => b.textContent === "נסה שוב"), "a delivered row must never show the Retry button");
+
+      assert.ok(readRow.querySelector(".badge-positive"), "a read row must show the read badge");
+      assert.equal(readRow.querySelectorAll(".badge-negative").length, 0, "a read row must never also show the failed badge");
+
+      assert.equal(sentRow.querySelectorAll(".badge-neutral, .badge-positive, .badge-negative").length, 0, "a plain sent row must show no delivery-status badge at all");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: clearWhatsAppMessages (round 154's own download button
  * is its neighbor, and handleClearHistory further up this file wipes the
  * WHOLE log) was previously the only way to remove anything from the log
