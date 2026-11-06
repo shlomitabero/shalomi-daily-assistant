@@ -6754,16 +6754,20 @@ test("the exported EntityView's recordDisplayLabel renders a number display fiel
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  // Round 1642: recordDisplayLabel's own number branch now also references
+  // this same generated file's PHONE_FIELD_NAME_HINTS, so it must be in
+  // scope here too or the eval below throws ReferenceError.
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && stripBidiMarksSrc,
-    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/stripBidiMarks in generated output",
+    displayFieldHintsSrc && phoneFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && stripBidiMarksSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/PHONE_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/stripBidiMarks in generated output",
   );
 
   const recordDisplayLabel = new Function(
-    `${displayFieldHintsSrc}\n${stripBidiMarksSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+    `${displayFieldHintsSrc}\n${phoneFieldHintsSrc}\n${stripBidiMarksSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
   )() as (entity: unknown, record: unknown) => string;
 
   const entity = {
@@ -6777,6 +6781,49 @@ test("the exported EntityView's recordDisplayLabel renders a number display fiel
     recordDisplayLabel(entity, { id: 7, quantity: 1500, warehouseId: 2 }),
     "1,500",
     "must render the number field with real locale thousands separators, not the raw \"1500\"",
+  );
+});
+
+/**
+ * Round 1642: the exact opposite problem from the round-1228 test just
+ * above, in the exported app's own recordDisplayLabel -- an entity with
+ * no name/title/text/longtext/enum/boolean/date field at all, only a
+ * phone-like-named number field (AI-generated specs commonly type a
+ * phone field "number"), has pickDisplayField's own last-resort step
+ * land on that number field, and this function used to run it through
+ * locale-grouped number formatting, inserting thousands separators into
+ * real phone-number digits. Reuses this same generated file's own
+ * PHONE_FIELD_NAME_HINTS (already relied on by its sumNumericFields,
+ * defined later in the file but safe since both are module-top-level
+ * const/function declarations). Mirrors the live apps/api/src/
+ * displayField.ts's own round-1642 fix.
+ */
+test("the exported EntityView's recordDisplayLabel renders a phone-like-named number display field as raw digits, not locale-grouped with thousands separators", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && phoneFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && stripBidiMarksSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/PHONE_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/stripBidiMarks in generated output",
+  );
+
+  const recordDisplayLabel = new Function(
+    `${displayFieldHintsSrc}\n${phoneFieldHintsSrc}\n${stripBidiMarksSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\nreturn recordDisplayLabel;`,
+  )() as (entity: unknown, record: unknown) => string;
+
+  const entity = {
+    name: "Contact",
+    fields: [{ name: "phone", type: "number" }],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 7, phone: 972501234567 }),
+    "972501234567",
+    "a phone-like-named number display field must render as raw digits, not \"972,501,234,567\"",
   );
 });
 

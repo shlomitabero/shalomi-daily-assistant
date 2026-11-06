@@ -2890,7 +2890,17 @@ export function recordDisplayLabel(entity, record) {
   // everywhere one is shown by name. stripBidiMarks (hoisted below)
   // mirrors the live apps/web/src/entityFormatting.ts's own round-1227
   // fix.
-  if (field?.type === "number" && typeof value === "number") return stripBidiMarks(value.toLocaleString());
+  // Round 1642: a phone-like-named number field (PHONE_FIELD_NAME_HINTS,
+  // defined below and already relied on by this same file's own
+  // sumNumericFields) must never be locale-grouped here either -- this
+  // record's own display label is shown wherever it's referenced as a
+  // related record (e.g. a relation field's <option> text), and a real
+  // phone number would otherwise render with thousands separators inserted
+  // into its digits.
+  if (field?.type === "number" && typeof value === "number") {
+    if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
+    return stripBidiMarks(value.toLocaleString());
+  }
   return String(value);
 }
 

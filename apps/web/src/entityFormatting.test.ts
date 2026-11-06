@@ -2088,6 +2088,28 @@ test("recordDisplayLabel renders a number display field with locale thousands se
   assert.ok(!he.includes("‎") && !he.includes("‏"), "must contain no invisible bidi mark at all");
 });
 
+/**
+ * Round 1642: the exact opposite problem from the round-1227 test just
+ * above -- an entity with no name/title/text/longtext/enum/boolean/date
+ * field at all, only a phone-like-named number field (AI-generated specs
+ * commonly type a phone field "number"), has pickDisplayField's own
+ * last-resort step land on that number field, and recordDisplayLabel used
+ * to run it through locale-grouped number formatting, inserting thousands
+ * separators into real phone-number digits. Mirrors the live apps/api/src/
+ * displayField.ts's own round-1642 fix.
+ */
+test("recordDisplayLabel renders a phone-like-named number display field as raw digits, not locale-grouped with thousands separators", () => {
+  const entity: Entity = {
+    name: "Contact",
+    fields: [{ name: "phone", type: "number", required: true }],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 7, phone: 972501234567 }),
+    "972501234567",
+    "a phone-like-named number display field must render as raw digits, not \"972,501,234,567\"",
+  );
+});
+
 const courierEntity: Entity = {
   name: "Courier",
   fields: [{ name: "name", type: "text", required: true }],

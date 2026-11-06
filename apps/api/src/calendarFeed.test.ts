@@ -318,6 +318,33 @@ test("buildCalendarFeedIcs's DESCRIPTION resolves a relation field to locale-gro
   assert.match(events[0], /לקוח: 1\\,500/, "the related record's own number display field must render with real locale thousands separators (RFC 5545 escapes the comma as \\,)");
 });
 
+/**
+ * Round 1642: the exact opposite problem from the round-1228 test just
+ * above -- a related entity with no name/title/text/longtext/enum/
+ * boolean/date field at all, only a phone-like-named number field (AI-
+ * generated specs commonly type a phone field "number"), has
+ * pickDisplayField's own last-resort step land on that number field, and
+ * recordDisplayLabelForRelation used to run it through locale-grouped
+ * number formatting, inserting thousands separators into real phone-
+ * number digits. Mirrors the live apps/api/src/displayField.ts's own
+ * round-1642 fix.
+ */
+test("buildCalendarFeedIcs's DESCRIPTION resolves a relation field to raw digits, not locale-grouped with thousands separators, when the related entity's own display field is a phone-like-named number field", () => {
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: null, customerId: 9 },
+  ];
+  const phoneCustomerEntity: Entity = {
+    name: "Customer",
+    label: "לקוח",
+    fields: [{ name: "phone", label: "טלפון", type: "number", required: true }],
+  };
+  const customerRecords: EntityRecord[] = [{ id: 9, phone: 972501234567 }];
+  const ics = buildCalendarFeedIcs(richEntity, records, "proj1", new Date(), [richEntity, phoneCustomerEntity], { Customer: customerRecords });
+  const events = parseEvents(ics!);
+  assert.doesNotMatch(events[0], /לקוח: 972\\,501\\,234\\,567/, "a phone-like-named number display field must never render with locale thousands separators");
+  assert.match(events[0], /לקוח: 972501234567/, "a phone-like-named number display field must render as raw digits");
+});
+
 test("buildCalendarFeedIcs's DESCRIPTION disambiguates two description fields that share the same label with each field's own unique name, mirroring calendarIcs.ts's round-635 fix", () => {
   const amount2Field: Field = { name: "amount2", label: "סכום", type: "number", required: false };
   const collisionEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, amountField, amount2Field] };

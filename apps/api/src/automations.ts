@@ -338,6 +338,19 @@ function stripBidiMarks(s: string): string {
   return s.replace(/[‎‏]/g, "");
 }
 
+/**
+ * Round 1642: mirrors twin.ts's/whatsapp.ts's own PHONE_FIELD_NAME_HINTS
+ * exactly (this codebase's established "duplicate the small pure
+ * cross-file helper" convention for this list) -- an AI-generated spec
+ * commonly types a phone-like field "number" (rounds 1278/1286/1321 all
+ * document this), and interpolateTemplate's own `number` branch below
+ * would otherwise run a real phone number through `toLocaleString`,
+ * inserting thousands separators into the literal text of a real outbound
+ * WhatsApp/email automation message (e.g. "972501234567" ->
+ * "972,501,234,567").
+ */
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
 export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord, lang: Lang): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, rawFieldName: string) => {
     const fieldName = resolveStoredFieldName(entity, rawFieldName);
@@ -351,7 +364,10 @@ export function interpolateTemplate(template: string, entity: Entity, record: En
       const date = parseFieldDate(String(value));
       return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(LOCALE[lang]);
     }
-    if (field?.type === "number") return stripBidiMarks(Number(value).toLocaleString(LOCALE[lang]));
+    if (field?.type === "number") {
+      if (PHONE_FIELD_NAME_HINTS.includes(fieldName.toLowerCase())) return String(value);
+      return stripBidiMarks(Number(value).toLocaleString(LOCALE[lang]));
+    }
     // "createdAt" is a reserved key repository.ts's own insert always sets
     // on every EntityRecord, never a declared entity field -- so `field`
     // above is always undefined for it, and it would otherwise fall

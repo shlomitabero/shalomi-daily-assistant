@@ -28,6 +28,18 @@ function stripBidiMarks(s: string): string {
   return s.replace(/[‎‏]/g, "");
 }
 
+/**
+ * Round 1642: mirrors automations.ts's own PHONE_FIELD_NAME_HINTS exactly
+ * -- see its doc comment for the full "AI-generated spec commonly types a
+ * phone-like field 'number'" rationale. Needed here for the identical
+ * reason: the `number` branch below would otherwise run a real phone
+ * number through `toLocaleString`, inserting thousands separators into
+ * this record's own display label wherever it's shown as a related
+ * record (a WhatsApp template's {{relationField}} placeholder, a CSV
+ * export's relation cell, a Business Twin narrative sentence).
+ */
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
 const DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
 
 /**
@@ -143,7 +155,10 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord, lang: L
   // established `number` branch, which already locale-formats for the
   // identical "one-way human reading" reason. stripBidiMarks matches that
   // same branch's own convention exactly.
-  if (field?.type === "number" && typeof value === "number") return stripBidiMarks(value.toLocaleString(LOCALE[lang]));
+  if (field?.type === "number" && typeof value === "number") {
+    if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
+    return stripBidiMarks(value.toLocaleString(LOCALE[lang]));
+  }
   if (field?.type === "relation") return `#${record.id}`;
   // Round 982: the SAME last-resort fallback can also land on a `file`
   // field -- an attachment/join entity like `Enrollment { certificate:

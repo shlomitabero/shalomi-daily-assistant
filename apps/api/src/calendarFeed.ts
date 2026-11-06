@@ -138,6 +138,14 @@ function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
 }
 
 /**
+ * Round 1642: mirrors entityFormatting.ts's/displayField.ts's own
+ * PHONE_FIELD_NAME_HINTS exactly -- see automations.ts's doc comment (the
+ * fix this round ported here) for the full "AI-generated spec commonly
+ * types a phone-like field 'number'" rationale.
+ */
+const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
+/**
  * Mirrors entityFormatting.ts's own recordDisplayLabel exactly (the subset
  * relationDisplayLabel below actually needs -- a relation target record's
  * own label, not a full record's display-everywhere label).
@@ -159,7 +167,14 @@ function recordDisplayLabelForRelation(entity: Entity, record: EntityRecord, lan
   // reasoning. formatIcsDescriptionNumber (above) already exists in
   // this file for calendarIcs's own DESCRIPTION line but was never
   // reused here.
-  if (field?.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value, lang));
+  // Round 1642: a phone-like-named number field must never be locale-
+  // grouped here either -- see automations.ts's own doc comment for the
+  // full rationale, this is the identical bug in this file's own sibling
+  // copy of recordDisplayLabel.
+  if (field?.type === "number" && typeof value === "number") {
+    if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
+    return String(formatIcsDescriptionNumber(value, lang));
+  }
   if (field?.type === "relation") return `#${record.id}`;
   if (field?.type === "file") return `#${record.id}`;
   return String(value);

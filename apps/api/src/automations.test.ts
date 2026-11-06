@@ -265,6 +265,37 @@ test("interpolateTemplate strips the invisible bidi mark toLocaleString adds bef
   assert.equal(en, "Balance: -150", "'en' never had the mark and must be unaffected");
 });
 
+/**
+ * Round 1642's finding: an AI-generated spec commonly types a phone-like
+ * field "number" (rounds 1278/1286/1321 all document this same outcome),
+ * and interpolateTemplate's own `number` branch above had no exclusion
+ * for it at all -- a real phone number referenced in a rule's own
+ * template would get thousands separators inserted into the literal text
+ * of a real outbound WhatsApp/email automation message. Confirms a
+ * phone-like-named number field (matched case-insensitively, mirroring
+ * PHONE_FIELD_NAME_HINTS's own established convention) renders its raw
+ * digits unchanged, while a genuinely numeric field with the same value
+ * still gets locale-grouped -- this is a name-based exclusion, not a
+ * blanket "skip grouping for large numbers" change.
+ */
+test("interpolateTemplate renders a phone-like-named number field as raw digits, not locale-grouped with thousands separators", () => {
+  const contactEntity: Entity = {
+    name: "Contact",
+    label: "Contact",
+    fields: [
+      { name: "phone", type: "number", required: true },
+      { name: "total", type: "number", required: true },
+    ],
+  };
+  const record = { phone: 972501234567, total: 972501234567 };
+
+  const phoneResult = interpolateTemplate("Call {{phone}}", contactEntity, record, "en");
+  assert.equal(phoneResult, "Call 972501234567", "a phone-like-named field must never be locale-grouped");
+
+  const totalResult = interpolateTemplate("Total {{total}}", contactEntity, record, "en");
+  assert.equal(totalResult, "Total 972,501,234,567", "a genuinely numeric field with the identical value must still be locale-grouped");
+});
+
 test("interpolateTemplate falls back to the raw stored value for a date field that isn't actually a valid date", () => {
   const invoiceEntity: Entity = {
     name: "Invoice",

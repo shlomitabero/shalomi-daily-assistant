@@ -415,3 +415,27 @@ test("recordDisplayLabel renders a number display field with locale thousands se
   assert.equal(he, "-150", "must honor the given lang and strip the invisible bidi mark before a negative number's minus sign");
   assert.ok(!he.includes("‎") && !he.includes("‏"), "must contain no invisible bidi mark at all");
 });
+
+/**
+ * Round 1642: mirrors automations.ts's own interpolateTemplate fix in the
+ * identical sibling shape -- an entity with no name/title/text/longtext/
+ * enum/boolean/date/relation field at all, only a phone-like-named
+ * "number" field (an AI-generated spec commonly types it this way, per
+ * rounds 1278/1286/1321), had its own display label rendered with
+ * locale thousands separators ("972,501,234,567") instead of the raw
+ * phone digits -- wherever that label is shown as a related record
+ * (a WhatsApp template's relation placeholder, a CSV export's relation
+ * cell, a Business Twin narrative sentence, all real callers of this
+ * function).
+ */
+test("recordDisplayLabel renders a phone-like-named number display field as raw digits, not locale-grouped with thousands separators", () => {
+  const entity: Entity = {
+    name: "Contact",
+    fields: [{ name: "phone", type: "number", required: true }],
+  };
+  assert.equal(
+    recordDisplayLabel(entity, { id: 7, createdAt: "", phone: 972501234567 }),
+    "972501234567",
+    "a phone-like-named display field must never be locale-grouped",
+  );
+});

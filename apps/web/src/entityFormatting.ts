@@ -1477,7 +1477,17 @@ export function recordDisplayLabel(entity: Entity, record: EntityRecord, lang: L
   // the table view's own cell rendering) for the identical reason.
   // stripBidiMarks matches automationsReport.ts's own established
   // convention for a locale-formatted number that can leave the app.
-  if (field?.type === "number" && typeof value === "number") return stripBidiMarks(formatNumberValue(value, lang));
+  // Round 1642: a phone-like-named number field (isPhoneFieldName, defined
+  // below) must never be locale-grouped here either -- an AI-generated
+  // spec commonly types a phone-like field "number", and this record's
+  // own display label is shown wherever it's referenced as a related
+  // record (a relation picker's own <option> text, Global Search, Business
+  // Twin's narrative sentences, a WhatsApp/email automation's own template
+  // interpolation).
+  if (field?.type === "number" && typeof value === "number") {
+    if (isPhoneFieldName(field.name)) return String(value);
+    return stripBidiMarks(formatNumberValue(value, lang));
+  }
   if (field?.type === "relation") return `#${record.id}`;
   // Round 982: the SAME last-resort fallback can also land on a `file`
   // field -- an attachment/join entity like `Enrollment { certificate:
