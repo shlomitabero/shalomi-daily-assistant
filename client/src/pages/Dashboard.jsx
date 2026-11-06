@@ -69,11 +69,13 @@ export default function Dashboard() {
   if (error) return <div className="page"><p className="form-error">{error}</p></div>;
   if (!summary || !settings) return <div className="page-loading">טוען…</div>;
 
-  // canSpend()'s real-money gate already compares lossSoFar against
-  // maxLoss on every spend attempt - until now the owner had no way to see
-  // how close they were except by waiting for a real action to actually
-  // get blocked. 80% is a warning, not the limit itself: the gate alone
-  // still decides what's actually allowed.
+  // canSpend()'s real-money gate already compares spentSoFar/lossSoFar
+  // against budget/maxLoss on every spend attempt - until now the owner
+  // had no way to see how close they were to either except by waiting for
+  // a real action to actually get blocked. 80% is a warning, not the limit
+  // itself: the gate alone still decides what's actually allowed.
+  const budgetRatio = settings.budgetConfigured && settings.budget > 0 ? summary.spentSoFar / settings.budget : null;
+  const nearBudget = budgetRatio != null && budgetRatio >= 0.8;
   const maxLossRatio = settings.maxLoss > 0 ? summary.lossSoFar / settings.maxLoss : null;
   const nearMaxLoss = maxLossRatio != null && maxLossRatio >= 0.8;
 
@@ -120,6 +122,17 @@ export default function Dashboard() {
             שום פעולה אמיתית (פרסום, חיוב) לא מתבצעת כרגע, בלי קשר למצב הפעולה שנבחר למטה — העצירה חוסמת הכול.
           </p>
           <Link className="btn btn-primary" to="/settings">לביטול העצירה</Link>
+        </div>
+      )}
+
+      {nearBudget && (
+        <div className="card" style={{ borderColor: 'var(--accent)', background: 'rgba(220, 38, 38, 0.08)' }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 700 }}>⚠️ מתקרב לתקציב שהוגדר</p>
+          <p className="hint" style={{ margin: '0 0 10px' }}>
+            הוצא עד כה: {formatMoney(summary.spentSoFar, 2)} מתוך {formatMoney(settings.budget, 2)}
+            {' '}({Math.round(budgetRatio * 100)}%). ברגע שהתקציב יעבור את התקרה, כל פעולה בתשלום תיחסם אוטומטית.
+          </p>
+          <Link className="btn btn-primary" to="/settings">לעדכון התקציב</Link>
         </div>
       )}
 
