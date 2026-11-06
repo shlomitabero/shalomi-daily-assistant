@@ -54,6 +54,7 @@ export function generateDailyDigest(now = new Date()) {
   const digest = buildDailyDigest({
     ledgerSummary, actionsToday, failuresToday, topOpportunity,
     emergencyStop: settings.emergencyStop, mode: settings.mode, approvedAwaitingPublish,
+    budget: settings.budget, budgetConfigured: settings.budgetConfigured, maxLoss: settings.maxLoss,
   });
 
   // The owner can click "generate now" on the Digests page any number of

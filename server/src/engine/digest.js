@@ -1,9 +1,26 @@
 // Builds the daily summary: net profit, what ran, what broke, and what to
 // do next. Pure text assembly so it's testable without a scheduler.
-export function buildDailyDigest({ ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null, approvedAwaitingPublish = 0 }) {
+export function buildDailyDigest({
+  ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null,
+  approvedAwaitingPublish = 0, budget = null, budgetConfigured = false, maxLoss = null,
+}) {
+  // Dashboard.jsx warns the owner in the app itself once spentSoFar/
+  // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
+  // daily digest is reaching the owner without them having to go check,
+  // so without this an owner who only reads the digest (not the
+  // dashboard) would have no warning at all until a real action actually
+  // got blocked by canSpend()'s gate.
+  const budgetRatio = budgetConfigured && budget > 0 ? ledgerSummary.spentSoFar / budget : null;
+  const maxLossRatio = maxLoss > 0 ? ledgerSummary.lossSoFar / maxLoss : null;
   const lines = [
     `רווח נטו מאומת היום: ${formatMoney(ledgerSummary.netProfitToday)}`,
     `נכנס בפועל: ${formatMoney(ledgerSummary.cashInToday)} | יצא בפועל: ${formatMoney(ledgerSummary.cashOutToday)}`,
+    ...(budgetRatio != null && budgetRatio >= 0.8
+      ? [`⚠️ מתקרב לתקציב שהוגדר: ${formatMoney(ledgerSummary.spentSoFar)} מתוך ${formatMoney(budget)} (${Math.round(budgetRatio * 100)}%).`]
+      : []),
+    ...(maxLossRatio != null && maxLossRatio >= 0.8
+      ? [`⚠️ מתקרב להפסד המרבי שהוגדר: ${formatMoney(ledgerSummary.lossSoFar)} מתוך ${formatMoney(maxLoss)} (${Math.round(maxLossRatio * 100)}%).`]
+      : []),
     // Without this, "פעולות שבוצעו: 0" reads as the system having found
     // nothing worth doing — the owner has no way to tell that from this
     // text alone, unless they also happen to go check Settings.

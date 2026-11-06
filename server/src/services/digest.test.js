@@ -26,6 +26,19 @@ test('generateDailyDigest counts an action logged in the Israel-midnight-to-UTC-
   assert.match(digest.text, /פעולות שבוצעו: 1/);
 });
 
+test('generateDailyDigest warns in the real digest text when real spend is close to the configured budget', () => {
+  // This is the real wiring behind engine/digest.js's pure budget-warning
+  // logic - settings.budget/budgetConfigured and the ledger's own
+  // spentSoFar must actually reach generateDailyDigest() through
+  // getSettings()/getLedgerSummary(), not just the hand-fed values the
+  // engine-level tests use.
+  __resetForTests();
+  updateSettings({ budget: 20, budgetConfigured: true });
+  db.ledger.insert({ id: makeId('led'), type: 'cost', amount: 17, verified: true, description: 'ai usage', date: '2026-01-01' });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /מתקרב לתקציב שהוגדר/);
+});
+
 test('generating again the same day updates the existing row instead of duplicating it', () => {
   // This is the bug this test guards against: the owner can click
   // "generate now" on the Digests page any number of times a day on top of

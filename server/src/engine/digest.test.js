@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDailyDigest } from './digest.js';
 
-const ledgerSummary = { cashInToday: 100, cashOutToday: 20, netProfitToday: 80, outstandingReceivables: 0, pendingObligations: 0, netProfitAllTime: 80 };
+const ledgerSummary = {
+  cashInToday: 100, cashOutToday: 20, netProfitToday: 80, outstandingReceivables: 0, pendingObligations: 0,
+  netProfitAllTime: 80, spentSoFar: 0, lossSoFar: 0,
+};
 
 test('reports net profit, cash in/out, and action count', () => {
   const digest = buildDailyDigest({ ledgerSummary, actionsToday: [{ id: 1 }, { id: 2 }] });
@@ -76,4 +79,45 @@ test('shows only the emergency stop line, not also the research-mode line, when 
   const digest = buildDailyDigest({ ledgerSummary, emergencyStop: true, mode: 'research' });
   assert.match(digest.text, /עצירת חירום הייתה פעילה/);
   assert.doesNotMatch(digest.text, /מצב מחקר בלבד/);
+});
+
+test('warns when spentSoFar reaches 80% of the configured budget', () => {
+  // Dashboard.jsx warns in-app at the same 80% threshold - the whole point
+  // of a daily digest is reaching the owner without them having to go
+  // check, so an owner who only reads the digest needs this warning too.
+  const digest = buildDailyDigest({
+    ledgerSummary: { ...ledgerSummary, spentSoFar: 17 }, budget: 20, budgetConfigured: true,
+  });
+  assert.match(digest.text, /מתקרב לתקציב שהוגדר: \$17\.00 מתוך \$20\.00 \(85%\)/);
+});
+
+test('says nothing about the budget when spentSoFar is well under 80%', () => {
+  const digest = buildDailyDigest({
+    ledgerSummary: { ...ledgerSummary, spentSoFar: 2 }, budget: 20, budgetConfigured: true,
+  });
+  assert.doesNotMatch(digest.text, /מתקרב לתקציב/);
+});
+
+test('says nothing about the budget when it was never configured, even with real spend', () => {
+  // budget defaults to 0 until the owner explicitly configures one -
+  // without checking budgetConfigured, spentSoFar/0 would be Infinity and
+  // always warn.
+  const digest = buildDailyDigest({
+    ledgerSummary: { ...ledgerSummary, spentSoFar: 5 }, budget: 0, budgetConfigured: false,
+  });
+  assert.doesNotMatch(digest.text, /מתקרב לתקציב/);
+});
+
+test('warns when lossSoFar reaches 80% of the configured maxLoss', () => {
+  const digest = buildDailyDigest({
+    ledgerSummary: { ...ledgerSummary, lossSoFar: 9 }, maxLoss: 10,
+  });
+  assert.match(digest.text, /מתקרב להפסד המרבי שהוגדר: \$9\.00 מתוך \$10\.00 \(90%\)/);
+});
+
+test('says nothing about maxLoss when it is not configured (null)', () => {
+  const digest = buildDailyDigest({
+    ledgerSummary: { ...ledgerSummary, lossSoFar: 9 }, maxLoss: null,
+  });
+  assert.doesNotMatch(digest.text, /מתקרב להפסד המרבי/);
 });
