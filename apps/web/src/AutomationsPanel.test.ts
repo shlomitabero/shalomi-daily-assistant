@@ -1941,6 +1941,82 @@ test("AutomationsPanel resolves an existing rule's stored relation id back to th
   });
 });
 
+/**
+ * Round 1652: this condition-value picker's relation branch is built from
+ * the exact same unsliced relationTargetRecords array EntityPanel.tsx's own
+ * FieldInput record-form relation <select> fixed in round 1637 -- named as
+ * a deferred candidate back in round 1638's own survey note, and missed
+ * again by round 1646's own port of the identical fix to EntityPanel's
+ * toolbar filter. Confirms this picker now offers a filter input once
+ * there are enough related records, caps its rendered options, shows a
+ * truncation hint naming shown/total, and -- mirroring EntityPanel.tsx's
+ * own guard exactly -- never loses the currently-selected record's own
+ * option even though its position in the full list falls past the cap.
+ */
+test("AutomationsPanel's field_equals Value picker caps its rendered options for a very large related entity, offers a filter input, and keeps the selected record's own option past the cap", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const courierRelated = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, name: `Courier ${i + 1}` }));
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj6/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj6/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(relationFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const triggerSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "field_equals"),
+      ) as HTMLSelectElement;
+      fireEvent.change(triggerSelect, { target: { value: "field_equals" } });
+
+      const fieldSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "courierId"),
+      ) as HTMLSelectElement;
+      fireEvent.change(fieldSelect, { target: { value: "courierId" } });
+
+      await waitForCondition(() => document.querySelector(".relation-filter-input") !== null);
+
+      const valueSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "1"),
+      ) as HTMLSelectElement;
+      // 200 capped options, no +1 here -- unlike EntityPanel's record form,
+      // this picker has no blank placeholder, and the already-selected
+      // first record ("1") already falls inside the first-200 slice.
+      await waitForCondition(() => valueSelect.options.length === 200);
+      assert.equal(valueSelect.value, "1", "must still default to the first related record's id");
+
+      const hint = document.querySelector(".relation-filter-truncated-hint");
+      assert.ok(hint, "a hint must explain the list is truncated");
+      assert.ok(hint?.textContent?.includes("200"), "the hint must name how many options are actually shown");
+      assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+
+      const filterInput = document.querySelector(".relation-filter-input") as HTMLInputElement;
+      // "Courier 123" (not "Courier 7") so the substring match is
+      // unambiguous -- "7" would also match "Courier 70".."79".
+      fireEvent.change(filterInput, { target: { value: "Courier 123" } });
+      // 2, not 1: "Courier 123" (matches the filter text) and "Courier 1"
+      // (the already-selected default value, which the filter text does
+      // NOT match, but must stay in the list regardless).
+      await waitForCondition(() => valueSelect.options.length === 2);
+      const narrowedLabels = Array.from(valueSelect.options).map((o) => o.textContent);
+      assert.ok(narrowedLabels.includes("Courier 123"), "the filter must keep the one matching record's option");
+      assert.ok(narrowedLabels.includes("Courier 1"), "the already-selected default value's own option must stay visible even though the filter text doesn't match it");
+      assert.ok(!narrowedLabels.includes("Courier 15"), "a non-matching, non-selected record's option must be filtered out");
+      assert.equal(valueSelect.value, "1", "the selected value must remain selected while filtered");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 const relationFieldCaseMismatchProject: Project = {
   ...relationFieldProject,
   id: "proj6b",

@@ -30,6 +30,12 @@ import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 
+// Mirrors EntityPanel.tsx's own RELATION_PICKER_OPTION_CAP (rounds
+// 1637/1646) exactly -- a related entity with thousands of records would
+// otherwise render one real <option> DOM node per record in this file's
+// own condition-value relation picker below.
+const RELATION_PICKER_OPTION_CAP = 200;
+
 /**
  * If-this-then-that automation rules on top of this app's existing
  * WhatsApp integration: "when a record in this entity is created, or a
@@ -115,6 +121,12 @@ export function AutomationsPanel({
   const [trigger, setTrigger] = useState<AutomationTrigger>("record_created");
   const [fieldName, setFieldName] = useState("");
   const [fieldValue, setFieldValue] = useState("");
+  // Round 1652: mirrors EntityPanel.tsx's own relationFilter state (rounds
+  // 1637/1646) -- this condition-value picker's relation branch (below)
+  // was the one relation-picker <select> in the app round 1638 named but
+  // never implemented, rendering one raw <option> per related record with
+  // no cap and no way to search.
+  const [fieldValueRelationFilter, setFieldValueRelationFilter] = useState("");
   // Round 1491: only meaningful (and only shown) when the selected field's
   // own type is "number" or "date" -- see AutomationFieldOperator's own
   // doc comment (packages/db/src/automations.ts) for why every other field
@@ -418,6 +430,28 @@ export function AutomationsPanel({
       ? entities.find((e) => e.name.toLowerCase() === selectedField.relationTo!.toLowerCase())
       : undefined;
   const relationTargetRecords = relationTargetEntity ? relatedRecords[relationTargetEntity.name] : undefined;
+  // Round 1652: mirrors EntityPanel.tsx's own FieldInput relation-picker
+  // filter+cap pair (rounds 1636/1637) exactly -- the currently-selected
+  // value's own option must always stay visible regardless of the filter
+  // text or the cap, for the same "stale value has no matching <option>"
+  // reason FieldInput's own guard exists.
+  const trimmedFieldValueRelationFilter = fieldValueRelationFilter.trim().toLowerCase();
+  const filteredFieldValueRelationRecords =
+    trimmedFieldValueRelationFilter === "" || !relationTargetEntity || !relationTargetRecords
+      ? relationTargetRecords
+      : relationTargetRecords.filter(
+          (r) => String(r.id) === fieldValue || recordDisplayLabel(relationTargetEntity, r, lang).toLowerCase().includes(trimmedFieldValueRelationFilter),
+        );
+  const isFieldValueRelationFilterTruncated = (filteredFieldValueRelationRecords?.length ?? 0) > RELATION_PICKER_OPTION_CAP;
+  let displayedFieldValueRelationRecords = filteredFieldValueRelationRecords;
+  if (isFieldValueRelationFilterTruncated && filteredFieldValueRelationRecords) {
+    const cappedFieldValueRelationSlice = filteredFieldValueRelationRecords.slice(0, RELATION_PICKER_OPTION_CAP);
+    const currentFieldValueRelationRecord = filteredFieldValueRelationRecords.find((r) => String(r.id) === fieldValue);
+    displayedFieldValueRelationRecords =
+      currentFieldValueRelationRecord && !cappedFieldValueRelationSlice.includes(currentFieldValueRelationRecord)
+        ? [currentFieldValueRelationRecord, ...cappedFieldValueRelationSlice]
+        : cappedFieldValueRelationSlice;
+  }
 
   const relationFieldTargets = useMemo(() => {
     const names = new Set<string>();
@@ -486,6 +520,15 @@ export function AutomationsPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldName, fieldTypesKey, relationTargetRecords]);
+
+  // Round 1652: clears a stale filter left over from a previously-selected
+  // relation field -- keyed only on fieldName/fieldTypesKey (not
+  // relationTargetRecords), so an in-progress filter isn't wiped out from
+  // under the user every time this same field's own records simply finish
+  // loading or refresh.
+  useEffect(() => {
+    setFieldValueRelationFilter("");
+  }, [fieldName, fieldTypesKey]);
 
   function loadRules() {
     setLoadError(null);
@@ -1640,14 +1683,34 @@ export function AutomationsPanel({
                   ))}
                 </select>
               ) : relationTargetEntity ? (
-                relationTargetRecords ? (
-                  <select value={fieldValue} onChange={(e) => setFieldValue(e.target.value)} aria-label={t("automations.fieldValue.placeholder")}>
-                    {relationTargetRecords.map((r) => (
-                      <option key={r.id as number} value={String(r.id)}>
-                        {recordDisplayLabel(relationTargetEntity, r, lang)}
-                      </option>
-                    ))}
-                  </select>
+                relationTargetRecords && displayedFieldValueRelationRecords ? (
+                  <>
+                    {relationTargetRecords.length > 5 && (
+                      <input
+                        type="text"
+                        className="relation-filter-input"
+                        value={fieldValueRelationFilter}
+                        onChange={(e) => setFieldValueRelationFilter(e.target.value)}
+                        placeholder={t("entity.relation.filterPlaceholder")}
+                        aria-label={t("entity.relation.filterPlaceholder")}
+                      />
+                    )}
+                    {isFieldValueRelationFilterTruncated && (
+                      <p className="relation-filter-truncated-hint">
+                        {t("entity.relation.optionCapHint", {
+                          shown: displayedFieldValueRelationRecords.length,
+                          total: filteredFieldValueRelationRecords?.length ?? 0,
+                        })}
+                      </p>
+                    )}
+                    <select value={fieldValue} onChange={(e) => setFieldValue(e.target.value)} aria-label={t("automations.fieldValue.placeholder")}>
+                      {displayedFieldValueRelationRecords.map((r) => (
+                        <option key={r.id as number} value={String(r.id)}>
+                          {recordDisplayLabel(relationTargetEntity, r, lang)}
+                        </option>
+                      ))}
+                    </select>
+                  </>
                 ) : (
                   <select disabled aria-label={t("automations.fieldValue.placeholder")}>
                     <option>{t("entity.relation.loading")}</option>
