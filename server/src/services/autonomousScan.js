@@ -1,16 +1,11 @@
 import { db } from '../db/store.js';
 import { generateTopicIdea } from '../engine/topicIdeation.js';
 import { SOURCE_DEFINITIONS, isSourceConnected } from '../engine/sourceDefinitions.js';
-import { createDigitalProductOpportunity } from './opportunities.js';
+import { createDigitalProductOpportunity, pendingDraftCount, MAX_PENDING_DRAFTS } from './opportunities.js';
 import { publishOpportunity } from './publishing.js';
 import { isPaddleConfigured } from './paddle.js';
 import { getSettings } from './settings.js';
 import { logAction } from './execution.js';
-
-// Caps how many unpublished drafts can pile up before the scan backs off —
-// the owner still has to look at them eventually, so this avoids churning
-// out drafts nobody will ever review.
-const MAX_PENDING_DRAFTS = 5;
 
 // The autonomous "keep looking for revenue" loop: runs on a schedule (and
 // can be triggered manually). Only operates on sources that are actually
@@ -27,15 +22,7 @@ export async function runAutonomousScan() {
     return { ran: false, reason: 'ai_digital_products source is not connected' };
   }
 
-  // A demo draft (created by the owner's manual "new product" form while
-  // ANTHROPIC_API_KEY wasn't set) can never be published - publishing.js
-  // refuses it - and there's no route to delete an opportunity, so it sits
-  // as 'draft' forever. The scan itself can never produce one: this
-  // function already can't get past the isSourceConnected check above
-  // without ANTHROPIC_API_KEY, so excluding demo drafts here only ever
-  // drops old manual-form litter, never anything this loop could pile up
-  // on its own.
-  const pendingDrafts = db.opportunities.where((o) => o.status === 'draft' && !o.productDraft?.demo).length;
+  const pendingDrafts = pendingDraftCount();
   if (pendingDrafts >= MAX_PENDING_DRAFTS) {
     logAction({ type: 'autonomous_scan', detail: { pendingDrafts }, result: `skipped: ${pendingDrafts} drafts already awaiting review` });
     return { ran: false, reason: `${pendingDrafts} drafts are already awaiting review` };

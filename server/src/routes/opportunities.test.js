@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from '../services/settings.js';
 import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute, rejectOpportunity, triggerAutonomousScan } from './opportunities.js';
+import { MAX_PENDING_DRAFTS } from '../services/opportunities.js';
 
 function withPaddleEnv(fn) {
   const vars = { PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
@@ -101,6 +102,36 @@ test('createDigitalProduct responds 502 instead of crashing when the AI returns 
     if (originalEnv === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalEnv;
   }
+});
+
+test('createDigitalProduct refuses to draft another one once the pending-draft cap is already reached', async () => {
+  // runAutonomousScan already refused a new draft past this same cap - this
+  // manual route had no limit at all before, even though each draft here
+  // is the exact same real, billed AI call. Never actually calls the AI
+  // once blocked: a stubFetchOnce-style unset fetch would throw if it did.
+  __resetForTests();
+  for (let i = 0; i < MAX_PENDING_DRAFTS; i += 1) {
+    insertOpportunity({ status: 'draft', productDraft: { demo: false } });
+  }
+  const res = makeRes();
+  await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(db.opportunities.all().length, MAX_PENDING_DRAFTS);
+});
+
+test('createDigitalProduct ignores demo drafts when counting toward the pending-draft cap', async () => {
+  // A demo draft (from an earlier run with no ANTHROPIC_API_KEY) can never
+  // be published and has no delete route - it must not permanently eat
+  // into this cap.
+  __resetForTests();
+  for (let i = 0; i < MAX_PENDING_DRAFTS; i += 1) {
+    insertOpportunity({ status: 'draft', productDraft: { demo: true } });
+  }
+  await withoutAnthropicKey(async () => {
+    const res = makeRes();
+    await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
+    assert.equal(res.statusCode, 201);
+  });
 });
 
 test('triggerAutonomousScan runs the scan and returns its result as-is', async () => {

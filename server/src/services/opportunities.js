@@ -3,6 +3,24 @@ import { draftProduct } from '../engine/productDraft.js';
 import { resolveDefaultPriceUSD } from '../engine/pricing.js';
 import { logAction } from './execution.js';
 
+// Caps how many unpublished, non-demo drafts can pile up before a new one
+// is drafted — the owner still has to look at each one eventually, so this
+// avoids churning out drafts nobody will ever review. Originally only
+// enforced by the autonomous scan loop; shared here so the owner's own
+// manual "new digital product" form respects the same limit, since it has
+// no cap of its own otherwise and each draft is a real, billed AI call —
+// an API client bug or a stolen owner token looping this route would
+// otherwise have no limit at all on real-money AI spend.
+export const MAX_PENDING_DRAFTS = 5;
+
+export function pendingDraftCount() {
+  // A demo draft (created while ANTHROPIC_API_KEY wasn't set) can never
+  // actually be published - publishing.js refuses it - and there's no
+  // route to delete an opportunity, so it would sit as 'draft' forever and
+  // permanently eat into this cap for no reason if counted.
+  return db.opportunities.where((o) => o.status === 'draft' && !o.productDraft?.demo).length;
+}
+
 // Shared by the owner's manual "new digital product" form and the
 // autonomous scan loop, so both produce identically-shaped, honest
 // opportunity cards — demand is never fabricated here, only drafted.

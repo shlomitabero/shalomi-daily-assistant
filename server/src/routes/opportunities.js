@@ -6,7 +6,7 @@ import { computeNetProfit } from '../engine/feasibility.js';
 import { rankOpportunities } from '../engine/ranking.js';
 import { isPaddleConfigured } from '../services/paddle.js';
 import { logAction } from '../services/execution.js';
-import { createDigitalProductOpportunity } from '../services/opportunities.js';
+import { createDigitalProductOpportunity, pendingDraftCount, MAX_PENDING_DRAFTS } from '../services/opportunities.js';
 import { publishOpportunity } from '../services/publishing.js';
 import { runAutonomousScan } from '../services/autonomousScan.js';
 
@@ -25,6 +25,19 @@ export async function createDigitalProduct(req, res) {
   const { topic, audience } = req.body ?? {};
   if (!topic || !topic.trim()) return res.status(400).json({ error: 'topic is required' });
   if (!audience || !audience.trim()) return res.status(400).json({ error: 'audience is required' });
+
+  // runAutonomousScan already refused a new draft past this same cap - this
+  // manual route had no such limit at all, even though each draft here is
+  // the exact same real, billed AI call. An API client bug or a stolen
+  // owner token looping this route would otherwise have no limit
+  // whatsoever on real-money AI spend; a legitimate owner is never
+  // realistically blocked by this, since reaching 5 unreviewed drafts in a
+  // row (without ever looking at any of them) is the "already enough to
+  // review" state this cap exists for either way.
+  const pendingDrafts = pendingDraftCount();
+  if (pendingDrafts >= MAX_PENDING_DRAFTS) {
+    return res.status(409).json({ error: `יש כבר ${pendingDrafts} טיוטות שממתינות לסקירה — סקור או דחה חלק מהן לפני יצירת טיוטה נוספת` });
+  }
 
   let opportunity;
   try {
