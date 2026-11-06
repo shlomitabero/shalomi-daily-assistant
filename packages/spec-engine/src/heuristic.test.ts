@@ -1318,6 +1318,29 @@ test("Employee has a phone field, like every other person-type domain entity", a
 });
 
 /**
+ * Round 1641: the same bug class as round 1629's Employee fix, found in a
+ * different sibling of the same person-type-entity set in
+ * domainEntities.ts (Customer, Courier, Student, Patient, Vendor,
+ * Volunteer, Employee all already carry a `phone` field alongside
+ * `name`/`email`) -- JobApplicant was the one left without it, with no
+ * comment anywhere explaining a deliberate omission. A recruiter's single
+ * most common follow-up action on a candidate -- calling them -- had
+ * nowhere to go, unlike every comparable Customer/Student/Patient/
+ * Volunteer record in the same generated app.
+ */
+test("JobApplicant has a phone field, like every other person-type domain entity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("Track job applicants: their name, email, phone number, the role they applied for, and hiring stage.");
+
+  const jobApplicant = spec.entities.find((e) => e.name === "JobApplicant")!;
+  assert.ok(jobApplicant, "expected the JobApplicant entity to be generated");
+  const phoneField = jobApplicant.fields.find((f) => f.name === "phone");
+  assert.ok(phoneField, "JobApplicant must have a phone field, matching every other person-type domain entity");
+  assert.equal(phoneField!.type, "text");
+  assert.equal(phoneField!.required, false);
+});
+
+/**
  * Regression test for a real bug found in round 447: Course's bare
  * "courses" keyword is a substring of "discourses" -- an ordinary word in
  * a plain discussion/forum description that has nothing to do with

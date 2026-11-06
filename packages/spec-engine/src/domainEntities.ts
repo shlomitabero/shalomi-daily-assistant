@@ -1211,7 +1211,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     ],
     labelHe: "מועמדים",
     descriptionHe: "מי שהגיש מועמדות למשרה בעסק.",
-    fieldLabelsHe: { name: "שם", email: "אימייל", appliedFor: "משרה מבוקשת", stage: "שלב", appliedDate: "תאריך הגשה" },
+    fieldLabelsHe: {
+      name: "שם",
+      email: "אימייל",
+      phone: "טלפון",
+      appliedFor: "משרה מבוקשת",
+      stage: "שלב",
+      appliedDate: "תאריך הגשה",
+    },
     enumLabelsHe: {
       stage: { Applied: "הוגשה", Interviewing: "בראיונות", Offer: "הצעה נשלחה", Rejected: "נדחה", Hired: "התקבל/ה" },
     },
@@ -1221,6 +1228,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       fields: [
         { name: "name", type: "text", required: true },
         { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
         { name: "appliedFor", type: "text", required: false },
         {
           name: "stage",
