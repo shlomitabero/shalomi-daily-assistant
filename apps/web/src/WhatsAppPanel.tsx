@@ -1547,6 +1547,8 @@ export function WhatsAppPanel({
                 <option value="all">{t("whatsapp.log.filter.all")}</option>
                 <option value="in">{t("whatsapp.log.filter.incoming")}</option>
                 <option value="out">{t("whatsapp.log.filter.outgoing")}</option>
+                <option value="delivered">{t("whatsapp.log.filter.delivered")}</option>
+                <option value="read">{t("whatsapp.log.filter.read")}</option>
                 <option value="failed">{t("whatsapp.log.filter.failed")}</option>
               </select>
             </div>

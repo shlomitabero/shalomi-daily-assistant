@@ -208,6 +208,34 @@ test("filterWhatsAppMessagesByDirection returns an empty list, not everything, w
   assert.deepEqual(filterWhatsAppMessagesByDirection(messages, "failed"), []);
 });
 
+test("filterWhatsAppMessagesByDirection('delivered') keeps only delivered sends, dropping read/failed/sent/incoming", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+    makeMessage({ id: "m3", direction: "out", status: "delivered" }),
+    makeMessage({ id: "m4", direction: "out", status: "read" }),
+    makeMessage({ id: "m5", direction: "out", status: "failed" }),
+  ];
+  assert.deepEqual(
+    filterWhatsAppMessagesByDirection(messages, "delivered").map((m) => m.id),
+    ["m3"],
+  );
+});
+
+test("filterWhatsAppMessagesByDirection('read') keeps only read sends -- a merely-delivered message must not count as read", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+    makeMessage({ id: "m3", direction: "out", status: "delivered" }),
+    makeMessage({ id: "m4", direction: "out", status: "read" }),
+    makeMessage({ id: "m5", direction: "out", status: "failed" }),
+  ];
+  assert.deepEqual(
+    filterWhatsAppMessagesByDirection(messages, "read").map((m) => m.id),
+    ["m4"],
+  );
+});
+
 test("formatWhatsAppMessageCount reports a plain total when the search hasn't narrowed anything out", () => {
   const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   assert.equal(formatWhatsAppMessageCount(6, 6, tr), "6 messages");

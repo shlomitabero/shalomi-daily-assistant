@@ -49,6 +49,15 @@ test("setWhatsAppLogFilter('in') and ('out') also round trip", async () => {
   });
 });
 
+test("setWhatsAppLogFilter('delivered') and ('read') also round trip -- the two statuses round 1634 added", async () => {
+  await withJsdom(() => {
+    setWhatsAppLogFilter("proj1", "userA", "delivered");
+    assert.equal(getWhatsAppLogFilter("proj1", "userA"), "delivered");
+    setWhatsAppLogFilter("proj1", "userA", "read");
+    assert.equal(getWhatsAppLogFilter("proj1", "userA"), "read");
+  });
+});
+
 test("setWhatsAppLogFilter back to 'all' clears the persisted entry instead of storing it", async () => {
   await withJsdom(() => {
     setWhatsAppLogFilter("proj1", "userA", "failed");

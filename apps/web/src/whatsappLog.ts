@@ -146,25 +146,33 @@ export function formatWhatsAppMessageCount(
   return total === 1 ? t("whatsapp.log.count.all.one", { count: total }) : t("whatsapp.log.count.all.many", { count: total });
 }
 
-export type WhatsAppLogFilter = "all" | "in" | "out" | "failed";
+export type WhatsAppLogFilter = "all" | "in" | "out" | "failed" | "delivered" | "read";
 
 /**
  * Narrows the log to one of: every message, only incoming, only outgoing,
- * or only failed sends -- applied together with (not instead of)
- * filterWhatsAppMessages' own text search, the same two-independent-
- * filters combination EntityPanel.tsx's search+statusFilter already use
- * on the entity table. A long, ever-growing conversation -- paginated since
- * round 263, and always deletable one message (or the whole log) at a time
- * via deleteWhatsAppMessage/clearWhatsAppMessages -- is exactly where being
+ * only failed sends, only delivered sends, or only read sends -- applied
+ * together with (not instead of) filterWhatsAppMessages' own text search,
+ * the same two-independent-filters combination EntityPanel.tsx's
+ * search+statusFilter already use on the entity table. A long,
+ * ever-growing conversation -- paginated since round 263, and always
+ * deletable one message (or the whole log) at a time via
+ * deleteWhatsAppMessage/clearWhatsAppMessages -- is exactly where being
  * able to isolate "just what I sent" or "just what failed" matters --
  * scanning by eye stops working once the log gets long.
+ *
+ * "delivered" and "read" each match only that exact status value (same
+ * shape as "failed"): a delivered-but-not-yet-read message must not show
+ * up under "read", and a message that has since progressed to "read" must
+ * not still count as merely "delivered".
  */
 export function filterWhatsAppMessagesByDirection(
   messages: WhatsAppMessageLogEntry[],
   filter: WhatsAppLogFilter,
 ): WhatsAppMessageLogEntry[] {
   if (filter === "all") return messages;
-  if (filter === "failed") return messages.filter((m) => m.status === "failed");
+  if (filter === "failed" || filter === "delivered" || filter === "read") {
+    return messages.filter((m) => m.status === filter);
+  }
   return messages.filter((m) => m.direction === filter);
 }
 

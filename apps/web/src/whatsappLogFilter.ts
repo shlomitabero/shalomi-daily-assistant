@@ -22,7 +22,14 @@ function storageKey(projectId: string, userId: string): string {
 }
 
 function isWhatsAppLogFilter(value: unknown): value is WhatsAppLogFilter {
-  return value === "all" || value === "in" || value === "out" || value === "failed";
+  return (
+    value === "all" ||
+    value === "in" ||
+    value === "out" ||
+    value === "failed" ||
+    value === "delivered" ||
+    value === "read"
+  );
 }
 
 /**
