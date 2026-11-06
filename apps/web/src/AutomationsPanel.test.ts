@@ -3523,6 +3523,44 @@ test("AutomationsPanel's webhook secret field is masked by default and reveals i
   });
 });
 
+/**
+ * Round 1650: every other field in this same webhook-action form already
+ * caps client-side at its own server-side limit (webhookUrl 2000, toEmail
+ * 320, emailSubject 500, messageTemplate 4000) for instant browser feedback
+ * instead of a silent post-submit 400 -- webhookSecret's own PasswordInput
+ * call site was the one field left without it, even though round 1583
+ * already added maxLength support to PasswordInput itself for the
+ * unrelated change-password forms.
+ */
+test("the webhook secret input caps at 500 chars, matching the server's .max(500) on webhookSecret", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "webhook"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "webhook" } });
+
+      const secretInput = document.querySelector('input[placeholder="Secret (optional)"]') as HTMLInputElement;
+      assert.ok(secretInput, "expected a secret input next to the webhook URL input");
+      assert.equal(secretInput.maxLength, 500, "the webhook secret input must cap at 500 chars client-side");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel's rule list describes a webhook rule by its URL, not a WhatsApp destination", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

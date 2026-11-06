@@ -1708,6 +1708,15 @@ export function AutomationsPanel({
                 autoComplete="off"
                 placeholder={t("automations.webhookSecret.placeholder")}
                 ariaLabel={t("automations.webhookSecret.placeholder")}
+                // Round 1650: matches the server's own .max(500) (routes/
+                // projects.ts) exactly, the same client-side parity every
+                // sibling field in this form already has (webhookUrl 2000,
+                // toEmail 320, toNumber 50, emailSubject 500, messageTemplate
+                // 4000) -- round 1583 added maxLength support to
+                // PasswordInput itself but skipped this one pre-existing
+                // call site, leaving it the only field here without instant
+                // browser-side feedback instead of a silent post-submit 400.
+                maxLength={500}
               />
               <p className="muted small">{t("automations.webhookSecret.hint")}</p>
             </>
