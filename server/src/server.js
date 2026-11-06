@@ -21,6 +21,7 @@ import { syncSources } from './services/sources.js';
 import { generateDailyDigest, catchUpDailyDigestIfMissed } from './services/digest.js';
 import { runAutonomousScan, catchUpAutonomousScanIfMissed } from './services/autonomousScan.js';
 import { classifyApiError } from './engine/apiError.js';
+import { securityHeaders } from './middleware/securityHeaders.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
@@ -37,6 +38,7 @@ const app = express();
 // attacker could forge directly.
 app.set('trust proxy', 1);
 app.use(cors());
+app.use(securityHeaders);
 
 // Paddle needs the raw body to verify the webhook signature, so this is
 // mounted before the global express.json() parser below.
