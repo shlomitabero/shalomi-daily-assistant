@@ -65,7 +65,22 @@ export default function Opportunities() {
   // ones rather than mixed into the worklist of things that can
   // actually be acted on.
   const activeOpportunities = opportunities.filter((o) => o.status === 'draft' && !o.productDraft?.demo);
-  const resolvedOpportunities = opportunities.filter((o) => o.status !== 'draft' || o.productDraft?.demo);
+  // Unlike activeOpportunities (naturally capped at 5 by the scan's own
+  // pending-draft limit), this list only ever grows as the scan keeps
+  // publishing/producing demo drafts every few hours, indefinitely - after
+  // enough months of real use this would mean rendering hundreds of DOM
+  // rows on one page with no pagination anywhere in this app. Sorted
+  // newest-first by createdAt (more useful for a completed-history list
+  // than the implicit score order the API returns) and capped at the most
+  // recent 50; MAX_RESOLVED_SHOWN only limits what's rendered here, never
+  // what the API itself returns, so Dashboard.jsx's own per-source revenue
+  // breakdown (which looks up a resolved opportunity by id from the same
+  // fetch) stays accurate regardless of how old it is.
+  const MAX_RESOLVED_SHOWN = 50;
+  const allResolvedOpportunities = opportunities
+    .filter((o) => o.status !== 'draft' || o.productDraft?.demo)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const resolvedOpportunities = allResolvedOpportunities.slice(0, MAX_RESOLVED_SHOWN);
 
   return (
     <div className="page">
@@ -118,7 +133,10 @@ export default function Opportunities() {
 
       {resolvedOpportunities.length > 0 && (
         <section className="section">
-          <h2>הושלמו ({resolvedOpportunities.length})</h2>
+          <h2>הושלמו ({allResolvedOpportunities.length})</h2>
+          {allResolvedOpportunities.length > MAX_RESOLVED_SHOWN && (
+            <p className="hint">מוצגות {MAX_RESOLVED_SHOWN} העדכניות מתוך {allResolvedOpportunities.length}.</p>
+          )}
           {resolvedOpportunities.map((o) => (
             <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-card">
               <div className="opp-card-top">
