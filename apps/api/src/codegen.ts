@@ -2161,6 +2161,11 @@ const MIN_COLUMN_WIDTH = 60;
 const MAX_COLUMN_WIDTH = 480;
 // How many pixels an ArrowLeft/ArrowRight press widens or narrows a column via the resize handle's keyboard fallback.
 const RESIZE_KEYBOARD_STEP = 20;
+// A relation field's <select> renders one real <option> per related record
+// -- capped here so the picker stays fast for a large related entity, the
+// same as the live preview's own fix (EntityPanel.tsx). The relationFilter
+// input is how a user narrows past the cap.
+const RELATION_PICKER_OPTION_CAP = 200;
 const COLUMN_WIDTHS_STORAGE_KEY = "forge_column_widths";
 function readColumnWidthsStore() {
   try {
@@ -5220,6 +5225,18 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         : selectableRecords.filter(
             (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r).toLowerCase().includes(trimmedFilter),
           );
+    // Capped so the <select> stays fast for a large related entity, the
+    // same as the live preview's own fix (EntityPanel.tsx). The current
+    // value's own option is always kept even past the cap slice, so this
+    // can never reintroduce the "stale value has no matching <option>"
+    // hazard the guards above already protect against.
+    const isTruncated = filteredRecords.length > RELATION_PICKER_OPTION_CAP;
+    let displayedRecords = filteredRecords;
+    if (isTruncated) {
+      const cappedSlice = filteredRecords.slice(0, RELATION_PICKER_OPTION_CAP);
+      const currentRecord = currentRelationId === null ? undefined : filteredRecords.find((r) => Number(r.id) === currentRelationId);
+      displayedRecords = currentRecord && !cappedSlice.includes(currentRecord) ? [currentRecord, ...cappedSlice] : cappedSlice;
+    }
     return (
       <div className="relation-field-input">
         {relatedEntityRecords.length > 5 && (
@@ -5231,6 +5248,9 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
             placeholder="Search…"
             aria-label="Search…"
           />
+        )}
+        {isTruncated && (
+          <p className="relation-filter-truncated-hint">{\`Showing \${displayedRecords.length} of \${filteredRecords.length} records -- type to search for a specific one.\`}</p>
         )}
         <select
           id={id}
@@ -5245,7 +5265,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
         >
           <option value="">…</option>
           {!hasCurrentRelationOption && <option value={currentRelationId}>{\`#\${currentRelationId}\`}</option>}
-          {filteredRecords.map((r) => (
+          {displayedRecords.map((r) => (
             <option key={r.id} value={r.id}>
               {recordDisplayLabel(relatedEntity, r)}
             </option>

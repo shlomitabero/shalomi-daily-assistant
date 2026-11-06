@@ -112,6 +112,17 @@ const UNDO_WINDOW_MS = 5000;
 /** How many pixels an ArrowLeft/ArrowRight press widens or narrows a column via the resize handle's keyboard fallback. */
 const RESIZE_KEYBOARD_STEP = 20;
 
+/**
+ * A relation field's <select> renders one real DOM <option> per related
+ * record -- with no pagination on listRecords, a large related entity
+ * (thousands of rows) would otherwise build thousands of <option> nodes on
+ * every single render of every relation field pointing at it. Capped here,
+ * client-side, so the picker stays fast regardless of how much data a
+ * project accumulates; the existing relationFilter input is how a user
+ * narrows past the cap to find a specific record.
+ */
+const RELATION_PICKER_OPTION_CAP = 200;
+
 interface PendingDeleteEntry {
   id: number;
   record: EntityRecord;
@@ -1412,6 +1423,25 @@ function FieldInput({
         : selectableRecords.filter(
             (r) => Number(r.id) === currentRelationId || recordDisplayLabel(relatedEntity, r, lang).toLowerCase().includes(trimmedFilter),
           );
+    // A related entity with thousands of records would otherwise render
+    // one real <option> DOM node per record on every mount of every
+    // relation field pointing at it -- capped here so the <select> stays
+    // fast; relationFilter above is how a user narrows past the cap. The
+    // currently-selected record's own option is always kept even when it
+    // falls past the cap slice, so this can never reintroduce the "stale
+    // value has no matching <option>" hazard the guards above already
+    // protect against.
+    const isTruncated = filteredRecords.length > RELATION_PICKER_OPTION_CAP;
+    let displayedRecords = filteredRecords;
+    if (isTruncated) {
+      const cappedSlice = filteredRecords.slice(0, RELATION_PICKER_OPTION_CAP);
+      // filteredRecords' own OR-clause above (`Number(r.id) === currentRelationId || ...`)
+      // guarantees the current record is present here whenever it's a
+      // selectable record at all -- so finding it missing from cappedSlice
+      // (not from filteredRecords) is the only case worth prepending for.
+      const currentRecord = currentRelationId === null ? undefined : filteredRecords.find((r) => Number(r.id) === currentRelationId);
+      displayedRecords = currentRecord && !cappedSlice.includes(currentRecord) ? [currentRecord, ...cappedSlice] : cappedSlice;
+    }
     return (
       <div className="relation-field-input">
         {relatedEntityRecords.length > 5 && (
@@ -1423,6 +1453,11 @@ function FieldInput({
             placeholder={t("entity.relation.filterPlaceholder")}
             aria-label={t("entity.relation.filterPlaceholder")}
           />
+        )}
+        {isTruncated && (
+          <p className="relation-filter-truncated-hint">
+            {t("entity.relation.optionCapHint", { shown: displayedRecords.length, total: filteredRecords.length })}
+          </p>
         )}
         <select
           required={field.required}
@@ -1436,7 +1471,7 @@ function FieldInput({
         >
           <option value="">{t("entity.select")}</option>
           {!hasCurrentRelationOption && <option value={currentRelationId as number}>{`#${currentRelationId}`}</option>}
-          {filteredRecords.map((r) => (
+          {displayedRecords.map((r) => (
             <option key={r.id as number} value={r.id as number}>
               {recordDisplayLabel(relatedEntity, r, lang)}
             </option>

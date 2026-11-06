@@ -14462,6 +14462,73 @@ test("EntityPanel's relation field offers a filter input once there are enough r
 });
 
 /**
+ * Round 1637: a related entity with more than RELATION_PICKER_OPTION_CAP
+ * (200) records had every single one rendered as a real <option> DOM node
+ * with no cap at all -- the relationFilter input above only helps once a
+ * user actually starts typing, and does nothing for the default, unfiltered
+ * state every mount starts in. Confirms the <select> now caps its rendered
+ * options, shows a hint naming the shown/total counts, and -- critically --
+ * still keeps the currently-selected record's own option even though its
+ * position in the full list falls well past the cap, so this can never
+ * reintroduce the "stale value has no matching <option>" hazard the
+ * existing hasCurrentRelationOption fallback already guards against for a
+ * different cause.
+ */
+test("EntityPanel's relation field caps the number of rendered options for a very large related entity, but always keeps the selected record's own option", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+    const courierRelated: EntityRecord[] = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, createdAt: "x", name: `Courier ${i + 1}` }));
+    // The selected record (id 250) is the very LAST one in the full list --
+    // guaranteed to fall outside any naive first-N slice.
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 250 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const editButton = document.querySelector(".row-actions button") as HTMLButtonElement;
+      fireEvent.click(editButton);
+      await waitForCondition(() => {
+        const select = document.querySelector(".record-form select") as HTMLSelectElement | null;
+        return select !== null && !select.disabled;
+      });
+
+      const select = document.querySelector(".record-form select") as HTMLSelectElement;
+      // Blank placeholder + 200 capped options + the selected record's own
+      // option prepended past the cap = 202, never the full 251.
+      assert.equal(select.querySelectorAll("option").length, 202, "the rendered option count must be capped, not one per related record");
+      assert.equal(select.value, "250", "the currently-selected record must remain the select's real value");
+      const optionLabels = Array.from(select.options).map((o) => o.textContent);
+      assert.ok(optionLabels.includes("Courier 250"), "the selected record's own option must stay present even though it falls past the cap slice");
+
+      const hint = document.querySelector(".relation-filter-truncated-hint");
+      assert.ok(hint, "a hint must explain the list is truncated");
+      assert.ok(hint?.textContent?.includes("201"), "the hint must name how many options are actually shown (200 capped + 1 for the selected record)");
+      assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the search box's own matchesSearch fell through to
  * the raw stored foreign-key id for a relation field, so typing the exact
  * name a relation cell visibly shows (e.g. "Dana", resolved via
