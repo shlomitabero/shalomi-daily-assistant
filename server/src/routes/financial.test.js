@@ -258,6 +258,27 @@ test('listPaperTrades returns trades newest first', () => {
   assert.deepEqual(res.body.trades.map((t) => t.id), ['pt_newer', 'pt_older']);
 });
 
+test('listPaperTrades caps the response at the 100 most recent trades, newest first', () => {
+  // Same unbounded-growth pattern already fixed for listDigests
+  // (server/src/routes/digest.js) - a simulation-only list that only ever
+  // grows every time the owner runs one, with no pagination anywhere in
+  // the client. Unlike the opportunities/approvals lists, nothing else
+  // looks up a paper trade by id from this same fetch, so a server-side
+  // cap carries no correctness risk here.
+  __resetForTests();
+  for (let i = 0; i < 105; i += 1) {
+    db.paper_trades.insert({
+      id: `pt_${i}`, symbol: 'AAPL', side: 'long',
+      createdAt: new Date(2026, 0, 1 + i).toISOString(),
+    });
+  }
+  const res = makeRes();
+  listPaperTrades({}, res);
+  assert.equal(res.body.trades.length, 100);
+  assert.equal(res.body.trades[0].id, 'pt_104');
+  assert.equal(res.body.trades[99].id, 'pt_5');
+});
+
 test('listWatchlist and listPaperTrades return what was stored', () => {
   __resetForTests();
   db.financial_watchlist.insert({ id: 'wl_1', symbol: 'AAPL' });

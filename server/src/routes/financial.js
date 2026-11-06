@@ -122,8 +122,16 @@ export function createPaperTrade(req, res) {
   res.status(201).json({ trade });
 }
 
+// Simulation-only and never read by anything else (no cross-file lookup by
+// id, unlike approvals/opportunities) - a straight server-side cap, same
+// precedent as listDigests, is safe here with no correctness risk.
+const MAX_PAPER_TRADES_RETURNED = 100;
+
 export function listPaperTrades(req, res) {
-  res.json({ trades: db.paper_trades.all().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) });
+  const trades = db.paper_trades.all()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, MAX_PAPER_TRADES_RETURNED);
+  res.json({ trades });
 }
 
 financialRouter.get('/financial/watchlist', requireOwner, listWatchlist);
