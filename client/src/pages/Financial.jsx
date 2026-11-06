@@ -177,6 +177,10 @@ export default function Financial() {
 
       <section className="section">
         <h2>עסקאות מדומות אחרונות</h2>
+        {/* Same gap as the Digests page (fixed earlier this hour): a bare
+            heading with nothing under it on first use, no indication
+            that's normal rather than a loading state or a bug. */}
+        {trades.length === 0 && <p className="hint">אין עסקאות מדומות עדיין — אפשר להריץ סימולציה בטופס למעלה.</p>}
         {trades.map((t) => (
           <div key={t.id} className="opp-row">
             <span>{t.symbol} ({sideLabel(t.side)})</span>
