@@ -133,21 +133,34 @@ export default function Financial() {
         </form>
         {error && <p className="form-error">{error}</p>}
         {watchlist.map((w) => (
-          <div key={w.id} className="source-row">
-            <span className={`dot ${w.connected ? 'dot-on' : 'dot-off'}`} />
-            <span>{w.symbol}</span>
-            <span>{w.lastPrice != null ? `$${w.lastPrice}` : 'לא מחובר'}</span>
-            <button
-              className="btn btn-ghost"
-              onClick={() => onRefreshSymbol(w.id)}
-              disabled={refreshingId === w.id || refreshingAll || !connected}
-              title={!connected ? 'מקור נתוני שוק לא מחובר' : undefined}
-            >
-              {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
-            </button>
-            <button className="btn btn-ghost" onClick={() => onRemoveSymbol(w.id)} disabled={removingId === w.id}>
-              {removingId === w.id ? 'מסיר…' : 'הסר'}
-            </button>
+          <div key={w.id}>
+            <div className="source-row">
+              <span className={`dot ${w.connected ? 'dot-on' : 'dot-off'}`} />
+              <span>{w.symbol}</span>
+              <span>{w.lastPrice != null ? `$${w.lastPrice}` : 'לא מחובר'}</span>
+              <button
+                className="btn btn-ghost"
+                onClick={() => onRefreshSymbol(w.id)}
+                disabled={refreshingId === w.id || refreshingAll || !connected}
+                title={!connected ? 'מקור נתוני שוק לא מחובר' : undefined}
+              >
+                {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
+              </button>
+              <button className="btn btn-ghost" onClick={() => onRemoveSymbol(w.id)} disabled={removingId === w.id}>
+                {removingId === w.id ? 'מסיר…' : 'הסר'}
+              </button>
+            </div>
+            {/* Without this, a price fetched once weeks ago (the owner never
+                clicked "רענן מחיר" again) looked identical to one fetched
+                moments ago - nothing distinguished a stale number from a
+                fresh one, which is exactly the kind of silent staleness
+                this app's "never show a number without being honest about
+                it" principle exists to avoid. lastUpdatedAt and lastPrice
+                are always set together (both come from the same fetchQuote
+                call), so this is never shown without a price next to it.*/}
+            {w.lastUpdatedAt && (
+              <p className="hint" style={{ margin: '-4px 0 6px' }}>עודכן לאחרונה: {new Date(w.lastUpdatedAt).toLocaleString('he-IL')}</p>
+            )}
           </div>
         ))}
       </div>
