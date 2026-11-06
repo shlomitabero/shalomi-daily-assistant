@@ -130,6 +130,37 @@ test("listRecords returns newest first", () => {
   assert.equal(rows[0].name, "Second");
 });
 
+/**
+ * Round 1638: listRecords() had no limit at all (flagged since round 375,
+ * never implemented) -- an entity with tens of thousands of rows meant
+ * every single load sent the entire table over the wire. The new 4th
+ * param is optional and must stay backward-compatible for every other
+ * caller (backup, Business Twin, seed, webhook lookups, automations) that
+ * never passes it.
+ */
+test("listRecords with no limit returns every record, unchanged from before", () => {
+  const db = setup();
+  for (let i = 0; i < 5; i++) insertRecord(db, "proj1", customer, { name: `Customer ${i}`, status: "New" });
+  const rows = listRecords(db, "proj1", customer);
+  assert.equal(rows.length, 5);
+});
+
+test("listRecords with a limit returns only the newest N records, still ordered newest-first", () => {
+  const db = setup();
+  for (let i = 0; i < 5; i++) insertRecord(db, "proj1", customer, { name: `Customer ${i}`, status: "New" });
+  const rows = listRecords(db, "proj1", customer, 2);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].name, "Customer 4");
+  assert.equal(rows[1].name, "Customer 3");
+});
+
+test("listRecords with a limit larger than the real row count returns every record, not an error", () => {
+  const db = setup();
+  insertRecord(db, "proj1", customer, { name: "Only One", status: "New" });
+  const rows = listRecords(db, "proj1", customer, 5000);
+  assert.equal(rows.length, 1);
+});
+
 test("insertRecord rejects a missing required field", () => {
   const db = setup();
   assert.throws(() => insertRecord(db, "proj1", customer, { status: "New" }), ValidationError);

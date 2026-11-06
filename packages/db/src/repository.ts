@@ -396,9 +396,14 @@ export function insertRecord(
   return getRecord(db, projectId, entity, id)!;
 }
 
-export function listRecords(db: ForgeDatabase, projectId: string, entity: Entity): EntityRecord[] {
+export function listRecords(db: ForgeDatabase, projectId: string, entity: Entity, limit?: number): EntityRecord[] {
   const table = tableNameFor(projectId, entity.name);
-  const rows = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} ORDER BY id DESC`).all() as Record<string, unknown>[];
+  // limit is optional and only ever passed by the one caller (the live
+  // GET .../entities/:entityName route) that needs to cap an interactive
+  // response -- every other caller (backup, twin insights, seed, webhook
+  // lookups, automations) keeps today's unbounded behavior untouched.
+  const sql = `SELECT * FROM ${quoteIdentifier(table)} ORDER BY id DESC${limit !== undefined ? " LIMIT ?" : ""}`;
+  const rows = (limit !== undefined ? db.prepare(sql).all(limit) : db.prepare(sql).all()) as Record<string, unknown>[];
   return rows.map((row) => rowToRecord(entity, row));
 }
 

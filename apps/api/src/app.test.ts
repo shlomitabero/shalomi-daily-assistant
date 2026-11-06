@@ -3325,6 +3325,94 @@ test("POST .../entities/:entityName attaches the authenticated caller's own user
 });
 
 /**
+ * Round 1638: GET .../entities/:entityName had no limit at all (flagged
+ * since round 375, never implemented) -- an entity with tens of thousands
+ * of rows meant sending the entire table over the wire on every load. The
+ * new 5000-row cap (RECORD_LIST_RESPONSE_CAP) is exercised here with
+ * records inserted directly via the db layer (not one POST per record,
+ * which would make this single test dominate the suite's runtime) --
+ * totalCount is a real COUNT(*), independent of how many records the
+ * response body actually carries, so a client can always tell "every
+ * record fit" apart from "the response was capped".
+ */
+test("GET .../entities/:entityName caps its response for a very large entity, but totalCount still reports the real row count", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-record-cap-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: ownerUser.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const entity = spec.entities[0];
+    for (let i = 0; i < 5001; i++) {
+      insertRecord(db, projectId, entity, { name: `Customer ${i}` });
+    }
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { records, totalCount, truncated } = (await listRes.json()) as {
+      records: unknown[];
+      totalCount: number;
+      truncated: boolean;
+    };
+    assert.equal(records.length, 5000, "the response body itself must be capped");
+    assert.equal(totalCount, 5001, "totalCount must report the real row count, not the capped records.length");
+    assert.equal(truncated, true);
+  });
+});
+
+/**
+ * Companion to the cap test above: a project whose entity has FEWER
+ * records than the cap must never report truncated, and totalCount must
+ * equal exactly what was returned -- otherwise a false-positive "showing
+ * N of M" hint would appear on every ordinary, non-huge project.
+ */
+test("GET .../entities/:entityName never reports truncated when every record already fits under the cap", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-record-no-cap-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: ownerUser.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Dana Levi" });
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, { headers: authHeaders(ownerToken) });
+    const { records, totalCount, truncated } = (await listRes.json()) as {
+      records: unknown[];
+      totalCount: number;
+      truncated: boolean;
+    };
+    assert.equal(records.length, 1);
+    assert.equal(totalCount, 1);
+    assert.equal(truncated, false);
+  });
+});
+
+/**
  * Round 1632: the delete half of the createdByUserId/updatedByUserId
  * audit-trail pair (rounds 1613/1617) -- round 1613's own closing note
  * explicitly deferred record-delete actor-tracking "for a future round."

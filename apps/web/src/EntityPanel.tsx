@@ -1758,6 +1758,13 @@ export function EntityPanel({
   // .../checkpoints already sends HistoryPanel.tsx for the identical
   // reason (the db layer only ever stores a bare userId).
   const [collaboratorEmails, setCollaboratorEmails] = useState<Record<string, string>>({});
+  // Round 1638: listRecords() now caps its response for a very large
+  // entity (RECORD_LIST_RESPONSE_CAP server-side) -- totalCount is the
+  // real row count (SELECT COUNT(*)), so this can tell "every record
+  // fit" apart from "the server truncated the response" even when
+  // totalCount happens to land exactly on the cap.
+  const [recordListTruncated, setRecordListTruncated] = useState(false);
+  const [recordListTotalCount, setRecordListTotalCount] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>(() => emptyForm(entity));
@@ -2137,12 +2144,14 @@ export function EntityPanel({
       setLoadError(null);
     }
     try {
-      const { records, collaboratorEmails: emails } = await listRecords(projectId, entity.name);
+      const { records, collaboratorEmails: emails, totalCount, truncated } = await listRecords(projectId, entity.name);
       if (refreshRequestId.current !== requestId) return;
       const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
       const visible = pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id as number));
       setRecords(visible);
       setCollaboratorEmails(emails);
+      setRecordListTruncated(truncated);
+      setRecordListTotalCount(totalCount);
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category, Employee.managerId -> Employee -- schema-legal, see
       // FieldSchema's own relation refine) makes this entity its own
@@ -5251,6 +5260,12 @@ export function EntityPanel({
             {t("entity.retry")}
           </button>
         </div>
+      )}
+
+      {!loading && recordListTruncated && (
+        <p className="record-list-truncated-hint muted small" role="status">
+          {t("entity.recordList.truncatedHint", { shown: records.length, total: recordListTotalCount })}
+        </p>
       )}
 
       {pendingDelete && (

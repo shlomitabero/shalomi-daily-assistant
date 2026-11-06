@@ -564,6 +564,9 @@ function rowToRecord(entity, row) {
   return record;
 }
 
+// Mirrors the live Forge AI preview's own round-1638 RECORD_LIST_RESPONSE_CAP.
+const RECORD_LIST_RESPONSE_CAP = 5000;
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "dist")));
@@ -586,8 +589,14 @@ for (const entity of ENTITIES) {
   const columns = entity.fields.map((f) => f.name);
 
   app.get(base, (_req, res) => {
-    const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
-    res.json({ records: rows.map((r) => rowToRecord(entity, r)) });
+    // Mirrors the live Forge AI preview's own round-1638 fix: an entity
+    // with tens of thousands of rows otherwise sent its entire table over
+    // the wire on every load. totalCount is a real COUNT(*), so the
+    // client can tell "every record fit" apart from "the response was
+    // capped" even when totalCount happens to land exactly on the cap.
+    const totalCount = db.prepare(\`SELECT COUNT(*) as count FROM \${q(entity.name)}\`).get().count;
+    const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC LIMIT ?\`).all(RECORD_LIST_RESPONSE_CAP);
+    res.json({ records: rows.map((r) => rowToRecord(entity, r)), totalCount, truncated: totalCount > rows.length });
   });
 
   app.post(base, (req, res) => {
@@ -5561,6 +5570,9 @@ export function hideDialogBackgroundFromAssistiveTech(dialogElement) {
 /** Shared list + form UI used by every entity's own component file. */
 export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange }) {
   const [records, setRecords] = useState([]);
+  // Round 1638: mirrors the live Forge AI preview's own EntityPanel.tsx fix.
+  const [recordListTruncated, setRecordListTruncated] = useState(false);
+  const [recordListTotalCount, setRecordListTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // Distinct from the error above (shared by CSV import, bulk-edit, and
@@ -6077,11 +6089,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setLoadError(null);
     }
     try {
-      const { records } = await listRecords(entity.name);
+      const { records, totalCount, truncated } = await listRecords(entity.name);
       if (refreshRequestId.current !== requestId) return;
       const pendingIds = new Set(pendingDeleteRef.current?.entries.map((e) => e.id) ?? []);
       const visible = pendingIds.size === 0 ? records : records.filter((r) => !pendingIds.has(r.id));
       setRecords(visible);
+      setRecordListTruncated(truncated);
+      setRecordListTotalCount(totalCount);
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category) makes this entity its own relation target. Without this,
       // relatedRecords[<that field's own relationTo string>] would only
@@ -7910,6 +7924,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             Try again
           </button>
         </div>
+      )}
+
+      {!loading && recordListTruncated && (
+        <p className="record-list-truncated-hint muted small" role="status">
+          {"Showing " + records.length + " of " + recordListTotalCount + " records — export to CSV to get all of them."}
+        </p>
       )}
 
       {pendingDelete && (

@@ -1209,10 +1209,11 @@ export function deleteCheckpoint(projectId: string, checkpointId: string): Promi
   });
 }
 
+/** Round 1638: totalCount/truncated let the caller tell "every record fit" apart from "the server capped the response" -- records.length alone can't, since it equals totalCount in the common case but is also exactly what a truncated response looks like. */
 export function listRecords(
   projectId: string,
   entityName: string,
-): Promise<{ records: EntityRecord[]; collaboratorEmails: Record<string, string> }> {
+): Promise<{ records: EntityRecord[]; collaboratorEmails: Record<string, string>; totalCount: number; truncated: boolean }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`);
 }
 

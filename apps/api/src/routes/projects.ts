@@ -568,6 +568,16 @@ const UpdateProjectDescriptionSchema = z.object({
 const SPEC_LABEL_MAX_LENGTH = PROJECT_NAME_MAX_LENGTH;
 const SPEC_PHRASE_MAX_LENGTH = 500;
 
+/**
+ * GET .../entities/:entityName had no limit at all (flagged since round
+ * 375, never implemented) -- an entity with tens of thousands of rows
+ * meant sending the entire table over the wire on every load. Generous
+ * enough that it's invisible to the overwhelming majority of real
+ * projects, while still bounding the worst case; Export CSV/JSON already
+ * exist for anyone who genuinely needs every row of a table this large.
+ */
+const RECORD_LIST_RESPONSE_CAP = 5000;
+
 const RenameEntityLabelSchema = z.object({
   label: z.string().trim().min(1, "label is required").max(SPEC_LABEL_MAX_LENGTH, "label must be 200 characters or fewer"),
 });
@@ -3821,7 +3831,19 @@ export function createProjectsRouter(
       for (const collaborator of listCollaborators(db, project.id)) {
         collaboratorEmails[collaborator.userId] = collaborator.email;
       }
-      res.json({ records: listRecords(db, project.id, entity), collaboratorEmails });
+      // Round 1638: listRecords() had no limit at all (flagged since round
+      // 375, never implemented) -- an entity with tens of thousands of
+      // rows meant every single load of this table sent its entire result
+      // set over the wire, parsed it, and rendered it, no matter how large
+      // it grew. totalCount is real (SELECT COUNT(*)), not records.length,
+      // so the client can tell "every record fit" apart from "capped" even
+      // when the count happens to land exactly on the cap. Every other
+      // caller of listRecords (backup, Business Twin, seed, webhook
+      // lookups, automations) is intentionally left unbounded -- only this
+      // one interactive route opts into the cap.
+      const totalCount = countRecords(db, project.id, entity);
+      const records = listRecords(db, project.id, entity, RECORD_LIST_RESPONSE_CAP);
+      res.json({ records, collaboratorEmails, totalCount, truncated: totalCount > records.length });
     }),
   );
 

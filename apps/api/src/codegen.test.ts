@@ -177,7 +177,7 @@ test("generated server.js works end-to-end for an entity named after a reserved 
         const res = await fetch(`http://localhost:${port}/api/Order`);
         assert.equal(res.status, 200);
         const body = await res.json();
-        assert.deepEqual(body, { records: [] });
+        assert.deepEqual(body, { records: [], totalCount: 0, truncated: false });
 
         // Also exercise the keyword column name end-to-end (create + read).
         const createRes = await fetch(`http://localhost:${port}/api/Order`, {
@@ -3423,6 +3423,78 @@ test("generated server.js's PATCH route only validates fields actually present i
       body: JSON.stringify({ status: "AlsoStale" }),
     });
     assert.equal(badPatchRes.status, 400);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1638: mirrors the live Forge AI preview's own round-1638 fix. The
+ * exported app's GET /api/:entityName route had no limit at all, same gap,
+ * same fix: a RECORD_LIST_RESPONSE_CAP of 5000 plus a real COUNT(*), so
+ * totalCount/truncated let the client tell "every record fit" apart from
+ * "the response was capped". Records are inserted directly via a second
+ * real sqlite connection (not one POST per record) so this single test
+ * doesn't dominate the suite's runtime.
+ */
+test("the exported app's GET /api/:entityName route caps its response for a very large entity, but totalCount still reports the real row count", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-record-cap-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 59000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    // Seeds 5001 rows directly through a second real sqlite connection --
+    // the table is only created once the server's own startup code runs,
+    // so this must happen after the readiness check above, not before.
+    const { DatabaseSync } = await import("node:sqlite");
+    const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
+    const insertStmt = directDb.prepare(`INSERT INTO "Customer" (createdAt, name, status) VALUES (?, ?, ?)`);
+    const createdAt = new Date().toISOString();
+    for (let i = 0; i < 5001; i++) {
+      insertStmt.run(createdAt, `Customer ${i}`, "New");
+    }
+    directDb.close();
+
+    const listRes = await fetch(`http://localhost:${port}/api/Customer`);
+    assert.equal(listRes.status, 200);
+    const { records, totalCount, truncated } = (await listRes.json()) as {
+      records: unknown[];
+      totalCount: number;
+      truncated: boolean;
+    };
+    assert.equal(records.length, 5000, "the response body itself must be capped");
+    assert.equal(totalCount, 5001, "totalCount must report the real row count, not the capped records.length");
+    assert.equal(truncated, true);
   } finally {
     child.kill();
     rmSync(dir, { recursive: true, force: true });

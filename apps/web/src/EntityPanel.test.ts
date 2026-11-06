@@ -2381,6 +2381,63 @@ test("EntityPanel shows a real error with a Retry button when the initial load f
   });
 });
 
+/**
+ * Round 1638: GET .../entities/:entityName now caps its response
+ * (RECORD_LIST_RESPONSE_CAP) for a very large entity and returns
+ * totalCount/truncated alongside records. Confirms the client surfaces
+ * this as a visible hint naming both the shown and true total counts --
+ * without it, a user editing a huge table would have no way to know the
+ * list they're looking at isn't actually the whole thing.
+ */
+test("EntityPanel shows a truncated-list hint naming the shown/total counts when the server caps its response", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 5001, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const hint = document.querySelector(".record-list-truncated-hint");
+      assert.ok(hint, "expected a visible hint when the server reports truncated: true");
+      assert.ok(hint?.textContent?.includes("1"), "the hint must name how many records are actually shown");
+      assert.ok(hint?.textContent?.includes("5001"), "the hint must name the true total record count");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel shows no truncated-list hint when the server reports every record already fit", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 1, truncated: false }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.equal(document.querySelector(".record-list-truncated-hint"), null, "no hint should appear for an ordinary, non-truncated list");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/BuildProgress.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
