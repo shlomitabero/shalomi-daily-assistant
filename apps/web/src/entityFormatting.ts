@@ -1963,6 +1963,17 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 const CSV_NUMBER_FORMATTING = /[,$€£₪\s]/g;
 
 /**
+ * Round 1633: mirrors webhookIn.ts's own WEBHOOK_PARENTHESIZED_NEGATIVE --
+ * an accounting-style export (QuickBooks/Xero) wraps a negative amount in
+ * parentheses ("($1,234.56)" for -1234.56) instead of a leading "-". The
+ * currency-stripping regex above already handles the symbol/comma/
+ * whitespace inside, but not the parens themselves, so a CSV cell in this
+ * exact shape -- the same input round 1627 already made the inbound-
+ * webhook route tolerate -- still hard-rejected the whole import row here.
+ */
+const CSV_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
+
+/**
  * Turns parsed CSV rows into record payloads matching `fields`' types --
  * the reverse of `fieldDisplayValue`, so a file this app exported (or a
  * hand-edited copy of one) round-trips back in. Columns are matched to
@@ -2207,11 +2218,16 @@ export function buildImportRecords(
       } else if (field.type === "number") {
         let n = Number(raw);
         if (!Number.isFinite(n)) {
-          const cleaned = raw.replace(CSV_NUMBER_FORMATTING, "");
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
+          const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
+          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
           // Guard against a cell that's nothing but currency
           // symbols/whitespace (e.g. a bare "$") -- Number("") is 0, not
-          // NaN, which would otherwise silently import as a real zero.
-          if (cleaned !== "") n = Number(cleaned);
+          // NaN, which would otherwise silently import as a real zero. The
+          // "-" guard catches the parenthesized-negative equivalent, a bare
+          // "()" -- Number("-") is also NaN, but checked explicitly to match
+          // webhookIn.ts's own guard rather than relying on that coincidence.
+          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
         }
         // Number.isFinite, not just !Number.isNaN: Number("Infinity") is
         // Infinity, not NaN, so it passes a NaN-only check -- but

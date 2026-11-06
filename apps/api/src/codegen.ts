@@ -3753,7 +3753,22 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   // inbound-webhook route's own number parsing -- a real spreadsheet
   // (Excel/Google Sheets with a currency-formatted column) plausibly
   // produces "$1,234.56"/"1,234", which a strict Number() parse rejects.
-  const CSV_NUMBER_FORMATTING = /[,$€£₪\s]/g;
+  // Double-backslash (\\\\s), not \\s: this whole function body is itself
+  // emitted from inside generateExportFiles' own outer template literal
+  // (see DATE_FORMAT/URL_RE elsewhere in this file for the same
+  // convention), which silently drops an unrecognized single-backslash
+  // escape -- round 1633 found this was already broken here (whitespace
+  // was never actually being stripped) while adding the sibling regex below.
+  const CSV_NUMBER_FORMATTING = /[,$€£₪\\s]/g;
+
+  // Round 1633: mirrors the identical leniency round 1627 added to the
+  // inbound-webhook route for the same "accounting export" shape -- a
+  // negative amount wrapped in parentheses ("($1,234.56)") instead of a
+  // leading "-". CSV_NUMBER_FORMATTING above strips the symbol/comma inside
+  // but not the parens themselves. Double-backslash for the same reason as
+  // CSV_NUMBER_FORMATTING above -- a single \\( or \\) here would silently
+  // become a bare ( or ), turning this into a no-op "match everything" regex.
+  const CSV_PARENTHESIZED_NEGATIVE = /^\\((.*)\\)$/;
 
   // Round 1182: case-insensitive, mirroring the established relationTo convention (rounds 1159-1181).
   const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) && !!(relatedRecords && relatedRecords[f.relationTo]);
@@ -3925,8 +3940,10 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
       } else if (field.type === "number") {
         let n = Number(raw);
         if (!Number.isFinite(n)) {
-          const cleaned = raw.replace(CSV_NUMBER_FORMATTING, "");
-          if (cleaned !== "") n = Number(cleaned);
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
+          const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
+          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;

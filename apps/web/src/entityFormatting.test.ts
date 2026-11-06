@@ -2518,6 +2518,36 @@ test("buildImportRecords accepts a currency/thousands-separator-formatted number
   assert.match(result.errors[0], /Row 4.*Amount/);
 });
 
+/**
+ * Regression test (round 1633): mirrors webhookIn.ts's own
+ * WEBHOOK_PARENTHESIZED_NEGATIVE leniency. An accounting-style export
+ * (QuickBooks/Xero) wraps a negative amount in parentheses instead of a
+ * leading "-" -- round 1630's currency-leniency fix above strips the
+ * symbol/comma/whitespace inside the parens but not the parens themselves,
+ * so this exact cell shape still hard-rejected the row. A bare "()" with
+ * nothing inside must still be rejected, not silently coerced to 0 (or a
+ * lone "-").
+ */
+test("buildImportRecords accepts an accounting-style parenthesized-negative number cell, but still rejects an empty pair of parentheses", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "($1,234.56)"],
+    ["Beta LLC", "(500)"],
+    ["Gamma Inc", "()"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { client: "Acme Corp", amount: -1234.56 },
+    { client: "Beta LLC", amount: -500 },
+  ]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 3.*Amount/);
+});
+
 test("buildImportRecords rejects a date column value that isn't a real, well-formed calendar date", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },

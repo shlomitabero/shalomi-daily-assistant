@@ -14722,6 +14722,69 @@ test("the exported EntityView's CSV import accepts a currency/thousands-separato
 });
 
 /**
+ * Round 1633: mirrors the live preview's own round-1633 fix
+ * (apps/web/src/entityFormatting.ts) and the identical leniency round 1627
+ * already added to the inbound-webhook route's own number parsing -- an
+ * accounting-style export (QuickBooks/Xero) wraps a negative amount in
+ * parentheses ("($1,234.56)") instead of a leading "-", which the generated
+ * buildImportRecords' currency-stripping regex (round 1630) didn't unwrap,
+ * so the row was still hard-rejected. A bare "()" must still be rejected,
+ * not silently coerced to 0. Executes the actual generated buildImportRecords
+ * function (extracted from real codegen output, not reimplemented here) so
+ * a future edit to this template can't silently reintroduce the gap.
+ */
+test("the exported EntityView's CSV import accepts an accounting-style parenthesized-negative number cell, but still rejects an empty pair of parentheses", () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = invoiceProject.spec.entities[0].fields;
+  const rows = [
+    ["Client", "Amount"],
+    ["Acme Corp", "($1,234.56)"],
+    ["Beta LLC", "(500)"],
+    ["Gamma Inc", "()"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [
+    { client: "Acme Corp", amount: -1234.56 },
+    { client: "Beta LLC", amount: -500 },
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /Row 3.*Amount/);
+});
+
+/**
  * Round 1151: mirrors the live preview's own round-1134 fix (fieldDisplayValue
  * exports a never-answered, null boolean as a genuinely blank CSV cell,
  * distinguishable from an explicit "FALSE") and closes the round-trip gap
