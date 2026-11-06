@@ -1014,3 +1014,140 @@ test("AuthScreen's login-code input caps at 6 chars, matching the server's Verif
     }
   });
 });
+
+/**
+ * Round 1635: the same gap round 1367/1368/1475-1477/1496/1552 already
+ * closed for every other form on this screen with comparably effortful
+ * typed input -- AuthScreen itself had zero useBeforeUnloadWarning
+ * protection on its signup form (email + password + confirmPassword) or
+ * its login form (email + password), despite ChangeEmailPanel/
+ * ChangePasswordPanel already protecting the exact same shape of draft.
+ */
+test("AuthScreen warns before a tab close/refresh while a signup draft (email/password/confirm) is in progress, but not while every field is still empty", async () => {
+  await withJsdom(() => {
+    renderAuthScreen(() => {});
+
+    const emptyEvent = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(emptyEvent);
+    assert.equal(emptyEvent.defaultPrevented, false, "must not warn while the signup form hasn't been touched at all");
+
+    const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+    fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+
+    const eventAfterEmail = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventAfterEmail);
+    assert.equal(eventAfterEmail.defaultPrevented, true, "must warn once a real signup draft (just the email so far) is in progress");
+
+    const [, confirmInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+    fireEvent.change(emailInput, { target: { value: "" } });
+    fireEvent.change(confirmInput, { target: { value: "a-typed-confirmation" } });
+
+    const eventAfterConfirmOnly = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventAfterConfirmOnly);
+    assert.equal(
+      eventAfterConfirmOnly.defaultPrevented,
+      true,
+      "must warn even when only the confirm-password field (not email/password) holds a draft",
+    );
+  });
+});
+
+/**
+ * Sibling to the test above, for the login form's own email+password draft
+ * (no confirmPassword field in that mode) -- and confirms the warning is
+ * suppressed the moment the code-entry step takes over, matching
+ * pendingLoginCodeId's own "a different step is showing instead" shape
+ * that round 1155's own comment on this state describes.
+ */
+test("AuthScreen warns before a tab close/refresh while a login draft is in progress, but stops warning once the code-entry step replaces the form", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ requiresCode: true, loginCodeId: "code-id-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+      fireEvent.click(document.querySelector("button.link-button") as HTMLButtonElement);
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const passwordInput = document.querySelector('input[name="password"]') as HTMLInputElement;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+
+      const eventWhileTyping = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(eventWhileTyping);
+      assert.equal(eventWhileTyping.defaultPrevented, true, "must warn while a login draft is in progress");
+
+      await act(async () => {
+        fireEvent.submit(document.querySelector("form.auth-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.ok(document.querySelector('input[inputmode="numeric"]'), "the code-entry step must now be showing");
+
+      const eventDuringCodeStep = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(eventDuringCodeStep);
+      assert.equal(
+        eventDuringCodeStep.defaultPrevented,
+        false,
+        "must not warn once the code-entry step has taken over -- the email/password state is stale at that point, not an in-progress draft",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1635: the sibling gap for the reset-password form reached via a
+ * real emailed `?resetToken=...` link -- a brand-new password typed twice
+ * is exactly as effortful as this app's other protected password drafts,
+ * and losing it to a tab close means requesting an entirely new reset
+ * email (the token is single-use). Also confirms the warning correctly
+ * stops firing once the reset actually succeeds, mirroring
+ * ChangeEmailPanel's own `done`-exclusion test.
+ */
+test("AuthScreen warns before a tab close/refresh while a reset-password draft is in progress, but not once the reset has actually succeeded", async () => {
+  await withJsdom(
+    async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+      try {
+        renderAuthScreen(() => {});
+
+        const [newPasswordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+
+        const eventBeforeTyping = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(eventBeforeTyping);
+        assert.equal(eventBeforeTyping.defaultPrevented, false, "must not warn while the reset-password form hasn't been touched yet");
+
+        fireEvent.change(newPasswordInput, { target: { value: "brand-new-password" } });
+        fireEvent.change(confirmPasswordInput, { target: { value: "brand-new-password" } });
+
+        const eventWhileTyping = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(eventWhileTyping);
+        assert.equal(eventWhileTyping.defaultPrevented, true, "must warn while a reset-password draft is in progress");
+
+        await act(async () => {
+          fireEvent.submit(document.querySelector("form.auth-form")!);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        assert.match(document.body.textContent ?? "", /password has been reset/i, "the success message must now be showing");
+
+        const eventAfterSuccess = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(eventAfterSuccess);
+        assert.equal(
+          eventAfterSuccess.defaultPrevented,
+          false,
+          "must not warn once the reset has actually succeeded, even though the typed password fields are still technically non-empty",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+    "http://localhost/?resetToken=abc123",
+  );
+});

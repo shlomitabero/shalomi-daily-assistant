@@ -5,6 +5,7 @@ import { useTranslation } from "./i18n/LanguageContext.js";
 import { LanguageSwitcher } from "./i18n/LanguageSwitcher.js";
 import { PasswordInput } from "./PasswordInput.js";
 import { ThemeSwitcher } from "./theme/ThemeSwitcher.js";
+import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
   const { t, lang } = useTranslation();
@@ -63,6 +64,34 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
   // resend actually succeeds; cleared the moment the user resends again,
   // so it never lingers as a stale confirmation.
   const [forgotPasswordResent, setForgotPasswordResent] = useState(false);
+
+  // Round 1635: the same gap round 1367/1368/1475-1477/1496/1552 already
+  // closed for every other form on this screen with comparably effortful
+  // typed input (ChangeEmailPanel/ChangePasswordPanel's own email+password
+  // drafts chief among them) -- a tab close/refresh/navigation away while
+  // typing a signup email+password+confirm, or a login email+password,
+  // silently discarded it with zero warning. Excludes the three "a
+  // different step is showing instead" states (resetToken/
+  // forgotPasswordMode/pendingLoginCodeId) since none of their own fields
+  // (code, forgot-password email) are effortful enough to warrant this --
+  // consistent with this app's low-stakes-single-field exclusion elsewhere
+  // (e.g. GlobalSearchPanel's search box).
+  const hasUnsavedAuthDraft =
+    !resetToken &&
+    !forgotPasswordMode &&
+    !pendingLoginCodeId &&
+    (email.trim() !== "" || password.trim() !== "" || (mode === "signup" && confirmPassword.trim() !== ""));
+  useBeforeUnloadWarning(hasUnsavedAuthDraft);
+
+  // Round 1635: the sibling gap for the reset-password form reached via a
+  // real emailed `?resetToken=...` link -- typing a brand-new password
+  // twice, then losing it to an accidental tab close, means requesting an
+  // entirely new reset email, since the token is single-use. Excludes
+  // `resetDone` for the same reason ChangeEmailPanel's own `done` exclusion
+  // does: the success state leaves the typed fields sitting in state with
+  // nothing left to warn about.
+  const hasUnsavedResetDraft = !!resetToken && !resetDone && (resetNewPassword.trim() !== "" || resetConfirmPassword.trim() !== "");
+  useBeforeUnloadWarning(hasUnsavedResetDraft);
 
   /**
    * Round 1587: every `<form>` below still relies on native HTML5
