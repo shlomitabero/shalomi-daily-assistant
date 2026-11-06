@@ -3896,7 +3896,7 @@ test("App's handleRevokeOtherSessions is gated by window.confirm and its own bus
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
   function run(opts: { status: "idle" | "busy"; confirmReturns: boolean; apiFn: () => Promise<void> }) {
-    const state: { status: string } = { status: opts.status };
+    const state: { status: string; otherSessionCount: number | null } = { status: opts.status, otherSessionCount: null };
     const confirmCalls: string[] = [];
     const fn = new Function(
       "revokeOtherSessionsStatus",
@@ -3904,6 +3904,7 @@ test("App's handleRevokeOtherSessions is gated by window.confirm and its own bus
       "t",
       "revokeOtherSessions",
       "setRevokeOtherSessionsStatus",
+      "setOtherSessionCount",
       `${code}\nreturn handleRevokeOtherSessions;`,
     )(
       opts.status,
@@ -3911,6 +3912,7 @@ test("App's handleRevokeOtherSessions is gated by window.confirm and its own bus
       (key: string) => key,
       opts.apiFn,
       (v: string) => (state.status = v),
+      (v: number) => (state.otherSessionCount = v),
     ) as () => Promise<void>;
     return { fn, state, confirmCalls };
   }
@@ -3937,6 +3939,7 @@ test("App's handleRevokeOtherSessions is gated by window.confirm and its own bus
   await succeeded.fn();
   assert.equal(apiCalls, 1, "confirming must call the real revokeOtherSessions() API exactly once");
   assert.equal(succeeded.state.status, "done", "must land on the 'done' status once the API call succeeds");
+  assert.equal(succeeded.state.otherSessionCount, 0, "a successful revoke must also zero the local otherSessionCount, round 1640's own addition");
 
   // Idle, confirmed, API rejects: must land on "failed", not throw.
   const failed = run({
@@ -3948,6 +3951,58 @@ test("App's handleRevokeOtherSessions is gated by window.confirm and its own bus
   });
   await failed.fn();
   assert.equal(failed.state.status, "failed", "must land on the 'failed' status when the API call rejects, instead of throwing");
+});
+
+/**
+ * Round 1640: loadOtherSessionCount (nested inside the otherSessionCount
+ * effect, the same "named inner function extracted by this file's own
+ * handlerMatch regex" shape as checkMyRole/checkUnread above) populates
+ * otherSessionCount so the "log out other devices" button above can
+ * disable itself when there's nothing to revoke. A failed request must
+ * never surface an error -- it just leaves the button in its pre-round-
+ * 1640 always-enabled (null) state, the same "skip this tick" tolerance
+ * checkMyRole's own poll uses for a background check.
+ */
+test("App's loadOtherSessionCount sets otherSessionCount from the real API, respects the cancelled flag, and swallows a failed request", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {4}async function loadOtherSessionCount\(\) \{[\s\S]*?\n {4}\}\n/);
+  assert.ok(handlerMatch, "expected to find loadOtherSessionCount in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(opts: { cancelled: boolean; apiFn: () => Promise<{ count: number }> }) {
+    const state: { count: number | "untouched" } = { count: "untouched" };
+    const fn = new Function(
+      "cancelled",
+      "getOtherSessionCount",
+      "setOtherSessionCount",
+      `${code}\nreturn loadOtherSessionCount;`,
+    )(
+      opts.cancelled,
+      opts.apiFn,
+      (v: number) => (state.count = v),
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const resolved = run({ cancelled: false, apiFn: async () => ({ count: 2 }) });
+  await resolved.fn();
+  assert.equal(resolved.state.count, 2, "a successful request must set otherSessionCount to the real count");
+
+  // Mirrors checkMyRole/checkUnread's own cancelled-flag discipline: a
+  // request that resolves after the effect already cleaned up (project
+  // switch, logout, unmount) must never patch state for a tab that moved on.
+  const cancelled = run({ cancelled: true, apiFn: async () => ({ count: 3 }) });
+  await cancelled.fn();
+  assert.equal(cancelled.state.count, "untouched", "a resolved request must never set state once cancelled is true");
+
+  const failed = run({
+    cancelled: false,
+    apiFn: async () => {
+      throw new Error("network error");
+    },
+  });
+  await assert.doesNotReject(failed.fn(), "a failed request must never throw -- it just leaves otherSessionCount untouched");
+  assert.equal(failed.state.count, "untouched", "a failed request must never set otherSessionCount");
 });
 
 /**

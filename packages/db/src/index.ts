@@ -67,6 +67,7 @@ export {
   deleteExpiredSessions,
   deleteAllSessionsForUser,
   deleteOtherSessionsForUser,
+  countOtherSessionsForUser,
   deleteUser,
   getPasswordHash,
   updatePasswordHash,

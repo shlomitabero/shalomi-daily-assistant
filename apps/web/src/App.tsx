@@ -11,6 +11,7 @@ import {
   enhanceIdea,
   exportProject,
   getEntityCounts,
+  getOtherSessionCount,
   getToken,
   getWhatsAppStatus,
   listAutomationRules,
@@ -769,6 +770,10 @@ function AppContent() {
   // of a separate success/error banner, fading back to idle a couple
   // seconds later (see the matching useEffect near the topbar JSX below).
   const [revokeOtherSessionsStatus, setRevokeOtherSessionsStatus] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  // Round 1640: null until the one-shot fetch below resolves -- the button
+  // stays enabled (its pre-round-1640 behavior) rather than flashing
+  // disabled-then-enabled while that request is in flight.
+  const [otherSessionCount, setOtherSessionCount] = useState<number | null>(null);
   // Round 1566: same idle/busy/done/failed copyStatus shape as
   // revokeOtherSessionsStatus just above, for the "Resend verification
   // email" button inside the unverified-email banner (see the mount-time
@@ -2262,10 +2267,45 @@ function AppContent() {
     try {
       await revokeOtherSessions();
       setRevokeOtherSessionsStatus("done");
+      // Round 1640: the whole point of revoking is that there's now
+      // nothing left to revoke -- updating this locally instead of
+      // re-fetching avoids a redundant round-trip for a count the action
+      // itself already determines.
+      setOtherSessionCount(0);
     } catch {
       setRevokeOtherSessionsStatus("failed");
     }
   }
+
+  /**
+   * Round 1640: populates otherSessionCount once the real signed-in user
+   * is known, the same "wait for user?.id, not the pre-auth render" shape
+   * as the myRole poll and the other per-user effects in this file. A
+   * failure here (e.g. a flaky request) just leaves the button in its
+   * pre-round-1640 always-enabled state (null), never disabled.
+   */
+  useEffect(() => {
+    if (!user) {
+      setOtherSessionCount(null);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadOtherSessionCount() {
+      try {
+        const { count } = await getOtherSessionCount();
+        if (!cancelled) setOtherSessionCount(count);
+      } catch {
+        // A single failed background check isn't worth surfacing to the
+        // user -- the button just stays in its always-enabled (null) state.
+      }
+    }
+
+    loadOtherSessionCount();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   // Fades the button's own "done"/"failed" text back to its idle label a
   // couple seconds later, same cleanup-on-unmount discipline as
@@ -2422,7 +2462,8 @@ function AppContent() {
               type="button"
               className="secondary"
               onClick={handleRevokeOtherSessions}
-              disabled={revokeOtherSessionsStatus === "busy"}
+              disabled={revokeOtherSessionsStatus === "busy" || otherSessionCount === 0}
+              title={otherSessionCount === 0 ? t("topbar.logoutOtherDevices.none") : undefined}
               aria-live="polite"
               aria-atomic="true"
             >

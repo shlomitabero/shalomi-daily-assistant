@@ -1338,6 +1338,64 @@ test("POST /auth/sessions/revoke-others requires a valid session, the same as an
   });
 });
 
+/**
+ * Round 1640: GET /auth/sessions/other-count -- lets the "log out other
+ * devices" button check in advance whether there's anything to revoke,
+ * instead of always popping the confirm() dialog even for the common case
+ * of a single-device user with no other session at all.
+ */
+test("GET /auth/sessions/other-count reflects 0 with a single session, then the real count once a second device logs in, then 0 again after revoke-others", async () => {
+  await withServer(async (baseUrl) => {
+    const email = `other-count-${Date.now()}@example.com`;
+    const password = "correct-horse-battery";
+    const firstSessionToken = await signup(baseUrl, email);
+
+    const soloCountRes = await fetch(`${baseUrl}/api/auth/sessions/other-count`, {
+      headers: authHeaders(firstSessionToken),
+    });
+    assert.equal(soloCountRes.status, 200);
+    assert.deepEqual(await soloCountRes.json(), { count: 0 });
+
+    const secondLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const { token: secondSessionToken } = (await secondLoginRes.json()) as { token: string };
+
+    const twoSessionCountRes = await fetch(`${baseUrl}/api/auth/sessions/other-count`, {
+      headers: authHeaders(firstSessionToken),
+    });
+    assert.deepEqual(await twoSessionCountRes.json(), { count: 1 });
+
+    // The second session's own count excludes the first session the same
+    // way -- it's "how many OTHER sessions", not a shared total.
+    const fromSecondSessionRes = await fetch(`${baseUrl}/api/auth/sessions/other-count`, {
+      headers: authHeaders(secondSessionToken),
+    });
+    assert.deepEqual(await fromSecondSessionRes.json(), { count: 1 });
+
+    const revokeRes = await fetch(`${baseUrl}/api/auth/sessions/revoke-others`, {
+      method: "POST",
+      headers: authHeaders(firstSessionToken),
+    });
+    assert.equal(revokeRes.status, 204);
+
+    const afterRevokeCountRes = await fetch(`${baseUrl}/api/auth/sessions/other-count`, {
+      headers: authHeaders(firstSessionToken),
+    });
+    assert.deepEqual(await afterRevokeCountRes.json(), { count: 0 });
+  });
+});
+
+test("GET /auth/sessions/other-count requires a valid session, the same as any other authenticated route", async () => {
+  await withServer(async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/auth/sessions/other-count`);
+    assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code?: string }).code, "AUTH_REQUIRED");
+  });
+});
+
 test("changing your password rejects a new password shorter than 8 characters, the same minimum signup enforces", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, `change-pw-3-${Date.now()}@example.com`);

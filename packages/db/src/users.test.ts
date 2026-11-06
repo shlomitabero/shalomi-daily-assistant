@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openDatabase } from "./connection.js";
 import {
+  countOtherSessionsForUser,
   createSession,
   createUser,
   deleteAllSessionsForUser,
@@ -311,6 +312,56 @@ test("deleteOtherSessionsForUser is a harmless no-op for a user with no other se
 
   assert.doesNotThrow(() => deleteOtherSessionsForUser(db, user.id, "only-session"));
   assert.ok(getSessionUser(db, "only-session"), "the lone matching session must stay untouched");
+});
+
+/**
+ * Round 1640: countOtherSessionsForUser mirrors deleteOtherSessionsForUser's
+ * own exclusion of the keep-token and of other users' sessions, so the
+ * "log out other devices" button can know in advance whether there's
+ * anything for that action to actually revoke.
+ */
+test("countOtherSessionsForUser is 0 for a user with only the current session", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "u1@example.com", passwordHash: "x" });
+  createSession(db, { token: "current-session", userId: user.id, expiresAt: new Date(Date.now() + HOUR_MS).toISOString() });
+
+  assert.equal(countOtherSessionsForUser(db, user.id, "current-session"), 0);
+});
+
+test("countOtherSessionsForUser counts every OTHER session for this user, excluding keepToken and other users' sessions", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "u1@example.com", passwordHash: "x" });
+  const otherUser = createUser(db, { id: "u2", email: "u2@example.com", passwordHash: "x" });
+  const future = new Date(Date.now() + HOUR_MS).toISOString();
+  createSession(db, { token: "current-session", userId: user.id, expiresAt: future });
+  createSession(db, { token: "lost-laptop-session", userId: user.id, expiresAt: future });
+  createSession(db, { token: "borrowed-phone-session", userId: user.id, expiresAt: future });
+  createSession(db, { token: "other-users-session", userId: otherUser.id, expiresAt: future });
+
+  assert.equal(countOtherSessionsForUser(db, user.id, "current-session"), 2);
+  // Confirms this is the exact same set deleteOtherSessionsForUser would
+  // revoke, not an independent (and possibly inconsistent) query.
+  deleteOtherSessionsForUser(db, user.id, "current-session");
+  assert.equal(countOtherSessionsForUser(db, user.id, "current-session"), 0);
+});
+
+test("countOtherSessionsForUser excludes an expired other-session row, the same as getSessionUser's own expiry check", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const user = createUser(db, { id: "u1", email: "u1@example.com", passwordHash: "x" });
+  // Inserted directly (not via createSession, which opportunistically prunes
+  // expired rows on every call) -- this test is about countOtherSessionsForUser's
+  // own expiry filter, not deleteExpiredSessions's.
+  db.prepare("INSERT INTO sessions (token, userId, expiresAt) VALUES (?, ?, ?)").run(
+    hashSessionToken("stale-expired-session"),
+    user.id,
+    new Date(Date.now() - HOUR_MS).toISOString(),
+  );
+  createSession(db, { token: "current-session", userId: user.id, expiresAt: new Date(Date.now() + HOUR_MS).toISOString() });
+
+  assert.equal(countOtherSessionsForUser(db, user.id, "current-session"), 0);
 });
 
 /**

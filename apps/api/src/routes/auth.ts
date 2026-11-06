@@ -7,6 +7,7 @@ import {
   createPasswordResetToken,
   createSession,
   createUser,
+  countOtherSessionsForUser,
   deleteAllSessionsForUser,
   deleteEmailVerificationToken,
   deleteEmailVerificationTokensForUser,
@@ -962,6 +963,18 @@ export function createAuthRouter(
     // the token is guaranteed present here.
     deleteSession(db, extractBearerToken(req)!);
     res.status(204).end();
+  });
+
+  /**
+   * Round 1640: lets the "log out other devices" button (App.tsx) check in
+   * advance whether there's anything to revoke, so it can stay disabled
+   * (with an explanatory tooltip) for the overwhelmingly common case of a
+   * single-device user, instead of popping the confirm() dialog below for
+   * an action that would be a no-op. Same requireAuth + bearer-token-as-
+   * keep-token shape as the revoke-others route itself.
+   */
+  router.get("/auth/sessions/other-count", requireAuth(db), (req, res) => {
+    res.json({ count: countOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!) });
   });
 
   /**

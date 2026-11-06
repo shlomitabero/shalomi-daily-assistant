@@ -418,6 +418,15 @@ export function revokeOtherSessions(): Promise<void> {
 }
 
 /**
+ * Round 1640: lets the "log out other devices" button check in advance
+ * whether there's anything to revoke, mirroring revokeOtherSessions's own
+ * endpoint family.
+ */
+export function getOtherSessionCount(): Promise<{ count: number }> {
+  return request("/auth/sessions/other-count");
+}
+
+/**
  * `lang` (round 1252) picks which language the server's own
  * password-changed notification is written in, the same `changeEmail`
  * convention just below.

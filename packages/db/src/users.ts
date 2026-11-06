@@ -227,6 +227,23 @@ export function deleteOtherSessionsForUser(db: ForgeDatabase, userId: string, ke
 }
 
 /**
+ * Round 1640: lets the "log out other devices" button (App.tsx) know in
+ * advance whether there's anything to revoke, mirroring
+ * deleteOtherSessionsForUser's own exclusion of the keep-token -- without
+ * this, the button's confirm() dialog fires for the overwhelmingly common
+ * case of a single-device user with nothing else to log out of. Also
+ * excludes already-expired rows (same `expiresAt > now` condition
+ * getSessionUser uses), so a stale row deleteExpiredSessions hasn't swept
+ * yet never counts as a real other session.
+ */
+export function countOtherSessionsForUser(db: ForgeDatabase, userId: string, keepToken: string): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS count FROM sessions WHERE userId = ? AND token != ? AND expiresAt > ?")
+    .get(userId, hashSessionToken(keepToken), new Date().toISOString()) as { count: number };
+  return row.count;
+}
+
+/**
  * Deletes the user row itself -- the last step of "delete my account"
  * (routes/auth.ts), called only after every project this user owns has
  * already been deleted, every OTHER project's collaborator grant for them
