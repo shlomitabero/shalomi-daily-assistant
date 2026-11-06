@@ -23,7 +23,12 @@ export function addLedgerEntry({ type, amount, verified, description, opportunit
 }
 
 export function getLedgerSummary() {
-  return summarizeLedger(db.ledger.all(), todayKey());
+  // spentSoFar/lossSoFar are the exact figures canSpend()'s real-money gate
+  // already compares against settings.budget/maxLoss - until now the owner
+  // had no way to see how close they were to either limit except by
+  // waiting for a real action to actually get blocked. Dashboard.jsx uses
+  // these to warn before that happens, not just after.
+  return { ...summarizeLedger(db.ledger.all(), todayKey()), spentSoFar: totalSpentSoFar(), lossSoFar: totalLossSoFar() };
 }
 
 // A single non-numeric entry (corrupted data, a future caller that skips

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests } from '../db/store.js';
-import { addLedgerEntry, totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
+import { addLedgerEntry, totalSpentSoFar, totalLossSoFar, todayKey, getLedgerSummary } from './ledger.js';
 
 test('todayKey returns the Israel-local calendar date, not the UTC one', () => {
   // This app is built throughout for a Hebrew-speaking, Israel-based owner
@@ -52,6 +52,19 @@ test('totalSpentSoFar ignores a non-numeric amount instead of poisoning the tota
   db.ledger.insert({ id: 'led_bad', type: 'cost', amount: Number('not a number'), verified: true, description: 'corrupted', date: todayKey() });
   assert.equal(totalSpentSoFar(), 5);
   assert.ok(Number.isFinite(totalSpentSoFar()));
+});
+
+test('getLedgerSummary includes spentSoFar and lossSoFar, the exact figures canSpend() gates on', () => {
+  // Until now the only way for the owner to see how close they were to
+  // their configured budget/maxLoss was waiting for a real action to
+  // actually get blocked - Dashboard.jsx needs these two figures to warn
+  // before that happens.
+  __resetForTests();
+  addLedgerEntry({ type: 'cost', amount: 20, verified: true, description: 'ai' });
+  addLedgerEntry({ type: 'revenue', amount: 8, verified: true, description: 'sale' });
+  const summary = getLedgerSummary();
+  assert.equal(summary.spentSoFar, 20);
+  assert.equal(summary.lossSoFar, 12);
 });
 
 test('totalLossSoFar ignores unverified revenue when computing the loss', () => {
