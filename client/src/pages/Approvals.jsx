@@ -22,6 +22,19 @@ export default function Approvals() {
 
   useEffect(refresh, []);
 
+  // Unlike listDigests (capped server-side, server/src/routes/digest.js),
+  // this list is never capped server-side: Dashboard.jsx's pendingApprovals
+  // and OpportunityDetail.jsx's hasPublishApproval both scan the FULL
+  // getApprovals() response to find a specific opportunity's current
+  // approval status, however old it is. Capping the API response itself
+  // would risk the exact bug fixed for resolved opportunities, just
+  // worse here: an old still-unpublished approval silently stops counting
+  // as approved. So only what's rendered on this page is capped, newest
+  // first by createdAt, same precedent as Opportunities.jsx's resolved list.
+  const MAX_APPROVALS_SHOWN = 50;
+  const sortedApprovals = [...approvals].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const shownApprovals = sortedApprovals.slice(0, MAX_APPROVALS_SHOWN);
+
   async function onReject(id) {
     setError('');
     setBusyId(id);
@@ -40,7 +53,10 @@ export default function Approvals() {
       <h1>אישורים</h1>
       {error && <p className="form-error">{error}</p>}
       {approvals.length === 0 && <p className="hint">אין אישורים עדיין. אישור נוצר מתוך כרטיס הזדמנות כשהמצב הוא "אישור לביצוע".</p>}
-      {approvals.map((a) => {
+      {sortedApprovals.length > MAX_APPROVALS_SHOWN && (
+        <p className="hint">מוצגים {MAX_APPROVALS_SHOWN} האחרונים מתוך {sortedApprovals.length}.</p>
+      )}
+      {shownApprovals.map((a) => {
         const opp = opportunities.find((o) => o.id === a.opportunityId);
         const stillActionable = a.status === 'approved' && opp?.status === 'draft';
         return (
