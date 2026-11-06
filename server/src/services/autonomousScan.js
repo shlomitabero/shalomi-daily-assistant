@@ -33,6 +33,13 @@ export async function runAutonomousScan() {
   try {
     idea = await generateTopicIdea({ avoidTitles: existingTitles });
   } catch (err) {
+    // logAction alone only ever reached the in-app activity log - a real
+    // failure here (an invalid/expired ANTHROPIC_API_KEY, a rate limit, a
+    // network error) would otherwise be completely invisible in Railway's
+    // own log viewer, the first place anyone actually debugging "the scan
+    // isn't producing anything" would look, long before logging into the
+    // app itself to check the activity log.
+    console.error('autonomous scan: generateTopicIdea failed', err);
     logAction({ type: 'autonomous_scan', detail: { error: err.message }, result: 'failed' });
     return { ran: false, reason: err.message };
   }
@@ -41,6 +48,7 @@ export async function runAutonomousScan() {
   try {
     opportunity = await createDigitalProductOpportunity({ topic: idea.topic, audience: idea.audience, createdBy: 'autonomous_scan' });
   } catch (err) {
+    console.error('autonomous scan: createDigitalProductOpportunity failed', err);
     logAction({ type: 'autonomous_scan', detail: { error: err.message }, result: 'failed' });
     return { ran: false, reason: err.message };
   }
@@ -51,9 +59,14 @@ export async function runAutonomousScan() {
       await publishOpportunity(opportunity);
       opportunity = db.opportunities.get(opportunity.id);
     } catch (err) {
-      // publishOpportunity already logs the failure — this is a background
-      // job, not an HTTP request, so there's nothing to respond with; the
-      // opportunity just stays a draft for the owner to retry manually.
+      // publishOpportunity already logs the failure to the in-app activity
+      // log — this is a background job, not an HTTP request, so there's
+      // nothing to respond with; the opportunity just stays a draft for
+      // the owner to retry manually. Still worth a console.error though:
+      // a real Paddle outage here would otherwise be invisible in
+      // Railway's own log viewer, the first place anyone debugging
+      // "auto_limited isn't publishing anything" would actually look.
+      console.error('autonomous scan: auto-publish failed, opportunity remains a draft', err);
     }
   }
 

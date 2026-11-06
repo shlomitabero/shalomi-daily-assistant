@@ -140,6 +140,13 @@ test('runAutonomousScan reports a clean failure, with no opportunity created, wh
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(JSON.stringify(badTopicResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+  // logAction alone only ever reached the in-app activity log - a real
+  // failure here must also reach Railway's own log viewer (console.error),
+  // the first place anyone debugging "the scan isn't producing anything"
+  // would actually look, long before logging into the app itself.
+  const originalConsoleError = console.error;
+  let consoleErrorCalls = 0;
+  console.error = () => { consoleErrorCalls += 1; };
   try {
     const result = await runAutonomousScan();
     assert.equal(result.ran, false);
@@ -147,8 +154,10 @@ test('runAutonomousScan reports a clean failure, with no opportunity created, wh
     assert.equal(db.opportunities.all().length, 0);
     const logged = db.actions_log.where((a) => a.type === 'autonomous_scan')[0];
     assert.equal(logged.result, 'failed');
+    assert.equal(consoleErrorCalls, 1);
   } finally {
     globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
     for (const key of Object.keys(originalEnv)) {
       if (originalEnv[key] === undefined) delete process.env[key];
       else process.env[key] = originalEnv[key];
@@ -183,13 +192,18 @@ test('runAutonomousScan reports a clean failure, with no opportunity created, wh
     const body = call === 1 ? topicResponse : badDraftResponse;
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   };
+  const originalConsoleError = console.error;
+  let consoleErrorCalls = 0;
+  console.error = () => { consoleErrorCalls += 1; };
   try {
     const result = await runAutonomousScan();
     assert.equal(result.ran, false);
     assert.match(result.reason, /title\/guide\/salesHeadline/);
     assert.equal(db.opportunities.all().length, 0);
+    assert.equal(consoleErrorCalls, 1);
   } finally {
     globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
     for (const key of Object.keys(originalEnv)) {
       if (originalEnv[key] === undefined) delete process.env[key];
       else process.env[key] = originalEnv[key];
@@ -279,14 +293,21 @@ test('runAutonomousScan leaves the opportunity as a draft when auto-publish fail
     if (call === 2) return new Response(JSON.stringify(draftResponse), { status: 200, headers: { 'content-type': 'application/json' } });
     return { ok: false, text: async () => 'Paddle is down' }; // the product-creation call fails
   };
+  // A real Paddle outage here must also reach Railway's own log viewer,
+  // not just the in-app activity log publishOpportunity already writes to.
+  const originalConsoleError = console.error;
+  let consoleErrorCalls = 0;
+  console.error = () => { consoleErrorCalls += 1; };
   try {
     const result = await runAutonomousScan();
     assert.equal(result.ran, true);
     assert.equal(result.opportunity.status, 'draft');
     assert.equal(result.opportunity.paddlePriceId, null);
     assert.equal(db.opportunities.get(result.opportunity.id).status, 'draft');
+    assert.equal(consoleErrorCalls, 1);
   } finally {
     globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
     for (const key of Object.keys(originalEnv)) {
       if (originalEnv[key] === undefined) delete process.env[key];
       else process.env[key] = originalEnv[key];
