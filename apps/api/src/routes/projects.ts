@@ -2977,10 +2977,28 @@ export function createProjectsRouter(
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/transfer-ownership`, async () => {
         const project = requireProjectOwner(db, req.params.id, req.userId!);
-        if (getCollaboratorRole(db, project.id, parsed.data.userId) === null) {
+        const previousRole = getCollaboratorRole(db, project.id, parsed.data.userId);
+        if (previousRole === null) {
           throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
         }
         const updated = transferProjectOwnership(db, project.id, parsed.data.userId);
+        // Round 1654: docs/security.md's own "Section 40" note named
+        // role_changed/removed as this audit trail's scope (round 1636),
+        // but ownership transfer -- the single biggest access-change
+        // action in this file (round 1255's own doc comment just above)
+        // -- was left out of that same sweep, even though it's the exact
+        // "who changed whose access and how" event this table exists to
+        // capture. newRole: null mirrors "removed"'s own shape -- "owner"
+        // isn't a representable CollaboratorRole, so the action name
+        // itself conveys the outcome.
+        insertCollaboratorAccessChange(db, {
+          projectId: project.id,
+          targetUserId: parsed.data.userId,
+          changedByUserId: req.userId!,
+          action: "ownership_transferred",
+          previousRole,
+          newRole: null,
+        });
         const newOwner = findUserById(db, parsed.data.userId);
         if (newOwner && emailSender.configured) {
           const isHebrew = parsed.data.lang !== "en";

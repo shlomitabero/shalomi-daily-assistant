@@ -1,7 +1,12 @@
 import type { CollaboratorRole } from "@forge/shared";
 import type { ForgeDatabase } from "./connection.js";
 
-export type CollaboratorAccessChangeAction = "role_changed" | "removed";
+// Round 1654: widened to add "ownership_transferred" -- the single
+// biggest access-change action in this file (round 1255's own doc
+// comment) had no audit-trail entry at all, unlike its two siblings
+// (role_changed/removed, round 1636) despite sitting right next to them
+// in routes/projects.ts.
+export type CollaboratorAccessChangeAction = "role_changed" | "removed" | "ownership_transferred";
 
 export interface CollaboratorAccessChange {
   id: number;

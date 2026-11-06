@@ -19942,6 +19942,59 @@ test("POST .../transfer-ownership hands the project to an existing collaborator,
   });
 });
 
+/**
+ * Round 1654: round 1636's own audit-trail sweep logged role_changed/
+ * removed (confirmed by the test above this one) but never revisited
+ * transfer-ownership, despite it being the single biggest access-change
+ * action in this file (round 1255's own doc comment). Mirrors that same
+ * test's own GET .../collaborator-access-log read exactly, for the new
+ * "ownership_transferred" action.
+ */
+test("POST .../transfer-ownership records who transferred to whom, readable via GET .../collaborator-access-log", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-transfer-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const newOwnerEmail = `new-owner-transfer-audit-${randomUUID()}@example.com`;
+    await signup(baseUrl, newOwnerEmail);
+    const newOwnerUser = findUserByEmail(db, newOwnerEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: newOwnerEmail }),
+    });
+
+    const transferRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+      method: "POST",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ userId: newOwnerUser.id }),
+    });
+    assert.equal(transferRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { changes } = (await listRes.json()) as {
+      changes: { action: string; targetUserId: string; changedByUserId: string | null; previousRole: string | null; newRole: string | null }[];
+    };
+
+    const transfer = changes.find((c) => c.action === "ownership_transferred")!;
+    assert.ok(transfer, "the ownership transfer must have been logged");
+    assert.equal(transfer.targetUserId, newOwnerUser.id, "the new owner must be the logged target");
+    assert.equal(transfer.changedByUserId, ownerUser.id, "the previous owner must be the logged actor");
+    assert.equal(transfer.previousRole, "editor", "must record the collaborator role the new owner held just before the transfer");
+    assert.equal(transfer.newRole, null, "\"owner\" isn't a representable CollaboratorRole, same as the removed action's own newRole: null");
+  });
+});
+
 test("transferring ownership sends a real notification to the NEW owner, naming the project, when email is configured", async () => {
   const emailSender = createFakeEmailSender();
   await withServer(

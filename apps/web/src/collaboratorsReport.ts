@@ -34,7 +34,7 @@ export interface RecordDeletionForReport {
  * `deletedByEmail`.
  */
 export interface CollaboratorAccessChangeForReport {
-  action: "role_changed" | "removed";
+  action: "role_changed" | "removed" | "ownership_transferred";
   targetEmail: string;
   changedByEmail: string | null;
   previousRole: CollaboratorRole | null;
@@ -126,6 +126,14 @@ export function formatCollaboratorsReport(
             who: c.targetEmail,
             from: c.previousRole ? roleLabel(c.previousRole, t) : "",
             to: c.newRole ? roleLabel(c.newRole, t) : "",
+            by: c.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (c.action === "ownership_transferred") {
+        lines.push(
+          t("collab.report.ownershipTransferredEntry", {
+            who: c.targetEmail,
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
             date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
           }),

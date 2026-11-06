@@ -118,6 +118,28 @@ test("formatCollaboratorsReport falls back to the unknown-actor translation when
 });
 
 /**
+ * Round 1654: the sibling action to role_changed/removed above --
+ * ownership transfer was the one access-change action round 1636's own
+ * sweep missed, despite being the single biggest access-change action in
+ * the file (round 1255's own doc comment).
+ */
+test("formatCollaboratorsReport renders an ownership-transferred entry in the access-changes section", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [
+    {
+      action: "ownership_transferred",
+      targetEmail: "dana@example.com",
+      changedByEmail: "owner@example.com",
+      previousRole: "editor",
+      newRole: null,
+      changedAt: "2024-02-03T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Recent access changes:"));
+  assert.ok(result.includes("Ownership of the project was transferred to dana@example.com by owner@example.com"));
+});
+
+/**
  * Round 1639: the sibling report section to accessChanges above, for
  * entity/field label renames -- docs/security.md's own "Section 40" note
  * still named this as the one sub-gap this audit-trail family left open.
