@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { formatMoney } from '../labels.js';
+import { actionTypeLabel, formatMoney } from '../labels.js';
 
 const MODE_LABEL = {
   research: 'מחקר בלבד — איתור והצגת הזדמנויות, שום דבר לא מתבצע לבד',
@@ -184,6 +184,21 @@ export default function Dashboard() {
           <h2>ממתין לאישור ({pendingApprovals.length})</h2>
           <Link className="link" to="/approvals">הכל ←</Link>
         </div>
+        {/* Unlike "הזדמנויות פעילות" right above, this section showed only a
+            bare count with no preview of what's actually waiting - the owner
+            had to click through to "אישורים" just to see which action needs
+            their sign-off, even though this is exactly the kind of
+            actionable item this page's "what should I do now" framing
+            exists to surface directly. */}
+        {pendingApprovals.slice(0, 3).map((a) => {
+          const opp = opportunities.find((o) => o.id === a.opportunityId);
+          return (
+            <Link key={a.id} to={`/opportunities/${a.opportunityId}`} className="opp-row">
+              <span className="opp-title">{opp?.title ?? a.opportunityId}</span>
+              <span className="opp-profit">{actionTypeLabel(a.actionType)}</span>
+            </Link>
+          );
+        })}
       </section>
 
       <section className="section">
