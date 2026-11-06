@@ -39,6 +39,20 @@ test('generateDailyDigest warns in the real digest text when real spend is close
   assert.match(digest.text, /מתקרב לתקציב שהוגדר/);
 });
 
+test('generateDailyDigest warns in the real digest text when the real pending-draft count hits the cap', () => {
+  // Real wiring behind engine/digest.js's pure scan-paused logic -
+  // pendingDraftCount() must actually reach generateDailyDigest(), not
+  // just the hand-fed values the engine-level tests use. Demo drafts
+  // (productDraft.demo) must never count toward this, same as the scan's
+  // own cap check.
+  __resetForTests();
+  for (let i = 0; i < 5; i += 1) {
+    db.opportunities.insert({ id: makeId('opp'), title: `draft ${i}`, status: 'draft', productDraft: { demo: false } });
+  }
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /הסריקה האוטומטית מושהית — 5 הזדמנויות ממתינות לסקירה/);
+});
+
 test('generating again the same day updates the existing row instead of duplicating it', () => {
   // This is the bug this test guards against: the owner can click
   // "generate now" on the Digests page any number of times a day on top of

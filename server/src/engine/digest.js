@@ -3,6 +3,7 @@
 export function buildDailyDigest({
   ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null,
   approvedAwaitingPublish = 0, budget = null, budgetConfigured = false, maxLoss = null,
+  scanPaused = false, pendingDrafts = 0,
 }) {
   // Dashboard.jsx warns the owner in the app itself once spentSoFar/
   // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
@@ -36,6 +37,12 @@ export function buildDailyDigest({
     // approved-but-unpublished indefinitely with no daily reminder that real
     // money is one click away from actually starting to come in.
     ...(approvedAwaitingPublish > 0 ? [`✅ ${approvedAwaitingPublish} הזדמנויות מאושרות ומחכות לפרסום בפועל שלך.`] : []),
+    // The scanner logs its own skip as 'skipped: N drafts already awaiting
+    // review' - a result that matches neither "success" nor "failed"
+    // below, so without this line the scan could quietly stop producing
+    // anything new, every single cycle, with absolutely nothing in this
+    // digest explaining why.
+    ...(scanPaused ? [`⏸️ הסריקה האוטומטית מושהית — ${pendingDrafts} הזדמנויות ממתינות לסקירה שלך. סקור או דחה חלק מהן כדי שהסריקה תמשיך לחפש.`] : []),
     `פעולות שבוצעו: ${actionsToday.length}`,
     failuresToday.length
       ? `בעיות: ${failuresToday.map((f) => f.summary).join('; ')}`

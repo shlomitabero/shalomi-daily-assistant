@@ -4,6 +4,7 @@ import { buildDailyDigest } from '../engine/digest.js';
 import { rankOpportunities } from '../engine/ranking.js';
 import { computeNetProfit } from '../engine/feasibility.js';
 import { getSettings } from './settings.js';
+import { pendingDraftCount, MAX_PENDING_DRAFTS } from './opportunities.js';
 
 export function generateDailyDigest(now = new Date()) {
   const today = todayKey(now);
@@ -50,11 +51,21 @@ export function generateDailyDigest(now = new Date()) {
     .filter((a) => db.opportunities.get(a.opportunityId)?.status === 'draft')
     .length;
 
+  // runAutonomousScan logs this as a 'skipped: N drafts already awaiting
+  // review' result, which matches neither actionsToday's 'success' filter
+  // nor failuresToday's 'failed' prefix above - a scan quietly skipping
+  // itself every 4 hours because the draft backlog is full was completely
+  // invisible in the digest, with nothing telling the owner the automatic
+  // loop has effectively paused until they review the backlog.
+  const pendingDrafts = pendingDraftCount();
+  const scanPaused = pendingDrafts >= MAX_PENDING_DRAFTS;
+
   const settings = getSettings();
   const digest = buildDailyDigest({
     ledgerSummary, actionsToday, failuresToday, topOpportunity,
     emergencyStop: settings.emergencyStop, mode: settings.mode, approvedAwaitingPublish,
     budget: settings.budget, budgetConfigured: settings.budgetConfigured, maxLoss: settings.maxLoss,
+    scanPaused, pendingDrafts,
   });
 
   // The owner can click "generate now" on the Digests page any number of

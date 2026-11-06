@@ -121,3 +121,18 @@ test('says nothing about maxLoss when it is not configured (null)', () => {
   });
   assert.doesNotMatch(digest.text, /מתקרב להפסד המרבי/);
 });
+
+test('warns that the automatic scan is paused once the pending-draft cap is reached', () => {
+  // runAutonomousScan logs this as a 'skipped: N drafts already awaiting
+  // review' result, which matches neither actionsToday's success filter
+  // nor failuresToday's failed prefix - without this line, a scan quietly
+  // skipping itself every cycle had nothing in the digest explaining why
+  // nothing new ever shows up.
+  const digest = buildDailyDigest({ ledgerSummary, scanPaused: true, pendingDrafts: 5 });
+  assert.match(digest.text, /הסריקה האוטומטית מושהית — 5 הזדמנויות ממתינות לסקירה/);
+});
+
+test('says nothing about a paused scan when under the pending-draft cap', () => {
+  const digest = buildDailyDigest({ ledgerSummary, scanPaused: false, pendingDrafts: 2 });
+  assert.doesNotMatch(digest.text, /הסריקה האוטומטית מושהית/);
+});
