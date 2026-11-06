@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { z } from "zod";
@@ -922,12 +922,30 @@ async function fireWebhookAction(
     // null (every rule created before this round, or one that simply never
     // set it) leaves this identical to the request this function always
     // sent.
+    // Round 1645: the bearer token above only ever proves the SENDER knows
+    // the secret at connection time -- it says nothing about the body a
+    // receiver actually gets, over a hop (a logging proxy, a misconfigured
+    // intermediary) that could alter it in transit. This feature's own
+    // doc comments above advertise compatibility with "Zapier, Slack, Make,
+    // or any other system" -- GitHub/Stripe/Shopify-style webhook receivers
+    // all document an HMAC body signature (not just a bearer header) as
+    // the expected way to verify a payload wasn't tampered with, precisely
+    // because a header and the body it's meant to vouch for can take
+    // different paths through middleboxes. Computed over the exact bytes
+    // sent (bodyString, not the payload object -- re-serializing could
+    // reorder keys and produce a signature that doesn't match what the
+    // receiver hashes), using the same webhookSecret already gating the
+    // Authorization header, so a rule with no secret set sends neither.
+    const bodyString = JSON.stringify(payload);
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (rule.webhookSecret) headers.authorization = `Bearer ${rule.webhookSecret}`;
+    if (rule.webhookSecret) {
+      headers.authorization = `Bearer ${rule.webhookSecret}`;
+      headers["x-forge-signature"] = `sha256=${createHmac("sha256", rule.webhookSecret).update(bodyString).digest("hex")}`;
+    }
     const res = await queuedWebhookFetch(rule.webhookUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: bodyString,
       signal: controller.signal,
       redirect: "manual",
     });

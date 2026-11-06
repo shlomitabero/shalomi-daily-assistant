@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -2900,6 +2901,11 @@ test("runAutomationsForRecordChange posts a JSON payload to the webhook URL and 
   assert.equal(payload.project.id, project.id);
   assert.equal(getAutomationRule(db, project.id, rule.id)!.lastStatus, "sent");
   assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, undefined, "no webhookSecret was configured -- no Authorization header at all");
+  assert.equal(
+    (calls[0]!.init.headers as Record<string, string>)["x-forge-signature"],
+    undefined,
+    "no webhookSecret was configured -- there is nothing to sign with, so no signature header either",
+  );
 });
 
 /**
@@ -3084,6 +3090,53 @@ test("runAutomationsForRecordChange sends the rule's webhookSecret as an Authori
   assert.equal(calls.length, 1);
   assert.equal((calls[0]!.init.headers as Record<string, string>).authorization, "Bearer s3cr3t-token");
   assert.equal((calls[0]!.init.headers as Record<string, string>)["content-type"], "application/json", "the existing content-type header must still be sent");
+});
+
+/**
+ * Round 1645: before this round, the bearer token above was the only
+ * thing fireWebhookAction ever sent to let a receiver verify a delivery --
+ * it proves the sender knew the secret at connection time, but says
+ * nothing about whether the body a receiver actually gets matches what
+ * this server sent, over any hop (a logging proxy, a misconfigured
+ * intermediary) that could alter it in transit. GitHub/Stripe/Shopify-
+ * style webhook receivers -- the exact kind of integration this feature's
+ * own doc comments name (Zapier/Slack/Make) -- all document an HMAC body
+ * signature as the expected verification mechanism. Confirms the real
+ * outbound request carries `X-Forge-Signature: sha256=<hex>`, computed
+ * over the exact JSON bytes sent, using the rule's own webhookSecret as
+ * the HMAC key -- and that it's reproducible by any receiver who knows
+ * that same secret (not just present with some arbitrary value).
+ */
+test("runAutomationsForRecordChange signs the webhook body with an X-Forge-Signature HMAC header, verifiable against the rule's own webhookSecret", async () => {
+  const { db, project } = setupProject();
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    webhookSecret: "s3cr3t-token",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init! });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.length, 1);
+  const bodySent = calls[0]!.init.body as string;
+  const expectedSignature = `sha256=${createHmac("sha256", "s3cr3t-token").update(bodySent).digest("hex")}`;
+  assert.equal((calls[0]!.init.headers as Record<string, string>)["x-forge-signature"], expectedSignature);
 });
 
 /**
