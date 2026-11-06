@@ -999,6 +999,7 @@ test("the generated server.js's own feedRecordDisplayLabel renders a date displa
 test("the generated server.js's own feedRecordDisplayLabel renders a number display field with locale thousands separators, not the raw ungrouped digits", () => {
   const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
   const feedDisplayFieldHintsSrc = serverJs.match(/const FEED_DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const feedPhoneFieldHintsSrc = serverJs.match(/const FEED_PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const pickFeedDisplayFieldSrc = serverJs.match(/function pickFeedDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
   const feedRecordDisplayLabelSrc = serverJs.match(/function feedRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
   const feedRelationDisplayLabelSrc = serverJs.match(/function feedRelationDisplayLabel\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
@@ -1006,12 +1007,13 @@ test("the generated server.js's own feedRecordDisplayLabel renders a number disp
   const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     feedDisplayFieldHintsSrc &&
+      feedPhoneFieldHintsSrc &&
       pickFeedDisplayFieldSrc &&
       feedRecordDisplayLabelSrc &&
       feedRelationDisplayLabelSrc &&
       stripBidiMarksSrc &&
       feedFormatIcsDescriptionNumberSrc,
-    "expected to find FEED_DISPLAY_FIELD_NAME_HINTS/pickFeedDisplayField/feedRecordDisplayLabel/feedRelationDisplayLabel/stripBidiMarks/feedFormatIcsDescriptionNumber in generated server.js",
+    "expected to find FEED_DISPLAY_FIELD_NAME_HINTS/FEED_PHONE_FIELD_NAME_HINTS/pickFeedDisplayField/feedRecordDisplayLabel/feedRelationDisplayLabel/stripBidiMarks/feedFormatIcsDescriptionNumber in generated server.js",
   );
 
   const stockLevelEntity = {
@@ -1023,7 +1025,7 @@ test("the generated server.js's own feedRecordDisplayLabel renders a number disp
   };
   const feedRelationDisplayLabel = new Function(
     "ENTITIES",
-    `${stripBidiMarksSrc}\n${feedFormatIcsDescriptionNumberSrc}\n${feedDisplayFieldHintsSrc}\n${pickFeedDisplayFieldSrc}\n${feedRecordDisplayLabelSrc}\n${feedRelationDisplayLabelSrc}\nreturn feedRelationDisplayLabel;`,
+    `${stripBidiMarksSrc}\n${feedFormatIcsDescriptionNumberSrc}\n${feedDisplayFieldHintsSrc}\n${feedPhoneFieldHintsSrc}\n${pickFeedDisplayFieldSrc}\n${feedRecordDisplayLabelSrc}\n${feedRelationDisplayLabelSrc}\nreturn feedRelationDisplayLabel;`,
   )([stockLevelEntity]);
 
   const stockField = { name: "stock", type: "relation", relationTo: "StockLevel" };
@@ -1031,6 +1033,60 @@ test("the generated server.js's own feedRecordDisplayLabel renders a number disp
     feedRelationDisplayLabel(stockField, 7, { StockLevel: new Map([[7, { id: 7, quantity: 1500, warehouseId: 2 }]]) }),
     "1,500",
     "must render the number field with real locale thousands separators in the feed's own DESCRIPTION, not the raw \"1500\"",
+  );
+});
+
+/**
+ * Round 1649: the live Forge AI backend's own calendarFeed.ts was fixed in
+ * round 1642 so a phone-like-named number display field (pickDisplayField's
+ * own last-resort fallback can land on one, same as the number test just
+ * above) is never run through toLocaleString's thousands-grouping -- a
+ * phone number isn't a quantity, and "972,501,234,567" is not a valid
+ * number to dial back. This exported app's own `feedRecordDisplayLabel`
+ * (the generated server.js's sibling copy backing its own public calendar-
+ * feed routes) carries the exact same bug, missed by round 1642's own grep
+ * sweep (its pattern required the function name to start with
+ * "recordDisplayLabel", which "feedRecordDisplayLabel" doesn't).
+ */
+test("the generated server.js's own feedRecordDisplayLabel renders a phone-like-named number display field as plain digits, not locale-grouped", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const feedDisplayFieldHintsSrc = serverJs.match(/const FEED_DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const feedPhoneFieldHintsSrc = serverJs.match(/const FEED_PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickFeedDisplayFieldSrc = serverJs.match(/function pickFeedDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedRecordDisplayLabelSrc = serverJs.match(/function feedRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedRelationDisplayLabelSrc = serverJs.match(/function feedRelationDisplayLabel\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    feedDisplayFieldHintsSrc &&
+      feedPhoneFieldHintsSrc &&
+      pickFeedDisplayFieldSrc &&
+      feedRecordDisplayLabelSrc &&
+      feedRelationDisplayLabelSrc &&
+      stripBidiMarksSrc &&
+      feedFormatIcsDescriptionNumberSrc,
+    "expected to find FEED_DISPLAY_FIELD_NAME_HINTS/FEED_PHONE_FIELD_NAME_HINTS/pickFeedDisplayField/feedRecordDisplayLabel/feedRelationDisplayLabel/stripBidiMarks/feedFormatIcsDescriptionNumber in generated server.js",
+  );
+
+  const applicantEntity = {
+    name: "JobApplicant",
+    fields: [
+      { name: "phone", type: "number" },
+      { name: "positionId", type: "relation", relationTo: "Position" },
+    ],
+  };
+  const feedRelationDisplayLabel = new Function(
+    "ENTITIES",
+    `${stripBidiMarksSrc}\n${feedFormatIcsDescriptionNumberSrc}\n${feedDisplayFieldHintsSrc}\n${feedPhoneFieldHintsSrc}\n${pickFeedDisplayFieldSrc}\n${feedRecordDisplayLabelSrc}\n${feedRelationDisplayLabelSrc}\nreturn feedRelationDisplayLabel;`,
+  )([applicantEntity]);
+
+  const applicantField = { name: "applicant", type: "relation", relationTo: "JobApplicant" };
+  assert.equal(
+    feedRelationDisplayLabel(applicantField, 9, {
+      JobApplicant: new Map([[9, { id: 9, phone: 972501234567, positionId: 2 }]]),
+    }),
+    "972501234567",
+    "a phone-like-named number display field must render as plain digits in the feed's own DESCRIPTION, not locale-grouped as \"972,501,234,567\"",
   );
 });
 

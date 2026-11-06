@@ -1188,6 +1188,14 @@ app.get("/api/backup", (req, res) => {
 const FEED_DATE_FIELD_NAME_HINTS = ["date", "appointmentdate", "scheduleddate", "eventdate", "duedate", "startdate"];
 const FEED_END_DATE_FIELD_NAME_HINTS = ["enddate", "returndate", "checkoutdate", "untildate", "todate"];
 const FEED_DISPLAY_FIELD_NAME_HINTS = ["name", "title"];
+// Mirrors the live apps/api/src/calendarFeed.ts's own PHONE_FIELD_NAME_HINTS
+// exactly (round 1642's fix there, and entityFormatting.ts/automations.ts's
+// canonical list this file's own EntityView.jsx template already carries
+// at its own PHONE_FIELD_NAME_HINTS, round 1642). This template
+// (renderServerJs) is a separate generated file from EntityView.jsx's own
+// template with no access to that copy, so feedRecordDisplayLabel below
+// needs its own.
+const FEED_PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
 
 function findFeedDateField(fields) {
   const dateFields = fields.filter((f) => f.type === "date");
@@ -1315,7 +1323,15 @@ function feedRecordDisplayLabel(entity, record) {
   // feedFormatIcsDescriptionNumber (below, hoisted) already exists in
   // this template for the DESCRIPTION line itself but was never reused
   // here.
-  if (field && field.type === "number" && typeof value === "number") return String(feedFormatIcsDescriptionNumber(value));
+  // Round 1649: a phone-like-named number field must never be locale-
+  // grouped here either -- mirrors calendarFeed.ts's own round-1642 fix
+  // exactly (see FEED_PHONE_FIELD_NAME_HINTS above), this file's own
+  // sibling copy of the same bug, missed by round 1642's own grep sweep
+  // because this function's name doesn't start with "recordDisplayLabel".
+  if (field && field.type === "number" && typeof value === "number") {
+    if (FEED_PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
+    return String(feedFormatIcsDescriptionNumber(value));
+  }
   if (field && field.type === "relation") return \`#\${record.id}\`;
   if (field && field.type === "file") return \`#\${record.id}\`;
   return String(value);
