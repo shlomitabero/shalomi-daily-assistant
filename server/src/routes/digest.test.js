@@ -21,6 +21,24 @@ test('listDigests returns digests newest-first regardless of insertion order', (
   assert.deepEqual(res.body.digests.map((d) => d.text), ['newest', 'middle', 'old']);
 });
 
+test('listDigests caps the response at the 90 most recent digests instead of returning an unbounded list', () => {
+  // One digest a day (generateDailyDigest is idempotent per day) means
+  // this list only ever grows - without a cap, a year of real daily use
+  // would mean returning and rendering 365+ digests on one page.
+  __resetForTests();
+  for (let i = 0; i < 95; i += 1) {
+    const day = String(i + 1).padStart(3, '0');
+    db.digests.insert({ id: makeId('dig'), date: `day-${day}`, text: `digest ${i}`, generatedAt: new Date(2026, 0, i + 1).toISOString() });
+  }
+  const res = makeRes();
+  listDigests({}, res);
+  assert.equal(res.body.digests.length, 90);
+  // Still the 90 most recent ones, not an arbitrary slice - the 5 oldest
+  // (digest 0-4) must be the ones left out.
+  assert.equal(res.body.digests[0].text, 'digest 94');
+  assert.ok(!res.body.digests.some((d) => d.text === 'digest 4'));
+});
+
 test('listDigests returns an empty list rather than throwing when there are no digests', () => {
   __resetForTests();
   const res = makeRes();
