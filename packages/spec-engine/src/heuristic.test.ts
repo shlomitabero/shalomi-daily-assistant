@@ -1341,6 +1341,44 @@ test("JobApplicant has a phone field, like every other person-type domain entity
 });
 
 /**
+ * Round 1655: rounds 1629/1641 each described the sibling person-type
+ * entities (Customer, Courier, Student, Patient, Vendor, Volunteer) as
+ * carrying "name/email" alongside the phone field they were fixing, but
+ * that was never actually true for Courier -- it had no email field or
+ * label at all, unlike every other person-type entity in this file. A
+ * business wanting to email a courier their delivery schedule had nowhere
+ * to put that address.
+ */
+test("Courier has an email field, like every other person-type domain entity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("Track our delivery couriers: their name, email, phone, and vehicle type.");
+
+  const courier = spec.entities.find((e) => e.name === "Courier")!;
+  assert.ok(courier, "expected the Courier entity to be generated");
+  const emailField = courier.fields.find((f) => f.name === "email");
+  assert.ok(emailField, "Courier must have an email field, matching every other person-type domain entity");
+  assert.equal(emailField!.type, "text");
+  assert.equal(emailField!.required, false);
+});
+
+/**
+ * Round 1655: the same gap as Courier just above (see its own comment) --
+ * Patient had no email field or label either. A clinic wanting to email
+ * appointment reminders had nowhere to put a patient's email address.
+ */
+test("Patient has an email field, like every other person-type domain entity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("A clinic app to track patients: their name, email, phone, and date of birth.");
+
+  const patient = spec.entities.find((e) => e.name === "Patient")!;
+  assert.ok(patient, "expected the Patient entity to be generated");
+  const emailField = patient.fields.find((f) => f.name === "email");
+  assert.ok(emailField, "Patient must have an email field, matching every other person-type domain entity");
+  assert.equal(emailField!.type, "text");
+  assert.equal(emailField!.required, false);
+});
+
+/**
  * Regression test for a real bug found in round 447: Course's bare
  * "courses" keyword is a substring of "discourses" -- an ordinary word in
  * a plain discussion/forum description that has nothing to do with

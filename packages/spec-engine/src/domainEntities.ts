@@ -633,7 +633,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     ],
     labelHe: "שליחים",
     descriptionHe: "מי שמבצע את המשלוח ללקוח.",
-    fieldLabelsHe: { name: "שם", phone: "טלפון", vehicleType: "סוג רכב", status: "סטטוס" },
+    // Round 1655: rounds 1629/1641 each listed Courier alongside the
+    // sibling person-type entities while fixing a different field's own
+    // gap (phone), describing them all as carrying "name/email" -- but
+    // that was never actually true for Courier specifically, which had no
+    // email field or label at all, unlike every other person-type entity
+    // in this file (Customer, Employee, Student, JobApplicant, Vendor,
+    // Volunteer).
+    fieldLabelsHe: { name: "שם", email: "אימייל", phone: "טלפון", vehicleType: "סוג רכב", status: "סטטוס" },
     enumLabelsHe: {
       vehicleType: { Bike: "אופניים", Scooter: "קטנוע", Car: "רכב" },
       status: { Available: "זמין", OnDelivery: "במשלוח", Offline: "לא זמין" },
@@ -643,6 +650,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       description: "The person who delivers an order to a customer.",
       fields: [
         { name: "name", type: "text", required: true },
+        { name: "email", type: "text", required: false },
         { name: "phone", type: "text", required: false },
         {
           name: "vehicleType",
@@ -842,12 +850,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     ],
     labelHe: "מטופלים",
     descriptionHe: "מי שמקבל טיפול רפואי מהעסק.",
-    fieldLabelsHe: { name: "שם", phone: "טלפון", dateOfBirth: "תאריך לידה", notes: "הערות רפואיות" },
+    // Round 1655: same gap as Courier just above (see its own comment) --
+    // Patient had no email field or label either, unlike every other
+    // person-type entity in this file.
+    fieldLabelsHe: { name: "שם", email: "אימייל", phone: "טלפון", dateOfBirth: "תאריך לידה", notes: "הערות רפואיות" },
     entity: {
       name: "Patient",
       description: "A person receiving medical care from the business.",
       fields: [
         { name: "name", type: "text", required: true },
+        { name: "email", type: "text", required: false },
         { name: "phone", type: "text", required: false },
         { name: "dateOfBirth", type: "date", required: false },
         { name: "notes", type: "longtext", required: false },
