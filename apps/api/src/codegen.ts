@@ -3749,6 +3749,12 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
   const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 
+  // Round 1630: mirrors the identical leniency round 1627 added to the
+  // inbound-webhook route's own number parsing -- a real spreadsheet
+  // (Excel/Google Sheets with a currency-formatted column) plausibly
+  // produces "$1,234.56"/"1,234", which a strict Number() parse rejects.
+  const CSV_NUMBER_FORMATTING = /[,$€£₪\s]/g;
+
   // Round 1182: case-insensitive, mirroring the established relationTo convention (rounds 1159-1181).
   const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) && !!(relatedRecords && relatedRecords[f.relationTo]);
 
@@ -3917,7 +3923,11 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
           break;
         }
       } else if (field.type === "number") {
-        const n = Number(raw);
+        let n = Number(raw);
+        if (!Number.isFinite(n)) {
+          const cleaned = raw.replace(CSV_NUMBER_FORMATTING, "");
+          if (cleaned !== "") n = Number(cleaned);
+        }
         if (!Number.isFinite(n)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
           break;

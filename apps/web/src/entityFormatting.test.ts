@@ -2485,6 +2485,39 @@ test("buildImportRecords rejects \"Infinity\"/\"-Infinity\" as a number, instead
   assert.match(result.errors[1], /Row 2.*Amount/);
 });
 
+/**
+ * Regression test (round 1630): mirrors the identical leniency round 1627
+ * added to the inbound-webhook route's own number parsing. A real
+ * spreadsheet (Excel/Google Sheets with a currency-formatted column) or an
+ * accounting export plausibly produces "$1,234.56"/"1,234" for a number
+ * cell -- a strict Number() parse used to reject the whole row as an
+ * import error, even though this app's own CSV export never emits that
+ * formatting (so there's no round-trip property this could break). A cell
+ * that's nothing but currency symbols/whitespace (e.g. a bare "$") must
+ * still be rejected, not silently coerced to 0.
+ */
+test("buildImportRecords accepts a currency/thousands-separator-formatted number cell, but still rejects a cell that's only currency symbols", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "$1,234.56"],
+    ["Beta LLC", "1,234"],
+    ["Gamma Inc", "€99.90"],
+    ["Delta Inc", "$"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { client: "Acme Corp", amount: 1234.56 },
+    { client: "Beta LLC", amount: 1234 },
+    { client: "Gamma Inc", amount: 99.9 },
+  ]);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 4.*Amount/);
+});
+
 test("buildImportRecords rejects a date column value that isn't a real, well-formed calendar date", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },

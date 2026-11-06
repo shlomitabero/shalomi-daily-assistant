@@ -1948,6 +1948,21 @@ const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 
 /**
+ * Round 1630: a CSV cell for a number field that fails a strict `Number()`
+ * parse is retried once with currency symbols/thousands-separators/
+ * whitespace stripped before the row is rejected -- the exact leniency
+ * round 1627 already added to the inbound-webhook route's own number
+ * parsing (apps/api/src/routes/webhookIn.ts's WEBHOOK_NUMBER_FORMATTING),
+ * for the identical reason: a real spreadsheet (Excel/Google Sheets with a
+ * currency-formatted column) or an accounting export plausibly produces
+ * "$1,234.56"/"1,234"/"€99,90", and this app's own CSV export never emits
+ * that formatting (fieldDisplayValue deliberately keeps numbers raw so a
+ * round-trip through this exact function still works -- see that
+ * function's own comment), so this cannot mask a genuine round-trip bug.
+ */
+const CSV_NUMBER_FORMATTING = /[,$€£₪\s]/g;
+
+/**
  * Turns parsed CSV rows into record payloads matching `fields`' types --
  * the reverse of `fieldDisplayValue`, so a file this app exported (or a
  * hand-edited copy of one) round-trips back in. Columns are matched to
@@ -2190,7 +2205,14 @@ export function buildImportRecords(
           break;
         }
       } else if (field.type === "number") {
-        const n = Number(raw);
+        let n = Number(raw);
+        if (!Number.isFinite(n)) {
+          const cleaned = raw.replace(CSV_NUMBER_FORMATTING, "");
+          // Guard against a cell that's nothing but currency
+          // symbols/whitespace (e.g. a bare "$") -- Number("") is 0, not
+          // NaN, which would otherwise silently import as a real zero.
+          if (cleaned !== "") n = Number(cleaned);
+        }
         // Number.isFinite, not just !Number.isNaN: Number("Infinity") is
         // Infinity, not NaN, so it passes a NaN-only check -- but
         // JSON.stringify silently turns Infinity/-Infinity into null
