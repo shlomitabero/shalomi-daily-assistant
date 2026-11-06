@@ -1012,7 +1012,18 @@ function backupRecordDisplayLabel(entity, record) {
   // raw un-grouped digits into the backup CSV as a relation column's own
   // display label. stripBidiMarks (below, hoisted) matches this same
   // server.js template's own established convention.
-  if (field && field.type === "number" && typeof value === "number") return stripBidiMarks(value.toLocaleString());
+  // Round 1651: a phone-like-named number field must never be locale-
+  // grouped here either -- mirrors displayField.ts's own round-1642 fix
+  // exactly (see FEED_PHONE_FIELD_NAME_HINTS, hoisted below, reused here
+  // rather than duplicated since it's already this same renderServerJs
+  // template's own copy of that constant) -- this function's own sibling
+  // in this same template, feedRecordDisplayLabel, got this fix in round
+  // 1649 but it was never ported to this one, a third call site round
+  // 1649's own scope never checked.
+  if (field && field.type === "number" && typeof value === "number") {
+    if (FEED_PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
+    return stripBidiMarks(value.toLocaleString());
+  }
   return String(value);
 }
 

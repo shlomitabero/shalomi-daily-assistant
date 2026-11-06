@@ -17628,9 +17628,10 @@ test("the exported server.js's own backupRecordDisplayLabel renders a number dis
   const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
   const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedPhoneFieldHintsSrc = serverJs.match(/const FEED_PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   assert.ok(
-    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && stripBidiMarksSrc,
-    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/stripBidiMarks in generated server.js",
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && stripBidiMarksSrc && feedPhoneFieldHintsSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/stripBidiMarks/FEED_PHONE_FIELD_NAME_HINTS in generated server.js",
   );
 
   const stockLevelEntity = {
@@ -17642,7 +17643,7 @@ test("the exported server.js's own backupRecordDisplayLabel renders a number dis
   };
   const backupFieldDisplayValue = new Function(
     "ENTITIES",
-    `${stripBidiMarksSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+    `${stripBidiMarksSrc}\n${feedPhoneFieldHintsSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
   )([stockLevelEntity]);
 
   const stockField = { name: "stock", type: "relation", relationTo: "StockLevel" };
@@ -17650,6 +17651,46 @@ test("the exported server.js's own backupRecordDisplayLabel renders a number dis
     backupFieldDisplayValue(stockField, 7, { StockLevel: new Map([[7, { id: 7, quantity: 1500, warehouseId: 2 }]]) }),
     "1,500",
     "must render the number field with real locale thousands separators into the backup CSV, not the raw \"1500\"",
+  );
+});
+
+/**
+ * Round 1651: the live apps/api/src/displayField.ts's own round-1642 fix
+ * (a phone-like-named number display field must never be locale-grouped)
+ * was ported to this same template's feedRecordDisplayLabel in round 1649,
+ * but never to this third, separately-named sibling -- backupRecordDisplayLabel
+ * backs the exported app's own "Backup all data" CSV/ZIP endpoint, a
+ * genuinely different call site from the calendar feed round 1649 fixed.
+ */
+test("the exported server.js's own backupRecordDisplayLabel renders a phone-like-named number display field as plain digits, not locale-grouped", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const backupRecordDisplayLabelSrc = serverJs.match(/function backupRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupPickDisplayFieldSrc = serverJs.match(/const BACKUP_DISPLAY_FIELD_HINTS[\s\S]*?\nfunction backupPickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const backupFieldDisplayValueSrc = serverJs.match(/function backupFieldDisplayValue\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedPhoneFieldHintsSrc = serverJs.match(/const FEED_PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  assert.ok(
+    backupRecordDisplayLabelSrc && backupPickDisplayFieldSrc && backupFieldDisplayValueSrc && stripBidiMarksSrc && feedPhoneFieldHintsSrc,
+    "expected to find backupRecordDisplayLabel/backupPickDisplayField/backupFieldDisplayValue/stripBidiMarks/FEED_PHONE_FIELD_NAME_HINTS in generated server.js",
+  );
+
+  const applicantEntity = {
+    name: "JobApplicant",
+    fields: [
+      { name: "phone", type: "number" },
+      { name: "positionId", type: "relation", relationTo: "Position" },
+    ],
+  };
+  const backupFieldDisplayValue = new Function(
+    "ENTITIES",
+    `${stripBidiMarksSrc}\n${feedPhoneFieldHintsSrc}\n${backupPickDisplayFieldSrc}\n${backupRecordDisplayLabelSrc}\n${backupFieldDisplayValueSrc}\nreturn backupFieldDisplayValue;`,
+  )([applicantEntity]);
+
+  const applicantField = { name: "applicant", type: "relation", relationTo: "JobApplicant" };
+  assert.equal(
+    backupFieldDisplayValue(applicantField, 9, { JobApplicant: new Map([[9, { id: 9, phone: 972501234567, positionId: 2 }]]) }),
+    "972501234567",
+    "a phone-like-named number display field must render as plain digits in the backup CSV, not locale-grouped as \"972,501,234,567\"",
   );
 });
 
