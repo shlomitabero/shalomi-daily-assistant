@@ -13,6 +13,7 @@ import {
   markWhatsAppMessageDeliveryFailed,
   recordWhatsAppConnected,
   recordWhatsAppDisconnected,
+  WHATSAPP_MESSAGES_RETENTION_LIMIT,
 } from "./whatsapp.js";
 
 test("getWhatsAppConnection returns undefined for a project that never connected", () => {
@@ -554,4 +555,69 @@ test("markWhatsAppMessageDeliveryFailed never re-flips a message some other path
 
   const proj2Messages = listWhatsAppMessages(db, "proj2").messages;
   assert.equal(proj2Messages[0].status, "sent", "a lookup scoped to proj1 must never touch proj2's own row");
+});
+
+/**
+ * Round 1631: mirrors checkpoints.test.ts's own insertCheckpoint retention
+ * test for the identical shape -- insertWhatsAppMessage never had any cap
+ * before this round, so a project's log grew forever. listWhatsAppMessages
+ * itself defaults to limit: 50 and is paginated via a keyset cursor, so it
+ * can't be used directly to see the WHOLE log here; loop its cursor to
+ * read every remaining row instead, confirming the true total server-side
+ * row count (not just what one page would show) never exceeds the limit.
+ */
+test("insertWhatsAppMessage prunes the oldest messages once a project passes the retention limit, keeping only the newest ones", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  for (let i = 0; i < WHATSAPP_MESSAGES_RETENTION_LIMIT + 5; i++) {
+    insertWhatsAppMessage(db, {
+      projectId: "proj1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: `message ${i}`,
+      status: "received",
+    });
+  }
+  const allMessages: ReturnType<typeof listWhatsAppMessages>["messages"] = [];
+  let cursor: string | null | undefined;
+  for (;;) {
+    const page = listWhatsAppMessages(db, "proj1", 200, cursor);
+    allMessages.push(...page.messages);
+    if (!page.hasMore) break;
+    cursor = page.nextCursor;
+  }
+  assert.equal(allMessages.length, WHATSAPP_MESSAGES_RETENTION_LIMIT, "the project's own message count must never exceed the retention limit");
+  assert.equal(allMessages[0].body, `message ${WHATSAPP_MESSAGES_RETENTION_LIMIT + 4}`, "the newest message must always survive pruning");
+  assert.equal(
+    allMessages[allMessages.length - 1].body,
+    "message 5",
+    "pruning must drop exactly the oldest messages, keeping the most recent WHATSAPP_MESSAGES_RETENTION_LIMIT",
+  );
+});
+
+test("insertWhatsAppMessage never prunes a DIFFERENT project's messages when this project passes the retention limit", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  insertWhatsAppMessage(db, {
+    projectId: "proj2",
+    direction: "in",
+    fromNumber: "972521112233",
+    toNumber: "972501234567",
+    body: "other project's own message",
+    status: "received",
+  });
+  for (let i = 0; i < WHATSAPP_MESSAGES_RETENTION_LIMIT + 5; i++) {
+    insertWhatsAppMessage(db, {
+      projectId: "proj1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: `message ${i}`,
+      status: "received",
+    });
+  }
+  const otherProjectMessages = listWhatsAppMessages(db, "proj2").messages;
+  assert.equal(otherProjectMessages.length, 1, "a different project's own message must survive another project's pruning untouched");
+  assert.equal(otherProjectMessages[0].body, "other project's own message");
 });

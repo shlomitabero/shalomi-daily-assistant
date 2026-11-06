@@ -186,6 +186,27 @@ function rowToMessage(row: Record<string, unknown>): WhatsAppMessage {
   };
 }
 
+/**
+ * Round 1631: mirrors checkpoints.ts's own CHECKPOINTS_RETENTION_LIMIT
+ * convention (itself mirroring automations.ts's AUTOMATION_RUNS_RETENTION_LIMIT)
+ * for the identical unbounded-growth shape -- every inbound customer message
+ * and every outgoing automation-fired/manual-test WhatsApp send adds one row,
+ * forever, with no cap at all before this round (the only prior ways a row
+ * was ever removed were the user's own manual clearWhatsAppMessages/
+ * deleteWhatsAppMessage actions, or whole-project deletion). Of this
+ * codebase's three tables sharing this "ever-growing log" shape, this one
+ * has by far the fastest real-world growth rate (every single real-time
+ * message in both directions for an actively-used integration, vs. once per
+ * build/refine for checkpoints or once per rule firing for automation_runs)
+ * -- but it is also the most valuable to the business owner, since it's
+ * their actual customer conversation history, not a diagnostic/versioning
+ * log. The limit is set an order of magnitude above CHECKPOINTS_RETENTION_LIMIT
+ * for exactly that reason: this is a safety net against truly unbounded
+ * growth (a years-long, high-volume project), not a routine cleanup that
+ * would ever reasonably touch a normal business's recent history.
+ */
+export const WHATSAPP_MESSAGES_RETENTION_LIMIT = 1000;
+
 export function insertWhatsAppMessage(
   db: ForgeDatabase,
   message: {
@@ -223,6 +244,17 @@ export function insertWhatsAppMessage(
     message.waMessageId ?? null,
     createdAt,
   );
+  // Prunes the oldest messages beyond the retention limit, mirroring
+  // insertCheckpoint's own exact DELETE...NOT IN (SELECT...ORDER BY...
+  // LIMIT ?) pattern (see WHATSAPP_MESSAGES_RETENTION_LIMIT's own doc
+  // comment above for why the limit itself is set so much higher than
+  // that table's). Scoped to this projectId only, so a high-volume
+  // project can never evict another project's own history.
+  db.prepare(
+    `DELETE FROM whatsapp_messages WHERE projectId = ? AND id NOT IN (
+      SELECT id FROM whatsapp_messages WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(message.projectId, message.projectId, WHATSAPP_MESSAGES_RETENTION_LIMIT);
   return {
     ...message,
     id,
