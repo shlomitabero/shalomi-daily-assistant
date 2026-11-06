@@ -4411,3 +4411,37 @@ test("warns before a tab close/refresh while the add-field form has a label or e
     assert.equal(eventWithEnumValues.defaultPrevented, true, "must warn while an enum-values draft is in progress, even with an empty label");
   });
 });
+
+/**
+ * Round 1653: useRenamableSpecItem (the shared hook backing RoleChip/
+ * AssumptionItem/PersonaItem/EntitySummaryItem's label/FieldChip's label)
+ * has the byte-identical editing/draft shape EntityLabelEditor.tsx/
+ * FieldLabelEditor.tsx/ProjectNameEditor.tsx/CheckpointLabelEditor.tsx
+ * already got useBeforeUnloadWarning protection for in round 1552 -- but
+ * living inside this already-"done" file let it slip past that round's
+ * own file-by-file sweep. RoleChip proves the fix for all five call sites,
+ * the same "one representative hook call site proves them all" shape
+ * round 1496's own test for useAddableSpecItem already used above.
+ */
+test("warns before a tab close/refresh while a role chip's rename draft is in progress, and stops once it matches the current value again", async () => {
+  await withJsdom(async () => {
+    renderRoleChip(() => {});
+
+    fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+    const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+
+    const eventWhilePristine = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhilePristine);
+    assert.equal(eventWhilePristine.defaultPrevented, false, "must not warn while the draft still matches the current role text");
+
+    fireEvent.change(input, { target: { value: "Warehouse Manager" } });
+    const eventWhileDirty = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhileDirty);
+    assert.equal(eventWhileDirty.defaultPrevented, true, "must warn while an unsaved rename draft differs from the current role text");
+
+    fireEvent.change(input, { target: { value: "Manager" } });
+    const eventBackToOriginal = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventBackToOriginal);
+    assert.equal(eventBackToOriginal.defaultPrevented, false, "must not warn once the draft is edited back to match the current role text");
+  });
+});

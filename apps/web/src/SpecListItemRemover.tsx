@@ -100,6 +100,16 @@ function useRenamableSpecItem(
   const [error, setError] = useState<string | null>(null);
   const cancelling = useRef(false);
 
+  // Round 1653: mirrors EntityLabelEditor.tsx/FieldLabelEditor.tsx/
+  // ProjectNameEditor.tsx/CheckpointLabelEditor.tsx's own round-1552 fix --
+  // this hook has the byte-identical editing/draft/busy shape those four
+  // standalone editors explicitly describe themselves as mirroring, but
+  // living in this file (not a standalone component) let it slip past that
+  // round's own file-by-file sweep. A tab close/refresh while a typed-but-
+  // unsubmitted role/assumption/persona/entity-label/field-label correction
+  // sits in draft silently discarded it with no warning.
+  useBeforeUnloadWarning(editing && draft.trim() !== "" && draft.trim() !== currentValue);
+
   function startEditing() {
     cancelling.current = false;
     setDraft(currentValue);
