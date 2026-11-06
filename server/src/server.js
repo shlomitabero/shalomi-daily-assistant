@@ -26,6 +26,27 @@ import { securityHeaders } from './middleware/securityHeaders.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
 
+// asyncHandler.js already solves this for every Express route handler - a
+// rejected promise anywhere else (a dependency's own internal async code,
+// a future call site that forgets its own .catch()) would otherwise crash
+// the entire process by default, taking down the owner's autonomous
+// engine for however long it takes Railway to notice and restart it, over
+// one failure anywhere in the process. Log it loudly instead, matching
+// every other failure path in this app, and keep running - an unhandled
+// rejection on its own doesn't mean the process's state is actually
+// corrupted. A genuinely uncaught synchronous exception is the different,
+// riskier case Node's own docs warn about: by the time it's caught here
+// the process may already be in a broken state, so log it and exit
+// instead of trying to keep serving requests from it - Railway restarts a
+// crashed process automatically.
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandled promise rejection', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('uncaught exception — exiting so the platform can restart cleanly', err);
+  process.exit(1);
+});
+
 const app = express();
 // Railway (like Render/Heroku) terminates TLS at its own edge and forwards
 // requests through a reverse proxy — without this, req.ip on every request
