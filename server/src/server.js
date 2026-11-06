@@ -26,6 +26,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4000;
 
 const app = express();
+// Railway (like Render/Heroku) terminates TLS at its own edge and forwards
+// requests through a reverse proxy — without this, req.ip on every request
+// reads as that proxy's own address, not the real client's, which would
+// turn the login route's per-source rate limiter below into one shared
+// global bucket (an attacker and the real owner indistinguishable, each
+// exhausting the other's allowance) instead of tracking each source
+// separately. Trusting exactly 1 hop reads the real client IP from
+// X-Forwarded-For as set by Railway's own edge, not an arbitrary header an
+// attacker could forge directly.
+app.set('trust proxy', 1);
 app.use(cors());
 
 // Paddle needs the raw body to verify the webhook signature, so this is
