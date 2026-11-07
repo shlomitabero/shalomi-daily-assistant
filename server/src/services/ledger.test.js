@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests } from '../db/store.js';
 import { addLedgerEntry, totalSpentSoFar, totalLossSoFar, todayKey, getLedgerSummary } from './ledger.js';
+import { makeId } from '../db/store.js';
 
 test('todayKey returns the Israel-local calendar date, not the UTC one', () => {
   // This app is built throughout for a Hebrew-speaking, Israel-based owner
@@ -65,6 +66,25 @@ test('getLedgerSummary includes spentSoFar and lossSoFar, the exact figures canS
   const summary = getLedgerSummary();
   assert.equal(summary.spentSoFar, 20);
   assert.equal(summary.lossSoFar, 12);
+});
+
+test('getLedgerSummary includes unrecordedSales, the count of real payments billing.js refused to record', () => {
+  // billing.js's webhook handler logs a 'blocked: <error>' sale_confirmed
+  // entry when a real transaction.completed event's amount/fee couldn't be
+  // parsed - services/digest.js and Dashboard.jsx both need this count to
+  // warn the owner that a real customer's real payment never made it into
+  // the ledger above, with no route that ever retries or resolves it.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1', error: 'bad amount' },
+    result: 'blocked: bad amount', createdAt: new Date().toISOString(),
+  });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_2', amount: 10 },
+    result: 'success', createdAt: new Date().toISOString(),
+  });
+  const summary = getLedgerSummary();
+  assert.equal(summary.unrecordedSales, 1);
 });
 
 test('totalLossSoFar ignores unverified revenue when computing the loss', () => {

@@ -78,6 +78,7 @@ export default function Dashboard() {
   const nearBudget = budgetRatio != null && budgetRatio >= 0.8;
   const maxLossRatio = settings.maxLoss > 0 ? summary.lossSoFar / settings.maxLoss : null;
   const nearMaxLoss = maxLossRatio != null && maxLossRatio >= 0.8;
+  const unrecordedSales = summary.unrecordedSales ?? 0;
 
   const connectedCount = sources.filter((s) => s.connected).length;
 
@@ -132,6 +133,16 @@ export default function Dashboard() {
             שום פעולה אמיתית (פרסום, חיוב) לא מתבצעת כרגע, בלי קשר למצב הפעולה שנבחר למטה — העצירה חוסמת הכול.
           </p>
           <Link className="btn btn-primary" to="/settings">לביטול העצירה</Link>
+        </div>
+      )}
+
+      {unrecordedSales > 0 && (
+        <div className="card" style={{ borderColor: 'var(--accent)', background: 'rgba(220, 38, 38, 0.08)' }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 700 }}>🚨 תשלומים אמיתיים שלא נרשמו</p>
+          <p className="hint" style={{ margin: 0 }}>
+            {unrecordedSales} תשלומים אמיתיים התקבלו אך לא נרשמו ביומן בגלל שגיאה בעיבוד — בדוק ביומן הפעולות ואת לוגי השרת.
+            אין מסלול אוטומטי לתיקון זה; הכסף כבר התקבל אבל לא חושב ברווח/הפסד עד שזה יטופל.
+          </p>
         </div>
       )}
 

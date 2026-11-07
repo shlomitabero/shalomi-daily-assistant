@@ -28,7 +28,22 @@ export function getLedgerSummary() {
   // had no way to see how close they were to either limit except by
   // waiting for a real action to actually get blocked. Dashboard.jsx uses
   // these to warn before that happens, not just after.
-  return { ...summarizeLedger(db.ledger.all(), todayKey()), spentSoFar: totalSpentSoFar(), lossSoFar: totalLossSoFar() };
+  return {
+    ...summarizeLedger(db.ledger.all(), todayKey()),
+    spentSoFar: totalSpentSoFar(), lossSoFar: totalLossSoFar(), unrecordedSales: countUnrecordedSales(),
+  };
+}
+
+// billing.js's webhook handler logs a 'blocked: <error>' sale_confirmed
+// entry when a real transaction.completed event's amount/fee couldn't be
+// parsed - a real customer's real payment that never made it into the
+// ledger above, and (unlike every other number on this page) no route
+// ever retries or marks it resolved. Lives here, not just inside
+// services/digest.js, so Dashboard.jsx can warn about it too without a
+// second, separate API call - this is the one other place a real-money
+// problem belongs alongside spentSoFar/lossSoFar.
+function countUnrecordedSales() {
+  return db.actions_log.where((a) => a.type === 'sale_confirmed' && String(a.result).startsWith('blocked')).length;
 }
 
 // A single non-numeric entry (corrupted data, a future caller that skips
