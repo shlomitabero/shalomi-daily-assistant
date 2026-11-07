@@ -607,6 +607,17 @@ for (const entity of ENTITIES) {
     res.json({ records: rows.map((r) => rowToRecord(entity, r)), totalCount, truncated: totalCount > rows.length });
   });
 
+  // Mirrors the live Forge AI preview's own round-1678 fix: the route just
+  // above's own truncation hint tells the user past RECORD_LIST_RESPONSE_CAP
+  // to "export to CSV to get all of them" -- but Export CSV/JSON/Copy below
+  // all built from that exact same capped records state, so the promise was
+  // false. This sibling route is deliberately uncapped, the one escape
+  // hatch that actually delivers on it.
+  app.get(\`\${base}/export\`, (_req, res) => {
+    const rows = db.prepare(\`SELECT * FROM \${q(entity.name)} ORDER BY id DESC\`).all();
+    res.json({ records: rows.map((r) => rowToRecord(entity, r)) });
+  });
+
   app.post(base, (req, res) => {
     try {
       const values = entity.fields.map((f) => coerce(f, req.body?.[f.name]));
@@ -1914,6 +1925,13 @@ export function listRecords(entityName) {
   return request(\`/\${entityName}\`);
 }
 
+// listRecords' sibling with no RECORD_LIST_RESPONSE_CAP -- EntityView calls
+// this instead when exporting an entity whose live table listing came back
+// truncated, so Export CSV/JSON/Copy can genuinely deliver "all of them".
+export function exportAllRecords(entityName) {
+  return request(\`/\${entityName}/export\`);
+}
+
 export function createRecord(entityName, data) {
   return request(\`/\${entityName}\`, { method: "POST", body: JSON.stringify(data) });
 }
@@ -1956,7 +1974,7 @@ function renderEntityViewJsx(project: Project): string {
   );
 
   return `import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { createRecord, deleteRecord, listRecords, updateRecord } from "../api.js";
+import { createRecord, deleteRecord, exportAllRecords, listRecords, updateRecord } from "../api.js";
 
 // See the comment on generateExportFiles' allEntitiesJson for why this
 // exists: it lets a relation field on one entity resolve a human label from
@@ -7587,8 +7605,27 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setRecentSearches([]);
   }
 
-  function handleExportCsv() {
-    const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords, true);
+  // Mirrors the live Forge AI preview's own round-1678 fix: the truncation
+  // hint below promises "export to CSV to get all of them" -- but reusing
+  // the same capped records state here would make that false. Scoped to
+  // the exact case the promise is about: no selection, no active search
+  // filter, no grouping (so no collapsed-group exclusion to re-apply), and
+  // the live list genuinely truncated. Outside that scope, nothing
+  // changes: selectedOrAllRecords runs exactly as it always has.
+  async function recordsForExport() {
+    if (selectedIds.size > 0 || search.trim() || groupFieldName || !recordListTruncated) {
+      return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
+    }
+    try {
+      const { records: allRecords } = await exportAllRecords(entity.name);
+      return sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, relatedRecords), pinnedIds);
+    } catch {
+      return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
+    }
+  }
+
+  async function handleExportCsv() {
+    const csv = recordsToCsv(orderedFields, await recordsForExport(), relatedRecords, true);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -7600,8 +7637,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     URL.revokeObjectURL(url);
   }
 
-  function handleExportJson() {
-    const json = recordsToJson(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds));
+  async function handleExportJson() {
+    const json = recordsToJson(orderedFields, await recordsForExport());
     const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -7615,7 +7652,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
 
   async function handleCopy() {
     try {
-      const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), relatedRecords);
+      const csv = recordsToCsv(orderedFields, await recordsForExport(), relatedRecords);
       await navigator.clipboard.writeText(csv);
       setCopyStatus("copied");
     } catch {

@@ -3740,6 +3740,71 @@ test("the exported app's GET /api/:entityName route caps its response for a very
 });
 
 /**
+ * Round 1679: the live Forge AI preview's own round 1678 fixed its
+ * Export CSV/JSON/Copy actions to genuinely deliver on their truncation
+ * hint's "export to CSV to get all of them" promise, by adding an
+ * uncapped sibling export route -- but that round never touched this
+ * exported, standalone app at all, which shows the user the identical
+ * false promise (EntityView.jsx's own "record-list-truncated-hint") with
+ * no uncapped escape hatch whatsoever. This is the same "GET .../export
+ * returns every record, uncapped" assertion the live preview's own app.ts
+ * test makes, against the real generated server.js this time.
+ */
+test("the exported app's GET /api/:entityName/export route returns every record, uncapped, unlike its own capped sibling route", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-export-cap-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 59000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const { DatabaseSync } = await import("node:sqlite");
+    const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
+    const insertStmt = directDb.prepare(`INSERT INTO "Customer" (createdAt, name, status) VALUES (?, ?, ?)`);
+    const createdAt = new Date().toISOString();
+    for (let i = 0; i < 5001; i++) {
+      insertStmt.run(createdAt, `Customer ${i}`, "New");
+    }
+    directDb.close();
+
+    const exportRes = await fetch(`http://localhost:${port}/api/Customer/export`);
+    assert.equal(exportRes.status, 200);
+    const { records } = (await exportRes.json()) as { records: unknown[] };
+    assert.equal(records.length, 5001, "export must never cap its response the way the live table listing does");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test, same "real generated code via new Function" standard as
  * the existing handleBulkDelete test in this file: commitPendingDelete used
  * to be a bare `.catch(() => {})`, silently discarding a failed deferred
@@ -13458,10 +13523,15 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
 
   const handleExportCsvSrc = entityViewJsx.match(/function handleExportCsv\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(handleExportCsvSrc, "expected to find handleExportCsv in generated output");
+  // Round 1679: handleExportCsv now builds from recordsForExport() (a thin
+  // wrapper that itself calls selectedOrAllRecords in every case except
+  // the one genuinely-truncated/no-selection/no-filter/no-group case --
+  // see recordsForExport's own test below) rather than calling
+  // selectedOrAllRecords directly.
   assert.match(
     handleExportCsvSrc!,
-    /recordsToCsv\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords, true\)/,
-    "handleExportCsv must route through selectedOrAllRecords instead of always exporting visibleRecords directly",
+    /recordsToCsv\(orderedFields, await recordsForExport\(\), relatedRecords, true\)/,
+    "handleExportCsv must route through recordsForExport instead of always exporting visibleRecords directly",
   );
 
   const selectedOrAllRecordsSrc = entityViewJsx.match(/function selectedOrAllRecords\(allRecords, visibleRecords, selectedIds\) \{[\s\S]*?\n\}\n/)?.[0];
@@ -13500,9 +13570,11 @@ test("the exported EntityView renders a real Copy button that writes the selecti
 
   const handleCopySrc = entityViewJsx.match(/async function handleCopy\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(handleCopySrc, "expected to find handleCopy in generated output");
+  // Round 1679: see handleExportCsv's own test above for why this now reads
+  // recordsForExport() rather than selectedOrAllRecords directly.
   assert.match(
     handleCopySrc!,
-    /recordsToCsv\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\), relatedRecords\)/,
+    /recordsToCsv\(orderedFields, await recordsForExport\(\), relatedRecords\)/,
     "handleCopy must reuse the exact same selection logic as handleExportCsv",
   );
   assert.match(handleCopySrc!, /navigator\.clipboard\.writeText\(csv\)/, "handleCopy must actually write to the clipboard");
@@ -13580,10 +13652,12 @@ test("the exported EntityView's Export JSON button routes through selectedOrAllR
 
   const handleExportJsonSrc = entityViewJsx.match(/function handleExportJson\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(handleExportJsonSrc, "expected to find handleExportJson in generated output");
+  // Round 1679: see handleExportCsv's own test above for why this now reads
+  // recordsForExport() rather than selectedOrAllRecords directly.
   assert.match(
     handleExportJsonSrc!,
-    /recordsToJson\(orderedFields, selectedOrAllRecords\(records, effectivelyVisibleRecords, selectedIds\)\)/,
-    "handleExportJson must route through selectedOrAllRecords, same as handleExportCsv",
+    /recordsToJson\(orderedFields, await recordsForExport\(\)\)/,
+    "handleExportJson must route through recordsForExport, same as handleExportCsv",
   );
   assert.match(handleExportJsonSrc!, /application\/json/);
 
