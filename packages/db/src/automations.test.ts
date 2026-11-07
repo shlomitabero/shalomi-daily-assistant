@@ -25,6 +25,7 @@ import {
   EMAIL_TIMEOUT_ERROR,
   EMAIL_UNREACHABLE_ERROR,
   WHATSAPP_NOT_CONNECTED_ERROR,
+  WHATSAPP_SEND_TIMEOUT_ERROR,
 } from "./automations.js";
 
 function baseRule(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
@@ -801,6 +802,42 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
       .get("proj1", rule.id, EMAIL_UNREACHABLE_ERROR) as { c: number }
   ).c;
   assert.equal(unreachableCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the email-unreachable rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
+/**
+ * Round 1662: same bug class as the webhook/email timeout tests above, for
+ * send_whatsapp's own equivalent -- whatsappWeb.ts's sendWithTimeout throws
+ * this exact, always-identical literal when a CONNECTED destination is
+ * simply slow to respond right now, never given its own retention bucket
+ * despite sharing the exact same flood risk (a schedule tick retrying a
+ * slow destination, or a bulk-update's unsuppressed per-record firing).
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 WhatsApp-send-timeout rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine, distinct failure first (e.g. an actual send rejection)...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" });
+  // ...then a timeout flood far past the old shared-bucket cap of 20 -- e.g.
+  // a schedule tick retrying a connected-but-slow destination many times.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: WHATSAPP_SEND_TIMEOUT_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, WHATSAPP_SEND_TIMEOUT_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive a WhatsApp-send-timeout flood of any length, not just a short one");
+
+  const timeoutCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, WHATSAPP_SEND_TIMEOUT_ERROR) as { c: number }
+  ).c;
+  assert.equal(timeoutCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the WhatsApp-send-timeout rows must still be capped at the normal retention limit, just in their own independent bucket");
 });
 
 /**

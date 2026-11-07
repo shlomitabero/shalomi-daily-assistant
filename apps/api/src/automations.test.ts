@@ -31,6 +31,7 @@ import {
   WEBHOOK_UNREACHABLE_ERROR,
   EMAIL_TIMEOUT_ERROR,
   EMAIL_UNREACHABLE_ERROR,
+  WHATSAPP_SEND_TIMEOUT_ERROR,
 } from "@forge/db";
 import {
   fireRule,
@@ -2661,6 +2662,53 @@ test("runScheduledAutomationsCheck still fires a scheduled send_email rule the s
     getAutomationRule(db, "proj1", rule.id)!.lastStatus,
     "sent",
     "must actually attempt the send now that Resend responds again, not stay suppressed for the rest of the day",
+  );
+});
+
+/**
+ * Round 1662: the send_whatsapp sibling of the webhook/email self-healing
+ * tests above -- WHATSAPP_SEND_TIMEOUT_ERROR (whatsappWeb.ts's own
+ * sendWithTimeout, a destination that's CONNECTED but simply slow to
+ * respond right now) is the exact same "destination hasn't responded yet"
+ * shape as a webhook/email timeout, not evidence the rule itself is
+ * broken or that WhatsApp is disconnected (that's WHATSAPP_NOT_CONNECTED_ERROR,
+ * already exempted since round 934). Before this round, this literal
+ * never got the matching exclusion the sibling timeout cases did, so 5
+ * consecutive scheduler ticks landing during a slow-but-connected send
+ * tripped hasTooManyConsecutiveFailuresToday exactly like 5 genuine
+ * failures would, silently suppressing the rule for the rest of the UTC
+ * day even once the send started succeeding again seconds later.
+ */
+test("runScheduledAutomationsCheck still fires a scheduled send_whatsapp rule the same day once sends stop timing out, even after 5 consecutive timeouts on a connected destination", async () => {
+  const { db } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ scheduleTimeUtc: "09:00", toNumber: "972501234567" }));
+
+  const sendCalls: { to: string; body: string }[] = [];
+  let sendsAreTimingOut = true;
+  const manager = {
+    getStatus() {
+      return { status: "connected", qrDataUrl: null, phoneNumber: "972500000000", error: null };
+    },
+    async sendMessage(_projectId: string, to: string, body: string) {
+      sendCalls.push({ to, body });
+      return sendsAreTimingOut ? { ok: false, error: WHATSAPP_SEND_TIMEOUT_ERROR } : { ok: true };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  for (const minute of ["09:00", "09:01", "09:02", "09:03", "09:04"]) {
+    await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastStatus, "failed");
+  assert.equal(getAutomationRule(db, "proj1", rule.id)!.lastError, WHATSAPP_SEND_TIMEOUT_ERROR);
+
+  // Sends stop timing out, and the next tick arrives -- still the same day.
+  sendsAreTimingOut = false;
+  await runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:05:00.000Z"));
+
+  assert.equal(
+    getAutomationRule(db, "proj1", rule.id)!.lastStatus,
+    "sent",
+    "must actually attempt the send now that it no longer times out, not stay suppressed for the rest of the day",
   );
 });
 

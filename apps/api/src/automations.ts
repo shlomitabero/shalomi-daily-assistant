@@ -19,6 +19,7 @@ import {
   WEBHOOK_UNREACHABLE_ERROR,
   EMAIL_TIMEOUT_ERROR,
   EMAIL_UNREACHABLE_ERROR,
+  WHATSAPP_SEND_TIMEOUT_ERROR,
   type AutomationFieldOperator,
   type AutomationRule,
   type ForgeDatabase,
@@ -1790,16 +1791,29 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * since there are now five independently-retained buckets (WhatsApp,
  * email-not-configured, webhook-timeout, email-timeout, isTest) that can
  * each contribute up to that many rows ahead of a real failure.
+ *
+ * Round 1662: WHATSAPP_SEND_TIMEOUT_ERROR (whatsappWeb.ts's sendWithTimeout,
+ * a connected-but-slow-right-now destination) is excluded for the identical
+ * self-healing reason as WEBHOOK_TIMEOUT_ERROR/EMAIL_TIMEOUT_ERROR above --
+ * despite this exact intent already being documented for this literal
+ * (apps/web/src/api.ts's own round-1326 comment on
+ * KNOWN_WHATSAPP_SEND_ERROR_CODES), it never actually got the matching
+ * exclusion here, so 5 consecutive send timeouts on an otherwise-healthy
+ * connection paused the rule for the rest of the day exactly like a
+ * genuinely broken rule would. Lookback widened from 5x to 6x for the same
+ * reason as every prior widening: a sixth independently-retained bucket can
+ * now each contribute up to that many rows ahead of a real failure.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const todayUtc = now.toISOString().slice(0, 10);
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, 5 * AUTOMATION_RUNS_RETENTION_LIMIT)
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 6 * AUTOMATION_RUNS_RETENTION_LIMIT)
     .filter(
       (run) =>
         run.error !== WHATSAPP_NOT_CONNECTED_ERROR &&
         run.error !== EMAIL_NOT_CONFIGURED_ERROR &&
         run.error !== WEBHOOK_TIMEOUT_ERROR &&
         run.error !== EMAIL_TIMEOUT_ERROR &&
+        run.error !== WHATSAPP_SEND_TIMEOUT_ERROR &&
         !run.isTest,
     )
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);

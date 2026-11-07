@@ -148,6 +148,27 @@ export const EMAIL_TIMEOUT_ERROR = "Resend API request timed out after 10000ms";
  */
 export const EMAIL_UNREACHABLE_ERROR = "Resend API request failed: could not reach the destination";
 
+/**
+ * Round 1662: the "send_whatsapp" action type's own equivalent of
+ * WEBHOOK_TIMEOUT_ERROR/EMAIL_TIMEOUT_ERROR above -- apps/api/src/whatsappWeb.ts's
+ * sendWithTimeout races a real Baileys sendMessage() call against a fixed
+ * 20s timeout and throws this exact, always-identical literal when the
+ * destination is connected but simply slow to respond right now (a laggy
+ * phone, a flaky network, Baileys momentarily unresponsive without a full
+ * disconnect) -- a different, narrower case than WHATSAPP_NOT_CONNECTED_ERROR
+ * above, which fires before any send is even attempted. Despite the
+ * codebase's own stated intent (apps/web/src/api.ts's round-1326 comment on
+ * KNOWN_WHATSAPP_SEND_ERROR_CODES explicitly calls this "the same fix
+ * email.ts's ResendEmailSender got in round 1126"), this literal never got
+ * the matching treatment WEBHOOK_TIMEOUT_ERROR/EMAIL_TIMEOUT_ERROR did: its
+ * own retention bucket here, and exclusion from
+ * hasTooManyConsecutiveFailuresToday's cap (apps/api/src/automations.ts).
+ * Same flood risk as every sibling bucket above: a schedule tick retries a
+ * slow-but-connected destination repeatedly, and a bulk-update's
+ * unsuppressed per-record firing (round 1076) can do the same.
+ */
+export const WHATSAPP_SEND_TIMEOUT_ERROR = "timeout";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -880,6 +901,15 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, EMAIL_UNREACHABLE_ERROR, projectId, id, EMAIL_UNREACHABLE_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 1662: mirrors the WEBHOOK_TIMEOUT_ERROR/EMAIL_TIMEOUT_ERROR
+  // buckets above, for WHATSAPP_SEND_TIMEOUT_ERROR's own identical flood
+  // risk -- a send_whatsapp rule whose destination is connected but merely
+  // slow right now produces this exact literal on every retry.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_SEND_TIMEOUT_ERROR, projectId, id, WHATSAPP_SEND_TIMEOUT_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -897,8 +927,8 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -909,6 +939,7 @@ export function recordAutomationRun(
     WEBHOOK_UNREACHABLE_ERROR,
     EMAIL_TIMEOUT_ERROR,
     EMAIL_UNREACHABLE_ERROR,
+    WHATSAPP_SEND_TIMEOUT_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
@@ -917,6 +948,7 @@ export function recordAutomationRun(
     WEBHOOK_UNREACHABLE_ERROR,
     EMAIL_TIMEOUT_ERROR,
     EMAIL_UNREACHABLE_ERROR,
+    WHATSAPP_SEND_TIMEOUT_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the
