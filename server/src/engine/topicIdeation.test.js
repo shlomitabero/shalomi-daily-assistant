@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTopicPrompt, generateTopicIdea, isValidTopicIdea } from './topicIdeation.js';
+import { buildTopicPrompt, generateTopicIdea, isValidTopicIdea, extractJson } from './topicIdeation.js';
 
 function withEnv(vars, fn) {
   const originals = {};
@@ -18,6 +18,21 @@ function withEnv(vars, fn) {
     }
   }
 }
+
+test('extractJson pulls the {...} block out of prose or markdown fences the model added despite being told not to', () => {
+  assert.equal(extractJson('Sure, here you go:\n```json\n{"topic":"x"}\n```'), '{"topic":"x"}');
+});
+
+test('extractJson returns the text as-is when it contains no {...} block at all', () => {
+  // generateTopicIdea's own 500-token response could, in principle, come
+  // back as plain prose with no JSON object anywhere in it at all (a
+  // refusal, a truncated response cut off before the opening brace) -
+  // every other test here always has at least an opening/closing brace
+  // somewhere, so this fallback had never actually been taken. JSON.parse
+  // on the result still throws as expected - it was never meant to make
+  // non-JSON parseable, only to strip surrounding decoration.
+  assert.equal(extractJson('sorry, I cannot help with that'), 'sorry, I cannot help with that');
+});
 
 test('isValidTopicIdea accepts a complete idea', () => {
   assert.equal(isValidTopicIdea({ topic: 'ניהול תקציב', audience: 'עצמאים' }), true);
