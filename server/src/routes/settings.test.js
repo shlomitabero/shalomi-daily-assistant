@@ -25,6 +25,11 @@ test('patchSettings rejects an invalid mode instead of storing it', () => {
   const res = makeRes();
   patchSettings({ body: { mode: 'auto_unlimited' } }, res);
   assert.equal(res.statusCode, 400);
+  // Settings.jsx renders this verbatim in an otherwise all-Hebrew app -
+  // it was a raw English technical message ("mode must be one of ...")
+  // until now, the one validation error in this file that hadn't been
+  // translated like every other user-facing error elsewhere.
+  assert.match(res.body.error, /מצב הפעולה חייב להיות אחד מ/);
 });
 
 test('patchSettings accepts each valid mode', () => {
@@ -42,6 +47,9 @@ test('patchSettings rejects a negative or non-numeric budget instead of storing 
   const resNegative = makeRes();
   patchSettings({ body: { budget: -1 } }, resNegative);
   assert.equal(resNegative.statusCode, 400);
+  // Was a raw English message ("budget must be a non-negative number")
+  // shown verbatim on Settings.jsx, in an otherwise all-Hebrew app.
+  assert.match(resNegative.body.error, /תקציב חייב להיות מספר לא שלילי/);
 
   const resString = makeRes();
   patchSettings({ body: { budget: 'a lot' } }, resString);
@@ -86,6 +94,9 @@ test('patchSettings rejects a negative maxLoss', () => {
   const res = makeRes();
   patchSettings({ body: { maxLoss: -50 } }, res);
   assert.equal(res.statusCode, 400);
+  // Was a raw English message ("maxLoss must be null (no limit) or a
+  // non-negative number") shown verbatim on Settings.jsx.
+  assert.match(res.body.error, /הפסד מרבי חייב להיות ריק/);
 });
 
 test('patchSettings rejects a non-numeric maxLoss instead of storing it', () => {

@@ -17,11 +17,11 @@ export function patchSettings(req, res) {
     if (field in (req.body ?? {})) patch[field] = req.body[field];
   }
   if ('mode' in patch && !VALID_MODES.includes(patch.mode)) {
-    return res.status(400).json({ error: `mode must be one of ${VALID_MODES.join(', ')}` });
+    return res.status(400).json({ error: `מצב הפעולה חייב להיות אחד מ: ${VALID_MODES.join(', ')}` });
   }
   if ('budget' in patch) {
     if (typeof patch.budget !== 'number' || !Number.isFinite(patch.budget) || patch.budget < 0) {
-      return res.status(400).json({ error: 'budget must be a non-negative number' });
+      return res.status(400).json({ error: 'תקציב חייב להיות מספר לא שלילי' });
     }
     // Settings.jsx's form always resubmits every field together on save
     // (a controlled form, not a per-field PATCH), so `budget` is present
@@ -36,7 +36,7 @@ export function patchSettings(req, res) {
   }
   if ('maxLoss' in patch && patch.maxLoss !== null) {
     if (typeof patch.maxLoss !== 'number' || !Number.isFinite(patch.maxLoss) || patch.maxLoss < 0) {
-      return res.status(400).json({ error: 'maxLoss must be null (no limit) or a non-negative number' });
+      return res.status(400).json({ error: 'הפסד מרבי חייב להיות ריק (ללא הגבלה) או מספר לא שלילי' });
     }
   }
   res.json({ settings: updateSettings(patch) });
