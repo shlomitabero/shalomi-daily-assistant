@@ -68,6 +68,18 @@ test('getProductGuide 400s without a transactionId — never guesses which sale 
   assert.equal(res.statusCode, 400);
 });
 
+test('getProductGuide 400s when req.query is missing entirely, not just empty', () => {
+  // A real Express request always provides req.query as an object, but
+  // this route's own ?? {} fallback existed defensively anyway - every
+  // other test here supplies query: {} explicitly, so that fallback had
+  // never actually been taken.
+  __resetForTests();
+  insertOpportunity();
+  const res = makeRes();
+  getProductGuide({ params: { slug: 'time-management-guide' } }, res);
+  assert.equal(res.statusCode, 400);
+});
+
 test('getProductGuide 404s for a slug that does not exist', () => {
   __resetForTests();
   const res = makeRes();
