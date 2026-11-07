@@ -67,6 +67,21 @@ test('generateDailyDigest warns in the real digest text when a real payment fail
   assert.match(digest.text, /1 תשלומים אמיתיים התקבלו אך לא נרשמו ביומן/);
 });
 
+test('generateDailyDigest keeps warning about an unrecorded sale from days ago, not just today', () => {
+  // Unlike actionsToday/failuresToday (a log of what happened today),
+  // this is a current-unresolved-problem check - there's no route that
+  // ever retries or marks a blocked sale as resolved, so the real money
+  // stays unrecorded indefinitely and the warning must not quietly stop
+  // just because a new calendar day started.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1', error: 'bad amount' },
+    result: 'blocked: bad amount', createdAt: '2020-01-01T00:00:00.000Z',
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /1 תשלומים אמיתיים התקבלו אך לא נרשמו ביומן/);
+});
+
 test('generateDailyDigest does not warn about a successful sale_confirmed entry', () => {
   __resetForTests();
   db.actions_log.insert({

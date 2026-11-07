@@ -65,9 +65,15 @@ export function generateDailyDigest(now = new Date()) {
   // result that matches neither actionsToday's 'success' filter nor
   // failuresToday's 'failed' prefix above, so a real customer's real
   // payment going unrecorded would otherwise have zero mention anywhere
-  // in the digest.
+  // in the digest. Deliberately NOT scoped to today like actionsToday/
+  // failuresToday above: unlike those (a log of what happened today),
+  // this is a current-unresolved-problem check, the same kind as
+  // scanPaused/budget/maxLoss below - there's no route that ever
+  // retries or marks a blocked sale as resolved, so the real money stays
+  // unrecorded indefinitely. A same-day-only warning would silently stop
+  // mentioning a real, still-broken problem the very next day.
   const unrecordedSales = db.actions_log.where(
-    (a) => todayKey(new Date(a.createdAt)) === today && a.type === 'sale_confirmed' && String(a.result).startsWith('blocked')
+    (a) => a.type === 'sale_confirmed' && String(a.result).startsWith('blocked')
   ).length;
 
   const settings = getSettings();
