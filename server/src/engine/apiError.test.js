@@ -6,7 +6,7 @@ test('a malformed JSON body (body-parser entity.parse.failed) is a clean 400, no
   const err = { type: 'entity.parse.failed', status: 400, expose: true, message: 'Unexpected token' };
   const result = classifyApiError(err);
   assert.equal(result.status, 400);
-  assert.match(result.message, /not valid JSON/);
+  assert.match(result.message, /JSON תקין/);
 });
 
 test('another body-parser client error marked expose:true keeps its own status and message', () => {
@@ -14,6 +14,15 @@ test('another body-parser client error marked expose:true keeps its own status a
   const result = classifyApiError(err);
   assert.equal(result.status, 413);
   assert.equal(result.message, 'request entity too large');
+});
+
+test('an expose:true 4xx with no message of its own falls back to a generic Hebrew message, not undefined', () => {
+  // The "has its own message" branch was already covered above - this is
+  // the one case that wasn't: err.expose true but err.message empty/absent.
+  const err = { status: 422, expose: true };
+  const result = classifyApiError(err);
+  assert.equal(result.status, 422);
+  assert.equal(result.message, 'בקשה לא תקינה');
 });
 
 test('a 4xx error NOT marked expose:true still falls back to a generic 500', () => {
@@ -28,7 +37,7 @@ test('a real application error (no status at all) is a generic 500', () => {
   const err = new Error('something broke in application code');
   const result = classifyApiError(err);
   assert.equal(result.status, 500);
-  assert.equal(result.message, 'internal server error');
+  assert.equal(result.message, 'שגיאת שרת פנימית');
 });
 
 test('a null/undefined error does not throw and falls back to 500', () => {
