@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@forge/shared": "*",
+    "esbuild": "^0.28.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {

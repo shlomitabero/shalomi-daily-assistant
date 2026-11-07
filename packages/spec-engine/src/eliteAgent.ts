@@ -1,3 +1,5 @@
+import { extname } from "node:path";
+import { transformSync } from "esbuild";
 import { fetchAnthropic } from "./anthropicFetch.js";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
@@ -218,6 +220,60 @@ export function applyPatch(originalContent: string, hunks: PatchHunk[]): ApplyPa
     content = content.slice(0, firstIndex) + replace + content.slice(firstIndex + search.length);
   }
   return { content, appliedCount: hunks.length, failedHunkIndex: null, failedHunkReason: null };
+}
+
+const SYNTAX_CHECK_LOADER: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
+  ".js": "js",
+  ".jsx": "jsx",
+  ".mjs": "js",
+  ".ts": "ts",
+  ".tsx": "tsx",
+};
+
+export interface FileSyntaxCheckResult {
+  valid: boolean;
+  /** esbuild's own error message, or null when valid or when this file's extension isn't checked. */
+  error: string | null;
+}
+
+/**
+ * Part 3 of the round-925 upgrade (continued past its foundation once
+ * שלומי reviewed it, round 1675): a new agent writing/patching real
+ * application files blind to a compiler is the single largest gap between
+ * this module's "foundation" and a usable agent -- `applyPatch` above
+ * already refuses to guess at a hunk that doesn't structurally fit, but it
+ * never checks whether the content it DID produce is even valid code. A
+ * single stray brace or an unclosed JSX tag in a model's patch would
+ * otherwise get "applied" successfully (every hunk matched) and only fail
+ * much later, at build or runtime, far from the actual mistake.
+ *
+ * This is deliberately scoped to a syntax check alone (esbuild's parser,
+ * already a dependency for this exact purpose in apps/api's own build),
+ * not full type-checking -- a real typecheck needs the whole project's
+ * tsconfig/node_modules graph, which this standalone function has no way
+ * to assemble for an arbitrary caller-supplied path. A future caller
+ * wiring this agent into a real build pipeline can layer a project-aware
+ * typecheck on top; this function's job is only to catch content that
+ * cannot even be parsed, the same "fail closed, never guess" discipline
+ * `applyPatch` itself already follows for a structurally bad hunk.
+ *
+ * Returns `{ valid: true, error: null }` for a file extension this check
+ * doesn't apply to (CSS, JSON, markdown, ...) -- there is nothing wrong
+ * with such a file by definition of this function, not a claim that its
+ * content was actually checked.
+ */
+export function checkGeneratedFileSyntax(filePath: string, content: string): FileSyntaxCheckResult {
+  const loader = SYNTAX_CHECK_LOADER[extname(filePath).toLowerCase()];
+  if (!loader) {
+    return { valid: true, error: null };
+  }
+  try {
+    transformSync(content, { loader, logLevel: "silent" });
+    return { valid: true, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { valid: false, error: message };
+  }
 }
 
 export interface EliteAgentOptions {

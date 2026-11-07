@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ELITE_SYSTEM_PROMPT, applyPatch, generateEliteCodeResponse, parseAgentResponse, parsePatchHunks } from "./eliteAgent.js";
+import {
+  ELITE_SYSTEM_PROMPT,
+  applyPatch,
+  checkGeneratedFileSyntax,
+  generateEliteCodeResponse,
+  parseAgentResponse,
+  parsePatchHunks,
+} from "./eliteAgent.js";
 
 test("parseAgentResponse extracts a single <thought> block, trimmed", () => {
   const actions = parseAgentResponse("<thought>\n  Plan: add a button.\n</thought>");
@@ -185,6 +192,50 @@ test("applyPatch with zero hunks returns the original content unchanged", () => 
   assert.equal(result.content, "unchanged");
   assert.equal(result.appliedCount, 0);
   assert.equal(result.failedHunkIndex, null);
+});
+
+/**
+ * Round 1675: checkGeneratedFileSyntax -- applyPatch above already refuses
+ * to guess at a hunk that doesn't structurally fit, but it never checked
+ * whether the content it DID produce is even valid code. This closes that
+ * gap with a syntax-only check (esbuild's parser), scoped deliberately
+ * below a full project-aware typecheck, which this standalone function has
+ * no tsconfig/node_modules graph to assemble.
+ */
+test("checkGeneratedFileSyntax accepts genuinely valid TypeScript", () => {
+  const result = checkGeneratedFileSyntax("src/thing.ts", "export const x: number = 1;");
+  assert.equal(result.valid, true);
+  assert.equal(result.error, null);
+});
+
+test("checkGeneratedFileSyntax accepts genuinely valid TSX (JSX in a .tsx file)", () => {
+  const result = checkGeneratedFileSyntax("src/Thing.tsx", "export const Thing = () => <div>hello</div>;");
+  assert.equal(result.valid, true);
+  assert.equal(result.error, null);
+});
+
+test("checkGeneratedFileSyntax rejects a file with a genuine syntax error, instead of letting it through to fail later at build time", () => {
+  const result = checkGeneratedFileSyntax("src/broken.ts", "function foo( { return 1; }");
+  assert.equal(result.valid, false);
+  assert.ok(result.error && result.error.length > 0, "must surface esbuild's own error message, not just a bare false");
+});
+
+test("checkGeneratedFileSyntax rejects unclosed JSX, the exact failure mode a patched React component risks", () => {
+  const result = checkGeneratedFileSyntax("src/Broken.tsx", "export const Broken = () => <div>unclosed;");
+  assert.equal(result.valid, false);
+  assert.ok(result.error, "must report the JSX parse failure");
+});
+
+test("checkGeneratedFileSyntax skips a file extension it has no business parsing as JS/TS, rather than misreporting it as broken", () => {
+  const result = checkGeneratedFileSyntax("src/styles.css", "{{{ not valid CSS either, but not this function's job }}}");
+  assert.equal(result.valid, true);
+  assert.equal(result.error, null);
+});
+
+test("checkGeneratedFileSyntax treats .jsx and .mjs the same as .ts/.tsx -- every JS-family extension this agent could emit", () => {
+  assert.equal(checkGeneratedFileSyntax("src/thing.jsx", "export const x = () => <div />;").valid, true);
+  assert.equal(checkGeneratedFileSyntax("src/thing.mjs", "export const x = 1;").valid, true);
+  assert.equal(checkGeneratedFileSyntax("src/thing.jsx", "export const x = () => <div;").valid, false);
 });
 
 test("generateEliteCodeResponse sends the elite system prompt and the caller's own request, and returns both the raw text and its parsed actions", async () => {
