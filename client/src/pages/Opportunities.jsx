@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { riskLevelLabel, formatMoney } from '../labels.js';
+import { riskLevelLabel, formatMoney, autonomousScanSummary } from '../labels.js';
 
 const STATUS_LABEL = { draft: 'טיוטה', published: 'פורסם', rejected: 'נדחה' };
 
@@ -13,9 +13,17 @@ export default function Opportunities() {
   const [scanBusy, setScanBusy] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [error, setError] = useState('');
+  const [lastScan, setLastScan] = useState(undefined); // undefined = still loading, null = never ran
 
   function refresh() {
     api.getOpportunities().then((r) => setOpportunities(r.opportunities)).catch((err) => setError(err.data?.error || err.message));
+    // The scheduled scan (every 4 hours, server.js) logs here too, not just
+    // a manual "סרוק עכשיו" click - without this, the owner had no way to
+    // tell the scheduled scan is actually running on its own short of
+    // digging through the full, unrelated-actions-mixed-in activity log.
+    api.getActions()
+      .then((r) => setLastScan(r.actions.find((a) => a.type === 'autonomous_scan') ?? null))
+      .catch(() => setLastScan(null));
   }
 
   useEffect(refresh, []);
@@ -93,6 +101,12 @@ export default function Opportunities() {
       <div className="card">
         <h3>סריקה אוטונומית</h3>
         <p className="hint">המערכת סורקת לבד כל כמה שעות ומחפשת רעיון למוצר חדש. אפשר גם להריץ עכשיו ידנית לבדיקה.</p>
+        {lastScan !== undefined && (
+          <p className="hint">
+            <strong style={{ color: 'var(--text)' }}>סריקה אחרונה: </strong>
+            {lastScan ? `${new Date(lastScan.createdAt).toLocaleString('he-IL')} — ${autonomousScanSummary(lastScan)}` : autonomousScanSummary(null)}
+          </p>
+        )}
         <button className="btn btn-ghost" onClick={onScanNow} disabled={scanBusy}>{scanBusy ? 'סורק…' : 'סרוק עכשיו'}</button>
         {scanResult && (
           <p className={scanResult.ran ? 'positive' : 'hint'}>

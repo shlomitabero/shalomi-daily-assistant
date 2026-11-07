@@ -114,6 +114,34 @@ export function reasonLabel(reason) {
   return REASON_LABEL[reason] ?? reason;
 }
 
+// Turns one 'autonomous_scan' actions_log entry (server/src/services/
+// autonomousScan.js's logAction calls) into a plain Hebrew sentence. The
+// raw result strings ('success', 'blocked: source not connected',
+// 'skipped: N drafts already awaiting review', 'failed') are exactly what
+// the activity log already shows via resultLabel, but that owner would
+// have to go dig through the full (unrelated-actions-mixed-in) activity
+// log to find the one entry that actually answers "is my scanner
+// working" - this gives the Opportunities page's own scan card the same
+// answer directly, in the one place someone asking that question would
+// actually look.
+export function autonomousScanSummary(action) {
+  if (!action) return 'עדיין לא רצה סריקה אוטונומית.';
+  const { result, detail } = action;
+  if (result === 'success') {
+    return detail?.published ? 'נוצרה הזדמנות חדשה ופורסמה אוטומטית.' : 'נוצרה הזדמנות חדשה (טיוטה, מחכה לסקירה שלך).';
+  }
+  if (typeof result === 'string' && result.startsWith('blocked: source not connected')) {
+    return 'המקור "מוצרים דיגיטליים מבוססי AI" לא מחובר — ראה עמוד "מקורות הכנסה".';
+  }
+  if (typeof result === 'string' && result.startsWith('skipped:')) {
+    return `הסריקה הושהתה — ${result.slice('skipped: '.length)}.`;
+  }
+  if (typeof result === 'string' && result.startsWith('failed')) {
+    return `נכשלה: ${detail?.error ?? result}.`;
+  }
+  return resultLabel(result);
+}
+
 export function missingFieldLabel(field) {
   if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
   if (field.startsWith('cost:')) {
