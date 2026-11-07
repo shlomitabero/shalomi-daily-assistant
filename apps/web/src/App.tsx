@@ -3529,12 +3529,17 @@ function AppContent() {
           )}
 
           {showCollaborators && (
+            // Round 1656: entities={orderedEntities}, the same reason
+            // AutomationsPanel above gets it -- CollaboratorsPanel's own
+            // record-deletions report section needs it to resolve a
+            // deleted record's raw entityName into its real display label.
             <CollaboratorsPanel
               projectId={project.id}
               projectName={project.name}
               isOwner={user?.id === project.ownerId}
               readOnly={myRole === "viewer"}
               currentUserId={user?.id}
+              entities={orderedEntities}
               onClose={() => setShowCollaborators(false)}
               onLeft={() => {
                 // Self-service "leave project" (CollaboratorsPanel's own

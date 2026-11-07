@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import type { CollaboratorRole, Project, ProjectCollaborator } from "@forge/shared";
+import type { CollaboratorRole, Entity, Project, ProjectCollaborator } from "@forge/shared";
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -65,6 +65,7 @@ function renderPanel(
   projectName = "Test Project",
   onOwnerTransferred: (project: Project, selfSharedAt: string | undefined) => void = () => {},
   readOnly = false,
+  entities: Entity[] = [],
 ) {
   return render(
     React.createElement(
@@ -79,6 +80,7 @@ function renderPanel(
           isOwner,
           readOnly,
           currentUserId,
+          entities,
           onClose: () => {},
           onLeft,
           onOwnerTransferred,
@@ -1905,6 +1907,7 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
               isOwner: true,
               readOnly: false,
               currentUserId: undefined,
+              entities: [],
               onClose: () => {
                 closeCalls += 1;
               },
@@ -2195,6 +2198,74 @@ test("CollaboratorsPanel shows Copy/Download buttons only once loaded, and Copy 
       assert.equal(copyButton!.textContent, "📋 Copy list", "must revert to the normal label once the delay elapses");
     } finally {
       t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * Round 1656: deletionsForReport previously passed a deleted record's raw
+ * internal entityName (e.g. "Customer") straight through unresolved -- but
+ * an AI-generated Hebrew spec typically gives an entity a Hebrew `label`
+ * distinct from its ASCII internal `name` (see spec-engine/
+ * domainEntities.ts's own Customer entity: name "Customer", label
+ * "לקוחות"), so the report's record-deletions line showed one raw English
+ * identifier floating in an otherwise all-Hebrew report, with no way for
+ * the reader to connect it to the entity they actually know by its real
+ * label. Mirrors round 1648's identical fix for GlobalSearchPanel's own
+ * truncated-results banner. Also confirms the fallback: a deletion whose
+ * entityName no longer matches any current spec entity (e.g. the entity
+ * was itself later deleted) still renders, using the raw stored name.
+ */
+test("CollaboratorsPanel's Copy report resolves a deleted record's entityName to the entity's real display label, falling back to the raw name when the entity no longer exists", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/record-deletions") {
+        return new Response(
+          JSON.stringify({
+            deletions: [
+              { id: 1, entityName: "Customer", recordId: 10, recordLabel: "Dana", deletedByUserId: "owner1", deletedAt: "2024-02-01T10:00:00.000Z" },
+              { id: 2, entityName: "Vanished", recordId: 11, recordLabel: "Ghost", deletedByUserId: "owner1", deletedAt: "2024-02-02T10:00:00.000Z" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    const entities: Entity[] = [{ name: "Customer", label: "לקוחות", fields: [{ name: "name", type: "text", required: false }] }];
+
+    try {
+      renderPanel(true, undefined, () => {}, "CRM", () => {}, false, entities);
+      await waitForCondition(() => document.querySelector(".collab-count") !== null);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy list"))!;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string");
+      assert.match(writtenText!, /Dana \(לקוחות\)/, "the resolved Hebrew display label must appear next to the deleted record, not the raw internal name");
+      assert.doesNotMatch(writtenText!, /\(Customer\)/, "the raw internal entity name must never appear once a real label is known");
+      assert.match(writtenText!, /Ghost \(Vanished\)/, "a deletion for an entity no longer in the spec must fall back to the raw stored name");
+    } finally {
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;
     }

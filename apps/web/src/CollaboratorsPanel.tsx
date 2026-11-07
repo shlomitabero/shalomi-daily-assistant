@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CollaboratorRole, Project, ProjectCollaborator } from "@forge/shared";
+import type { CollaboratorRole, Entity, Project, ProjectCollaborator } from "@forge/shared";
 import {
   addCollaborator,
   getCalendarFeedToken,
@@ -20,6 +20,7 @@ import {
 } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
+import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
@@ -41,6 +42,7 @@ export function CollaboratorsPanel({
   isOwner,
   readOnly,
   currentUserId,
+  entities,
   onClose,
   onLeft,
   onOwnerTransferred,
@@ -61,6 +63,19 @@ export function CollaboratorsPanel({
   readOnly: boolean;
   /** The signed-in user's own id -- lets this panel tell "my own row" apart from every other collaborator's, so only my own row ever gets a "Leave" button. */
   currentUserId: string | undefined;
+  /**
+   * Round 1656: mirrors AutomationsPanel's own identical `entities` prop
+   * (App.tsx already passes it `orderedEntities` there) -- used only to
+   * resolve a deleted record's raw internal entityName into its real
+   * display label for the Copy/Download report's record-deletions section
+   * (see deletionsForReport below), the same entityDisplayLabel/
+   * entityLabelOccurrences pair GlobalSearchPanel.tsx's own truncated-
+   * results banner already uses for the identical "don't show the raw
+   * internal name" purpose. A project with no spec entities loaded yet
+   * (or a test that doesn't pass this prop) still works fine -- the
+   * lookup below just degrades to the raw name, same as a deleted entity.
+   */
+  entities: Entity[];
   onClose: () => void;
   /** Called once a real self-removal succeeds -- the caller no longer has access to this project at all, so it's expected to navigate away (e.g. back to the home screen), not just close this panel. */
   onLeft: () => void;
@@ -555,11 +570,30 @@ export function CollaboratorsPanel({
   // pattern (GET .../checkpoints, GET .../entities/:entityName) but built
   // client-side here, since there's no reason to duplicate that lookup in
   // a dedicated route response just for this one report.
+  //
+  // Round 1656: the same treatment for d.entityName, which was passed
+  // through unresolved -- entityName is the raw internal spec identifier
+  // (e.g. "Customer"), never the Hebrew/friendly `label` an AI-generated
+  // spec actually gives most entities (e.g. "לקוחות"), the same raw-vs-
+  // display gap round 1648 already fixed for GlobalSearchPanel's own
+  // truncated-results banner. Case-insensitive fallback mirrors every
+  // other entityName lookup in this codebase (findField's own sibling
+  // pattern); an entity later removed from the spec entirely degrades to
+  // the raw stored name, same as deletedByEmail's own null fallback for a
+  // former collaborator whose email isn't in either current list.
   function deletionsForReport() {
     const emails: Record<string, string> = {};
     if (owner) emails[owner.userId] = owner.email;
     for (const c of collaborators ?? []) emails[c.userId] = c.email;
-    return recordDeletions.map((d) => ({ ...d, deletedByEmail: d.deletedByUserId ? emails[d.deletedByUserId] ?? null : null }));
+    const occurrences = entityLabelOccurrences(entities);
+    return recordDeletions.map((d) => {
+      const resolvedEntity = entities.find((e) => e.name === d.entityName) ?? entities.find((e) => e.name.toLowerCase() === d.entityName.toLowerCase());
+      return {
+        ...d,
+        entityName: resolvedEntity ? entityDisplayLabel(resolvedEntity, occurrences) : d.entityName,
+        deletedByEmail: d.deletedByUserId ? emails[d.deletedByUserId] ?? null : null,
+      };
+    });
   }
 
   // Round 1636: mirrors deletionsForReport's own email-resolution pattern
