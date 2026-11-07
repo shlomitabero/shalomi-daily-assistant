@@ -70,6 +70,16 @@ test('createDigitalProduct rejects a missing topic or audience before drafting a
   assert.equal(db.opportunities.all().length, 0);
 });
 
+test('createDigitalProduct rejects a request with no body at all instead of throwing', async () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all (e.g. a missing/wrong content-type) - every other test
+  // here always supplies a body object, even an empty one.
+  __resetForTests();
+  const res = makeRes();
+  await createDigitalProduct({}, res);
+  assert.equal(res.statusCode, 400);
+});
+
 test('createDigitalProduct creates a real draft with honest feasibility data when given a topic and audience', async () => {
   __resetForTests();
   await withoutAnthropicKey(async () => {
@@ -172,6 +182,18 @@ test('patchOpportunity 404s for an id that does not exist', () => {
   patchOpportunity({ params: { id: 'opp_missing' }, body: { priceUSD: 20 } }, res);
   assert.equal(res.statusCode, 404);
   assert.equal(res.body.error, 'לא נמצא');
+});
+
+test('patchOpportunity treats a request with no body at all as an empty patch instead of throwing', () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all - every other test here always supplies a body
+  // object. An empty patch is a legitimate no-op, not an error.
+  __resetForTests();
+  const opp = insertOpportunity({ riskLevel: 'low' });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.riskLevel, 'low');
 });
 
 test('patchOpportunity rejects a non-finite revenueEstimate instead of letting it corrupt the profit math', () => {
