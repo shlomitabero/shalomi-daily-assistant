@@ -1262,7 +1262,14 @@ export function calendarChipLabelValue(labelField: Field, record: EntityRecord, 
   // formatted number. stripBidiMarks matches this file's own established
   // convention for a locale-formatted number that leaves the app (the
   // calendar chip's own tooltip/day-cell text).
-  if (labelField.type === "number" && typeof value === "number") return stripBidiMarks(formatNumberValue(value, lang));
+  // Round 1668: a phone-like-named number field (isPhoneFieldName, same
+  // guard as recordDisplayLabel's own round-1642 fix just above) must
+  // never be locale-grouped here either -- e.g. CallLog { calledAt: date,
+  // phone: number } lands the phone field on this exact fallback.
+  if (labelField.type === "number" && typeof value === "number") {
+    if (isPhoneFieldName(labelField.name)) return String(value);
+    return stripBidiMarks(formatNumberValue(value, lang));
+  }
   return String(value);
 }
 

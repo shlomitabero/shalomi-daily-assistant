@@ -1885,6 +1885,19 @@ test("calendarChipLabelValue resolves a number display field to a locale-formatt
   assert.ok(!he.includes("‎") && !he.includes("‏"), "must contain no invisible bidi mark at all");
 });
 
+/**
+ * Round 1668: mirrors recordDisplayLabel's own round-1642 phone-field
+ * exclusion -- a phone-like-named number field (e.g. CallLog { calledAt:
+ * date, phone: number }) landing on this same last-resort fallback must
+ * never be locale-grouped, since that renders a non-dialable, comma-
+ * separated number in the live Calendar view's own day-chip label.
+ */
+test("calendarChipLabelValue never locale-groups a phone-like-named number display field", () => {
+  const field: Field = { name: "phone", type: "number", required: false };
+  assert.equal(calendarChipLabelValue(field, { id: 1, phone: 972501234567 }, "en"), "972501234567");
+  assert.equal(calendarChipLabelValue(field, { id: 1, phone: 972501234567 }, "he"), "972501234567");
+});
+
 test("recordDisplayLabel shows the display field's value, falling back to #id when it's empty or missing", () => {
   const courier: Entity = {
     name: "Courier",
