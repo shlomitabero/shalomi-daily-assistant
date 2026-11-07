@@ -5981,6 +5981,62 @@ test("DELETE /projects/:id/automations/:ruleId retried with the same idempotency
 });
 
 /**
+ * Round 1666: the delete half of the automation-rule audit-trail pair
+ * round 1664 (createdByUserId/updatedByUserId) closed for create/update --
+ * deleting a rule previously carried no "who did this" trail at all.
+ */
+test("DELETE /projects/:id/automations/:ruleId logs the deletion, readable via GET .../automation-rule-deletions with the rule's entity/trigger/actionType and the real deleter", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, `automation-deletion-audit-owner-${randomUUID()}@example.com`);
+    const collabEmail = `automation-deletion-audit-collab-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const entityName = project.spec.entities[0].name;
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entityName}/automations`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ trigger: "record_created", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "hi" }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${rule.id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(collabToken), "x-idempotency-key": randomUUID() },
+    });
+    assert.equal(deleteRes.status, 204);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/automation-rule-deletions`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { deletions } = (await listRes.json()) as {
+      deletions: { ruleId: string; entityName: string; trigger: string; actionType: string; deletedByUserId: string | null }[];
+    };
+    assert.equal(deletions.length, 1, "the deletion must be logged exactly once");
+    assert.equal(deletions[0].ruleId, rule.id);
+    assert.equal(deletions[0].entityName, entityName, "must snapshot the rule's own entityName, since the row itself is gone");
+    assert.equal(deletions[0].trigger, "record_created");
+    assert.equal(deletions[0].actionType, "send_whatsapp");
+    assert.ok(deletions[0].deletedByUserId, "must record who actually deleted it, not the owner by default");
+
+    // A collaborator (even the one who didn't delete it) can read the same audit trail.
+    const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/automation-rule-deletions`, { headers: authHeaders(collabToken) });
+    assert.equal(collabListRes.status, 200);
+  });
+});
+
+/**
  * Round 682: a rule's own lastTriggeredAt/lastStatus/lastError (already
  * returned by GET /automations) only ever showed the single most recent
  * firing -- a rule that failed repeatedly and then happened to succeed on

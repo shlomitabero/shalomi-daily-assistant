@@ -18,6 +18,7 @@ import { ensureAutomationRulesTable, insertAutomationRule, listAutomationRules }
 import { ensureRecordDeletionsTable } from "./recordDeletions.js";
 import { ensureCollaboratorAccessChangesTable } from "./collaboratorAccessChanges.js";
 import { ensureSchemaLabelEditsTable } from "./schemaLabelEdits.js";
+import { ensureAutomationRuleDeletionsTable } from "./automationRuleDeletions.js";
 import {
   ensureProjectsTable,
   deleteProject,
@@ -380,6 +381,7 @@ test("deleteProject removes the project row, its real generated data table, chec
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const project = insertProject(db, {
     id: "to-delete",
@@ -488,6 +490,7 @@ test("deleteProject drops the real data table of an entity that was added then l
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -562,6 +565,7 @@ test("deleteProject drops a real data table whose entity was only ever migrated 
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -626,6 +630,7 @@ test("deleteProject drops a real data table whose entity committed during a diff
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const buildSpec: ProductSpec = {
     ...validSpec,
@@ -703,6 +708,7 @@ test("deleteProject still drops a real data table even when the one checkpoint t
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -779,6 +785,7 @@ test("deleteProject still drops the real data table of an entity from a checkpoi
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   const project = insertProject(db, {
@@ -880,6 +887,7 @@ test("deleteProject still drops the real data table, checkpoints, collaborators,
   ensureRecordDeletionsTable(db);
   ensureCollaboratorAccessChangesTable(db);
   ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
 
   const buildSpec: ProductSpec = validSpec;
   // No FOREIGN KEY ties any of these to a real `projects` row (confirmed

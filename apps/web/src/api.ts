@@ -1423,6 +1423,28 @@ export function listSchemaLabelEdits(projectId: string): Promise<{ edits: Schema
   return request(`/projects/${projectId}/schema-label-edits`);
 }
 
+/**
+ * Round 1666: the delete half of the automation-rule audit-trail pair --
+ * round 1664's createdByUserId/updatedByUserId closed create/update, but
+ * deleting a rule still carried no trail at all. `entityName`/`trigger`/
+ * `actionType` are captured at delete time (there's no single free-text
+ * "name" field on an automation rule to snapshot the way a deleted
+ * record's own recordLabel is).
+ */
+export interface AutomationRuleDeletion {
+  id: number;
+  ruleId: string;
+  entityName: string;
+  trigger: AutomationTrigger;
+  actionType: AutomationActionType;
+  deletedByUserId: string | null;
+  deletedAt: string;
+}
+
+export function listAutomationRuleDeletions(projectId: string): Promise<{ deletions: AutomationRuleDeletion[] }> {
+  return request(`/projects/${projectId}/automation-rule-deletions`);
+}
+
 /** The owner never appears in `collaborators` itself (see collaborators.ts's own module comment -- their access comes from project.ownerId, not the join table), so the panel needs this separately to show who actually owns the project. Null only in the should-never-happen case of a dangling owner reference. */
 export interface ProjectOwnerInfo {
   userId: string;

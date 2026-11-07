@@ -231,3 +231,55 @@ test("formatCollaboratorsReport falls back to the unknown-actor translation when
   ]);
   assert.ok(result.includes("by Unknown"));
 });
+
+/**
+ * Round 1666: the sibling report section to schemaLabelEdits above, for
+ * automation-rule deletions -- the one action in the automation-rule
+ * audit-trail family (createdByUserId/updatedByUserId, round 1664) that
+ * still had no trail at all.
+ */
+test("formatCollaboratorsReport includes an automation-rule-deletions section listing a deleted rule's entity/trigger/action, but omits the section entirely when there are none", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const withoutDeletions = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [], []);
+  assert.ok(!withoutDeletions.includes("Deleted automation rules:"), "the section must not appear at all when there are no automation-rule deletions");
+
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [], [
+    {
+      entityName: "Customer",
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      deletedByEmail: "owner@example.com",
+      deletedAt: "2024-02-03T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Deleted automation rules:"));
+  assert.ok(result.includes("An automation rule for \"Customer\" (When a new record is created, Send a WhatsApp message) was deleted by owner@example.com"));
+});
+
+test("formatCollaboratorsReport in Hebrew renders the automation-rule-deletions section", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "he", t, [], [], [], [
+    {
+      entityName: "Customer",
+      trigger: "record_created",
+      actionType: "webhook",
+      deletedByEmail: "owner@example.com",
+      deletedAt: "2024-02-03T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("חוקי אוטומציה שנמחקו:"));
+});
+
+test("formatCollaboratorsReport falls back to the unknown-actor translation when an automation-rule-deletion's deletedByEmail is null", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [], [
+    {
+      entityName: "Customer",
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      deletedByEmail: null,
+      deletedAt: "2024-02-03T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("by Unknown"));
+});

@@ -1,11 +1,27 @@
 import type { CollaboratorRole, ProjectCollaborator } from "@forge/shared";
-import { safeDownloadName, type ProjectOwnerInfo } from "./api.js";
+import { safeDownloadName, type AutomationActionType, type AutomationTrigger, type ProjectOwnerInfo } from "./api.js";
 import type { Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
 
 function roleLabel(role: CollaboratorRole, t: (key: string, params?: Record<string, string | number>) => string): string {
   return role === "viewer" ? t("collab.role.viewer") : t("collab.role.editor");
+}
+
+/** Round 1666: reuses AutomationsPanel.tsx's own short trigger/actionType labels ("automations.trigger." and "automations.actionType." keys) rather than duplicating them -- this report only needs to name which rule was deleted, not the full describeRule/describeDestination sentence those keys' siblings build (which needs field/entity context a deleted rule no longer has). */
+function triggerLabel(trigger: AutomationTrigger, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (trigger === "record_created") return t("automations.trigger.recordCreated");
+  if (trigger === "field_equals") return t("automations.trigger.fieldEquals");
+  if (trigger === "schedule") return t("automations.trigger.schedule");
+  if (trigger === "record_deleted") return t("automations.trigger.recordDeleted");
+  if (trigger === "record_updated") return t("automations.trigger.recordUpdated");
+  return t("automations.trigger.inboundWebhook");
+}
+
+function actionTypeLabel(actionType: AutomationActionType, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (actionType === "webhook") return t("automations.actionType.webhook");
+  if (actionType === "send_email") return t("automations.actionType.sendEmail");
+  return t("automations.actionType.sendWhatsapp");
 }
 
 /**
@@ -60,6 +76,25 @@ export interface SchemaLabelEditForReport {
 }
 
 /**
+ * Round 1666: the sibling of SchemaLabelEditForReport above, for automation
+ * rule deletions -- the one action in the automation-rule audit-trail
+ * family (createdByUserId/updatedByUserId, round 1664) that still had no
+ * trail at all. `deletedByEmail` is already resolved by the caller
+ * (CollaboratorsPanel.tsx), same reason as the sibling report types' own
+ * *Email fields. `entityName` is already resolved to its display label
+ * the same way deletionsForReport/schemaLabelEditsForReport resolve
+ * theirs; trigger/actionType stay as the raw enum values this module's
+ * own triggerLabel/actionTypeLabel translate.
+ */
+export interface AutomationRuleDeletionForReport {
+  entityName: string;
+  trigger: AutomationTrigger;
+  actionType: AutomationActionType;
+  deletedByEmail: string | null;
+  deletedAt: string;
+}
+
+/**
  * Renders the Collaborators panel's own already-fetched owner + collaborator
  * list as a plain, shareable text snapshot -- the same gap every other
  * read-heavy "list of real data" overlay panel in this app (Business Twin,
@@ -77,6 +112,7 @@ export function formatCollaboratorsReport(
   recordDeletions: RecordDeletionForReport[] = [],
   accessChanges: CollaboratorAccessChangeForReport[] = [],
   schemaLabelEdits: SchemaLabelEditForReport[] = [],
+  automationRuleDeletions: AutomationRuleDeletionForReport[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`${t("collab.title")} — ${projectName}`);
@@ -190,6 +226,22 @@ export function formatCollaboratorsReport(
           }),
         );
       }
+    }
+  }
+
+  if (automationRuleDeletions.length > 0) {
+    lines.push("");
+    lines.push(t("collab.report.automationRuleDeletionsHeading"));
+    for (const d of automationRuleDeletions) {
+      lines.push(
+        t("collab.report.automationRuleDeletedEntry", {
+          entity: d.entityName,
+          trigger: triggerLabel(d.trigger, t),
+          action: actionTypeLabel(d.actionType, t),
+          by: d.deletedByEmail ?? t("collab.report.unknownActor"),
+          date: new Date(d.deletedAt).toLocaleString(LOCALE[lang]),
+        }),
+      );
     }
   }
 

@@ -5,6 +5,7 @@ import {
   getCalendarFeedToken,
   getInboundWebhookToken,
   listCollaborators,
+  listAutomationRuleDeletions,
   listCollaboratorAccessChanges,
   listRecordDeletions,
   listSchemaLabelEdits,
@@ -13,6 +14,7 @@ import {
   removeCollaborator,
   transferProjectOwnership,
   updateCollaboratorRole,
+  type AutomationRuleDeletion,
   type CollaboratorAccessChange,
   type ProjectOwnerInfo,
   type RecordDeletion,
@@ -129,6 +131,11 @@ export function CollaboratorsPanel({
   // contract, for the same reason (Copy/Download-report-only data, never a
   // hard dependency of opening this panel at all).
   const [schemaLabelEdits, setSchemaLabelEdits] = useState<SchemaLabelEdit[]>([]);
+  // Round 1666: the sibling fetch to schemaLabelEdits above, for the
+  // automation-rule-deletion audit log -- same silent-on-failure contract,
+  // for the same reason (Copy/Download-report-only data, never a hard
+  // dependency of opening this panel at all).
+  const [automationRuleDeletions, setAutomationRuleDeletions] = useState<AutomationRuleDeletion[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Distinct from the error above (shared by invite/remove/leave failures,
   // each of which already has its own clear recovery path): specifically
@@ -189,6 +196,11 @@ export function CollaboratorsPanel({
     // listCollaboratorAccessChanges above, for the same reason.
     listSchemaLabelEdits(projectId)
       .then(({ edits }) => setSchemaLabelEdits(edits))
+      .catch(() => {});
+    // Round 1666: same independent, silently-failing fetch pattern as
+    // listSchemaLabelEdits above, for the same reason.
+    listAutomationRuleDeletions(projectId)
+      .then(({ deletions }) => setAutomationRuleDeletions(deletions))
       .catch(() => {});
   }
 
@@ -650,6 +662,25 @@ export function CollaboratorsPanel({
     });
   }
 
+  // Round 1666: mirrors deletionsForReport's own entityName-resolution
+  // pattern exactly, for the sibling automation-rule-deletion log.
+  function automationRuleDeletionsForReport() {
+    const emails: Record<string, string> = {};
+    if (owner) emails[owner.userId] = owner.email;
+    for (const c of collaborators ?? []) emails[c.userId] = c.email;
+    const occurrences = entityLabelOccurrences(entities);
+    return automationRuleDeletions.map((d) => {
+      const resolvedEntity = entities.find((e) => e.name === d.entityName) ?? entities.find((e) => e.name.toLowerCase() === d.entityName.toLowerCase());
+      return {
+        entityName: resolvedEntity ? entityDisplayLabel(resolvedEntity, occurrences) : d.entityName,
+        trigger: d.trigger,
+        actionType: d.actionType,
+        deletedByEmail: d.deletedByUserId ? emails[d.deletedByUserId] ?? null : null,
+        deletedAt: d.deletedAt,
+      };
+    });
+  }
+
   function handleDownload() {
     downloadCollaboratorsReport(
       formatCollaboratorsReport(
@@ -661,6 +692,7 @@ export function CollaboratorsPanel({
         deletionsForReport(),
         accessChangesForReport(),
         schemaLabelEditsForReport(),
+        automationRuleDeletionsForReport(),
       ),
       projectName,
     );
@@ -686,6 +718,7 @@ export function CollaboratorsPanel({
           deletionsForReport(),
           accessChangesForReport(),
           schemaLabelEditsForReport(),
+          automationRuleDeletionsForReport(),
         ),
       );
       setCopyStatus("copied");

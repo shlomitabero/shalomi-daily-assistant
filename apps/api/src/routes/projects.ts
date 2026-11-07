@@ -68,6 +68,8 @@ import {
   listCollaboratorAccessChanges,
   insertSchemaLabelEdit,
   listSchemaLabelEdits,
+  insertAutomationRuleDeletion,
+  listAutomationRuleDeletions,
   type ForgeDatabase,
   type AutomationTrigger,
   type AutomationToMode,
@@ -6185,6 +6187,13 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/automations/${req.params.ruleId}`,
         async () => {
+          // Round 1666: the delete half of the automation-rule audit-trail
+          // pair round 1664 (createdByUserId/updatedByUserId) closed for
+          // create/update -- read before deleting, since the row itself
+          // (and with it, any single "name" field to snapshot) is gone
+          // once deleteAutomationRule returns, the same reason round 1632's
+          // own record-deletion log reads `before` first.
+          const before = getAutomationRule(db, project.id, req.params.ruleId);
           try {
             deleteAutomationRule(db, project.id, req.params.ruleId);
           } catch (err) {
@@ -6193,10 +6202,37 @@ export function createProjectsRouter(
             }
             throw err;
           }
+          if (before) {
+            insertAutomationRuleDeletion(db, {
+              projectId: project.id,
+              ruleId: before.id,
+              entityName: before.entityName,
+              trigger: before.trigger,
+              actionType: before.actionType,
+              deletedByUserId: req.userId!,
+            });
+          }
           return { status: 204, body: null };
         },
       );
       res.status(status).end();
+    }),
+  );
+
+  /**
+   * Round 1666: the read side of the automation-rule deletion audit trail --
+   * mirrors GET .../record-deletions and GET .../collaborator-access-log
+   * exactly (same requireProjectAccess, any collaborator can read it, not
+   * just the owner), for the same reason: CollaboratorsPanel.tsx's own
+   * Copy/Download report is already the one surface a collaborator can
+   * reach for "what happened on this project."
+   */
+  router.get(
+    "/projects/:id/automation-rule-deletions",
+    checkpointRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      res.json({ deletions: listAutomationRuleDeletions(db, project.id) });
     }),
   );
 

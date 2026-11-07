@@ -137,6 +137,14 @@ export {
   type SchemaLabelEditAction,
 } from "./schemaLabelEdits.js";
 export {
+  ensureAutomationRuleDeletionsTable,
+  insertAutomationRuleDeletion,
+  listAutomationRuleDeletions,
+  deleteAutomationRuleDeletionsForProject,
+  AUTOMATION_RULE_DELETIONS_RETENTION_LIMIT,
+  type AutomationRuleDeletion,
+} from "./automationRuleDeletions.js";
+export {
   ensureIdempotencyKeysTable,
   getIdempotencyRecord,
   insertIdempotencyRecord,

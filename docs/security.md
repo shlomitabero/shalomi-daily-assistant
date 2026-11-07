@@ -134,24 +134,24 @@ real threats to a smaller, concrete list:
   elsewhere in the full vision (section 100) — that changes materially once
   agents get filesystem/shell/git tools in a later phase, and this document
   should be revisited then.
-- **No audit log for automation-rule create/update/delete.** Section 40 of
-  the vision (who changed what, when, human or AI) is now covered for every
-  other write surface this doc used to call out as missing: a checkpoint
-  records *who* created it (`checkpoints.createdByUserId`, round 1567), a
-  restore records who performed it (`projects.lastRestoredByUserId`/
-  `lastRestoredCheckpointId`/`lastRestoredAt`, round 1568), a record create
-  records its creator (`records.createdByUserId`, round 1613) and a record
-  update its last editor (`records.updatedByUserId`, round 1617), a record
-  delete is logged with its deleter (`record_deletions`, round 1632), a
-  collaborator role change/removal/ownership-transfer is logged with both
-  actor and target (`collaborator_access_changes`, rounds 1636/1654), and an
-  entity/field label rename outside a build is logged with its actor
-  (`schema_label_edits`, round 1639) — all five of the latter surfaced in
-  `CollaboratorsPanel.tsx`'s Copy/Download report. What's left: creating,
-  editing, or deleting an automation rule itself carries no "who did this"
-  trail at all (`apps/api/src/automations.ts`/`packages/db/src/automations.ts`
-  have no `createdByUserId`/`changedByUserId` column on `automation_rules`),
-  unlike every other mutating surface above.
+- **Audit log for automation-rule create/update/delete is now complete.**
+  Section 40 of the vision (who changed what, when, human or AI) is now
+  covered for every write surface this doc used to call out as missing: a
+  checkpoint records *who* created it (`checkpoints.createdByUserId`, round
+  1567), a restore records who performed it
+  (`projects.lastRestoredByUserId`/`lastRestoredCheckpointId`/
+  `lastRestoredAt`, round 1568), a record create records its creator
+  (`records.createdByUserId`, round 1613) and a record update its last
+  editor (`records.updatedByUserId`, round 1617), a record delete is logged
+  with its deleter (`record_deletions`, round 1632), a collaborator role
+  change/removal/ownership-transfer is logged with both actor and target
+  (`collaborator_access_changes`, rounds 1636/1654), an entity/field label
+  rename outside a build is logged with its actor (`schema_label_edits`,
+  round 1639), an automation rule create/update is logged on the rule row
+  itself (`automation_rules.createdByUserId`/`updatedByUserId`, round
+  1664), and an automation rule delete is logged with its deleter
+  (`automation_rule_deletions`, round 1666) — all six of the latter
+  surfaced in `CollaboratorsPanel.tsx`'s Copy/Download report.
 
 ## Before any real deployment
 
