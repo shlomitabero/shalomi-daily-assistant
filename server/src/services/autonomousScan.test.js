@@ -362,6 +362,57 @@ test('runAutonomousScan never counts demo drafts toward the pending-draft cap', 
   }
 });
 
+test('runAutonomousScan only asks the AI to avoid the 50 most recently created titles, not the entire lifetime history', async () => {
+  // Every opportunity ever created stays in the DB forever (no delete
+  // route) - without a cap, the prompt sent on every single scan call
+  // would grow without bound over months of real use, inflating cost and
+  // eventually risking a token-limit failure. Capped at the 50 most
+  // recent by createdAt, so the oldest ones must be absent from the
+  // actual request sent to the AI while the newest ones are present.
+  __resetForTests();
+  const base = new Date('2026-01-01T00:00:00.000Z').getTime();
+  // 'published' (not 'draft'), so these count toward existingTitles
+  // (every opportunity ever, regardless of status) without also tripping
+  // the unrelated pending-draft cap this test isn't exercising.
+  for (let i = 0; i < 60; i += 1) {
+    db.opportunities.insert({
+      id: makeId('opp'), title: `נושא קודם מספר ${i}`, status: 'published',
+      createdAt: new Date(base + i * 60_000).toISOString(), // i=59 is newest
+    });
+  }
+  const topicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא חדש', audience: 'קהל' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  let sentPrompt = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (sentPrompt === null) sentPrompt = JSON.parse(init.body).messages[0].content;
+    return new Response(JSON.stringify(topicResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await runAutonomousScan();
+    assert.ok(sentPrompt);
+    assert.match(sentPrompt, /נושא קודם מספר 59/); // newest - must be present
+    assert.match(sentPrompt, /נושא קודם מספר 10/); // the 50th newest (indices 59..10) - still present
+    assert.doesNotMatch(sentPrompt, /נושא קודם מספר 9(?!\d)/); // the 51st newest - must be excluded
+    assert.doesNotMatch(sentPrompt, /נושא קודם מספר 0(?!\d)/); // oldest - must be excluded
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
 test('catchUpAutonomousScanIfMissed runs a scan immediately when none has ever been logged', async () => {
   // A fresh install (or a wiped log) must not wait up to 4 hours for the
   // normal cron tick before ever looking for revenue once.

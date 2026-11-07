@@ -28,7 +28,21 @@ export async function runAutonomousScan() {
     return { ran: false, reason: `${pendingDrafts} drafts are already awaiting review` };
   }
 
-  const existingTitles = db.opportunities.all().map((o) => o.title);
+  // Every opportunity ever created (published, rejected, and demo alike)
+  // stays in this list forever - after months of real use, sending the
+  // ENTIRE lifetime history as "avoid these" on every single scan call
+  // would make the prompt (and so the real AI cost) grow without bound,
+  // and eventually risk hitting a token limit that turns into a plain
+  // 'failed' scan with no indication why. The AI only needs recent history
+  // to dodge a near-term repeat, not everything the app has ever tried -
+  // capped at the 50 most recently created, newest first so the actual
+  // near-duplicates (not whatever happened to load first) are the ones
+  // that survive the cap.
+  const MAX_AVOID_TITLES = 50;
+  const existingTitles = db.opportunities.all()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, MAX_AVOID_TITLES)
+    .map((o) => o.title);
   let idea;
   try {
     idea = await generateTopicIdea({ avoidTitles: existingTitles });
