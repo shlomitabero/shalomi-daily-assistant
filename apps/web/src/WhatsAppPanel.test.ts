@@ -1355,6 +1355,53 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
 });
 
 /**
+ * Round 1659: the testTo input had no maxLength, unlike the sibling
+ * testMessage input right below it (maxLength={4096}, matching the
+ * server's WhatsAppSendSchema.message.max(4096)). The server's own
+ * WhatsAppSendSchema.to.max(50) (routes/projects.ts) was never mirrored
+ * client-side, so a recipient string over 50 chars typed unlimited into
+ * the browser and only failed with a silent post-submit 400 -- the same
+ * client/server parity gap this app has repeatedly closed elsewhere
+ * (round 1458's 5 email inputs, round 1650's webhookSecret).
+ */
+test("WhatsAppPanel's test-send recipient input caps at 50 chars client-side, matching the server's own to.max(50)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      const toInput = inputs[0] as HTMLInputElement;
+      const messageInput = inputs[1] as HTMLInputElement;
+      assert.equal(toInput.maxLength, 50, "the recipient input must cap at 50 chars client-side, matching WhatsAppSendSchema.to.max(50)");
+      assert.equal(messageInput.maxLength, 4096, "the message input's existing cap must remain unaffected by this fix");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1364: the exact same bug class round 1363 closed for
  * EntityPanel.tsx's record-form Save button -- handleSendTest had no
  * guard against racing ITSELF, unlike handleRemoveAttachment/

@@ -1366,7 +1366,16 @@ export function WhatsAppPanel({
             <h3>{t("whatsapp.test.heading")}</h3>
             <label className="field-row">
               <span>{t("whatsapp.test.to")}</span>
-              <input type="text" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder={t("whatsapp.test.to.placeholder")} required />
+              {/* Round 1659: matches WhatsAppSendSchema's own to.max(50) (routes/projects.ts) -- the
+                  sibling message input below already has this parity via maxLength={4096}. */}
+              <input
+                type="text"
+                value={testTo}
+                onChange={(e) => setTestTo(e.target.value)}
+                placeholder={t("whatsapp.test.to.placeholder")}
+                required
+                maxLength={50}
+              />
             </label>
             {recentNumbers.length > 0 && (
               <div className="whatsapp-recent-numbers">
