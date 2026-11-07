@@ -16774,6 +16774,46 @@ test("the exported GlobalSearch's rendered count span and its own copy/download 
 });
 
 /**
+ * Round 1670: the exported app's own formatGlobalSearchReport never took a
+ * truncatedNames parameter at all -- mirroring the live preview's
+ * identical round-1670 gap in searchReport.ts's formatSearchResults, this
+ * is the same silent-information-loss shape: the on-screen
+ * `truncatedEntityNames.length > 0` banner (already wired via round 1643's
+ * own searchAllEntities) told a user some entity's search was capped, but
+ * Copy/Download produced a saved report with zero trace of that caveat.
+ */
+test("the exported GlobalSearch's own copy/download report includes a truncation caveat naming the capped entity, and omits it when nothing was truncated", () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const pickDisplayFieldSrc = entityViewJsx.match(/export function pickDisplayField\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const formatReportSrc = globalSearchJsx.match(/function formatGlobalSearchReport\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    displayFieldHintsSrc && pickDisplayFieldSrc && recordDisplayLabelSrc && formatReportSrc,
+    "expected to find DISPLAY_FIELD_NAME_HINTS/pickDisplayField/recordDisplayLabel/formatGlobalSearchReport in generated output",
+  );
+  const fn = new Function(
+    `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${formatReportSrc}\nreturn formatGlobalSearchReport;`,
+  )() as (results: unknown[], entities: unknown[], expandedSamples: Record<string, unknown>, query: string, truncatedEntityNames?: string[]) => string;
+
+  const entity = { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Name", type: "text" }] };
+  const results = [{ entityName: "Customer", entityLabel: "Customer", totalMatches: 1, sample: [{ id: 1, name: "Amy" }] }];
+
+  const truncatedReport = fn(results, [entity], {}, "amy", ["Customer"]);
+  assert.match(truncatedReport, /too large for search to scan every record/);
+  assert.match(truncatedReport, /Customer/);
+
+  const untruncatedReport = fn(results, [entity], {}, "amy", []);
+  assert.doesNotMatch(untruncatedReport, /too large for search to scan every record/);
+
+  const defaultedReport = fn(results, [entity], {}, "amy");
+  assert.doesNotMatch(defaultedReport, /too large for search to scan every record/, "omitting the argument entirely must behave the same as an empty array");
+});
+
+/**
  * Round 790: the exported app's own GlobalSearch.jsx is a deliberate
  * duplicate of the live-preview GlobalSearchPanel.tsx's handleShowAll,
  * and it had the exact same staleness gap -- handleShowAll re-fetches one

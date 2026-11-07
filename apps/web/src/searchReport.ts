@@ -15,6 +15,14 @@ const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
  * exactly what the panel itself is currently showing (including any
  * "Show all" expansions), so the copied/downloaded text never disagrees
  * with what's actually on screen.
+ *
+ * Round 1670: `truncatedEntityNames` mirrors the live panel's own
+ * `search.truncatedHint` banner (the `truncated: true` flag some
+ * entities' `listRecords` call can return, when that entity has more
+ * records than the server-side search cap ever scans) -- without this,
+ * a user who sees that on-screen "may be incomplete" warning and then
+ * Copies/Downloads the results gets a saved artifact with zero trace of
+ * it, reading as a complete, authoritative match list.
  */
 export function formatSearchResults(
   results: EntitySearchResult[],
@@ -24,11 +32,15 @@ export function formatSearchResults(
   projectName: string,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
+  truncatedEntityNames: string[] = [],
 ): string {
   const lines: string[] = [];
   lines.push(`${t("search.title")} — ${projectName}`);
   lines.push(t("search.report.generatedAt", { date: new Date().toLocaleString(LOCALE[lang]) }));
   lines.push(t("search.report.query", { query }));
+  if (truncatedEntityNames.length > 0) {
+    lines.push(t("search.report.truncatedHint", { entities: truncatedEntityNames.join(", ") }));
+  }
   lines.push("");
 
   if (results.length === 0) {

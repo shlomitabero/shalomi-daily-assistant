@@ -973,6 +973,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.download": "⬇️ הורדת התוצאות",
     "search.report.generatedAt": "נוצר ב-{date}",
     "search.report.query": "חיפוש: \"{query}\"",
+    "search.report.truncatedHint": "הטבלאות הבאות גדולות מכדי שהחיפוש יסקור את כל הרשומות שלהן (רק הרשומות החדשות ביותר נבדקות): {entities}. ייתכן שיש רשומות ישנות יותר שמתאימות לחיפוש ולא מוצגות כאן.",
     "search.report.andMore": "ועוד {count}…",
   },
   en: {
@@ -1915,6 +1916,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "search.download": "⬇️ Download results",
     "search.report.generatedAt": "Generated on {date}",
     "search.report.query": 'Search: "{query}"',
+    "search.report.truncatedHint": "These tables are too large for search to scan every record (only the most recent ones are checked): {entities}. Older records matching your query may not be shown here.",
     "search.report.andMore": "and {count} more…",
   },
 };

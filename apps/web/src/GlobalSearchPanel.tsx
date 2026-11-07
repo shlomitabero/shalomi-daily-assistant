@@ -490,7 +490,7 @@ export function GlobalSearchPanel({
 
   function handleDownload() {
     downloadSearchResults(
-      formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t),
+      formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t, truncatedEntityNames),
       projectName,
     );
   }
@@ -506,7 +506,7 @@ export function GlobalSearchPanel({
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(
-        formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t),
+        formatSearchResults(results, entities, expandedSamples, highlightQuery, projectName, lang, t, truncatedEntityNames),
       );
       setCopyStatus("copied");
     } catch {

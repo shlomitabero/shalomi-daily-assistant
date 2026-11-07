@@ -178,3 +178,32 @@ test("formatSearchResults lists results from more than one entity, each under it
   assert.match(report, /Amy/);
   assert.match(report, /Orders/);
 });
+
+/**
+ * Round 1670: mirrors the live panel's own `search.truncatedHint` banner --
+ * a user who sees that on-screen "may be incomplete" warning and then
+ * Copies/Downloads the results must see the same caveat in the saved
+ * text, not a report that reads as a complete, authoritative match list.
+ */
+test("formatSearchResults includes a truncation caveat when any entity's search was capped, naming which ones", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const results: EntitySearchResult[] = [
+    { entityName: "Customer", entityLabel: "Customers", totalMatches: 1, sample: [customerRecord(1, "Amy")] },
+  ];
+
+  const report = formatSearchResults(results, [CUSTOMER_ENTITY], {}, "amy", "Flower Shop", "en", t, ["Customers"]);
+
+  assert.match(report, /too large for search to scan every record/);
+  assert.match(report, /Customers/);
+});
+
+test("formatSearchResults omits the truncation caveat entirely when no entity's search was capped", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const results: EntitySearchResult[] = [
+    { entityName: "Customer", entityLabel: "Customers", totalMatches: 1, sample: [customerRecord(1, "Amy")] },
+  ];
+
+  const report = formatSearchResults(results, [CUSTOMER_ENTITY], {}, "amy", "Flower Shop", "en", t, []);
+
+  assert.doesNotMatch(report, /too large for search to scan every record/);
+});

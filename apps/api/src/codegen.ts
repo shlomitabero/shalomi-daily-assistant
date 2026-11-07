@@ -8794,8 +8794,12 @@ async function searchAllEntities(entities, query) {
 // what the panel itself is currently showing (including any "Show all"
 // expansions, see searchReport.ts's own formatSearchResults), so the
 // copied/downloaded text never disagrees with what's actually on screen.
-function formatGlobalSearchReport(results, entities, expandedSamples, query) {
-  const lines = [\`Search everything — "\${query}"\`, \`Generated \${new Date().toLocaleString()}\`, ""];
+function formatGlobalSearchReport(results, entities, expandedSamples, query, truncatedEntityNames = []) {
+  const lines = [\`Search everything — "\${query}"\`, \`Generated \${new Date().toLocaleString()}\`];
+  if (truncatedEntityNames.length > 0) {
+    lines.push(\`These tables are too large for search to scan every record (only the most recent ones are checked): \${truncatedEntityNames.join(", ")}. Older records matching your query may not be shown here.\`);
+  }
+  lines.push("");
   if (results.length === 0) {
     lines.push("No matching results in any entity.");
     return lines.join("\\n").trimEnd();
@@ -9184,7 +9188,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, expandedSamples, highlightQuery));
+      await navigator.clipboard.writeText(formatGlobalSearchReport(results, entities, expandedSamples, highlightQuery, truncatedEntityNames));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");
@@ -9192,7 +9196,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   }
 
   function handleDownload() {
-    const text = formatGlobalSearchReport(results, entities, expandedSamples, highlightQuery);
+    const text = formatGlobalSearchReport(results, entities, expandedSamples, highlightQuery, truncatedEntityNames);
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
