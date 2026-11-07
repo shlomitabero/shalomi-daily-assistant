@@ -22219,6 +22219,239 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId replays its cache
 });
 
 /**
+ * Round 1683: the create and update routes above let an external sender
+ * (Stripe, Typeform, a website's own form handler) keep one record in sync
+ * across a whole sequence of events, but there was no way to remove one at
+ * all, even though these same integrations routinely send deletion-shaped
+ * events too (a Stripe subscription cancellation, a Typeform response
+ * deletion). Confirms the new route actually deletes the record, writes a
+ * record_deletions audit-log entry (mirroring routes/projects.ts's own
+ * round-1632 convention, deletedByUserId: null since this route has no
+ * req.userId), and fires a "record_deleted" automation rule.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete removes the record, logs a record_deletions entry, and fires a record_deleted automation", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `webhook-in-delete-${randomUUID()}@example.com`;
+      const authToken = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "phone", type: "text" }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(authToken) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({ trigger: "record_deleted", actionType: "send_whatsapp", toMode: "field", toField: "phone", messageTemplate: "Order removed." }),
+      });
+
+      const { token: webhookToken } = (await (
+        await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+      ).json()) as { token: string };
+
+      const createRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "pending", phone: "972500000001" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { id: recordId } = (await createRes.json()) as { id: string };
+
+      const deleteRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}/delete?token=${webhookToken}`, {
+        method: "POST",
+      });
+      assert.equal(deleteRes.status, 204);
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+      const { records } = (await listRes.json()) as { records: unknown[] };
+      assert.equal(records.length, 0, "the record must actually be gone after the webhook delete");
+
+      const deletionsRes = await fetch(`${baseUrl}/api/projects/${projectId}/record-deletions`, { headers: authHeaders(authToken) });
+      const { deletions } = (await deletionsRes.json()) as { deletions: { recordId: number; entityName: string; deletedByUserId: string | null }[] };
+      assert.equal(deletions.length, 1, "the webhook delete must be logged in the same audit trail every other delete path already writes to");
+      assert.equal(deletions[0].entityName, "Order");
+      assert.equal(deletions[0].deletedByUserId, null, "this route has no req.userId -- mirrors the create/update routes' own lack of an authenticated actor");
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "a record_deleted rule must fire for a record removed via the webhook delete route, the same as any other delete path");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
+ * Round 1683: the same "never leak which part of the lookup failed"
+ * convention the create/update routes' own 404s already follow.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete 404s for a nonexistent record id, without deleting or logging anything", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-delete-404-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const deleteRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/999999/delete?token=${webhookToken}`, { method: "POST" });
+    assert.equal(deleteRes.status, 404);
+
+    const deletionsRes = await fetch(`${baseUrl}/api/projects/${projectId}/record-deletions`, { headers: authHeaders(authToken) });
+    const { deletions } = (await deletionsRes.json()) as { deletions: unknown[] };
+    assert.equal(deletions.length, 0, "a 404'd delete of a nonexistent record id must not log anything");
+  });
+});
+
+/**
+ * Round 1683: an idempotency-key retry of the SAME delete must replay the
+ * original 204, not 404 just because the record (and this time, the whole
+ * reason for the request) is now gone -- the same rule round 1609 already
+ * applies to the update route, and must never fire a second automation or
+ * write a second record_deletions entry for what is really one real-world
+ * deletion event.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete replays its cached 204 for an idempotency-key retry, without logging or firing a second time", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-delete-idem-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const createRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "pending" }),
+    });
+    const { id: recordId } = (await createRes.json()) as { id: string };
+
+    const idempotencyKey = randomUUID();
+    const firstDeleteRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}/delete?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "X-Idempotency-Key": idempotencyKey },
+    });
+    assert.equal(firstDeleteRes.status, 204, "sanity check: the first delivery must succeed normally");
+
+    const retryRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}/delete?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "X-Idempotency-Key": idempotencyKey },
+    });
+    assert.equal(retryRes.status, 204, "a retry with the same idempotency key must replay the cached 204, not 404 just because the record is already gone");
+
+    const deletionsRes = await fetch(`${baseUrl}/api/projects/${projectId}/record-deletions`, { headers: authHeaders(authToken) });
+    const { deletions } = (await deletionsRes.json()) as { deletions: unknown[] };
+    assert.equal(deletions.length, 1, "a replayed retry must never write a second record_deletions entry for the same real-world deletion");
+  });
+});
+
+/**
+ * Round 1683: mirrors the authenticated DELETE route's own FOREIGN KEY ->
+ * 409 translation (routes/projects.ts) -- a webhook-driven delete of a
+ * record another record still references through a relation field must be
+ * rejected the same way, not crash with a raw 500 or silently corrupt the
+ * referencing row.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete is rejected with RECORD_HAS_DEPENDENT_RECORDS when another record still references it, and the record survives", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-delete-fk-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "courierId", type: "relation", relationTo: "Courier", required: false }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const courierRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Courier?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dave" }),
+    });
+    const { id: courierId } = (await courierRes.json()) as { id: string };
+
+    const orderRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "pending", courierId }),
+    });
+    assert.equal(orderRes.status, 201, "the Order must actually be created referencing this courier for the test to mean anything");
+
+    const deleteRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Courier/${courierId}/delete?token=${webhookToken}`, { method: "POST" });
+    assert.equal(deleteRes.status, 409, "deleting a courier a real order still references must be rejected, not 500 or silently succeed");
+    assert.equal(((await deleteRes.json()) as { code?: string }).code, "RECORD_HAS_DEPENDENT_RECORDS");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Courier`, { headers: authHeaders(authToken) });
+    const { records: couriers } = (await listRes.json()) as { records: unknown[] };
+    assert.equal(couriers.length, 1, "the referenced courier must survive the rejected delete");
+  });
+});
+
+/**
  * Round 1470: the new "inbound_webhook" automation trigger -- before this
  * round, the ONLY way to react to a record created via the public
  * inbound-webhook route was "record_created", which fires identically for

@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getInboundWebhookToken, getRecord, insertRecord, isValidDateString, listRecords, recordInboundWebhookDelivery, recordInboundWebhookFailure, updateRecord } from "@forge/db";
+import { deleteRecord, getInboundWebhookToken, getRecord, insertRecord, insertRecordDeletion, isValidDateString, listRecords, recordInboundWebhookDelivery, recordInboundWebhookFailure, updateRecord } from "@forge/db";
+import { isHebrewText } from "@forge/spec-engine";
 import { ProductSpecSchema, type Entity, type Project } from "@forge/shared";
 import type { WhatsAppWebManager } from "../whatsappWeb.js";
 import type { EmailSender } from "../email.js";
@@ -558,6 +559,99 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
         },
       );
       res.status(status).json(body);
+    }),
+  );
+
+  /**
+   * Round 1683: the create and update routes above let an external sender
+   * (Stripe, Typeform, a website's own form handler) keep one record in
+   * sync across a whole sequence of events about it -- but there was no
+   * way to remove one at all, even though these same integrations
+   * routinely send deletion-shaped events just as often (a Stripe
+   * subscription cancellation, a Typeform response deletion, a website's
+   * own "unsubscribe"/"cancel" webhook). A dedicated path segment rather
+   * than the real DELETE HTTP verb, consistent with this file's own
+   * POST-only convention above (a webhook sender almost always POSTs its
+   * event payload regardless of what it represents) and sidestepping any
+   * sender/proxy limitation on attaching a body to a DELETE request.
+   * Reuses every mechanism already established by this file's own
+   * siblings: resolveWebhookTarget, webhookInRateLimiter, withIdempotency,
+   * parseRecordId, and the FOREIGN KEY -> 409 translation the authenticated
+   * DELETE route (routes/projects.ts) already applies.
+   */
+  router.post(
+    "/public/webhook-in/:projectId/:entityName/:recordId/delete",
+    webhookInRateLimiter,
+    asyncRoute(async (req, res) => {
+      const { projectId, entityName } = req.params;
+      const provided = typeof req.query.token === "string" ? req.query.token : "";
+      const target = resolveWebhookTarget(db, projectId, entityName, provided);
+      if (!target) {
+        res.status(404).json({ error: "Webhook not found", code: "WEBHOOK_IN_NOT_FOUND" });
+        return;
+      }
+      const { project, entity } = target;
+      const recordId = parseRecordId(req.params.recordId);
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status } = await withIdempotency(
+        db,
+        idempotencyKey,
+        projectId,
+        `POST /public/webhook-in/${projectId}/${entityName}/${recordId}/delete`,
+        async () => {
+          // Round 1609's own "check inside the callback" rule, see the
+          // update route's identical comment above for why.
+          const before = getRecord(db, projectId, entity, recordId);
+          if (!before) {
+            throw new HttpError(404, "Record not found", "WEBHOOK_IN_RECORD_NOT_FOUND");
+          }
+          try {
+            deleteRecord(db, projectId, entity, recordId);
+          } catch (err) {
+            // Same FOREIGN KEY constraint translation as the authenticated
+            // DELETE route (routes/projects.ts) -- another record still
+            // referencing this one through a relation field is just as
+            // real a possibility for a webhook-driven delete.
+            if (err instanceof Error && err.message === "FOREIGN KEY constraint failed") {
+              const reason = "Cannot delete this record -- another record still references it through a relation field";
+              recordInboundWebhookFailure(db, projectId, reason);
+              throw new HttpError(409, reason, "RECORD_HAS_DEPENDENT_RECORDS");
+            }
+            if (err instanceof Error) {
+              recordInboundWebhookFailure(db, projectId, err.message);
+            }
+            throw err;
+          }
+          recordInboundWebhookDelivery(db, projectId);
+          // Round 1632's own convention (routes/projects.ts) -- a deleted
+          // row has nowhere left to carry a "who did this" column, so this
+          // writes to the same audit log instead. deletedByUserId: null,
+          // same as the create/update routes' own lack of req.userId --
+          // this route is deliberately pre-auth, token-based.
+          insertRecordDeletion(db, {
+            projectId,
+            entityName: entity.name,
+            recordId,
+            recordLabel: recordDisplayLabel(entity, before, isHebrewText(project.description) ? "he" : "en"),
+            deletedByUserId: null,
+          });
+          void runAutomationsForRecordChange(
+            db,
+            whatsapp,
+            emailSender,
+            project,
+            entity,
+            "deleted",
+            before,
+            new Set(),
+            uploadsDir,
+            `${req.protocol}://${req.get("host")}`,
+            "inbound_webhook",
+          );
+          return { status: 204, body: null };
+        },
+      );
+      res.status(status).end();
     }),
   );
 
