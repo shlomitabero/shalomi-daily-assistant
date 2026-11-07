@@ -129,7 +129,7 @@ export function HistoryPanel({
   }
 
   function handleDownload() {
-    downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails), projectName);
+    downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails, lastRestore), projectName);
   }
 
   /**
@@ -142,7 +142,7 @@ export function HistoryPanel({
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails));
+      await navigator.clipboard.writeText(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails, lastRestore));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

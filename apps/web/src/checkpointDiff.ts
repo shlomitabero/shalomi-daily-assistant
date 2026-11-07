@@ -536,10 +536,22 @@ export function formatCheckpointHistory(
   // pass; every other caller (including every existing test) keeps working
   // exactly as before, just without a creator line.
   collaboratorEmails?: Record<string, string>,
+  // Round 1684: the restore counterpart to collaboratorEmails above --
+  // HistoryPanel.tsx's own live panel (its "lastRestore" state, round 1568)
+  // already shows this once near the top, under the exact same honesty rule
+  // as the per-checkpoint creator line (omit entirely, never a raw id, when
+  // byUserId isn't resolvable). Optional and trailing for the same reason:
+  // every pre-existing call site, including every other test in this file,
+  // keeps working unchanged.
+  lastRestore?: { checkpointId: string; byUserId: string; at: string },
 ): string {
   const lines: string[] = [];
   lines.push(`${t("history.title")} — ${projectName}`);
   lines.push(t("history.report.generatedAt", { date: new Date().toLocaleString(LOCALE[lang]) }));
+  const lastRestoreEmail = lastRestore ? collaboratorEmails?.[lastRestore.byUserId] : undefined;
+  if (lastRestoreEmail) {
+    lines.push(t("history.lastRestoredBy", { date: new Date(lastRestore!.at).toLocaleString(LOCALE[lang]), email: lastRestoreEmail }));
+  }
   lines.push("");
 
   if (checkpoints.length === 0) {

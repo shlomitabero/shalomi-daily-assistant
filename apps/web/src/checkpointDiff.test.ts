@@ -1071,6 +1071,40 @@ test("formatCheckpointHistory omits every creator line when collaboratorEmails i
   assert.doesNotMatch(report, /Created by/);
 });
 
+/**
+ * Round 1684: formatCheckpointHistory never included the "last restored by"
+ * line HistoryPanel.tsx's own live panel already shows (lastRestore state,
+ * round 1568) -- the exact sibling of round 1567's own "Created by" line,
+ * added one round later and never ported into this report. lastRestore is
+ * optional and trailing for the same reason collaboratorEmails is: every
+ * pre-existing call site, including every other test in this file, keeps
+ * passing unchanged.
+ */
+test("formatCheckpointHistory includes a 'last restored by' line only when lastRestore is given and collaboratorEmails resolves its byUserId", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
+  const checkpoints: Checkpoint[] = [
+    { id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: currentSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null },
+  ];
+
+  const resolved = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t, { "user-1": "owner@example.com" }, {
+    checkpointId: "cp1",
+    byUserId: "user-1",
+    at: "2026-03-05T12:00:00.000Z",
+  });
+  assert.match(resolved, /Last restored on .* by owner@example\.com/, "a resolvable restorer must get its own report line, mirroring the live panel's own line");
+
+  const unresolved = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t, { "user-1": "owner@example.com" }, {
+    checkpointId: "cp1",
+    byUserId: "user-deleted",
+    at: "2026-03-05T12:00:00.000Z",
+  });
+  assert.doesNotMatch(unresolved, /Last restored/, "a byUserId with no matching email (e.g. a since-removed collaborator) must omit the line, not print a raw id -- the same honesty rule the live panel applies");
+
+  const noRestoreYet = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t, { "user-1": "owner@example.com" });
+  assert.doesNotMatch(noRestoreYet, /Last restored/, "omitting lastRestore entirely (a project never restored, or every pre-existing call site) must not print the line");
+});
+
 test("formatCheckpointHistory renders in Hebrew when given the Hebrew translator, with Hebrew text surviving intact", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
