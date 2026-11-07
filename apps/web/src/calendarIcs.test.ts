@@ -361,6 +361,27 @@ test("buildCalendarIcs locale-formats a number/date field in DESCRIPTION, not th
 });
 
 /**
+ * Round 1660: a phone-like-named number field (the AI/heuristic spec
+ * generator has no way to know "phone" should be `text`, not `number`)
+ * was still locale-grouped both in SUMMARY (when it's the entity's own
+ * last-resort label field) and in DESCRIPTION -- round 1642 only guarded
+ * a RELATED record's display label (recordDisplayLabel), never this
+ * one-shot export's own current-record field rendering.
+ */
+test("buildCalendarIcs never locale-groups a phone-like-named number field, in SUMMARY or DESCRIPTION", () => {
+  const phoneField: Field = { name: "phone", label: "טלפון", type: "number", required: false };
+  const scoreField: Field = { name: "score", label: "ניקוד", type: "number", required: false };
+  const contactEntity: Entity = { name: "Contact", label: "איש קשר", fields: [dateField, phoneField, scoreField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", phone: 972501234567, score: 4500 }];
+  // phoneField used as the last-resort SUMMARY label field here (no name/title/text field on this entity).
+  const ics = buildCalendarIcs(contactEntity, dateField, phoneField, records, [], {}, new Date(), null, contactEntity.fields, "he");
+  const events = parseEvents(ics);
+  assert.match(events[0]!, /SUMMARY:972501234567/, "a phone-like-named number field used as SUMMARY must render raw digits, not locale-grouped");
+  assert.match(events[0]!, /ניקוד: 4\\,500/, "an ordinary number field in DESCRIPTION must still get real locale thousands separators");
+  assert.doesNotMatch(events[0]!, /972\\,501\\,234\\,567/, "a phone-like-named number field in DESCRIPTION must never be locale-grouped");
+});
+
+/**
  * Round 1090: V8/ICU's "he-IL" locale silently prepends a real, invisible
  * U+200E LEFT-TO-RIGHT MARK before the minus sign of any negative number
  * -- confirmed directly via Node (`(-1234.5).toLocaleString("he-IL")`

@@ -92,7 +92,7 @@ function calendarChipLabelValue(labelField: Field, record: EntityRecord, lang: L
   // subscription feed's own SUMMARY line instead of a real locale-
   // formatted number. Reuses this file's own formatIcsDescriptionNumber
   // (round 1097).
-  if (labelField.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value, lang));
+  if (labelField.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value, lang, labelField.name));
   return String(value);
 }
 
@@ -132,9 +132,22 @@ function stripBidiMarks(s: string): string {
   return s.replace(/[‎‏]/g, "");
 }
 
-/** Mirrors calendarIcs.ts's own formatIcsDescriptionNumber exactly. */
-function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
-  return typeof value === "number" ? stripBidiMarks(value.toLocaleString(LOCALE[lang])) : value;
+/**
+ * Mirrors calendarIcs.ts's own formatIcsDescriptionNumber exactly.
+ * Round 1660: added the fieldName param so a phone-like-named number
+ * field (PHONE_FIELD_NAME_HINTS, declared below but safe to reference
+ * here -- only evaluated at call time, after module load, the same
+ * established forward-reference pattern this file already uses for
+ * recordDisplayLabelForRelation) never gets locale-grouped in SUMMARY
+ * or DESCRIPTION, the same guard this file's own recordDisplayLabelForRelation
+ * already had for a RELATED record's label -- this function instead
+ * renders the CURRENT record's own field value, a structurally
+ * different path that was never guarded.
+ */
+function formatIcsDescriptionNumber(value: unknown, lang: Lang, fieldName: string): unknown {
+  if (typeof value !== "number") return value;
+  if (PHONE_FIELD_NAME_HINTS.includes(fieldName.toLowerCase())) return String(value);
+  return stripBidiMarks(value.toLocaleString(LOCALE[lang]));
 }
 
 /**
@@ -173,7 +186,7 @@ function recordDisplayLabelForRelation(entity: Entity, record: EntityRecord, lan
   // copy of recordDisplayLabel.
   if (field?.type === "number" && typeof value === "number") {
     if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
-    return String(formatIcsDescriptionNumber(value, lang));
+    return String(formatIcsDescriptionNumber(value, lang, field.name));
   }
   if (field?.type === "relation") return `#${record.id}`;
   if (field?.type === "file") return `#${record.id}`;
@@ -357,7 +370,7 @@ function buildVeventLinesForEntity(
                   : f.type === "date"
                     ? formatIcsDescriptionDate(record[f.name], lang)
                     : f.type === "number"
-                      ? formatIcsDescriptionNumber(record[f.name], lang)
+                      ? formatIcsDescriptionNumber(record[f.name], lang, f.name)
                       : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label ?? f.name;

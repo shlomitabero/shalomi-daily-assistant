@@ -345,6 +345,27 @@ test("buildCalendarFeedIcs's DESCRIPTION resolves a relation field to raw digits
   assert.match(events[0], /לקוח: 972501234567/, "a phone-like-named number display field must render as raw digits");
 });
 
+/**
+ * Round 1660: the exact same bug class as round 1642 above, but for the
+ * CURRENT record's own field value (SUMMARY and DESCRIPTION) rather than
+ * a RELATED record's display label. recordDisplayLabelForRelation got
+ * its phone guard in round 1642, but calendarChipLabelValue (SUMMARY)
+ * and buildVeventLinesForEntity's own descriptionLines map (DESCRIPTION)
+ * -- which render a record's own fields directly, never through
+ * recordDisplayLabelForRelation -- never did.
+ */
+test("buildCalendarFeedIcs never locale-groups a phone-like-named number field, in SUMMARY or DESCRIPTION, for the record's own field value", () => {
+  const phoneField: Field = { name: "phone", label: "טלפון", type: "number", required: false };
+  const scoreField: Field = { name: "score", label: "ניקוד", type: "number", required: false };
+  const contactEntity: Entity = { name: "Contact", label: "איש קשר", fields: [dateField, phoneField, scoreField] };
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", phone: 972501234567, score: 4500 }];
+  const ics = buildCalendarFeedIcs(contactEntity, records, "proj1", new Date(), [], {}, "he");
+  const events = parseEvents(ics!);
+  assert.match(events[0], /SUMMARY:972501234567/, "a phone-like-named number field used as SUMMARY must render raw digits, not locale-grouped");
+  assert.match(events[0], /ניקוד: 4\\,500/, "an ordinary number field in DESCRIPTION must still get real locale thousands separators");
+  assert.doesNotMatch(events[0], /972\\,501\\,234\\,567/, "a phone-like-named number field in DESCRIPTION must never be locale-grouped");
+});
+
 test("buildCalendarFeedIcs's DESCRIPTION disambiguates two description fields that share the same label with each field's own unique name, mirroring calendarIcs.ts's round-635 fix", () => {
   const amount2Field: Field = { name: "amount2", label: "סכום", type: "number", required: false };
   const collisionEntity: Entity = { name: "Appointment", label: "תור", fields: [dateField, nameField, amountField, amount2Field] };

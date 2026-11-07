@@ -1259,7 +1259,7 @@ function feedChipLabelValue(labelField, record) {
   // feed's own SUMMARY line instead of a real locale-formatted number.
   // feedFormatIcsDescriptionNumber (below, hoisted) already exists in
   // this template for DESCRIPTION lines but was never reused here.
-  if (labelField.type === "number" && typeof value === "number") return String(feedFormatIcsDescriptionNumber(value));
+  if (labelField.type === "number" && typeof value === "number") return String(feedFormatIcsDescriptionNumber(value, labelField.name));
   return String(value);
 }
 
@@ -1341,7 +1341,7 @@ function feedRecordDisplayLabel(entity, record) {
   // because this function's name doesn't start with "recordDisplayLabel".
   if (field && field.type === "number" && typeof value === "number") {
     if (FEED_PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return String(value);
-    return String(feedFormatIcsDescriptionNumber(value));
+    return String(feedFormatIcsDescriptionNumber(value, field.name));
   }
   if (field && field.type === "relation") return \`#\${record.id}\`;
   if (field && field.type === "file") return \`#\${record.id}\`;
@@ -1404,8 +1404,16 @@ function stripBidiMarks(s) {
   return s.replace(/[‎‏]/g, "");
 }
 
-function feedFormatIcsDescriptionNumber(value) {
-  return typeof value === "number" ? stripBidiMarks(value.toLocaleString()) : value;
+// Round 1660: added the fieldName param so a phone-like-named number field
+// (FEED_PHONE_FIELD_NAME_HINTS, above) never gets locale-grouped in this
+// feed's own SUMMARY/DESCRIPTION -- the identical gap round 1642 already
+// fixed for feedRecordDisplayLabel (a RELATED record's label), but this
+// function instead renders the CURRENT record's own field value, a
+// structurally different path that was never guarded.
+function feedFormatIcsDescriptionNumber(value, fieldName) {
+  if (typeof value !== "number") return value;
+  if (FEED_PHONE_FIELD_NAME_HINTS.includes(fieldName.toLowerCase())) return String(value);
+  return stripBidiMarks(value.toLocaleString());
 }
 
 // Builds a real RFC 5545 .ics calendar for EVERY record of \`entity\` that
@@ -1475,7 +1483,7 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
           : f.type === "file" ? (feedParseFileFieldValue(record[f.name])?.name || null)
           : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE")
           : f.type === "date" ? feedFormatIcsDescriptionDate(record[f.name])
-          : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name])
+          : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name], f.name)
           : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label || f.name;
@@ -1609,7 +1617,7 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
             : f.type === "file" ? (feedParseFileFieldValue(record[f.name])?.name || null)
             : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE")
             : f.type === "date" ? feedFormatIcsDescriptionDate(record[f.name])
-            : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name])
+            : f.type === "number" ? feedFormatIcsDescriptionNumber(record[f.name], f.name)
             : record[f.name];
           if (value === null || value === undefined || value === "") return null;
           const fieldLabel = f.label || f.name;
@@ -4514,7 +4522,7 @@ function calendarLabelValue(labelField, record) {
   // formatted number. formatIcsDescriptionNumber (below, hoisted)
   // already exists in this template for DESCRIPTION lines but was never
   // reused here.
-  if (labelField.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value));
+  if (labelField.type === "number" && typeof value === "number") return String(formatIcsDescriptionNumber(value, labelField.name));
   return String(value);
 }
 
@@ -4585,8 +4593,17 @@ function stripBidiMarks(s) {
   return s.replace(/[‎‏]/g, "");
 }
 
-function formatIcsDescriptionNumber(value) {
-  return typeof value === "number" ? stripBidiMarks(value.toLocaleString()) : value;
+// Round 1660: added the fieldName param so a phone-like-named number field
+// (PHONE_FIELD_NAME_HINTS, hoisted below -- already relied on by this same
+// template's own Cell/recordDisplayLabel number branches) never gets
+// locale-grouped here either. This function renders the CURRENT record's
+// own field value (the calendar chip's label, or a DESCRIPTION line), a
+// structurally different path from recordDisplayLabel's own RELATED-record
+// label, which is why it was never guarded.
+function formatIcsDescriptionNumber(value, fieldName) {
+  if (typeof value !== "number") return value;
+  if (PHONE_FIELD_NAME_HINTS.includes(fieldName.toLowerCase())) return String(value);
+  return stripBidiMarks(value.toLocaleString());
 }
 
 // Builds a real RFC 5545 .ics calendar, one all-day VEVENT per record --
@@ -4635,7 +4652,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
             // un-grouped digits straight through as SUMMARY instead of
             // a real locale-formatted number.
             : labelField.type === "number"
-              ? formatIcsDescriptionNumber(rawLabelValue)
+              ? formatIcsDescriptionNumber(rawLabelValue, labelField.name)
               : rawLabelValue;
     // Round 1022: mirrors the live apps/web/src/calendarIcs.ts's own
     // identical fix -- \`??\` only falls through on null/undefined, never
@@ -4683,7 +4700,7 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
         // two raw only so a CSV round-trips exactly through
         // buildImportRecords' re-parse, which doesn't apply to this
         // one-way .ics export.
-        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE") : f.type === "date" ? formatIcsDescriptionDate(record[f.name]) : f.type === "number" ? formatIcsDescriptionNumber(record[f.name]) : record[f.name];
+        const value = f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : f.type === "enum" ? ((f.enumLabels && f.enumLabels[record[f.name]]) || record[f.name]) : f.type === "file" ? parseFileFieldValue(record[f.name])?.name || null : f.type === "boolean" ? (record[f.name] === null || record[f.name] === undefined ? null : record[f.name] ? "TRUE" : "FALSE") : f.type === "date" ? formatIcsDescriptionDate(record[f.name]) : f.type === "number" ? formatIcsDescriptionNumber(record[f.name], f.name) : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label || f.name;
         const ambiguous = (descriptionLabelOccurrences[fieldLabel] || 0) > 1;

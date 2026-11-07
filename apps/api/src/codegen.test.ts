@@ -1004,7 +1004,7 @@ test("the generated server.js's own feedRecordDisplayLabel renders a number disp
   const feedRecordDisplayLabelSrc = serverJs.match(/function feedRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
   const feedRelationDisplayLabelSrc = serverJs.match(/function feedRelationDisplayLabel\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
-  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     feedDisplayFieldHintsSrc &&
       feedPhoneFieldHintsSrc &&
@@ -1056,7 +1056,7 @@ test("the generated server.js's own feedRecordDisplayLabel renders a phone-like-
   const feedRecordDisplayLabelSrc = serverJs.match(/function feedRecordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0];
   const feedRelationDisplayLabelSrc = serverJs.match(/function feedRelationDisplayLabel\(field, value, recordIndexByEntity\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
-  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     feedDisplayFieldHintsSrc &&
       feedPhoneFieldHintsSrc &&
@@ -1115,7 +1115,7 @@ test("the generated server.js's own feedRecordDisplayLabel renders a phone-like-
 test("the generated server.js's own stripBidiMarks removes the invisible bidi mark, and feedFormatIcsDescriptionNumber actually calls it", () => {
   const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
   const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
-  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(
     stripBidiMarksSrc && feedFormatIcsDescriptionNumberSrc,
     "expected to find stripBidiMarks/feedFormatIcsDescriptionNumber in generated server.js",
@@ -1128,8 +1128,43 @@ test("the generated server.js's own stripBidiMarks removes the invisible bidi ma
 
   assert.match(
     feedFormatIcsDescriptionNumberSrc!,
-    /return typeof value === "number" \? stripBidiMarks\(value\.toLocaleString\(\)\) : value;/,
+    /return stripBidiMarks\(value\.toLocaleString\(\)\);/,
     "feedFormatIcsDescriptionNumber's own generated source must actually wrap its toLocaleString() result in stripBidiMarks, not just define it unused",
+  );
+});
+
+/**
+ * Round 1660: the exact same bug class as round 1642/1649 above, but for
+ * calendarChipLabelValue's/buildVeventLinesForEntity's own descriptionLines
+ * map -- which render the CURRENT record's own field value directly, never
+ * through feedRecordDisplayLabel -- which never got the phone guard. This
+ * directly exercises feedFormatIcsDescriptionNumber (the shared helper both
+ * call sites were fixed to use), the simplest reliable way to verify the
+ * fix without reconstructing the full buildVeventLinesForEntity pipeline.
+ */
+test("the generated server.js's own feedFormatIcsDescriptionNumber renders a phone-like-named number field as raw digits, but still locale-groups an ordinary number field", () => {
+  const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+  const stripBidiMarksSrc = serverJs.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const feedPhoneFieldHintsSrc = serverJs.match(/const FEED_PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const feedFormatIcsDescriptionNumberSrc = serverJs.match(/function feedFormatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    stripBidiMarksSrc && feedPhoneFieldHintsSrc && feedFormatIcsDescriptionNumberSrc,
+    "expected to find stripBidiMarks/FEED_PHONE_FIELD_NAME_HINTS/feedFormatIcsDescriptionNumber in generated server.js",
+  );
+
+  const feedFormatIcsDescriptionNumber = new Function(
+    `${stripBidiMarksSrc}\n${feedPhoneFieldHintsSrc}\n${feedFormatIcsDescriptionNumberSrc}\nreturn feedFormatIcsDescriptionNumber;`,
+  )() as (value: unknown, fieldName: string) => unknown;
+
+  assert.equal(
+    feedFormatIcsDescriptionNumber(972501234567, "phone"),
+    "972501234567",
+    "a phone-like-named number field must render as raw digits, never locale-grouped",
+  );
+  assert.equal(
+    feedFormatIcsDescriptionNumber(4500, "score"),
+    "4,500",
+    "an ordinary number field must still get real locale thousands separators",
   );
 });
 
@@ -7576,19 +7611,31 @@ test("the exported EntityView's real generated buildCalendarIcs renders a number
   const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
   const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
-  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
   assert.ok(
-    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && stripBidiMarksSrc && descNumberSrc && buildSrc,
+    pickDisplaySrc &&
+      labelFieldSrc &&
+      pad2Src &&
+      dateSrc &&
+      tsSrc &&
+      escSrc &&
+      utf8LenSrc &&
+      foldSrc &&
+      stripBidiMarksSrc &&
+      descNumberSrc &&
+      phoneFieldHintsSrc &&
+      buildSrc,
     "expected to find every ICS helper function (including formatIcsDescriptionNumber) in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const parseFieldDateStub = "function parseFieldDate(raw) { const m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(raw); return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(raw); }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${parseFieldDateStub}\n${stripBidiMarksSrc}\n${descNumberSrc}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${parseFieldDateStub}\n${stripBidiMarksSrc}\n${phoneFieldHintsSrc}\n${descNumberSrc}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = {
@@ -7619,14 +7666,15 @@ test("the exported EntityView's calendarLabelValue renders a number display fiel
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const calendarLabelValueSrc = entityViewJsx.match(/function calendarLabelValue\(labelField, record\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
-  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   assert.ok(
-    calendarLabelValueSrc && stripBidiMarksSrc && descNumberSrc,
+    calendarLabelValueSrc && stripBidiMarksSrc && descNumberSrc && phoneFieldHintsSrc,
     "expected to find calendarLabelValue/stripBidiMarks/formatIcsDescriptionNumber in generated output",
   );
 
   const calendarLabelValue = new Function(
-    `${stripBidiMarksSrc}\n${descNumberSrc}\n${calendarLabelValueSrc}\nreturn calendarLabelValue;`,
+    `${stripBidiMarksSrc}\n${phoneFieldHintsSrc}\n${descNumberSrc}\n${calendarLabelValueSrc}\nreturn calendarLabelValue;`,
   )() as (labelField: unknown, record: unknown) => string;
 
   const temperatureField = { name: "temperature", type: "number" };
@@ -7634,6 +7682,40 @@ test("the exported EntityView's calendarLabelValue renders a number display fiel
     calendarLabelValue(temperatureField, { id: 1, temperature: 1500 }),
     "1,500",
     "must render the number field with real locale thousands separators, not the raw \"1500\"",
+  );
+});
+
+/**
+ * Round 1660: the client-side counterpart to the server.js test above --
+ * calendarLabelValue's/buildCalendarIcs's own descriptionLines map render
+ * the CURRENT record's own field value directly, a structurally different
+ * path from recordDisplayLabel's own RELATED-record label, which is why
+ * neither ever got the phone guard despite PHONE_FIELD_NAME_HINTS already
+ * existing in this same generated file for Cell/recordDisplayLabel.
+ */
+test("the exported EntityView's own formatIcsDescriptionNumber renders a phone-like-named number field as raw digits, but still locale-groups an ordinary number field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    stripBidiMarksSrc && phoneFieldHintsSrc && descNumberSrc,
+    "expected to find stripBidiMarks/PHONE_FIELD_NAME_HINTS/formatIcsDescriptionNumber in generated output",
+  );
+
+  const formatIcsDescriptionNumber = new Function(
+    `${stripBidiMarksSrc}\n${phoneFieldHintsSrc}\n${descNumberSrc}\nreturn formatIcsDescriptionNumber;`,
+  )() as (value: unknown, fieldName: string) => unknown;
+
+  assert.equal(
+    formatIcsDescriptionNumber(972501234567, "phone"),
+    "972501234567",
+    "a phone-like-named number field must render as raw digits, never locale-grouped",
+  );
+  assert.equal(
+    formatIcsDescriptionNumber(4500, "score"),
+    "4,500",
+    "an ordinary number field must still get real locale thousands separators",
   );
 });
 
@@ -7765,8 +7847,9 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
   const calendarDateFormatSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT = .*;\n/)?.[0];
   const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
@@ -7784,13 +7867,14 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
       descDateSrc &&
       descNumberSrc &&
       stripBidiMarksSrc &&
+      phoneFieldHintsSrc &&
       buildSrc,
     "expected to find every ICS helper function (including the date/number formatters) in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${stripBidiMarksSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${stripBidiMarksSrc}\n${phoneFieldHintsSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = {
@@ -7827,7 +7911,7 @@ test("the exported EntityView's real generated buildCalendarIcs disambiguates tw
 test("the exported EntityView's own stripBidiMarks removes the invisible bidi mark, and formatIcsDescriptionNumber actually calls it", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
-  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(stripBidiMarksSrc && descNumberSrc, "expected to find stripBidiMarks/formatIcsDescriptionNumber in the real generated EntityView.jsx");
 
   const stripBidiMarks = new Function(`${stripBidiMarksSrc}\nreturn stripBidiMarks;`)() as (s: string) => string;
@@ -7836,7 +7920,7 @@ test("the exported EntityView's own stripBidiMarks removes the invisible bidi ma
 
   assert.match(
     descNumberSrc!,
-    /return typeof value === "number" \? stripBidiMarks\(value\.toLocaleString\(\)\) : value;/,
+    /return stripBidiMarks\(value\.toLocaleString\(\)\);/,
     "formatIcsDescriptionNumber's own generated source must actually wrap its toLocaleString() result in stripBidiMarks, not just define it unused",
   );
 });
@@ -8232,8 +8316,9 @@ test("the exported EntityView's real generated buildCalendarIcs locale-formats a
   const calendarDateFormatSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT = .*;\n/)?.[0];
   const parseFieldDateSrc = entityViewJsx.match(/function parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
   const descDateSrc = entityViewJsx.match(/function formatIcsDescriptionDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
-  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
   const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
   const buildSrc = entityViewJsx.match(
     /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
   )?.[0];
@@ -8251,13 +8336,14 @@ test("the exported EntityView's real generated buildCalendarIcs locale-formats a
       descDateSrc &&
       descNumberSrc &&
       stripBidiMarksSrc &&
+      phoneFieldHintsSrc &&
       buildSrc,
     "expected to find every ICS helper function (including the new date/number formatters) in the real generated output",
   );
 
   const relationStub = "function relationDisplayLabel() { return ''; }\n";
   const buildCalendarIcs = new Function(
-    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${stripBidiMarksSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${calendarDateFormatSrc}\n${parseFieldDateSrc}\n${descDateSrc}\n${stripBidiMarksSrc}\n${phoneFieldHintsSrc}\n${descNumberSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
   )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
 
   const entity = withProject.spec.entities.find((e) => e.name === "Project")!;

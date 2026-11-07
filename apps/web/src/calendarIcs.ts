@@ -1,5 +1,5 @@
 import type { Entity, EntityRecord, Field } from "@forge/shared";
-import { parseFieldDate, parseFileFieldValue, relationDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { isPhoneFieldName, parseFieldDate, parseFileFieldValue, relationDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { safeDownloadName } from "./api.js";
 import type { Lang } from "./i18n/language.js";
 
@@ -47,8 +47,20 @@ function stripBidiMarks(s: string): string {
   return s.replace(/[‎‏]/g, "");
 }
 
-function formatIcsDescriptionNumber(value: unknown, lang: Lang): unknown {
-  return typeof value === "number" ? stripBidiMarks(value.toLocaleString(LOCALE[lang])) : value;
+/**
+ * Round 1660: a phone-like-named number field (the AI/heuristic spec
+ * generator has no way to know "phone" should be `text`, not `number`)
+ * must never get locale thousands-grouping -- the same guard this
+ * codebase's recordDisplayLabel/Cell/fieldValueLabel family already
+ * applies everywhere else a number field's value becomes display text.
+ * This function renders a RECORD'S OWN field value (the calendar chip's
+ * label, or a DESCRIPTION line), not a related record's display label,
+ * so it needed its own guard -- see this round's roadmap entry.
+ */
+function formatIcsDescriptionNumber(value: unknown, lang: Lang, fieldName: string): unknown {
+  if (typeof value !== "number") return value;
+  if (isPhoneFieldName(fieldName)) return String(value);
+  return stripBidiMarks(value.toLocaleString(LOCALE[lang]));
 }
 
 /** RFC 5545 §3.3.11 TEXT escaping: backslash, semicolon, comma, and newline must be backslash-escaped, or a real calendar app's parser can misread the field boundary or drop the value outright. */
@@ -221,7 +233,7 @@ export function buildCalendarIcs(
             // formatIcsDescriptionNumber, already relied on for
             // DESCRIPTION lines just below.
             : labelField.type === "number"
-              ? formatIcsDescriptionNumber(rawLabelValue, lang)
+              ? formatIcsDescriptionNumber(rawLabelValue, lang, labelField.name)
               : rawLabelValue;
     // Round 1022: `??` only falls through on null/undefined, never on a
     // genuinely blank string -- a text/longtext display field (pickDisplayField
@@ -302,7 +314,7 @@ export function buildCalendarIcs(
                   : f.type === "date"
                     ? formatIcsDescriptionDate(record[f.name], lang)
                     : f.type === "number"
-                      ? formatIcsDescriptionNumber(record[f.name], lang)
+                      ? formatIcsDescriptionNumber(record[f.name], lang, f.name)
                       : record[f.name];
         if (value === null || value === undefined || value === "") return null;
         const fieldLabel = f.label ?? f.name;
