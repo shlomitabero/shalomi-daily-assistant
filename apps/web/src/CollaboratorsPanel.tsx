@@ -20,7 +20,7 @@ import {
 } from "./api.js";
 import { formatCollaboratorCount } from "./collaboratorCount.js";
 import { downloadCollaboratorsReport, formatCollaboratorsReport } from "./collaboratorsReport.js";
-import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
+import { entityDisplayLabel, entityLabelOccurrences, fieldDisplayLabel, fieldLabelOccurrences } from "./entityFormatting.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import { useDialogFocusTrap } from "./useDialogFocusTrap.js";
 import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
@@ -617,19 +617,37 @@ export function CollaboratorsPanel({
 
   // Round 1639: mirrors accessChangesForReport's own email-resolution
   // pattern exactly, for the sibling schema-label-edit log.
+  //
+  // Round 1661: entityName/fieldName are the raw internal spec
+  // identifiers logged at rename time, never the Hebrew/friendly label --
+  // exactly the same gap round 1656 fixed one function up in this same
+  // file, for deletionsForReport's own entityName. Resolves entityName the
+  // same way (exact-case then case-insensitive fallback, via
+  // entityDisplayLabel/entityLabelOccurrences), and, for a field_renamed
+  // entry, also resolves fieldName against the resolved entity's own
+  // fields the same way, via fieldDisplayLabel/fieldLabelOccurrences.
   function schemaLabelEditsForReport() {
     const emails: Record<string, string> = {};
     if (owner) emails[owner.userId] = owner.email;
     for (const c of collaborators ?? []) emails[c.userId] = c.email;
-    return schemaLabelEdits.map((e) => ({
-      action: e.action,
-      entityName: e.entityName,
-      fieldName: e.fieldName,
-      changedByEmail: e.changedByUserId ? emails[e.changedByUserId] ?? null : null,
-      previousLabel: e.previousLabel,
-      newLabel: e.newLabel,
-      changedAt: e.changedAt,
-    }));
+    const occurrences = entityLabelOccurrences(entities);
+    return schemaLabelEdits.map((e) => {
+      const resolvedEntity = entities.find((en) => en.name === e.entityName) ?? entities.find((en) => en.name.toLowerCase() === e.entityName.toLowerCase());
+      let fieldName = e.fieldName;
+      if (resolvedEntity && e.fieldName) {
+        const resolvedField = resolvedEntity.fields.find((f) => f.name === e.fieldName) ?? resolvedEntity.fields.find((f) => f.name.toLowerCase() === e.fieldName!.toLowerCase());
+        if (resolvedField) fieldName = fieldDisplayLabel(resolvedField, fieldLabelOccurrences(resolvedEntity.fields));
+      }
+      return {
+        action: e.action,
+        entityName: resolvedEntity ? entityDisplayLabel(resolvedEntity, occurrences) : e.entityName,
+        fieldName,
+        changedByEmail: e.changedByUserId ? emails[e.changedByUserId] ?? null : null,
+        previousLabel: e.previousLabel,
+        newLabel: e.newLabel,
+        changedAt: e.changedAt,
+      };
+    });
   }
 
   function handleDownload() {

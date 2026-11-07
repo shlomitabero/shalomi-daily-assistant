@@ -2272,6 +2272,69 @@ test("CollaboratorsPanel's Copy report resolves a deleted record's entityName to
   });
 });
 
+// Round 1661: schemaLabelEditsForReport (the sibling of deletionsForReport
+// above) never resolved entityName/fieldName to their real display labels at
+// all -- the exact same raw-internal-identifier gap round 1656 fixed for
+// deletionsForReport, left unfixed one function down in this same file.
+test("CollaboratorsPanel's Copy report resolves a schema label edit's entityName/fieldName to their real display labels, falling back to the raw name when the entity is gone", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/collaborators") {
+        return new Response(
+          JSON.stringify({ collaborators: [], owner: { userId: "owner1", email: "amit@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/schema-label-edits") {
+        return new Response(
+          JSON.stringify({
+            edits: [
+              { id: 1, action: "entity_renamed", entityName: "Customer", fieldName: null, changedByUserId: "owner1", previousLabel: "לקוחות", newLabel: "לקוחות VIP", changedAt: "2024-02-01T10:00:00.000Z" },
+              { id: 2, action: "field_renamed", entityName: "Customer", fieldName: "phone", changedByUserId: "owner1", previousLabel: "טלפון", newLabel: "נייד", changedAt: "2024-02-02T10:00:00.000Z" },
+              { id: 3, action: "entity_renamed", entityName: "Vanished", fieldName: null, changedByUserId: "owner1", previousLabel: "ישן", newLabel: "חדש", changedAt: "2024-02-03T10:00:00.000Z" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    const entities: Entity[] = [
+      { name: "Customer", label: "לקוחות עדכני", fields: [{ name: "phone", label: "מספר עדכני", type: "number", required: false }] },
+    ];
+
+    try {
+      renderPanel(true, undefined, () => {}, "CRM", () => {}, false, entities);
+      await waitForCondition(() => document.querySelector(".collab-count") !== null);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy list"))!;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string");
+      assert.doesNotMatch(writtenText!, /"Customer"/, "the raw internal entity name must never appear once a real label is known");
+      assert.match(writtenText!, /לקוחות עדכני/, "the entity_renamed entry must show the entity's real display label");
+      assert.match(writtenText!, /מספר עדכני/, "the field_renamed entry must show the field's real display label, not the raw internal field name");
+      assert.doesNotMatch(writtenText!, /"phone"/, "the raw internal field name must never appear once a real label is known");
+      assert.match(writtenText!, /Vanished/, "an edit for an entity no longer in the spec must fall back to the raw stored name");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
 test("CollaboratorsPanel's Download button downloads the real list as a named file", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
