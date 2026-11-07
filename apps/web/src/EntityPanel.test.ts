@@ -2557,6 +2557,68 @@ test("EntityPanel's Export CSV button exports only the search-filtered records, 
   });
 });
 
+/**
+ * Round 1685: the same promise-keeping scope the two tests above establish
+ * for the free-text search box applies equally to the per-column field
+ * filter (the "Status" <select> in the toolbar) -- a second, independent
+ * narrowing mechanism visibleRecords already applies alongside search (see
+ * this file's own filtering memo). Before this round, recordsForExport's
+ * bypass condition checked only `search.trim()`, so a column filter left
+ * active with an empty search box silently fell through to the full
+ * unfiltered GET .../export fetch. The mock /export route would hand back
+ * a record that doesn't match the filter at all, so this also proves that
+ * route is genuinely never called while a field filter is active.
+ */
+test("EntityPanel's Export CSV button exports only the field-filtered records, not the full unfiltered set, even while the list is truncated", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Zzz Other", status: "won" },
+            ],
+            totalCount: 3,
+            truncated: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input} -- GET .../export must not be called while a field filter is active`);
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const statusFilter = document.querySelector(".entity-status-filter") as HTMLSelectElement;
+      fireEvent.change(statusFilter, { target: { value: "new" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one matching, already-loaded record must still be exported");
+      assert.doesNotMatch(csvText, /Zzz Other/, "a non-matching loaded record must stay excluded by the active field filter");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/BuildProgress.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });

@@ -13554,6 +13554,91 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
 });
 
 /**
+ * Round 1685: recordsForExport's own bypass guard checked search.trim()
+ * but never fieldFilters -- the toolbar's independent per-column filter --
+ * so a column filter left active with an empty search box silently fell
+ * through to the uncapped exportAllRecords() fetch, discarding the
+ * filter. Mirrors the live preview's own EntityPanel.test.ts coverage for
+ * this exact gap, but against the real generated recordsForExport (not a
+ * reimplementation), via the same "extract and execute with new Function"
+ * standard this file already uses for selectedOrAllRecords above.
+ */
+test("the exported EntityView's recordsForExport stays capped when a column field filter is active, even with an empty search box on a truncated list", async () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const selectedOrAllRecordsSrc = entityViewJsx.match(/function selectedOrAllRecords\(allRecords, visibleRecords, selectedIds\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsForExportSrc = entityViewJsx.match(/async function recordsForExport\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(selectedOrAllRecordsSrc && recordsForExportSrc, "expected to find selectedOrAllRecords/recordsForExport in generated output");
+
+  const buildRecordsForExport = new Function(
+    "selectedIds",
+    "search",
+    "fieldFilters",
+    "groupFieldName",
+    "recordListTruncated",
+    "records",
+    "effectivelyVisibleRecords",
+    "exportAllRecords",
+    "sortRecordsByPinned",
+    "sortRecordsMulti",
+    "entity",
+    "relatedRecords",
+    "pinnedIds",
+    "sortKeys",
+    `${selectedOrAllRecordsSrc}\n${recordsForExportSrc}\nreturn recordsForExport;`,
+  );
+
+  const visible = [{ id: 1, name: "Acme Corp", status: "new" }];
+  let exportAllRecordsCalled = false;
+  const mockExportAllRecords = async () => {
+    exportAllRecordsCalled = true;
+    return { records: [...visible, { id: 2, name: "Zzz Other", status: "won" }] };
+  };
+  const identity = (records: unknown[]) => records;
+
+  const recordsForExportWithFilter = buildRecordsForExport(
+    new Set(),
+    "",
+    { status: "new" },
+    null,
+    true,
+    visible,
+    visible,
+    mockExportAllRecords,
+    identity,
+    identity,
+    { fields: [] },
+    {},
+    new Set(),
+    [],
+  );
+  const filteredResult = await recordsForExportWithFilter();
+  assert.equal(exportAllRecordsCalled, false, "an active fieldFilters entry must bypass exportAllRecords entirely, same as an active search box");
+  assert.equal(filteredResult, visible, "with a field filter active, recordsForExport must fall back to selectedOrAllRecords (the capped, already-filtered state)");
+
+  const recordsForExportNoFilter = buildRecordsForExport(
+    new Set(),
+    "",
+    {},
+    null,
+    true,
+    visible,
+    visible,
+    mockExportAllRecords,
+    identity,
+    identity,
+    { fields: [] },
+    {},
+    new Set(),
+    [],
+  );
+  const unfilteredResult = await recordsForExportNoFilter();
+  assert.equal(exportAllRecordsCalled, true, "with no selection, no search, no field filter and no grouping, a genuinely truncated list must still fetch the full export");
+  assert.equal(unfilteredResult.length, 2, "the uncapped fetch result must be used when nothing is actively narrowing the list");
+});
+
+/**
  * New in this round: the live preview's EntityPanel got a "Copy" button
  * (round 322) that writes the table's own CSV straight to the clipboard,
  * matching the copy-to-clipboard pattern already present on every other

@@ -7605,15 +7605,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setRecentSearches([]);
   }
 
-  // Mirrors the live Forge AI preview's own round-1678 fix: the truncation
-  // hint below promises "export to CSV to get all of them" -- but reusing
-  // the same capped records state here would make that false. Scoped to
-  // the exact case the promise is about: no selection, no active search
-  // filter, no grouping (so no collapsed-group exclusion to re-apply), and
-  // the live list genuinely truncated. Outside that scope, nothing
-  // changes: selectedOrAllRecords runs exactly as it always has.
+  // Mirrors the live Forge AI preview's own round-1678 fix (joined by
+  // round 1685's fieldFilters check): the truncation hint below promises
+  // "export to CSV to get all of them" -- but reusing the same capped
+  // records state here would make that false. Scoped to the exact case the
+  // promise is about: no selection, no active search or column filter, no
+  // grouping (so no collapsed-group exclusion to re-apply), and the live
+  // list genuinely truncated. Outside that scope, nothing changes:
+  // selectedOrAllRecords runs exactly as it always has.
   async function recordsForExport() {
-    if (selectedIds.size > 0 || search.trim() || groupFieldName || !recordListTruncated) {
+    // Round 1685: fieldFilters is search's own sibling here -- effectivelyVisibleRecords
+    // (just above) filters by both, and this guard's job is "does the capped
+    // table on screen already reflect everything the user asked to narrow it
+    // to"; checking search alone let a column filter with an empty search
+    // box silently bypass straight to the full unfiltered dataset.
+    if (selectedIds.size > 0 || search.trim() || Object.values(fieldFilters).some(Boolean) || groupFieldName || !recordListTruncated) {
       return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
     }
     try {

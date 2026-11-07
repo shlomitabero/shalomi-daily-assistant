@@ -4431,19 +4431,25 @@ export function EntityPanel({
    * Scoped to the one case that broken promise is literally about: no
    * selection (handleBulkDelete's own convention -- a hand-picked
    * selection can only ever contain already-loaded rows, so it was never
-   * missing anything), no active search (EntityPanel's search box only
-   * ever matches against the loaded page, same "may not include older
-   * matches" scope search.truncatedHint already discloses elsewhere, not
-   * a promise this fix should silently expand), and no grouping (so there
-   * are no collapsed groups' worth of records this fetched, unsorted-by-
-   * group full set would need to re-exclude). Outside that scope, nothing
+   * missing anything), no active search or column filter (round 1685:
+   * fieldFilters joined this check alongside search -- both only ever
+   * match against the loaded page, same "may not include older matches"
+   * scope search.truncatedHint already discloses elsewhere, not a promise
+   * this fix should silently expand), and no grouping (so there are no
+   * collapsed groups' worth of records this fetched, unsorted-by-group
+   * full set would need to re-exclude). Outside that scope, nothing
    * changes: `selectedOrAllRecords` runs exactly as it always has. Sorted
    * the same way the on-screen table would (any active sortKeys, then
    * pinned-to-top), so the shape of a genuinely full export still matches
    * what sorting the capped table led the user to expect.
    */
   async function recordsForExport(): Promise<EntityRecord[]> {
-    if (selectedIds.size > 0 || search.trim() || groupFieldName || !recordListTruncated) {
+    // Round 1685: fieldFilters is search's own sibling here -- visibleRecords
+    // (just above) filters by both, and this guard's job is "does the capped
+    // table on screen already reflect everything the user asked to narrow it
+    // to"; checking search alone let a column filter with an empty search
+    // box silently bypass straight to the full unfiltered dataset.
+    if (selectedIds.size > 0 || search.trim() || Object.values(fieldFilters).some(Boolean) || groupFieldName || !recordListTruncated) {
       return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
     }
     try {
