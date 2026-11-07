@@ -52,6 +52,16 @@ test('reportClientError rejects a request missing a message instead of logging a
   assert.equal(db.actions_log.all().length, 0);
 });
 
+test('reportClientError rejects a request with no body at all instead of throwing', () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all - every other test here always supplies a body object.
+  __resetForTests();
+  const res = makeRes();
+  reportClientError({}, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.actions_log.all().length, 0);
+});
+
 test('reportClientError rejects a non-string message instead of storing a type the UI never expects', () => {
   __resetForTests();
   const res = makeRes();

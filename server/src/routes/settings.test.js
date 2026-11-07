@@ -17,6 +17,16 @@ test('readSettings returns the current settings row', () => {
   assert.equal(res.body.settings.mode, 'research');
 });
 
+test('patchSettings treats a request with no body at all as an empty patch instead of throwing', () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all - every other test here always supplies a body
+  // object. An empty patch is a legitimate no-op, not an error.
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({}, res);
+  assert.equal(res.statusCode, 200);
+});
+
 test('patchSettings rejects an invalid mode instead of storing it', () => {
   // The owner's mode gate (research/approve/auto_limited) is the one thing
   // deciding whether a real action is even allowed to run — a typo here

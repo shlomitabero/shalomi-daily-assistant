@@ -16,6 +16,15 @@ function insertOpportunity(overrides = {}) {
   return opportunity;
 }
 
+test('createApproval rejects a request with no body at all instead of throwing', () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all - every other test here always supplies a body object.
+  __resetForTests();
+  const res = makeRes();
+  createApproval({}, res);
+  assert.equal(res.statusCode, 400);
+});
+
 test('createApproval rejects a request missing opportunityId or actionType', () => {
   __resetForTests();
   const res = makeRes();
