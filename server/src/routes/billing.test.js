@@ -100,6 +100,24 @@ test('a verified transaction.completed records real revenue and bumps the opport
   });
 });
 
+test('a verified sale on an opportunity with no salesCount field at all still gets counted', () => {
+  // Every other test here sets salesCount: 0 explicitly - this is the one
+  // real case that doesn't: an opportunity created before this field
+  // existed (there's no delete route, so old records can genuinely
+  // outlive a schema change like this one). Without the ?? 0 fallback,
+  // (undefined + 1) is NaN, silently poisoning salesCount forever.
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const opportunity = db.opportunities.insert({ id: makeId('opp'), title: 'מדריך' }); // no salesCount
+    const req = makeReq(completedTxn({ id: 'txn_legacy', opportunityId: opportunity.id, totalCents: '900' }), 'whsec_real');
+    const res = makeRes();
+    paddleWebhookHandler(req, res);
+
+    assert.deepEqual(res.body, { received: true });
+    assert.equal(db.opportunities.get(opportunity.id).salesCount, 1);
+  });
+});
+
 test('the same Paddle transaction id replayed is never recorded twice', () => {
   // Paddle retries webhook delivery on anything but a 2xx — without this,
   // a flaky response would double-count real revenue for one real sale.
