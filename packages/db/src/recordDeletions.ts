@@ -73,7 +73,19 @@ function rowToRecordDeletion(row: Record<string, unknown>): RecordDeletion {
   };
 }
 
-export function listRecordDeletions(db: ForgeDatabase, projectId: string, limit = 50): RecordDeletion[] {
+/**
+ * Round 1680: defaulted to 50 while RECORD_DELETIONS_RETENTION_LIMIT (just
+ * above) keeps up to 500 -- the only caller of this function with no limit
+ * override, CollaboratorsPanel.tsx's own Copy/Download report, silently
+ * showed just the 50 most recent deletions out of up to 500 genuinely
+ * retained ones, with no disclosure anything was left out. Matches the
+ * sibling AUTOMATION_RUNS_RETENTION_LIMIT/listAutomationRuns convention
+ * (automations.ts), which keeps its own retention and default list limit
+ * equal for the identical reason: a report built from this data should
+ * never be able to look complete while silently missing real, retained
+ * rows.
+ */
+export function listRecordDeletions(db: ForgeDatabase, projectId: string, limit = RECORD_DELETIONS_RETENTION_LIMIT): RecordDeletion[] {
   const rows = db
     .prepare(`SELECT * FROM record_deletions WHERE projectId = ? ORDER BY deletedAt DESC, id DESC LIMIT ?`)
     .all(projectId, limit) as Record<string, unknown>[];

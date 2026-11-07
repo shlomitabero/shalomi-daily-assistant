@@ -119,6 +119,24 @@ test("insertSchemaLabelEdit prunes the oldest entries once a project passes the 
   );
 });
 
+/** Round 1680: see recordDeletions.test.ts's own identical new test for why 60 (between the old default of 50 and SCHEMA_LABEL_EDITS_RETENTION_LIMIT's 500) is the deliberate choice here. */
+test("listSchemaLabelEdits with no limit argument returns every retained entry, not just the first 50", () => {
+  const db = openDatabase(":memory:");
+  ensureSchemaLabelEditsTable(db);
+  for (let i = 0; i < 60; i++) {
+    insertSchemaLabelEdit(db, {
+      projectId: "proj1",
+      changedByUserId: "user1",
+      action: "entity_renamed",
+      entityName: "Customer",
+      fieldName: null,
+      previousLabel: `label${i}`,
+      newLabel: `label${i + 1}`,
+    });
+  }
+  assert.equal(listSchemaLabelEdits(db, "proj1").length, 60, "the default limit must not silently truncate below the real retention limit");
+});
+
 test("insertSchemaLabelEdit never prunes a DIFFERENT project's entries when this project passes the retention limit", () => {
   const db = openDatabase(":memory:");
   ensureSchemaLabelEditsTable(db);

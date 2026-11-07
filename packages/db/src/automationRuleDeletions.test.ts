@@ -110,6 +110,23 @@ test("insertAutomationRuleDeletion prunes the oldest deletions once a project pa
   );
 });
 
+/** Round 1680: see recordDeletions.test.ts's own identical new test for why 60 (between the old default of 50 and AUTOMATION_RULE_DELETIONS_RETENTION_LIMIT's 500) is the deliberate choice here. */
+test("listAutomationRuleDeletions with no limit argument returns every retained deletion, not just the first 50", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRuleDeletionsTable(db);
+  for (let i = 0; i < 60; i++) {
+    insertAutomationRuleDeletion(db, {
+      projectId: "proj1",
+      ruleId: `rule${i}`,
+      entityName: "Customer",
+      trigger: "record_created",
+      actionType: "send_whatsapp",
+      deletedByUserId: "user1",
+    });
+  }
+  assert.equal(listAutomationRuleDeletions(db, "proj1").length, 60, "the default limit must not silently truncate below the real retention limit");
+});
+
 test("insertAutomationRuleDeletion never prunes a DIFFERENT project's deletions when this project passes the retention limit", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRuleDeletionsTable(db);

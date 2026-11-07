@@ -140,6 +140,23 @@ test("insertCollaboratorAccessChange prunes the oldest entries once a project pa
   );
 });
 
+/** Round 1680: see recordDeletions.test.ts's own identical new test for why 60 (between the old default of 50 and COLLABORATOR_ACCESS_CHANGES_RETENTION_LIMIT's 500) is the deliberate choice here. */
+test("listCollaboratorAccessChanges with no limit argument returns every retained entry, not just the first 50", () => {
+  const db = openDatabase(":memory:");
+  ensureCollaboratorAccessChangesTable(db);
+  for (let i = 0; i < 60; i++) {
+    insertCollaboratorAccessChange(db, {
+      projectId: "proj1",
+      targetUserId: `user${i}`,
+      changedByUserId: "owner1",
+      action: "removed",
+      previousRole: "editor",
+      newRole: null,
+    });
+  }
+  assert.equal(listCollaboratorAccessChanges(db, "proj1").length, 60, "the default limit must not silently truncate below the real retention limit");
+});
+
 test("insertCollaboratorAccessChange never prunes a DIFFERENT project's entries when this project passes the retention limit", () => {
   const db = openDatabase(":memory:");
   ensureCollaboratorAccessChangesTable(db);

@@ -106,7 +106,8 @@ function rowToCollaboratorAccessChange(row: Record<string, unknown>): Collaborat
   };
 }
 
-export function listCollaboratorAccessChanges(db: ForgeDatabase, projectId: string, limit = 50): CollaboratorAccessChange[] {
+/** Round 1680: see recordDeletions.ts's own identical fix for why this default now matches COLLABORATOR_ACCESS_CHANGES_RETENTION_LIMIT instead of a smaller, unrelated 50. */
+export function listCollaboratorAccessChanges(db: ForgeDatabase, projectId: string, limit = COLLABORATOR_ACCESS_CHANGES_RETENTION_LIMIT): CollaboratorAccessChange[] {
   const rows = db
     .prepare(`SELECT * FROM collaborator_access_changes WHERE projectId = ? ORDER BY changedAt DESC, id DESC LIMIT ?`)
     .all(projectId, limit) as Record<string, unknown>[];

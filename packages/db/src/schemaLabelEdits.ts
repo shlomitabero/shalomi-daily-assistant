@@ -95,7 +95,8 @@ function rowToSchemaLabelEdit(row: Record<string, unknown>): SchemaLabelEdit {
   };
 }
 
-export function listSchemaLabelEdits(db: ForgeDatabase, projectId: string, limit = 50): SchemaLabelEdit[] {
+/** Round 1680: see recordDeletions.ts's own identical fix for why this default now matches SCHEMA_LABEL_EDITS_RETENTION_LIMIT instead of a smaller, unrelated 50. */
+export function listSchemaLabelEdits(db: ForgeDatabase, projectId: string, limit = SCHEMA_LABEL_EDITS_RETENTION_LIMIT): SchemaLabelEdit[] {
   const rows = db
     .prepare(`SELECT * FROM schema_label_edits WHERE projectId = ? ORDER BY changedAt DESC, id DESC LIMIT ?`)
     .all(projectId, limit) as Record<string, unknown>[];

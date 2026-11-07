@@ -85,7 +85,8 @@ function rowToAutomationRuleDeletion(row: Record<string, unknown>): AutomationRu
   };
 }
 
-export function listAutomationRuleDeletions(db: ForgeDatabase, projectId: string, limit = 50): AutomationRuleDeletion[] {
+/** Round 1680: see recordDeletions.ts's own identical fix for why this default now matches AUTOMATION_RULE_DELETIONS_RETENTION_LIMIT instead of a smaller, unrelated 50. */
+export function listAutomationRuleDeletions(db: ForgeDatabase, projectId: string, limit = AUTOMATION_RULE_DELETIONS_RETENTION_LIMIT): AutomationRuleDeletion[] {
   const rows = db
     .prepare(`SELECT * FROM automation_rule_deletions WHERE projectId = ? ORDER BY deletedAt DESC, id DESC LIMIT ?`)
     .all(projectId, limit) as Record<string, unknown>[];

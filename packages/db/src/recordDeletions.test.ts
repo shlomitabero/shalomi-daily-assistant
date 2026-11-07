@@ -67,6 +67,25 @@ test("insertRecordDeletion prunes the oldest deletions once a project passes the
   );
 });
 
+/**
+ * Round 1680: listRecordDeletions used to default to 50 while
+ * RECORD_DELETIONS_RETENTION_LIMIT (500) kept far more than that -- its
+ * one caller with no limit override, CollaboratorsPanel.tsx's own Copy/
+ * Download report, silently showed only the 50 most recent deletions with
+ * no disclosure that more genuinely-retained ones existed. 60 rows here is
+ * deliberately chosen to sit strictly between the old default (50) and
+ * RECORD_DELETIONS_RETENTION_LIMIT (500), so this fails against the old
+ * default and passes only once the default itself was raised to match.
+ */
+test("listRecordDeletions with no limit argument returns every retained deletion, not just the first 50", () => {
+  const db = openDatabase(":memory:");
+  ensureRecordDeletionsTable(db);
+  for (let i = 0; i < 60; i++) {
+    insertRecordDeletion(db, { projectId: "proj1", entityName: "Customer", recordId: i, recordLabel: `record ${i}`, deletedByUserId: "user1" });
+  }
+  assert.equal(listRecordDeletions(db, "proj1").length, 60, "the default limit must not silently truncate below the real retention limit");
+});
+
 test("insertRecordDeletion never prunes a DIFFERENT project's deletions when this project passes the retention limit", () => {
   const db = openDatabase(":memory:");
   ensureRecordDeletionsTable(db);
