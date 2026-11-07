@@ -19565,6 +19565,67 @@ test("the owner can change an existing collaborator's role between 'editor' and 
  * the combined log via the new GET route -- same access level as
  * GET .../record-deletions.
  */
+/**
+ * Round 1665: "invited" is the one sibling action in this exact family
+ * (role_changed/removed round 1636, ownership_transferred round 1654) that
+ * never got its own audit-trail entry -- going from no access to some role
+ * is the most fundamental access change there is, yet it left no trace once
+ * the grant was later changed or removed. A re-invite of an already-
+ * existing collaborator (addCollaborator's own documented idempotent no-op)
+ * must not log a second, spurious entry.
+ */
+test("POST .../collaborators (invite) records the new grant, readable via GET .../collaborator-access-log, and a re-invite of an existing collaborator logs nothing new", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-invite-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-invite-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const inviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail, role: "viewer" }),
+    });
+    assert.equal(inviteRes.status, 201);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { changes } = (await listRes.json()) as {
+      changes: { action: string; targetUserId: string; changedByUserId: string | null; previousRole: string | null; newRole: string | null }[];
+    };
+    assert.equal(changes.length, 1, "the invite must be logged exactly once");
+    assert.equal(changes[0].action, "invited");
+    assert.equal(changes[0].targetUserId, collabUser.id);
+    assert.equal(changes[0].changedByUserId, ownerUser.id);
+    assert.equal(changes[0].previousRole, null, "there was no prior role at all before the invite");
+    assert.equal(changes[0].newRole, "viewer");
+
+    // addCollaborator is deliberately idempotent (round 1253's own doc
+    // comment) -- re-inviting an already-existing collaborator is a silent
+    // no-op with no actual access change to log.
+    const reinviteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail, role: "editor" }),
+    });
+    assert.equal(reinviteRes.status, 201);
+    const listRes2 = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(collabToken) });
+    assert.equal(listRes2.status, 200);
+    const { changes: changes2 } = (await listRes2.json()) as { changes: { action: string }[] };
+    assert.equal(changes2.length, 1, "a re-invite of an existing collaborator must not log a second entry");
+  });
+});
+
 test("PATCH .../collaborators/:userId/role and DELETE .../collaborators/:userId both record who made the change, readable via GET .../collaborator-access-log", async () => {
   await withServer(async (baseUrl, db) => {
     const ownerEmail = `owner-access-audit-${randomUUID()}@example.com`;
@@ -19672,10 +19733,16 @@ test("PATCH .../collaborators/:userId/role logs an entry even when resubmitting 
     assert.equal(noOpRes.status, 200);
 
     const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(ownerToken) });
-    const { changes } = (await listRes.json()) as { changes: { previousRole: string | null; newRole: string | null }[] };
-    assert.equal(changes.length, 1, "even a same-role resubmit must be logged");
+    const { changes } = (await listRes.json()) as { changes: { action: string; previousRole: string | null; newRole: string | null }[] };
+    // Round 1665: the invite itself now also logs an "invited" entry, so
+    // this project's log carries that entry plus the no-op role-change
+    // entry this test is really about -- changes are newest-first, so the
+    // no-op PATCH's own entry comes before the earlier invite's.
+    assert.equal(changes.length, 2, "even a same-role resubmit must be logged, alongside the invite's own entry");
+    assert.equal(changes[0].action, "role_changed");
     assert.equal(changes[0].previousRole, "editor");
     assert.equal(changes[0].newRole, "editor");
+    assert.equal(changes[1].action, "invited");
   });
 });
 

@@ -6,7 +6,16 @@ import type { ForgeDatabase } from "./connection.js";
 // comment) had no audit-trail entry at all, unlike its two siblings
 // (role_changed/removed, round 1636) despite sitting right next to them
 // in routes/projects.ts.
-export type CollaboratorAccessChangeAction = "role_changed" | "removed" | "ownership_transferred";
+//
+// Round 1665: widened again to add "invited" -- the one remaining
+// sibling in this exact action family (the routes/projects.ts doc
+// comments at the collaborators-route section explicitly group invite/
+// role-change/removal/ownership-transfer together as "every action that
+// changes who has access to this project") that still had no audit-trail
+// entry: going from no access to some role is the single most
+// fundamental access change there is, yet it left no trace once the
+// grant was later changed or removed.
+export type CollaboratorAccessChangeAction = "invited" | "role_changed" | "removed" | "ownership_transferred";
 
 export interface CollaboratorAccessChange {
   id: number;

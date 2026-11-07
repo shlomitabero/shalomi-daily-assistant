@@ -140,6 +140,32 @@ test("formatCollaboratorsReport renders an ownership-transferred entry in the ac
 });
 
 /**
+ * Round 1665: "invited" is the one sibling action in this exact family
+ * (role_changed/removed round 1636, ownership_transferred round 1654) that
+ * never got its own report entry -- without its own explicit branch in
+ * formatCollaboratorsReport's if/else-if chain, an "invited" entry would
+ * silently fall into the final `else` and render with removedEntry's own
+ * text ("X was removed from the project"), the exact opposite of what
+ * happened.
+ */
+test("formatCollaboratorsReport renders an invited entry in the access-changes section, not misclassified as a removal", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [
+    {
+      action: "invited",
+      targetEmail: "dana@example.com",
+      changedByEmail: "owner@example.com",
+      previousRole: null,
+      newRole: "editor",
+      changedAt: "2024-02-03T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Recent access changes:"));
+  assert.ok(result.includes("dana@example.com was invited to the project with Editor (full access) access by owner@example.com"));
+  assert.ok(!result.includes("was removed from the project"), "an invite must never render with the removal entry's text");
+});
+
+/**
  * Round 1639: the sibling report section to accessChanges above, for
  * entity/field label renames -- docs/security.md's own "Section 40" note
  * still named this as the one sub-gap this audit-trail family left open.

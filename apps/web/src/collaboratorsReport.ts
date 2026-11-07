@@ -34,7 +34,7 @@ export interface RecordDeletionForReport {
  * `deletedByEmail`.
  */
 export interface CollaboratorAccessChangeForReport {
-  action: "role_changed" | "removed" | "ownership_transferred";
+  action: "invited" | "role_changed" | "removed" | "ownership_transferred";
   targetEmail: string;
   changedByEmail: string | null;
   previousRole: CollaboratorRole | null;
@@ -120,7 +120,21 @@ export function formatCollaboratorsReport(
     lines.push("");
     lines.push(t("collab.report.accessChangesHeading"));
     for (const c of accessChanges) {
-      if (c.action === "role_changed") {
+      if (c.action === "invited") {
+        // Round 1665: without its own explicit branch here, an "invited"
+        // entry would silently fall into the final `else` below and render
+        // with removedEntry's own text -- "X was removed from the project"
+        // for what was actually a brand-new grant of access, the exact
+        // opposite of what happened.
+        lines.push(
+          t("collab.report.invitedEntry", {
+            who: c.targetEmail,
+            role: c.newRole ? roleLabel(c.newRole, t) : "",
+            by: c.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (c.action === "role_changed") {
         lines.push(
           t("collab.report.roleChangedEntry", {
             who: c.targetEmail,

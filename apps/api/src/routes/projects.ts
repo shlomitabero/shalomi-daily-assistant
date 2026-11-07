@@ -2658,6 +2658,25 @@ export function createProjectsRouter(
       }
       const isNewGrant = getCollaboratorRole(db, project.id, invited.id) === null;
       addCollaborator(db, project.id, invited.id, parsed.data.role);
+      // Round 1665: the one sibling in this route's own "invite/role-change/
+      // removal/ownership-transfer" access-change family (see the PATCH
+      // role route and DELETE route just below, rounds 1636/1654) that
+      // never got an audit-trail entry -- going from no access to some role
+      // is the single most fundamental access change there is, yet it left
+      // no trace once the grant was later changed or removed. Gated on
+      // isNewGrant, same as the email send just below: addCollaborator is
+      // deliberately idempotent, so re-inviting an existing collaborator is
+      // a silent no-op with no actual access change to log.
+      if (isNewGrant) {
+        insertCollaboratorAccessChange(db, {
+          projectId: project.id,
+          targetUserId: invited.id,
+          changedByUserId: req.userId!,
+          action: "invited",
+          previousRole: null,
+          newRole: parsed.data.role,
+        });
+      }
       if (isNewGrant && emailSender.configured) {
         const isHebrew = parsed.data.lang !== "en";
         const subject = isHebrew ? `הוזמנת לפרויקט "${project.name}" ב-Forge AI` : `You were invited to "${project.name}" on Forge AI`;

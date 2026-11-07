@@ -42,6 +42,34 @@ test("insertCollaboratorAccessChange stores a role change and returns it via lis
   assert.equal(changes[1].changedByUserId, "owner1");
 });
 
+/**
+ * Round 1665: "invited" is the one sibling action in this exact family
+ * (role_changed/removed round 1636, ownership_transferred round 1654) that
+ * never got its own audit-trail entry -- going from no access to some role
+ * is the most fundamental access change there is. previousRole is always
+ * null (there was no prior role at all), mirroring removed's own newRole
+ * being null for the opposite direction.
+ */
+test("insertCollaboratorAccessChange stores an invite with previousRole null and the granted role as newRole", () => {
+  const db = openDatabase(":memory:");
+  ensureCollaboratorAccessChangesTable(db);
+  insertCollaboratorAccessChange(db, {
+    projectId: "proj1",
+    targetUserId: "user1",
+    changedByUserId: "owner1",
+    action: "invited",
+    previousRole: null,
+    newRole: "editor",
+  });
+
+  const changes = listCollaboratorAccessChanges(db, "proj1");
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].action, "invited");
+  assert.equal(changes[0].previousRole, null, "there was no prior role at all before the invite");
+  assert.equal(changes[0].newRole, "editor");
+  assert.equal(changes[0].changedByUserId, "owner1");
+});
+
 test("insertCollaboratorAccessChange stores changedByUserId as null when given null, never fabricating an actor", () => {
   const db = openDatabase(":memory:");
   ensureCollaboratorAccessChangesTable(db);
