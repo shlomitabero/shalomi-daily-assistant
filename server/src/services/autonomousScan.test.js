@@ -458,3 +458,36 @@ test('catchUpAutonomousScanIfMissed runs a scan when the last one was more than 
     }
   );
 });
+
+test('catchUpAutonomousScanIfMissed compares against the MOST RECENT past scan, not just any of them', async () => {
+  // With only ever 0 or 1 prior entries, every other test above never
+  // actually exercises the sort comparator that picks "the most recent"
+  // out of several - inserted out of chronological order here so an
+  // insertion-order bug (e.g. picking whichever happens to sort first/
+  // last by id) would show up as a wrong decision, not just missing
+  // coverage.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'blocked: source not connected',
+    createdAt: new Date('2026-01-01T09:00:00Z').toISOString(), // most recent, inserted first
+  });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'blocked: source not connected',
+    createdAt: new Date('2026-01-01T02:00:00Z').toISOString(), // oldest
+  });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'blocked: source not connected',
+    createdAt: new Date('2026-01-01T06:00:00Z').toISOString(), // middle
+  });
+  await withEnv(
+    { ANTHROPIC_API_KEY: undefined, PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: undefined, PADDLE_WEBHOOK_SECRET: undefined },
+    async () => {
+      // Only 2 hours after the most recent (09:00) - still within the
+      // 4-hour window, so this must do nothing, even though it's well
+      // past 4 hours since the OLDEST (02:00) entry.
+      const result = await catchUpAutonomousScanIfMissed(new Date('2026-01-01T11:00:00Z'));
+      assert.equal(result, null);
+      assert.equal(db.actions_log.where((a) => a.type === 'autonomous_scan').length, 3);
+    }
+  );
+});

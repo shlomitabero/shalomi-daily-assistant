@@ -26,6 +26,21 @@ test('generateDailyDigest counts an action logged in the Israel-midnight-to-UTC-
   assert.match(digest.text, /פעולות שבוצעו: 1/);
 });
 
+test('generateDailyDigest surfaces a real failed action in the real digest text', () => {
+  // Every other test that covers the "בעיות" line hand-feeds an already-
+  // built failuresToday array straight to engine/digest.js's pure
+  // buildDailyDigest() - none of them exercise generateDailyDigest()'s own
+  // real actions_log query + .map() that builds that array from a real
+  // 'failed'-prefixed entry in the first place.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'draft_product', detail: { error: 'ANTHROPIC_API_KEY invalid' }, result: 'failed',
+    createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /בעיות: draft_product: ANTHROPIC_API_KEY invalid/);
+});
+
 test('generateDailyDigest warns in the real digest text when real spend is close to the configured budget', () => {
   // This is the real wiring behind engine/digest.js's pure budget-warning
   // logic - settings.budget/budgetConfigured and the ledger's own
