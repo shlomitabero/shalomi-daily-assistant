@@ -3336,7 +3336,15 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
       </span>
     );
   }
-  if (field.type === "number") return <>{Number(value).toLocaleString()}</>;
+  if (field.type === "number") {
+    // Round 1657: mirrors the live app's own identical fix -- a phone-like
+    // -named field can end up typed "number", and PHONE_FIELD_NAME_HINTS
+    // (defined further down, hoisted the same safe way this same
+    // template's round-1642 fix already relies on) must never be
+    // locale-grouped here either.
+    if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return <>{String(value)}</>;
+    return <>{Number(value).toLocaleString()}</>;
+  }
   if (field.type === "longtext") {
     return (
       <span className="longtext-cell" title={String(value)}>

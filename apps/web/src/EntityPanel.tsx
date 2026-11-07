@@ -71,6 +71,7 @@ import {
   isDeadlineFieldName,
   isGroupableField,
   isInlineEditableField,
+  isPhoneFieldName,
   isSameDay,
   isSameMonth,
   isImageMimeType,
@@ -344,6 +345,14 @@ function Cell({
     );
   }
   if (field.type === "number") {
+    // Round 1657: a phone-like-named field can end up typed "number" (the
+    // AI spec generator has no way to know "phone" should be text) --
+    // recordDisplayLabel's own round-1642 fix already guards against
+    // locale-grouping such a field wherever it's used as a RELATED
+    // record's label, but this cell renders the field on its OWN record's
+    // row in the main table/Kanban board/print output, a separate code
+    // path recordDisplayLabel never touches.
+    if (isPhoneFieldName(field.name)) return <>{String(value)}</>;
     return <>{formatNumberValue(Number(value), lang)}</>;
   }
   if (field.type === "longtext") {

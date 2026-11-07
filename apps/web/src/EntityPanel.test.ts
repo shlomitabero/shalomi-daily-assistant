@@ -16426,6 +16426,51 @@ test("EntityPanel's table shows a totals row summing each numeric column over th
 });
 
 /**
+ * Round 1657: round 1642's own fix only covered a phone-like-named number
+ * field when it's used as a RELATED record's display label (recordDisplayLabel,
+ * e.g. a relation picker's own <option> text) -- this cell renders the
+ * field on its OWN record's row in the main table, a separate code path
+ * recordDisplayLabel never touches. An AI-generated spec commonly types a
+ * "phone" field as "number" (the AI has no way to know it should be
+ * text), and before this fix the table showed real phone digits like
+ * "972501234567" with locale thousands separators inserted into them
+ * ("972,501,234,567"), garbling the only place the number is actually
+ * dialed from.
+ */
+test("EntityPanel's table cell renders a phone-like-named number field as raw digits, not locale-grouped with thousands separators, while an ordinary number field still gets thousands separators", async () => {
+  await withJsdom(async () => {
+    const contactEntity: Entity = {
+      name: "Contact",
+      label: "Contact",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "number", required: false },
+        { name: "score", label: "Score", type: "number", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Dana Levi", phone: 972501234567, score: 4500 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Contact") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const row = document.querySelector("table tbody tr")!;
+      assert.match(row.textContent ?? "", /972501234567/, "the phone-like-named number field must render as raw digits");
+      assert.doesNotMatch(row.textContent ?? "", /972,501,234,567/, "the phone-like-named number field must never render with thousands separators");
+      assert.match(row.textContent ?? "", /4,500/, "an ordinary (non-phone-named) number field must still get real locale thousands separators");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: grouping the table by an enum/boolean field (round
  * ~286-ish) and the numeric totals row (round 297) each shipped
  * independently and were never wired together -- grouping Orders by Status

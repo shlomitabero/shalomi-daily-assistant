@@ -6887,6 +6887,42 @@ test("the exported EntityView's recordDisplayLabel renders a phone-like-named nu
 });
 
 /**
+ * Round 1657: the fix above (round 1642) only covers recordDisplayLabel --
+ * a phone-like-named number field used as a RELATED record's own display
+ * label (e.g. a relation picker's option text). It never touches this
+ * generated Cell component, which renders the field on its OWN record's
+ * row in the main table/Kanban board/print output, a separate code path
+ * recordDisplayLabel never reaches. Mirrors the live app's own identical
+ * EntityPanel.tsx fix. Compiles the real generated Cell component's JSX
+ * with esbuild (the same transform the date-cell test above uses) and
+ * actually calls it, rather than string-matching the source.
+ */
+test("the exported record table's Cell renders a phone-like-named number field as raw digits, but still locale-groups an ordinary number field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
+
+  const transformed = transformSync(`${phoneFieldHintsSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (_type: unknown, _props: unknown, ...children: unknown[]) => (children.length === 1 ? children[0] : children),
+    Symbol("Fragment"),
+  );
+
+  assert.equal(
+    Cell({ field: { type: "number", name: "phone" }, value: 972501234567 }),
+    "972501234567",
+    "a phone-like-named number field's own table cell must render raw digits, not \"972,501,234,567\"",
+  );
+  assert.equal(
+    Cell({ field: { type: "number", name: "score" }, value: 4500 }),
+    "4,500",
+    "an ordinary (non-phone-named) number field must still get real locale thousands separators",
+  );
+});
+
+/**
  * Round 762: mirrors the live preview's own fix -- pickDisplayField's
  * "first text field" step only ever checked "text", never "longtext",
  * even though the two are the same free-text kind everywhere else in
