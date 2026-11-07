@@ -143,9 +143,9 @@ real threats to a smaller, concrete list:
   `lastRestoredAt`, round 1568), a record create records its creator
   (`records.createdByUserId`, round 1613) and a record update its last
   editor (`records.updatedByUserId`, round 1617), a record delete is logged
-  with its deleter (`record_deletions`, round 1632), a collaborator role
-  change/removal/ownership-transfer is logged with both actor and target
-  (`collaborator_access_changes`, rounds 1636/1654), an entity/field label
+  with its deleter (`record_deletions`, round 1632), a collaborator invite,
+  role change, removal, or ownership-transfer is logged with both actor and
+  target (`collaborator_access_changes`, rounds 1636/1654/1665), an entity/field label
   rename outside a build is logged with its actor (`schema_label_edits`,
   round 1639), an automation rule create/update is logged on the rule row
   itself (`automation_rules.createdByUserId`/`updatedByUserId`, round
