@@ -357,7 +357,7 @@ const ENTITY_NAMES_LOWER = new Set(ENTITIES.map((e) => e.name.toLowerCase()));
 
 for (const entity of ENTITIES) {
   assertSafe(entity.name);
-  const columns = ["id INTEGER PRIMARY KEY AUTOINCREMENT", "createdAt TEXT NOT NULL"];
+  const columns = ["id INTEGER PRIMARY KEY AUTOINCREMENT", "createdAt TEXT NOT NULL", "updatedAt TEXT"];
   for (const field of entity.fields) {
     assertSafe(field.name);
     // A relation field's REFERENCES clause is what lets PRAGMA foreign_keys
@@ -412,6 +412,14 @@ for (const entity of ENTITIES) {
   // generated README documents as a supported workflow ("edit the preview,
   // re-export, drop the new server.js next to your existing data.sqlite").
   const existingColumnsLower = new Set(Array.from(existingColumns, (c) => c.toLowerCase()));
+  // Mirrors the live preview's own repository.ts ensureUpdatedAtColumn:
+  // updatedAt was added to the CREATE TABLE columns above, but that
+  // statement only ever runs as IF NOT EXISTS -- a no-op for a table
+  // exported before this fix shipped, so it self-heals here the same way
+  // the per-field ALTER loop just below it does.
+  if (!existingColumnsLower.has("updatedat")) {
+    db.exec(\`ALTER TABLE \${q(entity.name)} ADD COLUMN updatedAt TEXT\`);
+  }
   for (const field of entity.fields) {
     if (existingColumnsLower.has(field.name.toLowerCase())) continue;
     const references = field.type === "relation" && field.relationTo && ENTITY_NAMES_LOWER.has(field.relationTo.toLowerCase()) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
@@ -548,7 +556,7 @@ function getRowValue(row, fieldName) {
 }
 
 function rowToRecord(entity, row) {
-  const record = { id: row.id, createdAt: row.createdAt };
+  const record = { id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt ?? null };
   for (const field of entity.fields) {
     const value = getRowValue(row, field.name);
     // Round 1134: mirrors the live preview's own repository.ts rowToRecord
@@ -675,7 +683,13 @@ for (const entity of ENTITIES) {
         }
         return coerced;
       });
-      db.prepare(\`UPDATE \${q(entity.name)} SET \${columns.map((c) => \`\${q(c)} = ?\`).join(", ")} WHERE id = ?\`).run(...values, req.params.id);
+      // Round 1673: mirrors the live preview's own repository.ts
+      // updateRecord -- updatedAt is written unconditionally on every
+      // update, the WHEN half of the record-update fact (the exported app
+      // has no auth/collaborator system, so there's no "who" to pair it
+      // with, unlike the live backend's own updatedByUserId).
+      const updatedAt = new Date().toISOString();
+      db.prepare(\`UPDATE \${q(entity.name)} SET \${columns.map((c) => \`\${q(c)} = ?\`).join(", ")}, updatedAt = ? WHERE id = ?\`).run(...values, updatedAt, req.params.id);
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
       res.json({ record: rowToRecord(entity, row) });
     } catch (err) {
@@ -7852,7 +7866,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           </td>
         );
       })}
-      <td className="muted small created-at-cell">{formatRecordCreatedAt(r.createdAt)}</td>
+      <td className="muted small created-at-cell" title={r.updatedAt ? \`Last updated on \${formatRecordCreatedAt(r.updatedAt)}\` : undefined}>{formatRecordCreatedAt(r.createdAt)}</td>
       <td className="row-actions">
         <button onClick={() => startEdit(r)}>Edit</button>
         <button disabled={writesInFlight} onClick={() => handleDuplicate(r.id)}>Duplicate</button>

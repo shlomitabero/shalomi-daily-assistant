@@ -2791,6 +2791,153 @@ test("generated server.js's update route rejects a self-referencing relation fie
 });
 
 /**
+ * Round 1673: round 1672 added updatedAt (the WHEN half of
+ * updatedByUserId's WHO) to the LIVE Forge AI backend, but its own
+ * writeup explicitly flagged the exported standalone app as still missing
+ * even a bare updatedAt timestamp (no "who" to pair it with -- this app
+ * has no auth/collaborator system at all) -- confirmed directly against a
+ * real spawned server.js: before this fix, every record's own
+ * updatedAt was always undefined, and PATCH never touched any timestamp
+ * column at all.
+ */
+test("generated server.js's PATCH route sets a real updatedAt timestamp, left null until a record's first real update", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-updated-at-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 61000 + Math.floor(Math.random() * 2000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const before = new Date().toISOString();
+    const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice", status: "New" }),
+    });
+    const customer = (await createRes.json()).record;
+    assert.equal(customer.updatedAt, null, "a freshly-created record must have no updatedAt until it's genuinely updated");
+
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${customer.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Alice Cohen" }),
+    });
+    assert.equal(patchRes.status, 200);
+    const patched = (await patchRes.json()).record;
+    assert.equal(typeof patched.updatedAt, "string");
+    assert.ok(patched.updatedAt >= before, "updatedAt must be a real, current timestamp");
+
+    const getRes = await fetch(`http://localhost:${port}/api/Customer`);
+    const records = (await getRes.json()).records;
+    assert.equal(records[0].updatedAt, patched.updatedAt, "GET must reflect the same updatedAt the PATCH response returned, not drop it");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1673's own direct sibling of the migration test above (round 802):
+ * a data.sqlite built by an OLDER export (before this round added
+ * updatedAt to the CREATE TABLE columns) has no such column at all --
+ * CREATE TABLE IF NOT EXISTS is a no-op against it, so this must self-heal
+ * via the same lazy ALTER TABLE pattern the per-field migration loop
+ * already uses, instead of crashing the whole server on startup the way
+ * round 1092's own case-only-rename bug did before its fix.
+ */
+test("generated server.js self-heals a pre-existing data.sqlite that predates the updatedAt column, instead of crashing on startup", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-updated-at-migration-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  // Builds the OLD (pre-round-1673) table shape directly -- id/createdAt
+  // and the entity's own fields only, no updatedAt column at all -- then
+  // seeds one row, exactly the state a real pre-existing export's
+  // data.sqlite would be in.
+  const { DatabaseSync } = await import("node:sqlite");
+  const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
+  directDb.exec(`CREATE TABLE "Customer" (id INTEGER PRIMARY KEY AUTOINCREMENT, createdAt TEXT NOT NULL, "name" TEXT NOT NULL, "status" TEXT NOT NULL)`);
+  directDb.prepare(`INSERT INTO "Customer" (createdAt, "name", "status") VALUES (?, ?, ?)`).run(new Date().toISOString(), "Legacy", "New");
+  directDb.close();
+
+  const port = 63000 + Math.floor(Math.random() * 2000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const getRes = await fetch(`http://localhost:${port}/api/Customer`);
+    assert.equal(getRes.status, 200, "startup against a pre-existing table missing updatedAt must not crash the server");
+    const legacy = (await getRes.json()).records[0];
+    assert.equal(legacy.name, "Legacy", "the pre-existing row must survive untouched");
+    assert.equal(legacy.updatedAt, null, "the pre-existing row's own updatedAt must self-heal to null, not throw or fabricate a value");
+
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${legacy.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Legacy Updated" }),
+    });
+    assert.equal(patchRes.status, 200, "updating a row in the self-healed table must succeed via the real migrated column");
+    const patched = (await patchRes.json()).record;
+    assert.equal(typeof patched.updatedAt, "string");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1176: the guard just above compared f.relationTo to entity.name
  * with exact-case equality -- rounds 1159-1162 already established, across
  * many other files, that a relationTo string can legitimately differ in
