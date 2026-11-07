@@ -4,8 +4,8 @@
 // watchlist as lastPrice and render as "$NaN" on the dashboard instead of
 // either a real price or the honest "not connected" state.
 export function parseQuotePrice(data) {
-  if (data?.code || !data?.price) throw new Error(data?.message || 'unexpected market data response');
+  if (data?.code || !data?.price) throw new Error(data?.message || 'תגובה לא צפויה ממקור נתוני השוק');
   const price = Number(data.price);
-  if (!Number.isFinite(price)) throw new Error(`market data returned a non-numeric price: ${JSON.stringify(data.price)}`);
+  if (!Number.isFinite(price)) throw new Error(`מקור נתוני השוק החזיר מחיר שאינו מספר: ${JSON.stringify(data.price)}`);
   return price;
 }

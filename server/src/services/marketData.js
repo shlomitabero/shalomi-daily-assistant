@@ -23,12 +23,20 @@ export async function fetchQuote(symbol, { timeoutMs = FETCH_TIMEOUT_MS } = {}) 
       { signal: controller.signal }
     );
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error('market data request timed out');
-    throw err;
+    if (err.name === 'AbortError') throw new Error('הבקשה למקור נתוני השוק לא קיבלה מענה בזמן');
+    // A raw network-layer failure (DNS, connection reset, TLS) comes with
+    // its own English message from the fetch implementation itself — not
+    // fit to show the owner directly, but worth keeping in Railway's own
+    // log viewer for anyone actually debugging "the price feed stopped
+    // working", the same split every other service-level failure in this
+    // app already uses (a clean Hebrew message to the owner, the raw
+    // technical detail to console.error).
+    console.error('fetchQuote: network request to market data provider failed', err);
+    throw new Error('הבקשה למקור נתוני השוק נכשלה מסיבה לא צפויה — בדוק את לוגי השרת');
   } finally {
     clearTimeout(timeout);
   }
-  if (!res.ok) throw new Error(`market data request failed with status ${res.status}`);
+  if (!res.ok) throw new Error(`הבקשה למקור נתוני השוק נכשלה עם קוד סטטוס ${res.status}`);
   const data = await res.json();
   return { price: parseQuotePrice(data), fetchedAt: new Date().toISOString() };
 }

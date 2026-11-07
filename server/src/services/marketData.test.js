@@ -69,6 +69,28 @@ test('fetchQuote throws with the HTTP status when the provider request itself fa
   }
 });
 
+test('fetchQuote wraps a raw network-layer failure in a Hebrew message instead of surfacing it as-is', () => {
+  // A DNS failure, connection reset, or TLS error throws its own English
+  // message straight from the fetch implementation — fine for the Railway
+  // log viewer (still logged via console.error), but not fit to show the
+  // owner directly on the Financial page like every other error here.
+  const original = process.env.MARKET_DATA_API_KEY;
+  process.env.MARKET_DATA_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+  console.error = () => {};
+  return fetchQuote('AAPL').then(
+    () => assert.fail('expected fetchQuote to reject'),
+    (err) => assert.match(err.message, /נכשלה מסיבה לא צפויה/)
+  ).finally(() => {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+    else delete process.env.MARKET_DATA_API_KEY;
+  });
+});
+
 test('fetchQuote times out instead of hanging forever when the provider never responds', async () => {
   // Without an explicit timeout, a hung connection to the provider would
   // leave this (and the watchlist's "refresh all", which awaits each
@@ -80,7 +102,7 @@ test('fetchQuote times out instead of hanging forever when the provider never re
     signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
   });
   try {
-    await assert.rejects(() => fetchQuote('AAPL', { timeoutMs: 5 }), /timed out/);
+    await assert.rejects(() => fetchQuote('AAPL', { timeoutMs: 5 }), /לא קיבלה מענה בזמן/);
   } finally {
     globalThis.fetch = originalFetch;
     if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
@@ -93,7 +115,7 @@ test('fetchQuote propagates a malformed-price error instead of returning a NaN q
   process.env.MARKET_DATA_API_KEY = 'test-key';
   const restore = stubFetchOnce({ body: { price: 'N/A' } });
   try {
-    await assert.rejects(() => fetchQuote('AAPL'), /non-numeric price/);
+    await assert.rejects(() => fetchQuote('AAPL'), /מחיר שאינו מספר/);
   } finally {
     restore();
     if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;

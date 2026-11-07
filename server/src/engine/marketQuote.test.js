@@ -11,17 +11,17 @@ test('throws on a provider error response (code set)', () => {
 });
 
 test('throws on a missing price', () => {
-  assert.throws(() => parseQuotePrice({}), /unexpected market data response/);
+  assert.throws(() => parseQuotePrice({}), /תגובה לא צפויה/);
 });
 
 test('throws instead of silently returning NaN for a non-numeric price', () => {
   // "N/A" is truthy, so a `!data.price` check alone would miss this —
   // Number("N/A") is NaN, which must never flow out of this function.
-  assert.throws(() => parseQuotePrice({ price: 'N/A' }), /non-numeric price/);
+  assert.throws(() => parseQuotePrice({ price: 'N/A' }), /מחיר שאינו מספר/);
 });
 
 test('throws instead of silently returning zero for an empty-string price', () => {
   // Number('') is 0 — a provider sending an empty string must not be
   // mistaken for a real $0 quote.
-  assert.throws(() => parseQuotePrice({ price: '' }), /unexpected market data response/);
+  assert.throws(() => parseQuotePrice({ price: '' }), /תגובה לא צפויה/);
 });
