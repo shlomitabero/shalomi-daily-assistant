@@ -37,6 +37,10 @@ test('login returns 503 instead of a confusing 401 when OWNER_PASSWORD is not co
     const res = makeRes();
     login({ ip: uniqueIp(), body: { password: 'anything' } }, res);
     assert.equal(res.statusCode, 503);
+    // Login.jsx renders this verbatim in an otherwise all-Hebrew app - was
+    // a raw English technical message ("OWNER_PASSWORD is not set on the
+    // server yet") until now.
+    assert.match(res.body.error, /OWNER_PASSWORD עדיין לא הוגדר/);
   });
 });
 
@@ -46,6 +50,10 @@ test('login rejects the wrong password without issuing a token', () => {
     login({ ip: uniqueIp(), body: { password: 'guess' } }, res);
     assert.equal(res.statusCode, 401);
     assert.equal(res.body.token, undefined);
+    // The single most commonly-reached error in the whole app (anyone who
+    // mistypes their password sees it) was the raw English string "wrong
+    // password", shown verbatim on Login.jsx.
+    assert.equal(res.body.error, 'סיסמה שגויה');
   });
 });
 

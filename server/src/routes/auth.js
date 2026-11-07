@@ -13,7 +13,7 @@ const loginRateLimiter = createLoginRateLimiter();
 
 export function login(req, res) {
   if (!process.env.OWNER_PASSWORD) {
-    return res.status(503).json({ error: 'OWNER_PASSWORD is not set on the server yet' });
+    return res.status(503).json({ error: 'OWNER_PASSWORD עדיין לא הוגדר בשרת' });
   }
   const key = req.ip ?? 'unknown';
   if (loginRateLimiter.isBlocked(key)) {
@@ -22,7 +22,7 @@ export function login(req, res) {
   const { password } = req.body ?? {};
   if (!verifyOwnerPassword(password)) {
     loginRateLimiter.recordFailure(key);
-    return res.status(401).json({ error: 'wrong password' });
+    return res.status(401).json({ error: 'סיסמה שגויה' });
   }
   loginRateLimiter.recordSuccess(key);
   res.json({ token: signOwnerToken() });
