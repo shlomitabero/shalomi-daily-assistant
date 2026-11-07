@@ -12240,6 +12240,65 @@ test("deleting your account notifies the OWNER of every project you merely colla
   );
 });
 
+/**
+ * Round 1681: every OTHER way a collaborator's access to a project ends
+ * already writes a collaborator_access_changes row -- invite, role change,
+ * removal, and ownership transfer (routes/projects.ts, round 1636's own
+ * convention), including the ordinary self-leave DELETE route, whose
+ * "removed" entry uses changedByUserId === targetUserId for exactly this
+ * self-initiated shape. But removeAllCollaborationsForUser, which this
+ * account-deletion cascade uses to strip the deleted account from every
+ * OTHER project it merely collaborated on (never owned), logged nothing at
+ * all -- the project's own "Access history" report would just show the
+ * collaborator vanish with no trace. Uses an UNCONFIGURED email sender
+ * deliberately: before this round's fix, the entire per-project loop that
+ * now also logs the audit entry used to be skipped completely whenever
+ * email wasn't configured (round 1277's own test above proves that for
+ * the email side of this same gap), so this test can't pass by accident
+ * via the pre-existing email feature -- only this round's own fix makes it
+ * pass.
+ */
+test("deleting your account logs a collaborator_access_changes 'removed' entry for every OTHER project you merely collaborated on, even when email isn't configured", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl, db) => {
+      const ownerEmail = `owner-acct-delete-audit-${randomUUID()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
+      const leavingEmail = `leaving-collab-acct-delete-audit-${randomUUID()}@example.com`;
+      const leavingToken = await signup(baseUrl, leavingEmail);
+      const leavingUser = findUserByEmail(db, leavingEmail)!;
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: leavingEmail }),
+      });
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(leavingToken) });
+      assert.equal(deleteRes.status, 204);
+
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborator-access-log`, { headers: authHeaders(ownerToken) });
+      assert.equal(listRes.status, 200);
+      const { changes } = (await listRes.json()) as {
+        changes: { action: string; targetUserId: string; changedByUserId: string | null; previousRole: string | null; newRole: string | null }[];
+      };
+      const removal = changes.find((c) => c.action === "removed" && c.targetUserId === leavingUser.id);
+      assert.ok(removal, "account deletion must log a 'removed' entry for every project the deleted account merely collaborated on");
+      assert.equal(removal!.changedByUserId, leavingUser.id, "self-initiated, mirroring the ordinary self-leave route's own shape");
+      assert.equal(removal!.previousRole, "editor");
+      assert.equal(removal!.newRole, null);
+    },
+    { emailSender },
+  );
+});
+
 test("deleting your account itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
   const emailSender = createFakeEmailSender({ configured: false });
   await withServer(

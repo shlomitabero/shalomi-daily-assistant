@@ -21,6 +21,7 @@ import {
   deleteProject,
   findUserByEmail,
   findUserById,
+  getCollaboratorRole,
   getEmailVerificationTokenByHash,
   getIdempotencyRecord,
   getLoginCode,
@@ -28,6 +29,7 @@ import {
   getPasswordResetTokenByHash,
   getSessionUser,
   incrementLoginCodeAttempts,
+  insertCollaboratorAccessChange,
   listCollaboratedProjectIds,
   listCollaborators,
   listOwnedProjectIds,
@@ -1405,33 +1407,56 @@ export function createAuthRouter(
           // collaborated on -- once it runs, listCollaboratedProjectIds
           // would find nothing.
           const deletedUser = findUserById(db, req.userId!);
-          if (deletedUser && emailSender.configured) {
-            const collaboratedProjectIds = listCollaboratedProjectIds(db, req.userId!);
-            for (const projectId of collaboratedProjectIds) {
-              // Round 1447: tryGetProject, see projectBeforeDelete's own
-              // comment above -- this loop's own `if (!collaboratedProject)
-              // continue` already assumed a missing project could only ever
-              // come back as undefined, never a thrown ZodError, so one
-              // stale-schema project this user merely collaborated on used
-              // to abort this same request instead of just being skipped.
-              const collaboratedProject = tryGetProject(db, projectId);
-              if (!collaboratedProject) continue;
-              const owner = findUserById(db, collaboratedProject.ownerId);
-              if (!owner) continue;
-              const subject = isHebrew
-                ? `${deletedUser.email} מחק/ה את החשבון ועזב/ה את הפרויקט "${collaboratedProject.name}" ב-Forge AI`
-                : `${deletedUser.email} deleted their account and left "${collaboratedProject.name}" on Forge AI`;
-              const body = isHebrew
-                ? `${deletedUser.email} מחק/ה את חשבון ה-Forge AI שלו/ה, ולכן הוא/היא אינו/ה יותר משתתף/ת בפרויקט "${collaboratedProject.name}".`
-                : `${deletedUser.email} deleted their Forge AI account and is no longer a collaborator on "${collaboratedProject.name}".`;
-              try {
-                await emailSender.send(owner.email, subject, body);
-              } catch {
-                // Swallowed, deliberately, same as this route's own
-                // established convention -- the account deletion itself
-                // must never be blocked or fail because a best-effort
-                // notification couldn't be sent.
-              }
+          // Round 1681: every OTHER way a collaborator's access ends already
+          // writes a collaborator_access_changes row (invite/role-change/
+          // removal/ownership-transfer, routes/projects.ts, round 1636's own
+          // convention) -- including the ordinary self-leave DELETE route,
+          // which uses this exact action/changedByUserId-equals-targetUserId
+          // shape. But this cascade, the account-deletion equivalent of a
+          // mass self-leave across every project this user merely
+          // collaborated on, called removeAllCollaborationsForUser with no
+          // audit-log entry at all: CollaboratorsPanel's own "Access
+          // history" report would show the collaborator simply vanish, with
+          // no trace access ever changed. Computed and logged
+          // unconditionally (unlike the email loop below, which stays
+          // gated on emailSender.configured) -- the audit trail must not
+          // depend on whether email happens to be configured on this
+          // deployment, and getCollaboratorRole must run before
+          // removeAllCollaborationsForUser erases the role it reads.
+          const collaboratedProjectIds = listCollaboratedProjectIds(db, req.userId!);
+          for (const projectId of collaboratedProjectIds) {
+            // Round 1447: tryGetProject, see projectBeforeDelete's own
+            // comment above -- this loop's own `if (!collaboratedProject)
+            // continue` already assumed a missing project could only ever
+            // come back as undefined, never a thrown ZodError, so one
+            // stale-schema project this user merely collaborated on used
+            // to abort this same request instead of just being skipped.
+            const collaboratedProject = tryGetProject(db, projectId);
+            if (!collaboratedProject) continue;
+            insertCollaboratorAccessChange(db, {
+              projectId,
+              targetUserId: req.userId!,
+              changedByUserId: req.userId!,
+              action: "removed",
+              previousRole: getCollaboratorRole(db, projectId, req.userId!),
+              newRole: null,
+            });
+            if (!deletedUser || !emailSender.configured) continue;
+            const owner = findUserById(db, collaboratedProject.ownerId);
+            if (!owner) continue;
+            const subject = isHebrew
+              ? `${deletedUser.email} מחק/ה את החשבון ועזב/ה את הפרויקט "${collaboratedProject.name}" ב-Forge AI`
+              : `${deletedUser.email} deleted their account and left "${collaboratedProject.name}" on Forge AI`;
+            const body = isHebrew
+              ? `${deletedUser.email} מחק/ה את חשבון ה-Forge AI שלו/ה, ולכן הוא/היא אינו/ה יותר משתתף/ת בפרויקט "${collaboratedProject.name}".`
+              : `${deletedUser.email} deleted their Forge AI account and is no longer a collaborator on "${collaboratedProject.name}".`;
+            try {
+              await emailSender.send(owner.email, subject, body);
+            } catch {
+              // Swallowed, deliberately, same as this route's own
+              // established convention -- the account deletion itself
+              // must never be blocked or fail because a best-effort
+              // notification couldn't be sent.
             }
           }
           removeAllCollaborationsForUser(db, req.userId!);
