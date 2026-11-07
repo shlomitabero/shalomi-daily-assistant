@@ -3471,6 +3471,49 @@ test("GET .../entities/:entityName never reports truncated when every record alr
 });
 
 /**
+ * Round 1678: the live table's own truncation hint
+ * (`entity.recordList.truncatedHint`) tells a user past
+ * RECORD_LIST_RESPONSE_CAP to "export to CSV to get all of them" --
+ * GET .../entities/:entityName/export is the uncapped sibling EntityPanel's
+ * Export CSV/JSON/Copy actions now call to make that promise real. Reuses
+ * the same 5001-row fixture as the cap test above specifically so this
+ * assertion means something: 5001 > RECORD_LIST_RESPONSE_CAP (5000), so a
+ * response capped the same way the live table route is would also come
+ * back with exactly 5000 records and this test would wrongly pass.
+ */
+test("GET .../entities/:entityName/export returns every record, uncapped, unlike its own capped sibling route", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-record-export-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: ownerUser.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const entity = spec.entities[0];
+    for (let i = 0; i < 5001; i++) {
+      insertRecord(db, projectId, entity, { name: `Customer ${i}` });
+    }
+
+    const exportRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/export`, { headers: authHeaders(ownerToken) });
+    assert.equal(exportRes.status, 200);
+    const { records } = (await exportRes.json()) as { records: unknown[] };
+    assert.equal(records.length, 5001, "export must never cap its response the way the live table listing does");
+  });
+});
+
+/**
  * Round 1632: the delete half of the createdByUserId/updatedByUserId
  * audit-trail pair (rounds 1613/1617) -- round 1613's own closing note
  * explicitly deferred record-delete actor-tracking "for a future round."

@@ -3911,6 +3911,38 @@ export function createProjectsRouter(
     }),
   );
 
+  /**
+   * Round 1678: the route just above's own truncation hint
+   * (`entity.recordList.truncatedHint`, EntityPanel.tsx) literally tells a
+   * user past RECORD_LIST_RESPONSE_CAP to "export to CSV to get all of
+   * them" -- but EntityPanel's handleExportCsv/handleExportJson/handleCopy
+   * all built their output from that exact same capped `records` state,
+   * so the promise was false: an entity over the cap could never actually
+   * be fully exported through this app's own UI. This sibling route is
+   * deliberately uncapped -- see the round-1638 comment above for why
+   * backup/Business Twin/seed/webhook lookups/automations all already
+   * call listRecords() with no limit; export is the one interactive case
+   * that is a genuine one-shot action, not a page a person stares at, so
+   * it belongs in that same unbounded group rather than the capped one.
+   * No collaboratorEmails/totalCount/truncated here: EntityPanel only
+   * calls this to build a CSV/JSON/clipboard export, none of which render
+   * createdByUserId or need to re-derive the already-known truncation
+   * state.
+   */
+  router.get(
+    "/projects/:id/entities/:entityName/export",
+    expensiveReadRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectAccess(db, req.params.id, req.userId!);
+      if (project.status !== "built") {
+        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
+      }
+      const entity = findEntity(project, req.params.entityName);
+      const records = listRecords(db, project.id, entity);
+      res.json({ records });
+    }),
+  );
+
   router.post(
     "/projects/:id/entities/:entityName",
     recordWriteRateLimiter,

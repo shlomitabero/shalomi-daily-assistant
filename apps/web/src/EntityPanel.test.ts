@@ -2438,6 +2438,125 @@ test("EntityPanel shows no truncated-list hint when the server reports every rec
   });
 });
 
+/**
+ * Round 1678: the truncated-list hint right above literally promises
+ * "export to CSV to get all of them" -- this confirms Export CSV now keeps
+ * that promise by calling the new uncapped GET .../export route instead of
+ * building the CSV from the same capped `records` state the hint is about.
+ */
+test("EntityPanel's Export CSV button fetches every record via GET .../export when the live list is truncated", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let exportFetched = false;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Deal/export") {
+        exportFetched = true;
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Beta Inc", status: "new" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.ok(document.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      assert.ok(exportFetched, "Export CSV must call the new uncapped GET .../export route when the live list is truncated");
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one already-loaded record must still be in the export");
+      assert.match(csvText, /Beta Inc/, "a record beyond the capped page must now be included, via the uncapped export fetch");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
+ * Companion to the test above: an active search filter already has its own
+ * documented "export what's showing" convention (selectedOrAllRecords'
+ * own doc comment) -- the new truncation-driven full fetch must stay out
+ * of its way rather than silently reinterpreting a filtered export as "all
+ * records, ignore the filter". The mock /export route would hand back a
+ * record that doesn't match the search box at all, so this also proves
+ * that route is genuinely never called while a search is active.
+ */
+test("EntityPanel's Export CSV button exports only the search-filtered records, not the full unfiltered set, even while the list is truncated", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Zzz Other", status: "new" },
+            ],
+            totalCount: 3,
+            truncated: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input} -- GET .../export must not be called while a search filter is active`);
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const searchInput = document.querySelector(".entity-search") as HTMLInputElement;
+      fireEvent.change(searchInput, { target: { value: "Acme" } });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one matching, already-loaded record must still be exported");
+      assert.doesNotMatch(csvText, /Zzz Other/, "a non-matching loaded record must stay excluded by the active search filter");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
 /** Same jsdom-swap technique as useDialogFocusTrap.test.ts/BuildProgress.test.ts. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });

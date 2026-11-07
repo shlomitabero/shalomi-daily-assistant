@@ -4,6 +4,7 @@ import {
   createRecord,
   deleteRecord,
   deleteUploadedRecordFile,
+  exportAllRecords,
   getCalendarFeedToken,
   getInboundWebhookToken,
   listRecords,
@@ -4421,19 +4422,44 @@ export function EntityPanel({
     return String(value);
   }
 
-  function handleExportCsv() {
+  /**
+   * Round 1678: the table's own truncation banner
+   * (`entity.recordList.truncatedHint`, rendered below) tells the user
+   * past RECORD_LIST_RESPONSE_CAP to "export to CSV to get all of them" --
+   * but `records` here is exactly that same server-capped state, so every
+   * export building from it unconditionally kept that promise false.
+   * Scoped to the one case that broken promise is literally about: no
+   * selection (handleBulkDelete's own convention -- a hand-picked
+   * selection can only ever contain already-loaded rows, so it was never
+   * missing anything), no active search (EntityPanel's search box only
+   * ever matches against the loaded page, same "may not include older
+   * matches" scope search.truncatedHint already discloses elsewhere, not
+   * a promise this fix should silently expand), and no grouping (so there
+   * are no collapsed groups' worth of records this fetched, unsorted-by-
+   * group full set would need to re-exclude). Outside that scope, nothing
+   * changes: `selectedOrAllRecords` runs exactly as it always has. Sorted
+   * the same way the on-screen table would (any active sortKeys, then
+   * pinned-to-top), so the shape of a genuinely full export still matches
+   * what sorting the capped table led the user to expect.
+   */
+  async function recordsForExport(): Promise<EntityRecord[]> {
+    if (selectedIds.size > 0 || search.trim() || groupFieldName || !recordListTruncated) {
+      return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
+    }
+    try {
+      const { records: allRecords } = await exportAllRecords(projectId, entity.name);
+      return sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, allEntities, relatedRecords), pinnedIds);
+    } catch {
+      return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
+    }
+  }
+
+  async function handleExportCsv() {
     // includeId: true -- unlike handleCopy below (pasted into Slack/email,
     // never re-imported), this is the one CSV this app actually hands back
     // to handleImportFile, so it needs the id column that lets re-import
     // update these exact records instead of duplicating them.
-    const csv = recordsToCsv(
-      orderedFields,
-      selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds),
-      lang,
-      allEntities,
-      relatedRecords,
-      true,
-    );
+    const csv = recordsToCsv(orderedFields, await recordsForExport(), lang, allEntities, relatedRecords, true);
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -4453,8 +4479,8 @@ export function EntityPanel({
    * enumLabels text, "TRUE"/"FALSE") aren't usable for that, while this
    * preserves each field's real stored value instead.
    */
-  function handleExportJson() {
-    const json = recordsToJson(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds));
+  async function handleExportJson() {
+    const json = recordsToJson(orderedFields, await recordsForExport());
     const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -4478,7 +4504,7 @@ export function EntityPanel({
    */
   async function handleCopy() {
     try {
-      const csv = recordsToCsv(orderedFields, selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds), lang, allEntities, relatedRecords);
+      const csv = recordsToCsv(orderedFields, await recordsForExport(), lang, allEntities, relatedRecords);
       await navigator.clipboard.writeText(csv);
       setCopyStatus("copied");
     } catch {

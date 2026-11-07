@@ -1226,6 +1226,11 @@ export function listRecords(
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`);
 }
 
+/** Round 1678: listRecords' sibling with no RECORD_LIST_RESPONSE_CAP -- EntityPanel.tsx calls this instead when exporting an entity whose live table listing came back `truncated`, so Export CSV/JSON/Copy can genuinely deliver "all of them" as their own on-screen hint already promises. */
+export function exportAllRecords(projectId: string, entityName: string): Promise<{ records: EntityRecord[] }> {
+  return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/export`);
+}
+
 /**
  * Round 594: the one real-effect mutation route missed when the
  * X-Idempotency-Key mechanism (docs/wakeRetry-idempotency-design.md) was
