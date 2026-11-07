@@ -7,11 +7,13 @@ import { test } from "node:test";
 import type { Entity, Project } from "@forge/shared";
 import {
   applyMigrations,
+  createUser,
   deleteProject,
   ensureAutomationRulesTable,
   ensureCheckpointsTable,
   ensureProjectCollaboratorsTable,
   ensureProjectsTable,
+  ensureUsersTable,
   ensureWhatsAppConnectionsTable,
   ensureWhatsAppMessagesTable,
   EMAIL_NOT_CONFIGURED_ERROR,
@@ -2011,6 +2013,115 @@ test("runAutomationsForRecordChange interpolates a relation field's display labe
     sendCalls[0]!.body,
     "Congrats Dana Levi, your deal is Won!",
     "the message must carry the related customer's own name even though relationTo is lowercase customer, not Customer",
+  );
+});
+
+/**
+ * Round 1686: createdByUserId/updatedByUserId are repository.ts's own
+ * reserved, unconditionally-set actor-id fields -- the same kind of "never
+ * a declared entity field" case createdAt/updatedAt already got dedicated
+ * handling for in interpolateTemplate (rounds 744/1676), but for an actor
+ * id rather than a timestamp, so the fix lives in
+ * resolveRelationFieldsForTemplate instead, resolving to the real email
+ * EntityPanel.tsx's own "Created by"/"Last updated by" tooltip already
+ * shows for this exact field. Before this round, both placeholders fell
+ * through interpolateTemplate's generic String(value) branch, embedding
+ * the raw internal user-id UUID verbatim in a real outbound message.
+ */
+test("runAutomationsForRecordChange interpolates {{createdByUserId}}/{{updatedByUserId}} to the actor's real email, not the raw internal user id", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [{ name: "status", type: "text", required: true }],
+  };
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const owner = createUser(db, { id: "owner-uuid-1", email: "owner@example.com", passwordHash: "x" });
+  const editor = createUser(db, { id: "editor-uuid-2", email: "editor@example.com", passwordHash: "x" });
+  const spec = { summary: "A deals app", entities: [dealEntity], roles: ["Admin"], screens: [], openQuestions: [] };
+  const inserted = insertProject(db, { id: "proj-actor", ownerId: owner.id, name: "Deals", description: "A deals app", spec });
+  applyMigrations(db, inserted.id, inserted.spec);
+  markProjectBuilt(db, inserted.id);
+  const project = { ...inserted, status: "built" as const };
+
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Deal",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Won",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972501234567",
+    messageTemplate: "Created by {{createdByUserId}}, last updated by {{updatedByUserId}}",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  const record = { id: 1, status: "Won", createdByUserId: owner.id, updatedByUserId: editor.id };
+
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(
+    sendCalls[0]!.body,
+    "Created by owner@example.com, last updated by editor@example.com",
+    "both actor-id placeholders must resolve to the real account email, not the raw internal user-id UUID",
+  );
+});
+
+/**
+ * Companion to the test above: a createdByUserId pointing at an account
+ * that's since been deleted (findUserById returns undefined) must never
+ * fall back to sending the raw, meaningless UUID to a real WhatsApp
+ * recipient -- the same "never leak the raw id" rule the live panel's own
+ * round-1567/1568 "Created by" tooltip applies (omit rather than show a
+ * stale id). The closest equivalent for inline template text is leaving
+ * the {{placeholder}} itself untouched, exactly like an unknown field name
+ * already does elsewhere in this same function.
+ */
+test("runAutomationsForRecordChange leaves {{createdByUserId}} as the literal placeholder when the account no longer exists, rather than leaking the raw user id", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [{ name: "status", type: "text", required: true }],
+  };
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const owner = createUser(db, { id: "owner-uuid-3", email: "owner3@example.com", passwordHash: "x" });
+  const spec = { summary: "A deals app", entities: [dealEntity], roles: ["Admin"], screens: [], openQuestions: [] };
+  const inserted = insertProject(db, { id: "proj-actor-gone", ownerId: owner.id, name: "Deals", description: "A deals app", spec });
+  applyMigrations(db, inserted.id, inserted.spec);
+  markProjectBuilt(db, inserted.id);
+  const project = { ...inserted, status: "built" as const };
+
+  insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Deal",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "Won",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972501234567",
+    messageTemplate: "Created by {{createdByUserId}}",
+  });
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+  const record = { id: 1, status: "Won", createdByUserId: "deleted-account-uuid-does-not-exist" };
+
+  await runAutomationsForRecordChange(db, manager, UNUSED_EMAIL_SENDER, project, dealEntity, "updated", record, new Set(["status"]), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(
+    sendCalls[0]!.body,
+    "Created by {{createdByUserId}}",
+    "an unresolvable user id must leave the placeholder untouched, never the raw internal UUID",
   );
 });
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   AUTOMATION_RUNS_RETENTION_LIMIT,
+  findUserById,
   getProject,
   tryGetProject,
   getRecord,
@@ -439,6 +440,28 @@ function resolveRelationFieldsForTemplate(
     const targetEntity = relationTo ? allEntities.find((e) => e.name.toLowerCase() === relationTo.toLowerCase()) : undefined;
     const targetRecord = targetEntity ? getRecord(db, projectId, targetEntity, Number(value)) : undefined;
     resolved[field.name] = targetRecord ? recordDisplayLabel(targetEntity!, targetRecord, lang) : `#${value}`;
+  }
+  // Round 1686: createdByUserId/updatedByUserId are repository.ts's own
+  // reserved, unconditionally-set actor-id fields (round 1613/round-1681-era
+  // writes), the exact same kind of "never a declared entity field, so
+  // interpolateTemplate's typed branches never see it" case createdAt/
+  // updatedAt already got dedicated reserved-key branches for (just above,
+  // in interpolateTemplate itself) -- except these hold a user id, not a
+  // timestamp, so the fix belongs here (alongside relation-field
+  // resolution) rather than as a format-only branch there. Resolves to the
+  // actor's real email, the same value EntityPanel.tsx's own "Created by"/
+  // "Last updated by" tooltip already shows for this exact field. Unlike a
+  // relation field's own "#<id>" fallback above, a deleted/unresolvable
+  // user's raw UUID is never a reasonable thing to send a real WhatsApp/
+  // email recipient -- left unset here (rather than falling back to the
+  // raw value) so interpolateTemplate's own `value == null` check leaves
+  // the {{placeholder}} untouched, never leaking an internal id.
+  for (const key of ["createdByUserId", "updatedByUserId"] as const) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const email = findUserById(db, value)?.email;
+    if (email) resolved[key] = email;
+    else delete resolved[key];
   }
   return resolved;
 }
