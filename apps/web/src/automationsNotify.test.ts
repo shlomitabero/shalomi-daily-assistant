@@ -29,6 +29,8 @@ function rule(overrides: Partial<AutomationRuleView> & { id: string }): Automati
     lastError: null,
     lastActionType: null,
     pausedForToday: false,
+    createdByUserId: null,
+    updatedByUserId: null,
     ...overrides,
   };
 }

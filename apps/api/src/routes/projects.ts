@@ -5740,7 +5740,18 @@ export function createProjectsRouter(
         webhookSecret: isViewer ? null : rule.webhookSecret,
         pausedForToday: rule.trigger === "schedule" && rule.enabled ? hasTooManyConsecutiveFailuresToday(db, rule, now) : false,
       }));
-      res.json({ rules });
+      // Round 1664: same collaboratorEmails resolution convention as
+      // GET .../checkpoints and GET .../entities/:entityName -- resolves
+      // each rule's raw createdByUserId/updatedByUserId (round 1664) into
+      // a display email at this route layer, rather than baking email
+      // lookups into packages/db's own rowToRule.
+      const collaboratorEmails: Record<string, string> = {};
+      const owner = getOwnerInfo(db, project);
+      if (owner) collaboratorEmails[owner.userId] = owner.email;
+      for (const collaborator of listCollaborators(db, project.id)) {
+        collaboratorEmails[collaborator.userId] = collaborator.email;
+      }
+      res.json({ rules, collaboratorEmails });
     }),
   );
 
@@ -6059,7 +6070,7 @@ export function createProjectsRouter(
             toEmail: data.toEmail ?? null,
             emailSubject: data.emailSubject ?? null,
             messageTemplate: data.messageTemplate,
-          });
+          }, req.userId!);
           return { status: 201, body: { rule } };
         },
       );
@@ -6128,7 +6139,7 @@ export function createProjectsRouter(
             validateAutomationToField(findField(entity, next.toField));
           }
           try {
-            const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data);
+            const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data, req.userId!);
             return { status: 200, body: { rule } };
           } catch (err) {
             if (err instanceof NotFoundError) {

@@ -247,6 +247,10 @@ export interface AutomationRule {
   lastError: string | null;
   /** Round 948: the actionType this rule actually HAD when lastTriggeredAt/lastStatus/lastError were last written -- see AutomationRun's own identical field for why a live `actionType` reference isn't safe to translate lastError against. Null for a run recorded before this column existed, or if the rule has never fired at all. */
   lastActionType: AutomationActionType | null;
+  /** Round 1664: same convention as packages/db/src/repository.ts's own createdByUserId on a record row (round 1613) -- the collaborator (or owner) who created this rule, resolved to a display email at the route layer. Null for a rule created before this column existed, or whenever the caller doesn't pass one. */
+  createdByUserId: string | null;
+  /** Round 1664: the repository.ts updatedByUserId counterpart (round 1617) -- whoever last PATCHed this rule, including a no-op field toggle. Null until the first PATCH after this column existed; never backfilled from createdByUserId, so "nobody has edited this rule yet" stays distinguishable from "someone edited it, but we don't know who." */
+  updatedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -523,6 +527,17 @@ export function ensureAutomationRulesTable(db: ForgeDatabase): void {
   if (!columns.includes("fieldOperator")) {
     db.exec("ALTER TABLE automation_rules ADD COLUMN fieldOperator TEXT");
   }
+  // Round 1664: see AutomationRule.createdByUserId/updatedByUserId's own
+  // doc comments. Both stay nullable, same as every actor-tracking column
+  // this convention has ever added (repository.ts's own createdByUserId/
+  // updatedByUserId, checkpoints.ts's createdByUserId) -- no backfill for
+  // a rule created before this column existed.
+  if (!columns.includes("createdByUserId")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN createdByUserId TEXT");
+  }
+  if (!columns.includes("updatedByUserId")) {
+    db.exec("ALTER TABLE automation_rules ADD COLUMN updatedByUserId TEXT");
+  }
 }
 
 function rowToRule(row: Record<string, unknown>): AutomationRule {
@@ -551,6 +566,8 @@ function rowToRule(row: Record<string, unknown>): AutomationRule {
     lastStatus: (row.lastStatus as AutomationLastStatus) ?? null,
     lastError: (row.lastError as string | null) ?? null,
     lastActionType: (row.lastActionType as AutomationActionType | null) ?? null,
+    createdByUserId: (row.createdByUserId as string | null) ?? null,
+    updatedByUserId: (row.updatedByUserId as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -578,13 +595,14 @@ export function insertAutomationRule(
     emailSubject?: string | null;
     messageTemplate: string;
   },
+  createdByUserId?: string | null,
 ): AutomationRule {
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO automation_rules
-       (id, projectId, entityName, trigger, fieldName, fieldValue, fieldOperator, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, toEmail, emailSubject, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+       (id, projectId, entityName, trigger, fieldName, fieldValue, fieldOperator, scheduleTimeUtc, scheduleDaysOfWeek, scheduleTimezone, actionType, toMode, toNumber, toField, webhookUrl, webhookSecret, toEmail, emailSubject, messageTemplate, enabled, lastTriggeredAt, lastStatus, lastError, createdByUserId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?, ?)`,
   ).run(
     id,
     rule.projectId,
@@ -605,6 +623,7 @@ export function insertAutomationRule(
     rule.toEmail ?? null,
     rule.emailSubject ?? null,
     rule.messageTemplate,
+    createdByUserId ?? null,
     now,
     now,
   );
@@ -690,6 +709,7 @@ export function updateAutomationRule(
     messageTemplate: string;
     enabled: boolean;
   }>,
+  updatedByUserId?: string | null,
 ): AutomationRule {
   const existing = getAutomationRule(db, projectId, id);
   if (!existing) {
@@ -698,7 +718,7 @@ export function updateAutomationRule(
   const next = { ...existing, ...patch };
   db.prepare(
     `UPDATE automation_rules SET
-       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, fieldOperator = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, toEmail = ?, emailSubject = ?, messageTemplate = ?, enabled = ?, updatedAt = ?
+       entityName = ?, trigger = ?, fieldName = ?, fieldValue = ?, fieldOperator = ?, scheduleTimeUtc = ?, scheduleDaysOfWeek = ?, scheduleTimezone = ?, actionType = ?, toMode = ?, toNumber = ?, toField = ?, webhookUrl = ?, webhookSecret = ?, toEmail = ?, emailSubject = ?, messageTemplate = ?, enabled = ?, updatedByUserId = ?, updatedAt = ?
      WHERE projectId = ? AND id = ?`,
   ).run(
     next.entityName,
@@ -719,6 +739,7 @@ export function updateAutomationRule(
     next.emailSubject,
     next.messageTemplate,
     next.enabled ? 1 : 0,
+    updatedByUserId ?? null,
     new Date().toISOString(),
     projectId,
     id,

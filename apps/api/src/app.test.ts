@@ -5361,6 +5361,85 @@ test("POST /projects/:id/entities/:entityName/automations retried with the same 
 });
 
 /**
+ * Round 1664: automation_rules was the one mutable row in this app with
+ * zero actor-tracking at all -- unlike a record (createdByUserId/
+ * updatedByUserId, rounds 1613/1617) or a checkpoint (createdByUserId,
+ * round 1567), the exact gap round 1663's own docs/security.md rewrite
+ * named as still open. POST .../automations now attaches the authenticated
+ * caller's own userId as createdByUserId, PATCH .../automations/:ruleId
+ * attaches it as updatedByUserId (leaving createdByUserId untouched), and
+ * GET .../automations resolves both via the same owner+collaborators
+ * collaboratorEmails map GET .../entities/:entityName and GET
+ * .../checkpoints already send for the identical reason.
+ */
+test("POST .../automations attaches the caller's userId as createdByUserId, PATCH attaches a different collaborator's userId as updatedByUserId without disturbing createdByUserId, and GET .../automations resolves both to real emails", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-automation-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-automation-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        description:
+          "Build an appointment-management application for a beauty clinic. I need customers, appointments, employees, services, an admin dashboard and automatic appointment status tracking.",
+      }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(ownerToken) });
+    await collectSSE(buildRes);
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const createRuleRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer/automations`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "phone",
+        messageTemplate: "hi",
+      }),
+    });
+    assert.equal(createRuleRes.status, 201);
+    const { rule: created } = (await createRuleRes.json()) as { rule: { id: string; createdByUserId: string | null; updatedByUserId: string | null } };
+    assert.equal(created.createdByUserId, ownerUser.id);
+    assert.equal(created.updatedByUserId, null, "creating a rule is not itself an update");
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/automations/${created.id}`, {
+      method: "PATCH",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(patchRes.status, 200);
+    const { rule: patched } = (await patchRes.json()) as { rule: { createdByUserId: string | null; updatedByUserId: string | null } };
+    assert.equal(patched.createdByUserId, ownerUser.id, "an editor's PATCH must never overwrite who originally created the rule");
+    assert.equal(patched.updatedByUserId, collabUser.id);
+
+    const listRes2 = await fetch(`${baseUrl}/api/projects/${project.id}/automations`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes2.status, 200);
+    const { rules, collaboratorEmails } = (await listRes2.json()) as {
+      rules: { createdByUserId: string | null; updatedByUserId: string | null }[];
+      collaboratorEmails: Record<string, string>;
+    };
+    assert.equal(rules[0].createdByUserId, ownerUser.id);
+    assert.equal(rules[0].updatedByUserId, collabUser.id);
+    assert.equal(collaboratorEmails[ownerUser.id], ownerEmail);
+    assert.equal(collaboratorEmails[collabUser.id], collabEmail);
+  });
+});
+
+/**
  * Round 1424: CreateAutomationRuleSchema's free-text fields never got the
  * `.trim()` treatment rounds 408/919/939 already established everywhere
  * else in this file for "a whitespace-only value passes `.min(1)` but is

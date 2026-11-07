@@ -76,6 +76,11 @@ export function AutomationsPanel({
 }) {
   const { t, lang } = useTranslation();
   const [rules, setRules] = useState<AutomationRuleView[] | null>(null);
+  // Round 1664: resolves a rule's own createdByUserId/updatedByUserId
+  // (packages/db/src/automations.ts) into a display email -- same
+  // resolution convention as EntityPanel.tsx's own collaboratorEmails for
+  // a record's createdByUserId/updatedByUserId (round 1613/1617).
+  const [collaboratorEmails, setCollaboratorEmails] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
@@ -533,7 +538,10 @@ export function AutomationsPanel({
   function loadRules() {
     setLoadError(null);
     listAutomationRules(projectId)
-      .then(({ rules }) => setRules(rules))
+      .then(({ rules, collaboratorEmails: emails }) => {
+        setRules(rules);
+        setCollaboratorEmails(emails);
+      })
       .catch((err) => setLoadError((err as Error).message));
   }
 
@@ -1397,6 +1405,23 @@ export function AutomationsPanel({
                     )}
                     <div className="muted small">{rule.messageTemplate}</div>
                     <div className="muted small">{describeLastRun(rule)}</div>
+                    {/* Round 1664: see createdByUserId/updatedByUserId's own
+                        doc comments (packages/db/src/automations.ts) -- the
+                        one actor-tracking gap round 1663's docs/security.md
+                        fix named as still open under this app's "who did
+                        this" convention. Same display rule as EntityPanel's
+                        own record row tooltip: the "updated by" fact is only
+                        shown when it genuinely differs from "created by" --
+                        a rule nobody has edited since creation shows only
+                        one line, not two identical names. */}
+                    {rule.createdByUserId && collaboratorEmails[rule.createdByUserId] && (
+                      <div className="muted small">{t("automations.rule.createdBy", { email: collaboratorEmails[rule.createdByUserId] })}</div>
+                    )}
+                    {rule.updatedByUserId &&
+                      rule.updatedByUserId !== rule.createdByUserId &&
+                      collaboratorEmails[rule.updatedByUserId] && (
+                        <div className="muted small">{t("automations.rule.updatedBy", { email: collaboratorEmails[rule.updatedByUserId] })}</div>
+                      )}
                   </div>
                   <div className="automations-rule-actions">
                     <span className={`chip ${rule.enabled ? "automations-chip-enabled" : "automations-chip-disabled"}`}>

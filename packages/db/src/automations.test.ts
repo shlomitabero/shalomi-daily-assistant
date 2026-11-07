@@ -64,6 +64,38 @@ test("insertAutomationRule stores the rule and returns it with generated id/time
 });
 
 /**
+ * Round 1664: see AutomationRule.createdByUserId/updatedByUserId's own doc
+ * comments -- the one actor-tracking gap round 1663's docs/security.md fix
+ * named as still open, mirroring repository.ts's own createdByUserId
+ * (round 1613) and updatedByUserId (round 1617) for a record row.
+ */
+test("insertAutomationRule defaults createdByUserId to null when omitted, and persists an explicit value that survives a round-trip through storage", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const defaulted = insertAutomationRule(db, baseRule());
+  assert.equal(defaulted.createdByUserId, null);
+  assert.equal(defaulted.updatedByUserId, null);
+  const withCreator = insertAutomationRule(db, baseRule(), "user-1");
+  assert.equal(withCreator.createdByUserId, "user-1");
+  assert.equal(withCreator.updatedByUserId, null, "creating a rule is not itself an update");
+  assert.equal(getAutomationRule(db, "proj1", withCreator.id)!.createdByUserId, "user-1");
+});
+
+test("updateAutomationRule leaves createdByUserId untouched and sets updatedByUserId to the patch's actor, even when the patch itself is empty", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule(), "user-1");
+  const updated = updateAutomationRule(db, "proj1", rule.id, { enabled: false }, "user-2");
+  assert.equal(updated.createdByUserId, "user-1", "an update must never overwrite who originally created the rule");
+  assert.equal(updated.updatedByUserId, "user-2");
+  // A caller that never passes an actor (e.g. the scheduler's own automatic
+  // disable, apps/api/src/routes/projects.ts line ~4668) must not silently
+  // fabricate one -- stays null, exactly like omitting it on insert above.
+  const systemUpdated = updateAutomationRule(db, "proj1", rule.id, { enabled: true });
+  assert.equal(systemUpdated.updatedByUserId, null);
+});
+
+/**
  * Round 1491: AutomationFieldOperator -- see that type's own doc comment
  * for the full rationale. Defaults to null (treated as "equals" by every
  * reader) so a rule created before this column existed, or one that simply
@@ -1084,6 +1116,8 @@ test("ensureAutomationRulesTable adds scheduleTimeUtc/scheduleDaysOfWeek to a pr
   assert.equal(oldRule.scheduleTimeUtc, null);
   assert.equal(oldRule.scheduleDaysOfWeek, null);
   assert.equal(oldRule.scheduleTimezone, null, "round 967's scheduleTimezone column must also be added additively, defaulting to null for a pre-existing row");
+  assert.equal(oldRule.createdByUserId, null, "round 1664's createdByUserId column must also be added additively, defaulting to null for a pre-existing row");
+  assert.equal(oldRule.updatedByUserId, null, "round 1664's updatedByUserId column must also be added additively, defaulting to null for a pre-existing row");
   assert.equal(oldRule.fieldName, "status", "the migration must not disturb an existing row's other columns");
 
   // Running it again (every app startup) must stay a no-op.

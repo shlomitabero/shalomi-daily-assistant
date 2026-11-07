@@ -1591,6 +1591,8 @@ function automationRule(overrides: Partial<AutomationRuleView> & { id: string })
     lastError: null,
     lastActionType: null,
     pausedForToday: false,
+    createdByUserId: null,
+    updatedByUserId: null,
     ...overrides,
   };
 }

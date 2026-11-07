@@ -1855,9 +1855,13 @@ export interface AutomationRuleView {
   lastActionType: AutomationActionType | null;
   /** Round 959: computed server-side from hasTooManyConsecutiveFailuresToday's own cap (apps/api/src/automations.ts, rounds 924/934/951) -- true means the scheduler has stopped retrying this "schedule"-trigger rule for the rest of today after 5 consecutive real failures, and won't try again until tomorrow's UTC rollover even if the destination is fixed sooner. Always false for a non-"schedule" trigger or a disabled rule, since the scheduler never consults this cap for either. */
   pausedForToday: boolean;
+  /** Round 1664: see packages/db's AutomationRule.createdByUserId for why. Resolve via this response's own collaboratorEmails, same convention as a record's createdByUserId (EntityPanel.tsx) or a checkpoint's createdByUserId (HistoryPanel.tsx). */
+  createdByUserId: string | null;
+  /** Round 1664: see packages/db's AutomationRule.updatedByUserId for why. */
+  updatedByUserId: string | null;
 }
 
-export function listAutomationRules(projectId: string): Promise<{ rules: AutomationRuleView[] }> {
+export function listAutomationRules(projectId: string): Promise<{ rules: AutomationRuleView[]; collaboratorEmails: Record<string, string> }> {
   return request(`/projects/${projectId}/automations`);
 }
 
