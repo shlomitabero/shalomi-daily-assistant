@@ -345,6 +345,54 @@ test("interpolateTemplate renders {{createdAt}} in locale-formatted form (date a
 });
 
 /**
+ * Round 1676: "updatedAt" is createdAt's own reserved sibling (round 1672's
+ * repository.ts always sets it the same unconditional way), and it got no
+ * matching branch here when it was added -- the exact same gap as
+ * createdAt above, just arriving later. {{updatedAt}} is just as natural a
+ * guess as {{createdAt}} already was.
+ */
+test("interpolateTemplate renders {{updatedAt}} in locale-formatted form (date and time), not the raw ISO-8601 timestamp", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [{ name: "dueDate", type: "date", required: true }],
+  };
+  const rawTimestamp = "2026-03-15T14:30:00.000Z";
+  const record = { updatedAt: rawTimestamp, dueDate: "2026-03-15" };
+
+  const result = interpolateTemplate("Updated {{updatedAt}}", invoiceEntity, record, "en");
+  assert.notEqual(result, `Updated ${rawTimestamp}`, "must never send the raw ISO-8601 timestamp verbatim");
+
+  const dueDateOnly = interpolateTemplate("Due {{dueDate}}", invoiceEntity, record, "en");
+  assert.notEqual(
+    result.replace("Updated ", ""),
+    dueDateOnly.replace("Due ", ""),
+    "updatedAt carries real time-of-day information a declared date field never does, so it must not format identically to one",
+  );
+});
+
+/**
+ * A record that has never been updated has a genuinely null updatedAt
+ * (round 1672's own documented nullable shape, unlike createdAt which is
+ * never null) -- interpolateTemplate's own top-level null/undefined guard
+ * already returns the placeholder untouched for this case before the
+ * updatedAt branch is ever reached, matching the established "unmatched
+ * placeholder stays visible verbatim" convention rather than printing the
+ * literal string "null".
+ */
+test("interpolateTemplate leaves {{updatedAt}} as the literal placeholder for a record that has never been updated (null), rather than printing the word null", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [{ name: "dueDate", type: "date", required: true }],
+  };
+  const record = { updatedAt: null, dueDate: "2026-03-15" };
+
+  const result = interpolateTemplate("Updated {{updatedAt}}", invoiceEntity, record, "en");
+  assert.equal(result, "Updated {{updatedAt}}");
+});
+
+/**
  * New in this round: a "file" field's stored value is a JSON-encoded
  * {url, name, size, mimeType} descriptor (see entityFormatting.ts's own
  * parseFileFieldValue), not plain text like every other field type --

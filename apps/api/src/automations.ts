@@ -386,6 +386,20 @@ export function interpolateTemplate(template: string, entity: Entity, record: En
       const date = new Date(String(value));
       return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(LOCALE[lang]);
     }
+    // Round 1676: "updatedAt" is createdAt's own reserved sibling
+    // (round 1672's repository.ts always sets it the same unconditional
+    // way, never a declared entity field) -- the exact same gap as
+    // createdAt above, just arriving later. {{updatedAt}} is just as
+    // natural a guess as {{createdAt}} already was. Unlike createdAt,
+    // though, updatedAt is genuinely null until a record's first real
+    // update, and the `value === null` check above already returns
+    // `match` (the placeholder left untouched) before this branch is
+    // ever reached for that case -- so no separate null guard is needed
+    // here, only the same stale-value parse guard createdAt already has.
+    if (fieldName === "updatedAt") {
+      const date = new Date(String(value));
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(LOCALE[lang]);
+    }
     return String(value);
   });
 }
