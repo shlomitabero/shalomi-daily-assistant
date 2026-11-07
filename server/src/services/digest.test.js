@@ -41,6 +41,22 @@ test('generateDailyDigest surfaces a real failed action in the real digest text'
   assert.match(digest.text, /בעיות: draft_product: ANTHROPIC_API_KEY invalid/);
 });
 
+test('generateDailyDigest falls back to the raw result string when a real failed action has no detail.error', () => {
+  // routes/actions.js's reportClientError (a real render crash reported by
+  // the client's own ErrorBoundary) logs result: 'failed' with detail:
+  // {message, path} - no 'error' key at all. Without the ?? a.result
+  // fallback, that entry's summary would read "client_error: undefined"
+  // instead of something at least minimally informative.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'client_error', detail: { message: 'TypeError: x is undefined', path: '/opportunities' },
+    result: 'failed', createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /בעיות: client_error: failed/);
+  assert.doesNotMatch(digest.text, /undefined/);
+});
+
 test('generateDailyDigest warns in the real digest text when real spend is close to the configured budget', () => {
   // This is the real wiring behind engine/digest.js's pure budget-warning
   // logic - settings.budget/budgetConfigured and the ledger's own
