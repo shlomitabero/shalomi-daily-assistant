@@ -42,6 +42,16 @@ test('addToWatchlist rejects a missing or non-string symbol instead of storing a
   assert.equal(db.financial_watchlist.all().length, 0);
 });
 
+test('addToWatchlist rejects a request with no body at all instead of throwing', async () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all (e.g. a missing/wrong content-type) - every other test
+  // always supplies a body object, even an empty one.
+  __resetForTests();
+  const res = makeRes();
+  await addToWatchlist({}, res);
+  assert.equal(res.statusCode, 400);
+});
+
 test('addToWatchlist stores an honest disconnected entry when no market data key is configured', async () => {
   __resetForTests();
   const original = process.env.MARKET_DATA_API_KEY;
@@ -232,12 +242,41 @@ test('createPaperTrade rejects an invalid side instead of silently simulating it
   assert.equal(db.paper_trades.all().length, 0);
 });
 
+test('createPaperTrade rejects a request with no body at all instead of throwing', () => {
+  __resetForTests();
+  const res = makeRes();
+  createPaperTrade({}, res);
+  assert.equal(res.statusCode, 400);
+});
+
 test('createPaperTrade rejects non-positive prices/quantity', () => {
   __resetForTests();
   const res = makeRes();
   createPaperTrade({ body: { symbol: 'AAPL', side: 'long', entryPrice: 0, exitPrice: 110, quantity: 1 } }, res);
   assert.equal(res.statusCode, 400);
   assert.match(res.body.error, /מחיר כניסה חייב להיות מספר חיובי/);
+});
+
+test('createPaperTrade rejects a non-positive exitPrice even when entryPrice is valid', () => {
+  // The entryPrice/exitPrice/quantity checks are three independent ifs, not
+  // an else-chain - the test above only ever exercised entryPrice being
+  // invalid, so exitPrice's own check had never actually been taken with a
+  // valid entryPrice in front of it.
+  __resetForTests();
+  const res = makeRes();
+  createPaperTrade({ body: { symbol: 'AAPL', side: 'long', entryPrice: 100, exitPrice: -5, quantity: 1 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /מחיר יציאה חייב להיות מספר חיובי/);
+  assert.equal(db.paper_trades.all().length, 0);
+});
+
+test('createPaperTrade rejects a non-positive quantity even when both prices are valid', () => {
+  __resetForTests();
+  const res = makeRes();
+  createPaperTrade({ body: { symbol: 'AAPL', side: 'long', entryPrice: 100, exitPrice: 110, quantity: 0 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /כמות חייבת להיות מספר חיובי/);
+  assert.equal(db.paper_trades.all().length, 0);
 });
 
 test('createPaperTrade stores a simulated trade and logs it, never touching the real ledger', () => {
