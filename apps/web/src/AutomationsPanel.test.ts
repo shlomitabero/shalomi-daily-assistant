@@ -2433,6 +2433,10 @@ const dateFieldProject: Project = {
           { name: "dueDate", label: "Due Date", type: "date", required: false },
           { name: "amount", label: "Amount", type: "number", required: false },
           { name: "isUrgent", label: "Is Urgent", type: "boolean", required: false },
+          // Round 1658: a phone-like-named number field (an AI-generated
+          // spec commonly types "phone" as "number"), used by the
+          // regression test below for fieldValueLabel's own phone guard.
+          { name: "phone", label: "Phone", type: "number", required: false },
         ],
       },
     ],
@@ -2738,6 +2742,66 @@ test("AutomationsPanel shows uppercase TRUE/FALSE for a boolean field_equals rul
 
       assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
       assert.match(writtenText!, /becomes "TRUE"/, "the Copy report text must also show uppercase TRUE, not the raw lowercase stored string");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * Round 1658 regression test: round 1657 fixed EntityPanel.tsx's Cell (the
+ * record's own table-cell rendering) so a phone-like-named number field
+ * never gets locale thousands-grouping -- but fieldValueLabel, in both
+ * AutomationsPanel.tsx and automationsReport.ts, is a structurally
+ * different code path (a field_equals rule's own stored condition value,
+ * not a record's field value) that round 1642's own number-formatting fix
+ * never guarded. An AI-generated spec commonly types a "phone" field as
+ * "number", so a rule like "when Phone on Order becomes 972501234567"
+ * showed "972,501,234,567" -- comma-grouped, not the real dialable digits
+ * -- in both the live rule list and the Copy/Download report.
+ */
+test("AutomationsPanel shows a phone-like-named number field_equals rule's value as raw digits, not locale-grouped, in the rule list and the Copy report", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const phoneRule = makeRule({
+      id: "rule15",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "phone",
+      fieldValue: "972501234567",
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [phoneRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(dateFieldProject);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-condition").length === 1);
+      const conditionText = document.querySelector(".automations-rule-condition")?.textContent ?? "";
+
+      assert.ok(conditionText.includes("972501234567"), `expected raw digits, got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes("972,501,234,567"), "a phone-like-named number field must never be locale-grouped with thousands separators");
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /becomes "972501234567"/, "the Copy report text must also show raw digits, not locale-grouped");
     } finally {
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;

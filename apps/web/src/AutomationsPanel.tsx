@@ -1021,7 +1021,17 @@ export function AutomationsPanel({
       const date = parseFieldDate(rule.fieldValue);
       return Number.isNaN(date.getTime()) ? rule.fieldValue : date.toLocaleDateString(LOCALE[lang]);
     }
-    if (field?.type === "number") return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
+    // Round 1658: a phone-like-named number field (isPhoneFieldName -- an
+    // AI-generated spec commonly types "phone" as "number") must never be
+    // locale-grouped here either -- this mirrors round 1657's own fix for
+    // EntityPanel.tsx's Cell, the record's own table-cell rendering, for
+    // the identical reason: real phone digits like "972501234567" must
+    // never show up as "972,501,234,567", here in a field_equals rule's
+    // own condition-value description.
+    if (field?.type === "number") {
+      if (isPhoneFieldName(field.name)) return rule.fieldValue;
+      return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
+    }
     if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
     return rule.fieldValue;
   }

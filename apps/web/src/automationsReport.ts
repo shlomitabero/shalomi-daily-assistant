@@ -8,7 +8,7 @@ import {
   type AutomationRuleView,
   type AutomationRunView,
 } from "./api.js";
-import { fieldDisplayLabel, fieldLabelOccurrences, parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
+import { fieldDisplayLabel, fieldLabelOccurrences, isPhoneFieldName, parseFieldDate, recordDisplayLabel, type RelatedRecordsByEntity } from "./entityFormatting.js";
 import { resolveErrorMessage, translate, type Lang } from "./i18n/language.js";
 
 const LOCALE: Record<Lang, string> = { he: "he-IL", en: "en-US" };
@@ -125,7 +125,14 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
   // text snapshot"). AutomationsPanel.tsx's own on-screen fieldValueLabel
   // is deliberately left untouched -- that one renders into live React
   // UI, where the mark is doing its real, intended bidi job.
-  if (field?.type === "number") return stripBidiMarks(Number(rule.fieldValue).toLocaleString(LOCALE[lang]));
+  // Round 1658: mirrors AutomationsPanel.tsx's own identical fix -- a
+  // phone-like-named number field must never be locale-grouped here
+  // either, the same reason round 1657 already fixed for EntityPanel.tsx's
+  // own table-cell rendering of the field on its own record.
+  if (field?.type === "number") {
+    if (isPhoneFieldName(field.name)) return rule.fieldValue;
+    return stripBidiMarks(Number(rule.fieldValue).toLocaleString(LOCALE[lang]));
+  }
   if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
   return rule.fieldValue;
 }
