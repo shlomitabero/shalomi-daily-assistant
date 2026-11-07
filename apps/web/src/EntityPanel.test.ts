@@ -16713,6 +16713,103 @@ test("EntityPanel's grand-total tfoot excludes a collapsed group's records, matc
 });
 
 /**
+ * Round 1667: round 1622 fixed sumNumericFields itself to exclude a
+ * phone-like-named "number" field from the totals it computes, but every
+ * render-side gate that decides WHETHER to show a totals row/footer/board-
+ * header at all still checked only `f.type === "number"`, with no
+ * isPhoneFieldName exclusion -- so an entity whose only numeric-typed field
+ * is phone-like still rendered a totals row, just one that always read
+ * "Total: 0" (sumNumericFields' own map has no entry for that field, so
+ * `totals[f.name] ?? 0` falls through to the fallback). Confirms the grand
+ * total row/footer no longer renders at all when a phone-like-named number
+ * field is the only numeric-typed field on the entity -- matching
+ * sumNumericFields' own "nothing to total here" semantics, rather than
+ * showing a bogus zero that looks like real data went missing.
+ */
+test("EntityPanel's table shows no totals row at all when the only number-typed field is phone-like-named", async () => {
+  await withJsdom(async () => {
+    const contactEntity: Entity = {
+      name: "Contact",
+      label: "Contact",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "number", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana", phone: 5551234567 },
+      { id: 2, createdAt: "x", name: "Lee", phone: 5559876543 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Contact") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      assert.equal(
+        document.querySelector("table tfoot"),
+        null,
+        "no totals footer should render at all when the entity's only number-typed field is phone-like",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1667: the sibling case of the test above -- an entity with BOTH a
+ * phone-like-named number field and a genuinely numeric one. Confirms the
+ * totals footer renders (since there IS something to total), but only
+ * shows a total under the real numeric column, never a bogus "Total: 0"
+ * (or worse, a summed phone number) under the phone column.
+ */
+test("EntityPanel's table totals footer skips a phone-like-named column but still totals a genuinely numeric sibling", async () => {
+  await withJsdom(async () => {
+    const contactEntity: Entity = {
+      name: "Contact",
+      label: "Contact",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "number", required: false },
+        { name: "balance", label: "Balance", type: "number", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Dana", phone: 5551234567, balance: 100 },
+      { id: 2, createdAt: "x", name: "Lee", phone: 5559876543, balance: 250 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Contact") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const tfootRow = document.querySelector("table tfoot tr");
+      assert.ok(tfootRow, "a totals footer must render since the entity has a genuinely numeric field (balance)");
+      assert.match(tfootRow!.textContent ?? "", /350/, "balance's own total (100 + 250) must appear");
+      assert.doesNotMatch(
+        tfootRow!.textContent ?? "",
+        /5551234567|5559876543|11111111110/,
+        "the phone column must never show its own value or a summed phone number as a 'total'",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Updated in round 980: this test used to confirm `<input type="number">`
  * carried `step="any"` so a decimal price wouldn't fail native HTML5
  * step-mismatch validation. Round 980's own fix (see EntityPanel.tsx)

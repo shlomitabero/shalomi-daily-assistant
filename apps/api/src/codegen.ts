@@ -5048,7 +5048,7 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
 function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords, show }) {
   if (!show) return <div className="print-list-sheet" />;
   const labelOccurrences = fieldLabelOccurrences(fields);
-  const hasNumericField = fields.some((f) => f.type === "number");
+  const hasNumericField = fields.some((f) => f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   const totals = hasNumericField ? sumNumericFields(records, fields) : {};
   function renderRow(r) {
     return (
@@ -5084,7 +5084,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
                 {hasNumericField && (
                   <tr className="print-list-group-totals-row">
                     {fields.map((f) => (
-                      <td key={f.name}>{f.type === "number" && <>Total: {(groupTotals[f.name] ?? 0).toLocaleString()}</>}</td>
+                      <td key={f.name}>{f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && <>Total: {(groupTotals[f.name] ?? 0).toLocaleString()}</>}</td>
                     ))}
                   </tr>
                 )}
@@ -5098,7 +5098,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
           <tfoot>
             <tr className="print-list-totals-row">
               {fields.map((f) => (
-                <td key={f.name}>{f.type === "number" && <>Total: {(totals[f.name] ?? 0).toLocaleString()}</>}</td>
+                <td key={f.name}>{f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && <>Total: {(totals[f.name] ?? 0).toLocaleString()}</>}</td>
               ))}
             </tr>
           </tfoot>
@@ -6598,7 +6598,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return sortRecordsByPinned(sortRecordsMulti(filtered, sortKeys, entity.fields, relatedRecords), pinnedIds);
   }, [records, entity.fields, search, fieldFilters, sortKeys, relatedRecords, pinnedIds]);
 
-  const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
+  const hasNumericVisibleField = useMemo(
+    () => visibleFields.some((f) => f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase())),
+    [visibleFields],
+  );
 
   // Grouping the plain table by a small-value-space field (enum/boolean) --
   // distinct from the Kanban board view (always exactly one auto-picked
@@ -8397,7 +8400,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       <span className="muted small">{column.records.length}</span>
                       {hasNumericVisibleField &&
                         visibleFields
-                          .filter((f) => f.type === "number")
+                          .filter((f) => f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()))
                           .map((f) => (
                             <span key={f.name} className="muted small board-column-total">
                               Total: {(boardColumnNumericTotals?.[column.value]?.[f.name] ?? 0).toLocaleString()}
@@ -8626,7 +8629,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                               <td className="select-col"></td>
                               {visibleFields.map((f) => (
                                 <td key={f.name}>
-                                  {f.type === "number" && (
+                                  {f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && (
                                     <>
                                       Total: {(groupNumericTotals[group.key][f.name] ?? 0).toLocaleString()}
                                     </>
@@ -8647,7 +8650,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       <th className="select-col"></th>
                       {visibleFields.map((f) => (
                         <th key={f.name}>
-                          {f.type === "number" && (
+                          {f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()) && (
                             <>
                               Total: {(numericFieldTotals[f.name] ?? 0).toLocaleString()}
                             </>

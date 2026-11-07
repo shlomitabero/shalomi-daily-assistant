@@ -13890,8 +13890,8 @@ test("the exported EntityView's table has a conditional totals-row <tfoot> backe
   );
   assert.match(
     entityViewJsx,
-    /const hasNumericVisibleField = useMemo\(\(\) => visibleFields\.some\(\(f\) => f\.type === "number"\)/,
-    "hasNumericVisibleField must be derived from visibleFields, not the full unfiltered field list",
+    /const hasNumericVisibleField = useMemo\(\s*\(\) => visibleFields\.some\(\(f\) => f\.type === "number" && !PHONE_FIELD_NAME_HINTS\.includes\(f\.name\.toLowerCase\(\)\)\)/,
+    "hasNumericVisibleField must be derived from visibleFields (not the full unfiltered field list) and exclude a phone-like-named field (round 1667), matching sumNumericFields' own exclusion",
   );
 
   const serviceProject: Project = {
@@ -13951,6 +13951,80 @@ test("the exported EntityView's generated sumNumericFields excludes a phone-like
     { amount: 350 },
     "a phone-like-named number field must be excluded from the totals, while a genuinely numeric sibling still sums normally",
   );
+});
+
+/**
+ * Round 1667: round 1622 fixed the generated sumNumericFields itself (the
+ * test just above) to exclude a phone-like-named "number" field, but every
+ * render-side gate that decides WHETHER to show a totals row/footer/board-
+ * header at all (hasNumericField/hasNumericVisibleField, and the board
+ * column's own `.filter((f) => f.type === "number")`) still had no such
+ * exclusion in the generated output -- so an entity whose only numeric-
+ * typed field was phone-like still rendered a totals row that always read
+ * "Total: 0". Renders the real generated EntityView.jsx end to end (same
+ * convention as the Print-list sheet test below) rather than just matching
+ * on source text, since this is about what actually shows up in the DOM.
+ */
+test("the exported EntityView's table omits the totals footer entirely when the only number-typed field is phone-like, and totals only a genuinely numeric sibling", async () => {
+  const contactProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Contact",
+          label: "Contact",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "phone", label: "Phone", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(contactProject);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, name: "Dana", phone: 5551234567 },
+    { id: 2, name: "Lee", phone: 5559876543 },
+  ];
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Contact") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const contactEntity = contactProject.spec.entities[0];
+      const props = {
+        entity: contactEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.equal(
+        container.querySelector("tfoot"),
+        null,
+        "no totals footer should render at all when the entity's only number-typed field is phone-like",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 /**

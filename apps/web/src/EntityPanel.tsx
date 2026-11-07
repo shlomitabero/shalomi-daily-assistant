@@ -498,7 +498,7 @@ function RecordListPrintSheet({
   // Previously the printed list showed every record's own number column
   // but never the one number a person printing a list of amounts/prices
   // is very plausibly printing it FOR -- the total.
-  const hasNumericField = fields.some((f) => f.type === "number");
+  const hasNumericField = fields.some((f) => f.type === "number" && !isPhoneFieldName(f.name));
   const totals = hasNumericField ? sumNumericFields(records, fields) : {};
   function renderRow(record: EntityRecord) {
     return (
@@ -543,7 +543,7 @@ function RecordListPrintSheet({
                   <tr className="print-list-group-totals-row">
                     {fields.map((f) => (
                       <td key={f.name}>
-                        {f.type === "number" && (
+                        {f.type === "number" && !isPhoneFieldName(f.name) && (
                           <>
                             {t("entity.table.total")}: {formatNumberValue(groupTotals[f.name] ?? 0, lang)}
                           </>
@@ -563,7 +563,7 @@ function RecordListPrintSheet({
             <tr className="print-list-totals-row">
               {fields.map((f) => (
                 <td key={f.name}>
-                  {f.type === "number" && (
+                  {f.type === "number" && !isPhoneFieldName(f.name) && (
                     <>
                       {t("entity.table.total")}: {formatNumberValue(totals[f.name] ?? 0, lang)}
                     </>
@@ -3357,7 +3357,10 @@ export function EntityPanel({
 
   // Whether the totals row under the table is relevant at all -- only
   // rendered when at least one visible field is numeric.
-  const hasNumericVisibleField = useMemo(() => visibleFields.some((f) => f.type === "number"), [visibleFields]);
+  const hasNumericVisibleField = useMemo(
+    () => visibleFields.some((f) => f.type === "number" && !isPhoneFieldName(f.name)),
+    [visibleFields],
+  );
 
   /**
    * Exactly the records the calendar grid's current month is showing -- the
@@ -5752,7 +5755,7 @@ export function EntityPanel({
                       <span className="muted small">{column.records.length}</span>
                       {hasNumericVisibleField &&
                         visibleFields
-                          .filter((f) => f.type === "number")
+                          .filter((f) => f.type === "number" && !isPhoneFieldName(f.name))
                           .map((f) => (
                             <span key={f.name} className="muted small board-column-total">
                               {t("entity.table.total")}: {formatNumberValue(boardColumnNumericTotals?.[column.value]?.[f.name] ?? 0, lang)}
@@ -6008,7 +6011,7 @@ export function EntityPanel({
                               <td className="select-col" />
                               {visibleFields.map((f) => (
                                 <td key={f.name}>
-                                  {f.type === "number" && (
+                                  {f.type === "number" && !isPhoneFieldName(f.name) && (
                                     <>
                                       {t("entity.table.total")}:{" "}
                                       {formatNumberValue(groupNumericTotals?.[group.key]?.[f.name] ?? 0, lang)}
@@ -6031,7 +6034,7 @@ export function EntityPanel({
                       <th className="select-col" />
                       {visibleFields.map((f) => (
                         <th key={f.name}>
-                          {f.type === "number" && (
+                          {f.type === "number" && !isPhoneFieldName(f.name) && (
                             <>
                               {t("entity.table.total")}: {formatNumberValue(numericFieldTotals[f.name] ?? 0, lang)}
                             </>
