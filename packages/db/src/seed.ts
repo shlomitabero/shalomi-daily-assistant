@@ -141,6 +141,13 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // gap as "rooms" above, a table seated for 10/20 guests looks
       // obviously broken. 2/4/6/8 covers a 2-top through a large booth.
       if (field.name === "seats") return ((index % 4) * 2) + 2;
+      // Round 1674: the Restaurant & Table Management template's own
+      // RestaurantTable entity (templates.ts) also has a "number" field
+      // (table number) -- the same gap as "rooms"/"seats" above, right next
+      // to "seats" on this exact entity. A table numbered 10/20 looks just
+      // as obviously broken; a plain sequential counter starting at 1 is
+      // the real-world convention for table numbers.
+      if (field.name === "number") return index + 1;
       return (index + 1) * 10;
     case "boolean":
       return index % 2 === 0;

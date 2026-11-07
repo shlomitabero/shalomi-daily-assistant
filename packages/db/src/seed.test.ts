@@ -305,6 +305,33 @@ test("a RestaurantTable entity's seat count seeds a believable 2-8 value, not th
   }
 });
 
+/**
+ * Round 1674: the Restaurant & Table Management template's RestaurantTable
+ * entity (templates.ts) also has a "number" field (table number) -- the
+ * same gap as "rooms"/"seats" above, on this exact entity. A table numbered
+ * 10/20 looks just as obviously broken; a real table number starts at 1 and
+ * counts up sequentially, which the round-1625 test above's own mock entity
+ * already includes a "number" field for, but never asserted on.
+ */
+test("a RestaurantTable entity's table number seeds a sequential 1, 2, 3... value, not the generic (index+1)*10 formula", () => {
+  const restaurantTable: Entity = {
+    name: "RestaurantTable",
+    fields: [
+      { name: "number", type: "number", required: true },
+      { name: "seats", type: "number", required: false },
+    ],
+  };
+
+  const records = generateSeedRecords(restaurantTable, 3);
+  records.forEach((record, index) => {
+    assert.strictEqual(
+      record.number,
+      index + 1,
+      `table number must be a sequential 1, 2, 3... value, got ${record.number}`,
+    );
+  });
+});
+
 test("the WorkOrder, Volunteer, and Case entities each get believable seed values, not the generic placeholder formula", () => {
   const workOrder: Entity = {
     name: "WorkOrder",
