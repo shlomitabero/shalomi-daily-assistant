@@ -5041,16 +5041,20 @@ export function EntityPanel({
             if (record.createdByUserId && collaboratorEmails[record.createdByUserId as string]) {
               parts.push(t("entity.table.createdBy", { email: collaboratorEmails[record.createdByUserId as string] }));
             }
-            // Round 1617: only shown when it genuinely differs from createdByUserId
-            // -- a record nobody has edited since creation has the same user in
-            // both columns, and repeating "created by X / last updated by X" for
-            // every untouched row would be noise, not a real second fact.
-            if (
-              record.updatedByUserId &&
-              record.updatedByUserId !== record.createdByUserId &&
-              collaboratorEmails[record.updatedByUserId as string]
-            ) {
-              parts.push(t("entity.table.updatedBy", { email: collaboratorEmails[record.updatedByUserId as string] }));
+            // Round 1672: gated on updatedAt itself (null until a record's first
+            // real update, same as updatedByUserId) rather than on
+            // updatedByUserId !== createdByUserId as round 1617 originally did --
+            // that older gate silently showed nothing for a record the SAME user
+            // edited after creating it, even though a genuine edit (with a real
+            // timestamp now available) had occurred. An untouched record still
+            // shows nothing, since its updatedAt is still null.
+            if (record.updatedAt) {
+              const date = formatRecordCreatedAt(record.updatedAt as string | undefined, lang);
+              if (record.updatedByUserId && collaboratorEmails[record.updatedByUserId as string]) {
+                parts.push(t("entity.table.updatedBy", { email: collaboratorEmails[record.updatedByUserId as string], date }));
+              } else {
+                parts.push(t("entity.table.updatedAtOnly", { date }));
+              }
             }
             return parts.length > 0 ? parts.join("\n") : undefined;
           })()}

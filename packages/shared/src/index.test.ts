@@ -125,6 +125,19 @@ test("FieldSchema rejects a field literally named 'updatedByUserId', case-insens
   }
 });
 
+/**
+ * Round 1672: the direct sibling of round 1617's updatedByUserId test just
+ * above, added in the SAME round that introduced updatedAt (the WHEN half
+ * of that same record-update fact) -- not as a follow-up round.
+ */
+test("FieldSchema rejects a field literally named 'updatedAt', case-insensitively, since every table already has a built-in updatedAt column", () => {
+  for (const name of ["updatedAt", "updatedat", "UPDATEDAT"]) {
+    const result = FieldSchema.safeParse({ name, type: "text", required: false });
+    assert.ok(!result.success, `expected "${name}" to be rejected`);
+    assert.match(result.error.issues[0].message, /collides with a built-in column/);
+  }
+});
+
 test("FieldSchema accepts an ordinary field name that merely contains 'id' as a substring, not the whole reserved name", () => {
   const result = FieldSchema.safeParse({ name: "vendorId", type: "text", required: false });
   assert.ok(result.success);

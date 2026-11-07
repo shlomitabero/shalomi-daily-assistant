@@ -289,6 +289,7 @@ function rowToRecord(entity: Entity, row: Record<string, unknown>): EntityRecord
     createdAt: row.createdAt as string,
     createdByUserId: (row.createdByUserId as string | null) ?? null,
     updatedByUserId: (row.updatedByUserId as string | null) ?? null,
+    updatedAt: (row.updatedAt as string | null) ?? null,
   };
   for (const field of entity.fields) {
     const value = getRowValue(row, field.name);
@@ -352,6 +353,22 @@ function ensureUpdatedByUserIdColumn(db: ForgeDatabase, table: string): void {
   );
   if (!hasColumn) {
     db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN updatedByUserId TEXT`);
+  }
+}
+
+/**
+ * Round 1672: the direct sibling of ensureUpdatedByUserIdColumn just above,
+ * for updateRecord's own new updatedAt column -- the WHEN half of the WHO
+ * that column already tracks. Same self-healing rationale (a table built
+ * before this round's generateCreateTableStatements shipped has no such
+ * column at all).
+ */
+function ensureUpdatedAtColumn(db: ForgeDatabase, table: string): void {
+  const hasColumn = (db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as { name: string }[]).some(
+    (c) => c.name === "updatedAt",
+  );
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN updatedAt TEXT`);
   }
 }
 
@@ -436,6 +453,7 @@ export function updateRecord(
 ): EntityRecord {
   const table = tableNameFor(projectId, entity.name);
   ensureUpdatedByUserIdColumn(db, table);
+  ensureUpdatedAtColumn(db, table);
   const existingRow = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} WHERE id = ?`).get(id) as
     | Record<string, unknown>
     | undefined;
@@ -492,9 +510,16 @@ export function updateRecord(
   // zero of entity.fields (e.g. a future metadata-only PATCH) -- the
   // person who performed the update changed the record regardless of
   // which fields they actually set, mirroring insertRecord's own
-  // unconditional createdByUserId write.
-  const setClause = [...columns.map((c) => `${quoteIdentifier(c)} = ?`), `${quoteIdentifier("updatedByUserId")} = ?`].join(", ");
-  db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, updatedByUserId ?? null, id);
+  // unconditional createdByUserId write. Round 1672: updatedAt is written
+  // the same unconditional way, right alongside updatedByUserId -- the
+  // WHEN half of the same fact, not a separately-gated write.
+  const updatedAt = new Date().toISOString();
+  const setClause = [
+    ...columns.map((c) => `${quoteIdentifier(c)} = ?`),
+    `${quoteIdentifier("updatedByUserId")} = ?`,
+    `${quoteIdentifier("updatedAt")} = ?`,
+  ].join(", ");
+  db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, updatedByUserId ?? null, updatedAt, id);
   return getRecord(db, projectId, entity, id)!;
 }
 

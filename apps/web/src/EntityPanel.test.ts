@@ -2638,19 +2638,31 @@ test("EntityPanel's created-at cell carries a tooltip naming who created the rec
 });
 
 /**
- * Round 1617: the direct sibling of round 1613's createdByUserId tooltip
- * test above, for the new updatedByUserId column -- only surfaced when it
- * genuinely differs from createdByUserId (a record nobody has edited
- * since creation has the same actor in both, and repeating the same name
- * twice in one tooltip for every untouched row would be noise, not a real
- * second fact, per this round's own comment in the component).
+ * Round 1617 originally gated this on updatedByUserId !== createdByUserId --
+ * surfaced only when the last updater genuinely differed from the creator,
+ * on the theory that a same-user edit was "the same name twice," not a real
+ * second fact. Round 1672 adds a real updatedAt timestamp alongside
+ * updatedByUserId, which changes that: a record the SAME user edited after
+ * creating it now has a real second fact (WHEN, not just WHO) that the old
+ * gate silently dropped. The gate is now updatedAt itself (null until a
+ * record's first real update, same nullable rationale as updatedByUserId) --
+ * an untouched record still shows nothing, since its updatedAt stays null.
  */
-test("EntityPanel's created-at cell tooltip also names who last updated the record when that differs from who created it", async () => {
+test("EntityPanel's created-at cell tooltip names who/when a record was last updated, gated on updatedAt rather than on the updater differing from the creator", async () => {
   await withJsdom(async () => {
     const store: EntityRecord[] = [
-      { id: 1, name: "Dana", status: "new", createdByUserId: "user-99", updatedByUserId: "user-50" },
-      { id: 2, name: "Yossi", status: "new", createdByUserId: "user-99", updatedByUserId: "user-99" },
-      { id: 3, name: "Rivka", status: "new", createdByUserId: "user-99", updatedByUserId: null },
+      { id: 1, name: "Dana", status: "new", createdByUserId: "user-99", updatedByUserId: "user-50", updatedAt: "2025-03-01T00:00:00.000Z" },
+      // Same user created and later edited this one -- round 1617's old gate
+      // (updatedByUserId !== createdByUserId) would have shown nothing here;
+      // round 1672 shows the update timestamp regardless, since it's a real
+      // second fact the old gate was discarding.
+      { id: 2, name: "Yossi", status: "new", createdByUserId: "user-99", updatedByUserId: "user-99", updatedAt: "2025-03-02T00:00:00.000Z" },
+      // Genuinely untouched since creation: both updatedByUserId and
+      // updatedAt are still null.
+      { id: 3, name: "Rivka", status: "new", createdByUserId: "user-99", updatedByUserId: null, updatedAt: null },
+      // A server-side update with no real actor (e.g. an automation) still
+      // has a real updatedAt but no updatedByUserId -- the date-only branch.
+      { id: 4, name: "Omer", status: "new", createdByUserId: "user-99", updatedByUserId: null, updatedAt: "2025-03-03T00:00:00.000Z" },
     ];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
@@ -2668,24 +2680,35 @@ test("EntityPanel's created-at cell tooltip also names who last updated the reco
     }) as typeof fetch;
     try {
       renderEntityPanel();
-      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 4);
 
       const cells = Array.from(document.querySelectorAll("table tbody td.created-at-cell"));
-      assert.equal(cells.length, 3);
+      assert.equal(cells.length, 4);
       assert.match(
         cells[0].getAttribute("title") ?? "",
         /sara@example\.com/,
-        "a record last updated by someone other than its creator must show the updater's email too",
+        "a record last updated by someone other than its creator must show the updater's email",
+      );
+      assert.match(
+        cells[1].getAttribute("title") ?? "",
+        /dana@example\.com/,
+        "a record the same user edited after creating it must now show the update fact too, since updatedAt gives it a real second fact to show",
       );
       assert.doesNotMatch(
-        cells[1].getAttribute("title") ?? "",
-        /sara@example\.com|dana@example\.com.*dana@example\.com/,
-        "a record whose updatedByUserId equals its own createdByUserId must not repeat the same name as a second fact",
+        cells[2].getAttribute("title") ?? "",
+        /Last updated/,
+        "a genuinely untouched record (updatedAt still null) must show nothing about an update",
       );
-      assert.match(cells[2].getAttribute("title") ?? "", /dana@example\.com/, "a record with no known updater must still show its creator");
-      assert.ok(
-        !(cells[2].getAttribute("title") ?? "").includes("undefined"),
-        "a null updatedByUserId must not leak into the tooltip text",
+      assert.match(cells[2].getAttribute("title") ?? "", /dana@example\.com/, "an untouched record must still show its creator");
+      assert.match(
+        cells[3].getAttribute("title") ?? "",
+        /Last updated on/,
+        "a record updated with no known actor (updatedByUserId null) must still show the date-only fact",
+      );
+      assert.doesNotMatch(
+        cells[3].getAttribute("title") ?? "",
+        /undefined/,
+        "a null updatedByUserId must not leak into the date-only tooltip text",
       );
     } finally {
       globalThis.fetch = originalFetch;

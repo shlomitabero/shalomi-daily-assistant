@@ -317,7 +317,7 @@ test("diffAndMigrate treats a field that only changed letter-case as the same su
   const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string }[];
   assert.deepEqual(
     columnInfo.map((c) => c.name).sort(),
-    ["createdAt", "createdByUserId", "id", "name", "status", "updatedByUserId"],
+    ["createdAt", "createdByUserId", "id", "name", "status", "updatedAt", "updatedByUserId"],
     "must still have exactly one name-ish column, not two",
   );
   const customers = listRecords(db, "proj1", spec.entities[0]);
@@ -371,7 +371,7 @@ test("diffAndMigrate treats a field removed on one refine and re-added under dif
   const columnInfo = db.prepare('PRAGMA table_info("entity_proj1_Customer")').all() as { name: string }[];
   assert.deepEqual(
     columnInfo.map((c) => c.name).sort(),
-    ["createdAt", "createdByUserId", "id", "name", "status", "updatedByUserId"],
+    ["createdAt", "createdByUserId", "id", "name", "status", "updatedAt", "updatedByUserId"],
     "must still have exactly one name-ish column, not two",
   );
   const customers = listRecords(db, "proj1", spec.entities[0]);

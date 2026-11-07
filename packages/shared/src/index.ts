@@ -35,8 +35,12 @@ export const FIELD_TYPES = [
  * round -- added here immediately alongside it (not as a follow-up round,
  * the mistake round 1613 made with createdByUserId) specifically because
  * round 1614 already demonstrated what happens when it isn't.
+ *
+ * Round 1672: "updatedat" closes the identical gap for updatedAt, the
+ * record-update TIMESTAMP added in this same round alongside
+ * updatedByUserId -- same immediate-not-deferred reasoning.
  */
-const RESERVED_FIELD_NAMES = new Set(["id", "createdat", "createdbyuserid", "updatedbyuserid"]);
+const RESERVED_FIELD_NAMES = new Set(["id", "createdat", "createdbyuserid", "updatedbyuserid", "updatedat"]);
 
 /**
  * Mirrors packages/db/src/identifiers.ts's own SAFE_IDENTIFIER exactly
@@ -194,7 +198,7 @@ export const FieldSchema = z
     message: "relation fields must declare relationTo",
   })
   .refine((f) => !RESERVED_FIELD_NAMES.has(f.name.toLowerCase()), (f) => ({
-    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt/createdByUserId/updatedByUserId) -- choose a different name`,
+    message: `Field name "${f.name}" collides with a built-in column every table already has (id/createdAt/createdByUserId/updatedByUserId/updatedAt) -- choose a different name`,
   }))
   .refine((f) => SAFE_FIELD_NAME.test(f.name), (f) => ({
     message: `Field name "${f.name}" must be a plain ASCII identifier (letters, digits, underscore, starting with a letter) -- use "label" for a human-facing display name instead`,

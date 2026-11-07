@@ -181,6 +181,14 @@ export function generateCreateTableStatements(projectId: string, spec: ProductSp
       // self-healing path for a table built before this round
       // (repository.ts's ensureUpdatedByUserIdColumn).
       "updatedByUserId TEXT",
+      // Round 1672: the WHEN half of the WHO updatedByUserId just above
+      // tracks -- added as its own column, in the same round, rather than
+      // repeating the gap round 1614 had to fix after the fact for
+      // createdByUserId/updatedByUserId being introduced one round apart.
+      // Same nullable rationale (null until a record's first real update)
+      // and the same lazy-ALTER self-healing path for a table built before
+      // this round (repository.ts's ensureUpdatedAtColumn).
+      "updatedAt TEXT",
     ];
     for (const field of entity.fields) {
       const columnName = assertSafeIdentifier(field.name, "column");

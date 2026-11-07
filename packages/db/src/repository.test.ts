@@ -104,6 +104,24 @@ test("updateRecord stores the given updatedByUserId, and leaves it null when non
 });
 
 /**
+ * Round 1672: the WHEN half of updatedByUserId's WHO -- written
+ * unconditionally on every update (even one with no acting user), unlike
+ * updatedByUserId which stays null without one. A freshly-inserted record
+ * (never updated) must still have a null updatedAt, same nullable-until-
+ * first-real-update rationale as updatedByUserId.
+ */
+test("updateRecord stores a real updatedAt timestamp on every update, even with no actor, while a freshly-inserted record's own updatedAt stays null", () => {
+  const db = setup();
+  const record = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" }, "user-1");
+  assert.equal(record.updatedAt, null);
+  const before = new Date().toISOString();
+  const updated = updateRecord(db, "proj1", customer, record.id as number, { name: "Alice B." });
+  assert.equal(typeof updated.updatedAt, "string");
+  assert.ok((updated.updatedAt as string) >= before, "updatedAt must be a real, current timestamp, not a stale or fixed value");
+  assert.equal(getRecord(db, "proj1", customer, record.id as number)?.updatedAt, updated.updatedAt);
+});
+
+/**
  * Regression test for the self-healing ALTER TABLE, mirroring round
  * 1613's identical test for createdByUserId -- a table built by an OLDER
  * version of generateCreateTableStatements (before this round added
@@ -119,6 +137,25 @@ test("updateRecord adds the updatedByUserId column itself to a pre-existing tabl
   const updated = updateRecord(db, "proj1", customer, created.id as number, { name: "Legacy B." }, "user-3");
   assert.equal(updated.updatedByUserId, "user-3");
   assert.equal(getRecord(db, "proj1", customer, created.id as number)?.updatedByUserId, "user-3");
+});
+
+/**
+ * Round 1672's own direct sibling of the self-healing test just above, for
+ * updatedAt -- a table built by an OLDER version of
+ * generateCreateTableStatements (before this round added updatedAt to it,
+ * even one already carrying updatedByUserId from round 1617) has no such
+ * column at all.
+ */
+test("updateRecord adds the updatedAt column itself to a pre-existing table that already has updatedByUserId but predates this round", () => {
+  const db = openDatabase(":memory:");
+  const table = quoteIdentifier(tableNameFor("proj1", "Customer"));
+  db.exec(
+    `CREATE TABLE ${table} (id INTEGER PRIMARY KEY AUTOINCREMENT, createdAt TEXT NOT NULL, createdByUserId TEXT, updatedByUserId TEXT, "name" TEXT NOT NULL, "vip" INTEGER, "status" TEXT NOT NULL)`,
+  );
+  const created = insertRecord(db, "proj1", customer, { name: "Legacy", status: "New" }, "user-1");
+  const updated = updateRecord(db, "proj1", customer, created.id as number, { name: "Legacy B." }, "user-3");
+  assert.equal(typeof updated.updatedAt, "string");
+  assert.equal(getRecord(db, "proj1", customer, created.id as number)?.updatedAt, updated.updatedAt);
 });
 
 test("listRecords returns newest first", () => {

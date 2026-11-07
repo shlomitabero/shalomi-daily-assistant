@@ -189,7 +189,7 @@ test("deriveFieldName appends the first free numeric suffix on a case-insensitiv
  * error instead of just picking a free name the same way a real collision
  * with another field on the entity does.
  */
-test("deriveFieldName treats the built-in 'id'/'createdAt'/'createdByUserId'/'updatedByUserId' column names as already taken", () => {
+test("deriveFieldName treats the built-in 'id'/'createdAt'/'createdByUserId'/'updatedByUserId'/'updatedAt' column names as already taken", () => {
   assert.equal(deriveFieldName("Id", []), "id2");
   assert.equal(deriveFieldName("Created At", []), "createdAt2");
   // Round 1614: createdByUserId (added in round 1613) was missing from the
@@ -201,6 +201,9 @@ test("deriveFieldName treats the built-in 'id'/'createdAt'/'createdByUserId'/'up
   // that introduced the column, closing the exact gap round 1614 had to
   // fix after the fact for createdByUserId.
   assert.equal(deriveFieldName("Updated By User Id", []), "updatedByUserId2");
+  // Round 1672: updatedAt added to the `taken` set in the SAME round that
+  // introduced the column, same immediate-not-deferred reasoning.
+  assert.equal(deriveFieldName("Updated At", []), "updatedAt2");
 });
 
 /**
