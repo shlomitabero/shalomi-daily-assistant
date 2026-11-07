@@ -1304,7 +1304,7 @@ export function AutomationsPanel({
 
   function handleDownload() {
     downloadAutomationsReport(
-      formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords, runsByRuleId),
+      formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords, runsByRuleId, collaboratorEmails),
       project.name,
     );
   }
@@ -1323,7 +1323,7 @@ export function AutomationsPanel({
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(
-        formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords, runsByRuleId),
+        formatAutomationsReport(rules ?? [], entities, project.name, lang, t, relatedRecords, runsByRuleId, collaboratorEmails),
       );
       setCopyStatus("copied");
     } catch {

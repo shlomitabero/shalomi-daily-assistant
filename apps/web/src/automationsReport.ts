@@ -333,6 +333,12 @@ export function formatAutomationsReport(
   // state, zero extra fetch needed to include it here too. Keyed by rule
   // id, exactly like AutomationsPanel.tsx's own runsByRuleId state.
   runsByRuleId: Record<string, AutomationRunView[]> = {},
+  // Round 1682: mirrors AutomationsPanel.tsx's own "created by"/"updated
+  // by" lines (round 1664) -- this report built from the exact same
+  // `rules` array never showed either, even though both ids have been
+  // carried on AutomationRuleView, and resolved to a real email via this
+  // same state, since round 1664 itself.
+  collaboratorEmails: Record<string, string> = {},
 ): string {
   const lines: string[] = [];
   lines.push(`${t("automations.title")} — ${projectName}`);
@@ -364,6 +370,22 @@ export function formatAutomationsReport(
       lines.push(t("automations.rule.subject", { subject: rule.emailSubject ?? "" }));
     }
     lines.push(rule.messageTemplate);
+    // Round 1682: see this function's own `collaboratorEmails` param doc
+    // comment -- mirrors AutomationsPanel.tsx's exact condition shape
+    // (createdByUserId first, then updatedByUserId only when it differs
+    // from createdByUserId, both gated on a resolved email actually being
+    // known) so the report never claims an actor the live panel itself
+    // wouldn't show.
+    if (rule.createdByUserId && collaboratorEmails[rule.createdByUserId]) {
+      lines.push(t("automations.rule.createdBy", { email: collaboratorEmails[rule.createdByUserId] }));
+    }
+    if (
+      rule.updatedByUserId &&
+      rule.updatedByUserId !== rule.createdByUserId &&
+      collaboratorEmails[rule.updatedByUserId]
+    ) {
+      lines.push(t("automations.rule.updatedBy", { email: collaboratorEmails[rule.updatedByUserId] }));
+    }
     lines.push(describeLastRun(rule, lang, t));
     const runs = runsByRuleId[rule.id];
     if (runs && runs.length > 0) {

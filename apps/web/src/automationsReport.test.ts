@@ -521,3 +521,37 @@ test("formatAutomationsReport includes a rule's full run history when runsByRule
   assert.match(withHistory, /missing a country code/, "an older failed run's error must be translated using ITS OWN actionType (send_whatsapp), not the rule's current webhook actionType");
   assert.equal(withHistory.includes("missing_country_code"), false, "the bare raw error code must never leak into the report");
 });
+
+/**
+ * Round 1682: AutomationsPanel.tsx has shown a rule's "Created by"/"Last
+ * updated by" lines since round 1664 -- this report, built from the exact
+ * same `rules` array, never included either. Confirms a passed-in
+ * collaboratorEmails map produces both lines, mirroring the live panel's
+ * own wording exactly.
+ */
+test("formatAutomationsReport includes a rule's 'Created by'/'Last updated by' lines when collaboratorEmails is passed, mirroring AutomationsPanel.tsx's own rule-list lines", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ createdByUserId: "user1", updatedByUserId: "user2" });
+
+  const withoutEmails = formatAutomationsReport([rule], [], "Shop", "en", t);
+  assert.equal(withoutEmails.includes("Created by"), false, "without collaboratorEmails, the report must stay exactly as before -- no actor lines at all");
+
+  const withEmails = formatAutomationsReport([rule], [], "Shop", "en", t, {}, {}, { user1: "owner@example.com", user2: "editor@example.com" });
+  assert.match(withEmails, /Created by owner@example\.com/);
+  assert.match(withEmails, /Last updated by editor@example\.com/);
+});
+
+/**
+ * Round 1682: mirrors AutomationsPanel.tsx's own guard against showing a
+ * redundant "Last updated by" line when the same person both created and
+ * last edited the rule (updatedByUserId === createdByUserId) -- the report
+ * must not duplicate the same actor under two different labels.
+ */
+test("formatAutomationsReport omits the 'Last updated by' line when updatedByUserId equals createdByUserId", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({ createdByUserId: "user1", updatedByUserId: "user1" });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t, {}, {}, { user1: "owner@example.com" });
+  assert.match(report, /Created by owner@example\.com/);
+  assert.equal(report.includes("Last updated by"), false, "the same actor must never appear twice under both labels");
+});
