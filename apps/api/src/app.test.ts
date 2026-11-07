@@ -23505,6 +23505,72 @@ test("regenerating the inbound webhook token sends a real notification to every 
   );
 });
 
+/**
+ * Round 1687: the test above only ever invited a default-role (editor)
+ * collaborator, so it could not have caught this -- round 1419's fix
+ * copied the calendar-feed-token sibling's unfiltered `listCollaborators`
+ * loop verbatim, but that loop's audience was only correct there because
+ * its own GET route is requireProjectAccess (open to viewers too). This
+ * route's own GET route is requireProjectWriteAccess (round 1407,
+ * deliberately excluding viewers -- a viewer can never create a record
+ * anywhere else in this app), so a viewer collaborator never could have
+ * fetched or configured this token, making "you'll need to copy the new
+ * URL from within the project" simply false for them -- there is no such
+ * UI they can reach (CollaboratorsPanel.tsx/EntityPanel.tsx both hide the
+ * whole inbound-webhook section for a readOnly viewer).
+ */
+test("regenerating the inbound webhook token does NOT notify a viewer collaborator, who never had access to it, while still notifying an editor collaborator who did", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const ownerEmail = `webhook-in-regen-viewer-owner-${randomUUID()}@example.com`;
+      const ownerToken = await signup(baseUrl, ownerEmail);
+      const editorEmail = `webhook-in-regen-viewer-editor-${randomUUID()}@example.com`;
+      await signup(baseUrl, editorEmail);
+      const viewerEmail = `webhook-in-regen-viewer-viewer-${randomUUID()}@example.com`;
+      await signup(baseUrl, viewerEmail);
+      const owner = findUserByEmail(db, ownerEmail)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Sales CRM", description: "test", spec });
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: editorEmail, role: "editor" }),
+      });
+      await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: viewerEmail, role: "viewer" }),
+      });
+      emailSender.sentTo.length = 0; // The two invites above (round 1253) also send their own -- only the regenerate sends matter here.
+
+      const res = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token/regenerate?lang=en`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(res.status, 200);
+
+      assert.equal(emailSender.sentTo.length, 1, "exactly one notification must be sent -- to the editor only, never the viewer or the owner who triggered it");
+      assert.equal(emailSender.sentTo[0].to, editorEmail, "the editor collaborator could have configured this token, so they must be notified");
+      assert.ok(
+        !emailSender.sentTo.some((m) => m.to === viewerEmail),
+        "the viewer collaborator never had access to this token (requireProjectWriteAccess on the GET route) and must never receive this notification",
+      );
+    },
+    { emailSender },
+  );
+});
+
 test("regenerating the inbound webhook token itself still succeeds, with no notification attempted, when no email provider is configured", async () => {
   const emailSender = createFakeEmailSender({ configured: false });
   await withServer(

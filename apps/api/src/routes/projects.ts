@@ -2320,6 +2320,23 @@ export function createProjectsRouter(
    * a real external sender (Stripe, Typeform) now POSTing to a token that
    * 404s, losing real orders/leads/payment events with no signal anywhere.
    * Mirrors the calendar route's own round-1290 fix exactly.
+   *
+   * Round 1687: round 1290's fix was copied verbatim, including its
+   * unfiltered `listCollaborators(db, project.id)` loop -- but that loop's
+   * audience was correct there only because the calendar-feed-token GET
+   * route it mirrors is requireProjectAccess (open to viewers too), so
+   * every collaborator, viewer included, really could have subscribed.
+   * This route's own GET route above is requireProjectWriteAccess (round
+   * 1407, by design -- a viewer categorically cannot create a record
+   * anywhere else in this app, so handing them this token would be a
+   * privilege escalation): a viewer collaborator never could fetch this
+   * token or see any UI to configure it (CollaboratorsPanel.tsx/
+   * EntityPanel.tsx both hide the whole inbound-webhook section for
+   * readOnly users), so "if you had configured an external service... you'll
+   * need to copy the new URL from within the project" is simply false for
+   * them -- there is no such UI they can reach. Excluding viewers here
+   * matches this route's own narrower access boundary instead of blindly
+   * re-using the calendar route's broader one.
    */
   router.post(
     "/projects/:id/inbound-webhook-token/regenerate",
@@ -2337,7 +2354,10 @@ export function createProjectsRouter(
           const emailBody = isHebrew
             ? `בעל/ת הפרויקט "${project.name}" ב-Forge AI אפס/ה את כתובת ה-Webhook הנכנס. אם הגדרת שירות חיצוני (כמו Stripe או Typeform) לשלוח לכתובת הישנה, הוא הפסיק לעבוד -- יש להעתיק את הכתובת החדשה מתוך הפרויקט ולהגדיר אותה שם מחדש.`
             : `The owner of "${project.name}" on Forge AI reset the inbound webhook URL. If you had configured an external service (like Stripe or Typeform) to send to the old URL, it has stopped working -- you'll need to copy the new URL from within the project and update it there.`;
-          for (const collaborator of listCollaborators(db, project.id)) {
+          // Round 1687: viewers never had access to this token (see the doc
+          // comment above) -- only editor collaborators could have configured
+          // an external integration with it.
+          for (const collaborator of listCollaborators(db, project.id).filter((c) => c.role !== "viewer")) {
             try {
               await emailSender.send(collaborator.email, subject, emailBody);
             } catch {
