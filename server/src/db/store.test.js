@@ -115,3 +115,28 @@ test('a corrupt db.json on disk is backed up, not destroyed, and the app starts 
     rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+// mkdtempSync (above, and this file's own regular DATA_DIR) always creates
+// the directory itself, so persist()'s own "the directory doesn't exist
+// yet, create it" branch had never actually been exercised - this is
+// exactly what a brand-new Railway deploy with a freshly-mounted, still-
+// empty volume looks like on its very first write. Same spawned-subprocess
+// pattern as the corrupt-db test above: a plain path string, never passed
+// through mkdtempSync/mkdirSync, so it genuinely does not exist yet when
+// the subprocess starts.
+test('persist() creates DATA_DIR itself on the very first write when it does not exist yet', () => {
+  const freshDir = join(tmpdir(), `profitai-store-nodir-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  assert.ok(!existsSync(freshDir), 'must not exist yet, or this test proves nothing');
+  try {
+    const storeUrl = new URL('./store.js', import.meta.url).href;
+    const script = `import('${storeUrl}').then(({ db, makeId }) => { db.settings.insert({ id: makeId('set') }); console.log('done'); });`;
+    execFileSync('node', ['--input-type=module', '-e', script], {
+      cwd: join(__dirname, '..', '..'),
+      env: { ...process.env, DATA_DIR: freshDir },
+      encoding: 'utf-8',
+    });
+    assert.ok(existsSync(join(freshDir, 'db.json')), 'persist() must create both the directory and the file');
+  } finally {
+    rmSync(freshDir, { recursive: true, force: true });
+  }
+});

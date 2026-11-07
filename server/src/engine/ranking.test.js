@@ -16,6 +16,19 @@ test('a riskier opportunity scores lower than an equally profitable safe one', (
   assert.ok(safe > risky);
 });
 
+test('an unrecognized riskLevel/dataQuality falls back to a safe default weight instead of producing NaN', () => {
+  // Every other test here only ever uses a valid riskLevel/dataQuality -
+  // there's no delete route, so an opportunity from before stricter
+  // validation existed (or a stray value from direct DB editing) can
+  // genuinely still have neither. Without the ?? 0.2 fallback, an
+  // unrecognized key reads undefined from the weight map, and
+  // undefined * anything is NaN - silently poisoning the whole score
+  // instead of just treating it as medium-ish, unknown-ish.
+  const unrecognized = scoreOpportunity({ ...base, riskLevel: 'extreme', dataQuality: 'guessed' });
+  assert.ok(Number.isFinite(unrecognized));
+  assert.ok(unrecognized > 0);
+});
+
 test('an opportunity requiring more capital scores lower, same profit', () => {
   const cheap = scoreOpportunity({ ...base, capitalRequired: 10 });
   const expensive = scoreOpportunity({ ...base, capitalRequired: 1000 });
