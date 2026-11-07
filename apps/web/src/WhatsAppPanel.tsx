@@ -1126,7 +1126,7 @@ export function WhatsAppPanel({
   }
 
   function handleDownloadLog() {
-    downloadWhatsAppLog(formatWhatsAppLog(messages, entities, projectName, lang, t), projectName);
+    downloadWhatsAppLog(formatWhatsAppLog(messages, entities, projectName, lang, t, hasMoreMessages), projectName);
   }
 
   /**
@@ -1139,7 +1139,7 @@ export function WhatsAppPanel({
    */
   async function handleCopyLog() {
     try {
-      await navigator.clipboard.writeText(formatWhatsAppLog(messages, entities, projectName, lang, t));
+      await navigator.clipboard.writeText(formatWhatsAppLog(messages, entities, projectName, lang, t, hasMoreMessages));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

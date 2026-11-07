@@ -125,6 +125,32 @@ test("formatWhatsAppLog adds no entity suffix at all for a message with no match
 });
 
 /**
+ * Round 1677: mirrors round 1670's own `truncatedEntityNames` fix for
+ * Global Search's Copy/Download report -- the live panel already shows a
+ * "hasMore" count/button when there's more history than the currently
+ * loaded page, but this report previously had no `hasMore` parameter at
+ * all, so a Download/Copy taken mid-conversation silently omitted every
+ * older message with no trace that anything was left out.
+ */
+test("formatWhatsAppLog includes a hint that older messages exist when hasMore is true", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const messages = [makeMessage()];
+  const report = formatWhatsAppLog(messages, [], "Flower Shop", "en", t, true);
+
+  assert.match(report, /older messages/i);
+});
+
+test("formatWhatsAppLog omits the hasMore hint when hasMore is false (the default)", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const messages = [makeMessage()];
+  const withoutArg = formatWhatsAppLog(messages, [], "Flower Shop", "en", t);
+  const explicitFalse = formatWhatsAppLog(messages, [], "Flower Shop", "en", t, false);
+
+  assert.doesNotMatch(withoutArg, /older messages/i);
+  assert.doesNotMatch(explicitFalse, /older messages/i);
+});
+
+/**
  * New in this round: a WhatsApp conversation only ever grows (no cap, no
  * delete besides "Clear history" wiping the whole thing), so a search box
  * was added above the log once it passes a threshold, matching

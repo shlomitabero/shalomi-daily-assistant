@@ -56,6 +56,15 @@ function matchedEntityLabel(entityName: string, entities: Entity[]): string {
  * a Lead named "Dana") -- this report never took an `entities` param at
  * all, so the exact same disambiguation it exists to show was silently
  * missing from the one artifact a person actually keeps/shares.
+ *
+ * Round 1677: `hasMore` mirrors the live panel's own `hasMoreMessages`
+ * flag (shown on screen via formatWhatsAppMessageCount's "{count}+" and a
+ * "Load older messages" button) -- the exact same gap round 1670 already
+ * fixed for Global Search's own Copy/Download report (`searchReport.ts`'s
+ * `truncatedEntityNames`). Without this, a conversation with more history
+ * than the currently-loaded page produces a Download/Copy report that
+ * looks like the complete conversation but silently omits every older
+ * message, with no trace that anything was left out.
  */
 export function formatWhatsAppLog(
   messages: WhatsAppMessageLogEntry[],
@@ -63,10 +72,14 @@ export function formatWhatsAppLog(
   projectName: string,
   lang: Lang,
   t: (key: string, params?: Record<string, string | number>) => string,
+  hasMore = false,
 ): string {
   const lines: string[] = [];
   lines.push(`${t("whatsapp.title")} — ${projectName}`);
   lines.push(t("whatsapp.log.generatedAt", { date: new Date().toLocaleString(LOCALE[lang]) }));
+  if (hasMore) {
+    lines.push(t("whatsapp.log.report.hasMoreHint"));
+  }
   lines.push("");
 
   if (messages.length === 0) {
