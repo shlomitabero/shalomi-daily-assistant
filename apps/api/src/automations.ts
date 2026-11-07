@@ -468,12 +468,26 @@ export function matchesTrigger(
     return event === "created";
   }
   // Round 1470: unlike record_created above (which fires for every source),
-  // this only matches a record actually created through the public
+  // this only matches a record actually touched through the public
   // inbound-webhook route -- see AutomationTrigger's own doc comment
   // (packages/db/src/automations.ts) for why this exists as its own
   // trigger rather than a record_created variant.
   if (rule.trigger === "inbound_webhook") {
-    return event === "created" && source === "inbound_webhook";
+    if (source !== "inbound_webhook") return false;
+    if (event === "created") return true;
+    // Round 1669: routes/webhookIn.ts's own round-1607 update route (POST
+    // .../:recordId) also passes source: "inbound_webhook", with
+    // event === "updated" -- this trigger was added at round 1470, before
+    // that update route existed, so the guard above only ever saw
+    // event === "created" in practice and this branch was never reached.
+    // Without it, a rule meant to react to "this Order was touched via the
+    // webhook" (round 1607's own motivating example: a Stripe
+    // checkout.session.created -> charge.succeeded -> charge.refunded
+    // sequence for one record) silently never fired for any event in that
+    // sequence after the first. Mirrors record_updated's own no-op guard
+    // just below -- a webhook update that changes nothing shouldn't fire
+    // this either.
+    return event === "updated" && changedFields.size > 0;
   }
   if (rule.trigger === "record_deleted") {
     return event === "deleted";

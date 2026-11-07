@@ -21896,6 +21896,108 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId updates the SAME 
 });
 
 /**
+ * Round 1669: an inbound_webhook-trigger rule must fire for BOTH the create
+ * route (event === "created", already covered since round 1470) and this
+ * sibling update route (event === "updated", added later by round 1607) --
+ * matchesTrigger's inbound_webhook branch was hardcoded to event ===
+ * "created" only, so a rule meant to track a webhook-delivered record's
+ * whole lifecycle (e.g. Stripe's own checkout.session.created ->
+ * charge.succeeded -> charge.refunded sequence for one Order) silently
+ * never fired for any follow-up update. Also confirms the no-op guard
+ * (mirroring record_updated's own round-1340 fix): a webhook update that
+ * changes nothing must not fire a second, spurious send.
+ */
+test("an inbound_webhook-trigger automation rule fires on both the create and update webhook-in routes, but not on a no-op update", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `webhook-in-inbound-webhook-trigger-${randomUUID()}@example.com`;
+      const authToken = await signup(baseUrl, email);
+      const user = findUserByEmail(db, email)!;
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "phone", type: "text" }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(authToken) });
+      createdSockets[0].sock.user = { id: "15550009999:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(authToken),
+        body: JSON.stringify({
+          trigger: "inbound_webhook",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Order {{status}} via webhook.",
+        }),
+      });
+
+      const { token: webhookToken } = (await (
+        await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+      ).json()) as { token: string };
+
+      const createRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "pending", phone: "972500000001" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { id: recordId } = (await createRes.json()) as { id: string };
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "the create route's own event === \"created\" must still fire inbound_webhook, as it always has since round 1470");
+
+      const updateRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "paid" }),
+      });
+      assert.equal(updateRes.status, 200);
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 1; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 2, "a genuine status change via the update route must ALSO fire inbound_webhook -- the round-1669 fix");
+
+      // A follow-up no-op update (same status, nothing actually changes)
+      // must not fire a third, spurious send.
+      const noopRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "paid" }),
+      });
+      assert.equal(noopRes.status, 200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(createdSockets[0].sendCalls.length, 2, "a no-op update (status already \"paid\") must not fire inbound_webhook again");
+    },
+    {
+      whatsapp: (db) => {
+        // sendSpacingMs: 0 -- this test fires two real sends (create, then
+        // update) in quick succession; the manager's own default 1200ms
+        // post-send queue spacing (whatsappWeb.ts) would otherwise hold the
+        // second send pending past this test's short polling window.
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, { sendSpacingMs: 0 });
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 1607: the update route must still 404 (not insert, not crash) when
  * the recordId in the URL doesn't exist, or belongs to a project the given
  * token doesn't match -- the same "never leak which part of the lookup

@@ -637,8 +637,16 @@ test("matchesTrigger: record_deleted only matches the 'deleted' event, never 'cr
  * does "record_created" fail to match regardless of source -- the two
  * triggers are deliberately asymmetric (record_created is source-blind,
  * inbound_webhook is source-specific).
+ *
+ * Round 1669: this used to also assert that an "updated" event with
+ * source "inbound_webhook" never matches -- true when this test was
+ * written (round 1470, before webhookIn.ts had any update route at all),
+ * but stale now that round 1607's own update route (POST .../:recordId)
+ * genuinely produces that exact combination. See the dedicated test below
+ * for the corrected (now source- and lifecycle-aware, not creation-only)
+ * expectation.
  */
-test("matchesTrigger: inbound_webhook only matches a 'created' event whose source is itself 'inbound_webhook', never the default 'app' source or any other event", () => {
+test("matchesTrigger: inbound_webhook only matches a 'created'/'updated' event whose source is itself 'inbound_webhook', never the default 'app' source", () => {
   const rule = insertAutomationRule(openDbForRuleOnly(), {
     projectId: "p",
     entityName: "Order",
@@ -651,8 +659,33 @@ test("matchesTrigger: inbound_webhook only matches a 'created' event whose sourc
   assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), true);
   assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "app"), false);
   assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity), false, "source defaults to 'app', not 'inbound_webhook'");
-  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["orderId"]), orderEntity, "inbound_webhook"), false);
   assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), false);
+});
+
+/**
+ * Round 1669: webhookIn.ts's own round-1607 update route (POST
+ * .../:recordId) passes source: "inbound_webhook" with event === "updated"
+ * -- matchesTrigger's inbound_webhook branch was still hardcoded to
+ * event === "created" only, so a rule meant to react to a webhook-
+ * delivered record's whole lifecycle (not just its creation) silently
+ * never fired for any follow-up update, with no error or log entry
+ * pointing at why. Mirrors record_updated's own round-1340 no-op guard:
+ * a webhook update that changes nothing must not fire this either, the
+ * same reasoning as that trigger's own "Apply to N" bulk-update case.
+ */
+test("matchesTrigger: inbound_webhook also matches a genuine 'updated' event via source 'inbound_webhook', but not a no-op update", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "inbound_webhook",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} was touched via webhook.",
+  });
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["status"]), orderEntity, "inbound_webhook"), true);
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), false, "a no-op webhook update (nothing actually changed) must not fire");
+  assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["status"]), orderEntity, "app"), false, "source must still be 'inbound_webhook', not the default 'app'");
 });
 
 /**

@@ -32,6 +32,15 @@ import { NotFoundError } from "./repository.js";
  * fires identically for all of those sources too -- there was no way to
  * express "only notify me when this Order came in via the Stripe webhook"
  * without that same rule also firing for every manually-created Order.
+ *
+ * Round 1669: webhookIn.ts's own round-1607 update route (POST
+ * .../:recordId, added after this trigger) also goes through the same
+ * "inbound_webhook" source, firing event === "updated" instead -- this
+ * trigger matches that too (mirroring record_updated's own no-op guard
+ * for an update that changes nothing), so a rule can react to the whole
+ * lifecycle of a webhook-delivered record (e.g. a Stripe
+ * checkout.session.created -> charge.succeeded -> charge.refunded
+ * sequence for one Order), not only its initial creation.
  */
 export type AutomationTrigger = "record_created" | "field_equals" | "schedule" | "record_deleted" | "record_updated" | "inbound_webhook";
 /**
