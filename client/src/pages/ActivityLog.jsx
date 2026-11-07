@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel, autonomousScanSummary } from '../labels.js';
+import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel, autonomousScanSummary, saleConfirmedSummary } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -33,14 +33,15 @@ export default function ActivityLog() {
                   'skipped'/...) - the free-text detail after it stays in
                   whatever language the logging code wrote it in, which for
                   autonomous_scan's own 'blocked: source not connected' /
-                  'skipped: N drafts already awaiting review' is English.
-                  Since the scan logs one of these every 4 hours whenever
-                  the source isn't connected or the draft cap is full, that
-                  English fragment would otherwise repeat constantly in an
-                  all-Hebrew log - autonomousScanSummary() already has a
-                  full Hebrew sentence for every one of its outcomes. */}
+                  'skipped: N drafts already awaiting review', and for
+                  sale_confirmed's own 'skipped: sandbox transaction, not
+                  recorded as real revenue' (the common case while testing
+                  Paddle in sandbox mode) / 'blocked: <raw payload error>',
+                  is English. autonomousScanSummary()/saleConfirmedSummary()
+                  already have a full Hebrew sentence for every one of their
+                  outcomes. */}
               <span className={`log-result ${a.result === 'success' ? 'positive' : a.result?.startsWith('blocked') ? 'muted' : 'negative'}`}>
-                {a.type === 'autonomous_scan' ? autonomousScanSummary(a) : resultLabel(a.result)}
+                {a.type === 'autonomous_scan' ? autonomousScanSummary(a) : a.type === 'sale_confirmed' ? saleConfirmedSummary(a) : resultLabel(a.result)}
               </span>
             </div>
             {opportunity && (

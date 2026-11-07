@@ -142,6 +142,27 @@ export function autonomousScanSummary(action) {
   return resultLabel(result);
 }
 
+// Turns one 'sale_confirmed' actions_log entry (server/src/routes/billing.js's
+// Paddle webhook) into a plain Hebrew sentence - the same gap
+// autonomousScanSummary() already closed for 'autonomous_scan'. The raw result
+// strings here ('skipped: sandbox transaction, not recorded as real revenue'
+// for every test purchase made while PADDLE_ENV=sandbox — the README's own
+// documented default while testing Paddle — and 'blocked: <a raw English
+// error message from engine/paddleTransaction.js>' for a malformed payload)
+// would otherwise fall through resultLabel()'s known partial-translation
+// limitation and show English mid-sentence in the activity log.
+export function saleConfirmedSummary(action) {
+  const { result } = action;
+  if (result === 'success') return 'מכירה אומתה בפועל.';
+  if (typeof result === 'string' && result.startsWith('skipped: sandbox transaction')) {
+    return 'עסקת בדיקה (sandbox) — לא נרשמה כהכנסה אמיתית.';
+  }
+  if (typeof result === 'string' && result.startsWith('blocked:')) {
+    return 'התשלום לא נרשם בגלל שגיאה בעיבוד הנתונים מ-Paddle — בדוק את לוגי השרת.';
+  }
+  return resultLabel(result);
+}
+
 export function missingFieldLabel(field) {
   if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
   if (field.startsWith('cost:')) {
