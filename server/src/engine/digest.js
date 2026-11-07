@@ -3,7 +3,7 @@
 export function buildDailyDigest({
   ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null,
   approvedAwaitingPublish = 0, budget = null, budgetConfigured = false, maxLoss = null,
-  scanPaused = false, pendingDrafts = 0,
+  scanPaused = false, pendingDrafts = 0, unrecordedSales = 0,
 }) {
   // Dashboard.jsx warns the owner in the app itself once spentSoFar/
   // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
@@ -43,6 +43,17 @@ export function buildDailyDigest({
     // anything new, every single cycle, with absolutely nothing in this
     // digest explaining why.
     ...(scanPaused ? [`⏸️ הסריקה האוטומטית מושהית — ${pendingDrafts} הזדמנויות ממתינות לסקירה שלך. סקור או דחה חלק מהן כדי שהסריקה תמשיך לחפש.`] : []),
+    // billing.js refuses to record a real transaction.completed webhook
+    // whose amount/fee it couldn't parse, logging 'blocked: ...' so it
+    // never corrupts the ledger with a NaN - but that result matches
+    // neither "success" nor "failed" below, so a real customer's real
+    // payment could go completely unrecorded with nothing in this digest
+    // ever telling the owner it happened. console.error already reaches
+    // Railway's own log viewer, but this is the one place an owner who
+    // only reads the digest would ever see it.
+    ...(unrecordedSales > 0
+      ? [`🚨 ${unrecordedSales} תשלומים אמיתיים התקבלו אך לא נרשמו ביומן בגלל שגיאה בעיבוד — בדוק ביומן הפעולות ואת לוגי השרת.`]
+      : []),
     `פעולות שבוצעו: ${actionsToday.length}`,
     failuresToday.length
       ? `בעיות: ${failuresToday.map((f) => f.summary).join('; ')}`

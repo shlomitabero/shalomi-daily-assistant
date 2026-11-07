@@ -136,3 +136,19 @@ test('says nothing about a paused scan when under the pending-draft cap', () => 
   const digest = buildDailyDigest({ ledgerSummary, scanPaused: false, pendingDrafts: 2 });
   assert.doesNotMatch(digest.text, /הסריקה האוטומטית מושהית/);
 });
+
+test('warns loudly when a real payment could not be recorded into the ledger', () => {
+  // billing.js logs this as 'blocked: <error>' when a real
+  // transaction.completed webhook's amount/fee couldn't be parsed - a
+  // result that matches neither actionsToday's success filter nor
+  // failuresToday's failed prefix, so without this line a real customer's
+  // real payment going unrecorded would have no mention anywhere in the
+  // one place meant to reach the owner without them having to go check.
+  const digest = buildDailyDigest({ ledgerSummary, unrecordedSales: 2 });
+  assert.match(digest.text, /2 תשלומים אמיתיים התקבלו אך לא נרשמו ביומן/);
+});
+
+test('says nothing about unrecorded sales when there were none', () => {
+  const digest = buildDailyDigest({ ledgerSummary, unrecordedSales: 0 });
+  assert.doesNotMatch(digest.text, /תשלומים אמיתיים התקבלו/);
+});

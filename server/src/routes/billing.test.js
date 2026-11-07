@@ -203,6 +203,12 @@ test('a malformed transaction amount is refused instead of poisoning the ledger 
     assert.deepEqual(res.body, { received: true });
     assert.equal(db.ledger.all().length, 0);
     assert.equal(db.opportunities.get(opportunity.id).salesCount, 0);
+    // services/digest.js's generateDailyDigest() specifically looks for a
+    // 'sale_confirmed' entry whose result starts with 'blocked' to warn the
+    // owner that a real payment went unrecorded - this pins the exact
+    // shape that fix depends on, so a refactor here can't silently break it.
+    const logged = db.actions_log.where((a) => a.type === 'sale_confirmed')[0];
+    assert.match(logged.result, /^blocked:/);
   });
 });
 

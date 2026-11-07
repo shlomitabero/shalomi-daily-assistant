@@ -60,12 +60,22 @@ export function generateDailyDigest(now = new Date()) {
   const pendingDrafts = pendingDraftCount();
   const scanPaused = pendingDrafts >= MAX_PENDING_DRAFTS;
 
+  // billing.js's webhook handler logs this as 'blocked: <error>' when a
+  // real transaction.completed event's amount/fee couldn't be parsed - a
+  // result that matches neither actionsToday's 'success' filter nor
+  // failuresToday's 'failed' prefix above, so a real customer's real
+  // payment going unrecorded would otherwise have zero mention anywhere
+  // in the digest.
+  const unrecordedSales = db.actions_log.where(
+    (a) => todayKey(new Date(a.createdAt)) === today && a.type === 'sale_confirmed' && String(a.result).startsWith('blocked')
+  ).length;
+
   const settings = getSettings();
   const digest = buildDailyDigest({
     ledgerSummary, actionsToday, failuresToday, topOpportunity,
     emergencyStop: settings.emergencyStop, mode: settings.mode, approvedAwaitingPublish,
     budget: settings.budget, budgetConfigured: settings.budgetConfigured, maxLoss: settings.maxLoss,
-    scanPaused, pendingDrafts,
+    scanPaused, pendingDrafts, unrecordedSales,
   });
 
   // The owner can click "generate now" on the Digests page any number of

@@ -53,6 +53,30 @@ test('generateDailyDigest warns in the real digest text when the real pending-dr
   assert.match(digest.text, /הסריקה האוטומטית מושהית — 5 הזדמנויות ממתינות לסקירה/);
 });
 
+test('generateDailyDigest warns in the real digest text when a real payment failed to record into the ledger today', () => {
+  // Real wiring behind engine/digest.js's pure unrecordedSales logic -
+  // billing.js's own 'blocked: <error>' result on a sale_confirmed entry
+  // must actually reach generateDailyDigest() via a real actions_log
+  // query, not just the hand-fed value the engine-level tests use.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1', error: 'bad amount' },
+    result: 'blocked: bad amount', createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /1 תשלומים אמיתיים התקבלו אך לא נרשמו ביומן/);
+});
+
+test('generateDailyDigest does not warn about a successful sale_confirmed entry', () => {
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1', amount: 10 },
+    result: 'success', createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /תשלומים אמיתיים התקבלו/);
+});
+
 test('generating again the same day updates the existing row instead of duplicating it', () => {
   // This is the bug this test guards against: the owner can click
   // "generate now" on the Digests page any number of times a day on top of
