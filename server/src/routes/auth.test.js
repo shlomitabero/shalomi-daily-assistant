@@ -75,6 +75,30 @@ test('login rejects a request with no password in the body instead of throwing',
   });
 });
 
+test('login falls back to a shared "unknown" rate-limit key instead of throwing when req.ip is missing', () => {
+  // req.ip can genuinely be undefined (a request object built by something
+  // other than Express's own listener, or a proxy config that doesn't set
+  // it) - every other test always supplies a real ip, so this ?? 'unknown'
+  // fallback had never actually been exercised.
+  withOwnerPassword('the-real-password', () => {
+    const res = makeRes();
+    login({ body: { password: 'the-real-password' } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.ok(res.body.token);
+  });
+});
+
+test('login rejects a request with no body at all instead of throwing', () => {
+  // req.body is undefined, not {}, when body-parser didn't run for this
+  // request at all (e.g. a missing/wrong content-type) - every other test
+  // always supplies a body object, even an empty one.
+  withOwnerPassword('the-real-password', () => {
+    const res = makeRes();
+    login({ ip: uniqueIp() }, res);
+    assert.equal(res.statusCode, 401);
+  });
+});
+
 test('login blocks further attempts from the same source after too many wrong passwords', () => {
   withOwnerPassword('the-real-password', () => {
     const ip = uniqueIp();
