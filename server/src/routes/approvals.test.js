@@ -21,6 +21,7 @@ test('createApproval rejects a request missing opportunityId or actionType', () 
   const res = makeRes();
   createApproval({ body: { actionType: 'publish' } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /opportunityId ו-actionType הם שדות חובה/);
   assert.equal(db.approvals.all().length, 0);
 });
 
@@ -29,6 +30,7 @@ test('createApproval rejects an opportunityId that does not exist', () => {
   const res = makeRes();
   createApproval({ body: { opportunityId: 'opp_missing', actionType: 'publish' } }, res);
   assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error, 'ההזדמנות לא נמצאה');
   assert.equal(db.approvals.all().length, 0);
 });
 
@@ -68,6 +70,7 @@ test('rejectApproval returns 404 for an approval id that does not exist', () => 
   const res = makeRes();
   rejectApproval({ params: { id: 'appr_missing' } }, res);
   assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error, 'לא נמצא');
 });
 
 test('rejectApproval marks the approval rejected and logs the action', () => {

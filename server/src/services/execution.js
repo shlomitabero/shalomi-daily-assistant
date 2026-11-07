@@ -25,7 +25,7 @@ export async function executeGatedAction({ opportunityId, actionType, amount = 0
   // and this duplicated its exact logic inline instead.
   const performedKeys = db.actions_log.where((a) => a.result === 'success').map((a) => a.detail?.idempotencyKey);
   const alreadyDone = wasAlreadyPerformed(key, performedKeys);
-  if (alreadyDone) return { allowed: false, duplicate: true, reason: 'this exact action was already performed today' };
+  if (alreadyDone) return { allowed: false, duplicate: true, reason: 'הפעולה הזו כבר בוצעה היום' };
 
   const modeGate = checkExecutionGate({
     mode: settings.mode,

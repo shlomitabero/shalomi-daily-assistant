@@ -23,8 +23,8 @@ function withFeasibility(opportunity) {
 // owner sets their own estimate on the card.
 export async function createDigitalProduct(req, res) {
   const { topic, audience } = req.body ?? {};
-  if (!topic || !topic.trim()) return res.status(400).json({ error: 'topic is required' });
-  if (!audience || !audience.trim()) return res.status(400).json({ error: 'audience is required' });
+  if (!topic || !topic.trim()) return res.status(400).json({ error: 'נושא הוא שדה חובה' });
+  if (!audience || !audience.trim()) return res.status(400).json({ error: 'קהל מטרה הוא שדה חובה' });
 
   // runAutonomousScan already refused a new draft past this same cap - this
   // manual route had no such limit at all, even though each draft here is
@@ -43,7 +43,7 @@ export async function createDigitalProduct(req, res) {
   try {
     opportunity = await createDigitalProductOpportunity({ topic: topic.trim(), audience: audience.trim(), createdBy: 'owner' });
   } catch (err) {
-    return res.status(502).json({ error: `product drafting failed: ${err.message}` });
+    return res.status(502).json({ error: `יצירת הטיוטה נכשלה: ${err.message}` });
   }
 
   res.status(201).json({ opportunity: withFeasibility(opportunity) });
@@ -63,7 +63,7 @@ export function listOpportunities(req, res) {
 
 export function getOpportunity(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
-  if (!opportunity) return res.status(404).json({ error: 'not found' });
+  if (!opportunity) return res.status(404).json({ error: 'לא נמצא' });
   res.json({ opportunity: withFeasibility(opportunity) });
 }
 
@@ -90,7 +90,7 @@ const VALID_DATA_QUALITIES = ['unknown', 'estimated', 'verified'];
 
 export function patchOpportunity(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
-  if (!opportunity) return res.status(404).json({ error: 'not found' });
+  if (!opportunity) return res.status(404).json({ error: 'לא נמצא' });
   const patch = {};
   for (const field of EDITABLE_FIELDS) {
     if (field in (req.body ?? {})) patch[field] = req.body[field];
@@ -104,16 +104,16 @@ export function patchOpportunity(req, res) {
   // telling the caller why, rather than being rejected at the door like
   // every other field on this same endpoint.
   if ('riskLevel' in patch && !VALID_RISK_LEVELS.includes(patch.riskLevel)) {
-    return res.status(400).json({ error: `riskLevel must be one of ${VALID_RISK_LEVELS.join(', ')}` });
+    return res.status(400).json({ error: `רמת הסיכון חייבת להיות אחת מ: ${VALID_RISK_LEVELS.join(', ')}` });
   }
   if ('dataQuality' in patch && !VALID_DATA_QUALITIES.includes(patch.dataQuality)) {
-    return res.status(400).json({ error: `dataQuality must be one of ${VALID_DATA_QUALITIES.join(', ')}` });
+    return res.status(400).json({ error: `איכות הנתונים חייבת להיות אחת מ: ${VALID_DATA_QUALITIES.join(', ')}` });
   }
 
   if ('revenueEstimate' in patch && patch.revenueEstimate !== null) {
     const { low, mid, high } = patch.revenueEstimate ?? {};
     if (!isFiniteOrNullish(low) || !isFiniteOrNullish(mid) || !isFiniteOrNullish(high)) {
-      return res.status(400).json({ error: 'revenueEstimate.low/mid/high must each be a finite number (or omitted)' });
+      return res.status(400).json({ error: 'הערכת ההכנסה (נמוכה/בינונית/גבוהה) חייבת להיות מספר סופי או ריקה' });
     }
     // Each field individually passing finiteness doesn't catch an
     // inverted range (low > high) - computeNetProfit would still run
@@ -121,13 +121,13 @@ export function patchOpportunity(req, res) {
     // opportunity page, reading as a display bug rather than what it
     // actually is: bad input data that was never rejected.
     if (low != null && high != null && low > high) {
-      return res.status(400).json({ error: 'revenueEstimate.low cannot be greater than revenueEstimate.high' });
+      return res.status(400).json({ error: 'הערכת ההכנסה הנמוכה לא יכולה להיות גבוהה מההערכה הגבוהה' });
     }
   }
   if ('costs' in patch && patch.costs != null) {
     for (const [key, value] of Object.entries(patch.costs)) {
       if (!isFiniteOrNullish(value)) {
-        return res.status(400).json({ error: `costs.${key} must be a finite number or null (unknown)` });
+        return res.status(400).json({ error: `העלות "${key}" חייבת להיות מספר סופי או ריקה (לא ידוע)` });
       }
       // Unlike revenueEstimate.low (which can legitimately be negative - a
       // worst-case loss scenario is still a coherent estimate), a cost is
@@ -138,7 +138,7 @@ export function patchOpportunity(req, res) {
       // exactly the kind of fabricated number this app exists to avoid,
       // even when the mistake is the owner's own.
       if (value != null && value < 0) {
-        return res.status(400).json({ error: `costs.${key} must be a non-negative number` });
+        return res.status(400).json({ error: `העלות "${key}" חייבת להיות מספר לא שלילי` });
       }
     }
   }
@@ -147,7 +147,7 @@ export function patchOpportunity(req, res) {
   // just non-numbers; `patch.priceUSD <= 0` alone would wrongly let null
   // slip through on the "null <= 0" coercion.
   if ('priceUSD' in patch && !(typeof patch.priceUSD === 'number' && Number.isFinite(patch.priceUSD) && patch.priceUSD > 0)) {
-    return res.status(400).json({ error: 'priceUSD must be a positive number' });
+    return res.status(400).json({ error: 'מחיר המוצר חייב להיות מספר חיובי' });
   }
   // Once published, priceUSD is baked into a real Paddle price object
   // (publishing.js never updates an existing one — there's no API for
@@ -165,7 +165,7 @@ export function patchOpportunity(req, res) {
   // published opportunity either, every attempt 400ing with this exact
   // unrelated price-change error.
   if ('priceUSD' in patch && patch.priceUSD !== opportunity.priceUSD && opportunity.status === 'published') {
-    return res.status(400).json({ error: 'priceUSD cannot be changed after publishing — the live price is already fixed in Paddle' });
+    return res.status(400).json({ error: 'לא ניתן לשנות מחיר אחרי פרסום — המחיר כבר קבוע ב-Paddle' });
   }
   // In "approve" mode the owner explicitly approves publish_product for
   // this exact opportunity before it runs — but that approval record has
@@ -193,7 +193,7 @@ export function patchOpportunity(req, res) {
 // (research mode, no approval yet, or emergency stop).
 export async function publishOpportunityRoute(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
-  if (!opportunity) return res.status(404).json({ error: 'not found' });
+  if (!opportunity) return res.status(404).json({ error: 'לא נמצא' });
   // Without this, hitting publish again on an already-live opportunity (a
   // stray repeat request, a retried script) would sail through the
   // idempotency check — that key is scoped per day, so a next-day call
@@ -201,18 +201,18 @@ export async function publishOpportunityRoute(req, res) {
   // the audit log even though nothing actually happened: perform() finds
   // paddlePriceId/slug already set and just re-saves the same status.
   if (opportunity.status === 'published') {
-    return res.status(409).json({ error: 'already published', duplicate: true });
+    return res.status(409).json({ error: 'כבר פורסם', duplicate: true });
   }
   // The owner explicitly dismissed this one via rejectOpportunity above —
   // without this check, a stray repeat click, a stale approval, or a race
   // against the autonomous scan could still carry it through to a real
   // Paddle checkout and reverse the owner's own decision not to pursue it.
   if (opportunity.status === 'rejected') {
-    return res.status(409).json({ error: 'this opportunity was rejected and cannot be published' });
+    return res.status(409).json({ error: 'ההזדמנות הזו נדחתה ולא ניתן לפרסם אותה' });
   }
   if (!isPaddleConfigured()) {
-    logAction({ type: 'publish_product', detail: { opportunityId: opportunity.id }, result: 'blocked: Paddle is not configured yet' });
-    return res.status(503).json({ error: 'Paddle is not configured yet — cannot open real checkout' });
+    logAction({ type: 'publish_product', detail: { opportunityId: opportunity.id }, result: 'blocked: Paddle עדיין לא מוגדר' });
+    return res.status(503).json({ error: 'Paddle עדיין לא מוגדר — לא ניתן לפתוח תשלום אמיתי' });
   }
 
   let result;
@@ -221,7 +221,7 @@ export async function publishOpportunityRoute(req, res) {
   } catch (err) {
     // perform() failed (e.g. Paddle API unreachable) — executeGatedAction
     // already logged it; respond cleanly instead of crashing the process.
-    return res.status(502).json({ error: `publish failed: ${err.message}` });
+    return res.status(502).json({ error: `הפרסום נכשל: ${err.message}` });
   }
 
   if (!result.allowed) return res.status(409).json({ error: result.reason, duplicate: Boolean(result.duplicate) });
@@ -239,12 +239,12 @@ export async function publishOpportunityRoute(req, res) {
 // clear them short of publishing something unwanted.
 export function rejectOpportunity(req, res) {
   const opportunity = db.opportunities.get(req.params.id);
-  if (!opportunity) return res.status(404).json({ error: 'not found' });
+  if (!opportunity) return res.status(404).json({ error: 'לא נמצא' });
   if (opportunity.status === 'published') {
-    return res.status(409).json({ error: 'cannot reject an opportunity that is already published' });
+    return res.status(409).json({ error: 'אי אפשר לדחות הזדמנות שכבר פורסמה' });
   }
   if (opportunity.status === 'rejected') {
-    return res.status(409).json({ error: 'already rejected', duplicate: true });
+    return res.status(409).json({ error: 'כבר נדחה', duplicate: true });
   }
   const updated = db.opportunities.update(opportunity.id, { status: 'rejected', rejectedAt: new Date().toISOString() });
   // Same reasoning as the stale-approval invalidation on a price change

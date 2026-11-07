@@ -34,6 +34,7 @@ test('addToWatchlist rejects a missing or non-string symbol instead of storing a
   const resMissing = makeRes();
   await addToWatchlist({ body: {} }, resMissing);
   assert.equal(resMissing.statusCode, 400);
+  assert.match(resMissing.body.error, /סימבול הוא שדה חובה/);
 
   const resBadType = makeRes();
   await addToWatchlist({ body: { symbol: { not: 'a string' } } }, resBadType);
@@ -82,6 +83,7 @@ test('addToWatchlist surfaces a 502 instead of storing a broken entry when the q
       const res = makeRes();
       await addToWatchlist({ body: { symbol: 'AAPL' } }, res);
       assert.equal(res.statusCode, 502);
+      assert.match(res.body.error, /לא ניתן היה לקבל מחיר/);
       assert.equal(db.financial_watchlist.all().length, 0);
     } finally {
       restore();
@@ -118,6 +120,7 @@ test('addToWatchlist rejects a symbol already on the watchlist instead of creati
     const res2 = makeRes();
     await addToWatchlist({ body: { symbol: 'aapl' } }, res2);
     assert.equal(res2.statusCode, 409);
+    assert.match(res2.body.error, /AAPL כבר נמצא ברשימת המעקב/);
     assert.equal(db.financial_watchlist.all().length, 1);
   } finally {
     if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
@@ -129,6 +132,7 @@ test('refreshWatchlistEntry returns 404 for an entry that does not exist', async
   const res = makeRes();
   await refreshWatchlistEntry({ params: { id: 'wl_missing' } }, res);
   assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error, 'לא נמצא');
 });
 
 test('refreshWatchlistEntry returns 503 instead of silently reusing a stale price when market data is not connected', async () => {
@@ -137,6 +141,7 @@ test('refreshWatchlistEntry returns 503 instead of silently reusing a stale pric
   const res = makeRes();
   await refreshWatchlistEntry({ params: { id: entry.id } }, res);
   assert.equal(res.statusCode, 503);
+  assert.equal(res.body.error, 'מקור נתוני שוק לא מחובר');
 });
 
 test('refreshWatchlistEntry updates a previously-disconnected entry to the current real price and connected state', async () => {
@@ -173,6 +178,7 @@ test('refreshWatchlistEntry surfaces a 502 instead of silently keeping the stale
       const res = makeRes();
       await refreshWatchlistEntry({ params: { id: entry.id } }, res);
       assert.equal(res.statusCode, 502);
+      assert.match(res.body.error, /לא ניתן היה לקבל מחיר/);
       const unchanged = db.financial_watchlist.get(entry.id);
       assert.equal(unchanged.connected, false);
       assert.equal(unchanged.lastPrice, null);
@@ -193,6 +199,7 @@ test('deleteWatchlistEntry removes an existing entry and 404s for one that does 
   const res2 = makeRes();
   deleteWatchlistEntry({ params: { id: entry.id } }, res2);
   assert.equal(res2.statusCode, 404);
+  assert.equal(res2.body.error, 'לא נמצא');
 });
 
 test('createPaperTrade rejects a whitespace-only symbol instead of storing a blank-looking trade', () => {
@@ -204,6 +211,7 @@ test('createPaperTrade rejects a whitespace-only symbol instead of storing a bla
   const res = makeRes();
   createPaperTrade({ body: { symbol: '   ', side: 'long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /סימבול הוא שדה חובה/);
   assert.equal(db.paper_trades.all().length, 0);
 });
 
@@ -220,6 +228,7 @@ test('createPaperTrade rejects an invalid side instead of silently simulating it
   const res = makeRes();
   createPaperTrade({ body: { symbol: 'AAPL', side: 'Long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /הצד חייב להיות אחד מ/);
   assert.equal(db.paper_trades.all().length, 0);
 });
 
@@ -228,6 +237,7 @@ test('createPaperTrade rejects non-positive prices/quantity', () => {
   const res = makeRes();
   createPaperTrade({ body: { symbol: 'AAPL', side: 'long', entryPrice: 0, exitPrice: 110, quantity: 1 } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /מחיר כניסה חייב להיות מספר חיובי/);
 });
 
 test('createPaperTrade stores a simulated trade and logs it, never touching the real ledger', () => {

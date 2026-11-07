@@ -61,10 +61,12 @@ test('createDigitalProduct rejects a missing topic or audience before drafting a
   const resNoTopic = makeRes();
   await createDigitalProduct({ body: { audience: 'יזמים' } }, resNoTopic);
   assert.equal(resNoTopic.statusCode, 400);
+  assert.equal(resNoTopic.body.error, 'נושא הוא שדה חובה');
 
   const resBlankAudience = makeRes();
   await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: '   ' } }, resBlankAudience);
   assert.equal(resBlankAudience.statusCode, 400);
+  assert.equal(resBlankAudience.body.error, 'קהל מטרה הוא שדה חובה');
   assert.equal(db.opportunities.all().length, 0);
 });
 
@@ -96,6 +98,7 @@ test('createDigitalProduct responds 502 instead of crashing when the AI returns 
     const res = makeRes();
     await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
     assert.equal(res.statusCode, 502);
+    assert.match(res.body.error, /יצירת הטיוטה נכשלה/);
     assert.equal(db.opportunities.all().length, 0);
   } finally {
     globalThis.fetch = originalFetch;
@@ -116,6 +119,7 @@ test('createDigitalProduct refuses to draft another one once the pending-draft c
   const res = makeRes();
   await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
   assert.equal(res.statusCode, 409);
+  assert.match(res.body.error, /טיוטות שממתינות לסקירה/);
   assert.equal(db.opportunities.all().length, MAX_PENDING_DRAFTS);
 });
 
@@ -159,6 +163,7 @@ test('listOpportunities and getOpportunity attach feasibility and 404 for a miss
   const missingRes = makeRes();
   getOpportunity({ params: { id: 'opp_missing' } }, missingRes);
   assert.equal(missingRes.statusCode, 404);
+  assert.equal(missingRes.body.error, 'לא נמצא');
 });
 
 test('patchOpportunity 404s for an id that does not exist', () => {
@@ -166,6 +171,7 @@ test('patchOpportunity 404s for an id that does not exist', () => {
   const res = makeRes();
   patchOpportunity({ params: { id: 'opp_missing' }, body: { priceUSD: 20 } }, res);
   assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error, 'לא נמצא');
 });
 
 test('patchOpportunity rejects a non-finite revenueEstimate instead of letting it corrupt the profit math', () => {
@@ -174,6 +180,7 @@ test('patchOpportunity rejects a non-finite revenueEstimate instead of letting i
   const res = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: { low: 100, mid: 'lots', high: 300 } } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /הערכת ההכנסה/);
   assert.equal(db.opportunities.get(opp.id).revenueEstimate, null);
 });
 
@@ -187,6 +194,7 @@ test('patchOpportunity rejects an inverted revenueEstimate range (low greater th
   const res = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: { low: 400, mid: 250, high: 100 } } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /הערכת ההכנסה הנמוכה לא יכולה להיות גבוהה/);
   assert.equal(db.opportunities.get(opp.id).revenueEstimate, null);
 });
 
@@ -218,6 +226,7 @@ test('patchOpportunity rejects a non-finite cost field', () => {
   const res = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { costs: { hosting: 'free-ish' } } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /העלות "hosting" חייבת להיות מספר סופי/);
 });
 
 test('patchOpportunity rejects a negative cost - a single typo must not silently inflate the shown profit', () => {
@@ -226,6 +235,7 @@ test('patchOpportunity rejects a negative cost - a single typo must not silently
   const res = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { costs: { aiUsage: -5 } } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /העלות "aiUsage" חייבת להיות מספר לא שלילי/);
   assert.equal(db.opportunities.get(opp.id).costs.aiUsage, undefined);
 });
 
@@ -245,11 +255,13 @@ test('patchOpportunity rejects an invalid riskLevel or dataQuality instead of st
   const res1 = makeRes();
   patchOpportunity({ params: { id: opp1.id }, body: { riskLevel: 'veryhigh' } }, res1);
   assert.equal(res1.statusCode, 400);
+  assert.match(res1.body.error, /רמת הסיכון חייבת להיות אחת מ/);
 
   const opp2 = insertOpportunity();
   const res2 = makeRes();
   patchOpportunity({ params: { id: opp2.id }, body: { dataQuality: 'confirmed' } }, res2);
   assert.equal(res2.statusCode, 400);
+  assert.match(res2.body.error, /איכות הנתונים חייבת להיות אחת מ/);
 });
 
 test('patchOpportunity accepts each valid riskLevel and dataQuality', () => {
@@ -276,6 +288,7 @@ test('patchOpportunity rejects a null or non-positive priceUSD — a product alw
   const resNull = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { priceUSD: null } }, resNull);
   assert.equal(resNull.statusCode, 400);
+  assert.equal(resNull.body.error, 'מחיר המוצר חייב להיות מספר חיובי');
 
   const resZero = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 0 } }, resZero);
@@ -292,6 +305,7 @@ test('patchOpportunity rejects changing priceUSD after publishing — the live P
   const res = makeRes();
   patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 29 } }, res);
   assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /לא ניתן לשנות מחיר אחרי פרסום/);
   assert.equal(db.opportunities.get(opp.id).priceUSD, 9);
 });
 
@@ -380,6 +394,7 @@ test('publishOpportunityRoute 404s for an id that does not exist', async () => {
   const res = makeRes();
   await publishOpportunityRoute({ params: { id: 'opp_missing' } }, res);
   assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error, 'לא נמצא');
 });
 
 test('publishOpportunityRoute rejects publishing an opportunity that is already published', async () => {
@@ -391,6 +406,7 @@ test('publishOpportunityRoute rejects publishing an opportunity that is already 
   const res = makeRes();
   await publishOpportunityRoute({ params: { id: opp.id } }, res);
   assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, 'כבר פורסם');
   assert.equal(res.body.duplicate, true);
 });
 
@@ -408,6 +424,7 @@ test('rejectOpportunity 404s for an id that does not exist', () => {
   const res = makeRes();
   rejectOpportunity({ params: { id: 'opp_missing' } }, res);
   assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error, 'לא נמצא');
 });
 
 test('rejectOpportunity marks a draft opportunity rejected', () => {
@@ -430,6 +447,7 @@ test('rejectOpportunity refuses to reject an already-published opportunity', () 
   const res = makeRes();
   rejectOpportunity({ params: { id: opp.id } }, res);
   assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, 'אי אפשר לדחות הזדמנות שכבר פורסמה');
   assert.equal(db.opportunities.get(opp.id).status, 'published');
 });
 
@@ -439,6 +457,7 @@ test('rejectOpportunity is idempotent — rejecting an already-rejected opportun
   const res = makeRes();
   rejectOpportunity({ params: { id: opp.id } }, res);
   assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, 'כבר נדחה');
   assert.equal(res.body.duplicate, true);
   assert.equal(db.actions_log.where((a) => a.type === 'reject_opportunity').length, 0);
 });
@@ -463,6 +482,7 @@ test('publishOpportunityRoute refuses to publish an opportunity the owner alread
   const res = makeRes();
   await publishOpportunityRoute({ params: { id: opp.id } }, res);
   assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error, 'ההזדמנות הזו נדחתה ולא ניתן לפרסם אותה');
   assert.equal(db.opportunities.get(opp.id).status, 'rejected');
 });
 
@@ -479,7 +499,7 @@ test('publishOpportunityRoute responds 503 and never calls Paddle when Paddle is
     assert.equal(res.statusCode, 503);
     assert.equal(db.opportunities.get(opp.id).status, 'draft');
     const logged = db.actions_log.where((a) => a.type === 'publish_product')[0];
-    assert.match(logged.result, /blocked: Paddle is not configured/);
+    assert.match(logged.result, /blocked: Paddle עדיין לא מוגדר/);
   } finally {
     restore();
   }
@@ -540,6 +560,7 @@ test('publishOpportunityRoute responds 502 and leaves the opportunity a draft wh
       const res = makeRes();
       await publishOpportunityRoute({ params: { id: opp.id } }, res);
       assert.equal(res.statusCode, 502);
+      assert.match(res.body.error, /הפרסום נכשל/);
       assert.equal(db.opportunities.get(opp.id).status, 'draft');
       assert.ok(!db.opportunities.get(opp.id).paddlePriceId);
     } finally {

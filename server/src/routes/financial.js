@@ -20,7 +20,7 @@ export async function addToWatchlist(req, res) {
   // would catch that, but it resets the whole app back to the dashboard,
   // not just that one row — this stops it at the door instead.
   if (!symbol || typeof symbol !== 'string' || !symbol.trim()) {
-    return res.status(400).json({ error: 'symbol is required and must be a non-empty string' });
+    return res.status(400).json({ error: 'סימבול הוא שדה חובה וחייב להיות מחרוזת לא ריקה' });
   }
   const normalizedSymbol = symbol.trim().toUpperCase();
 
@@ -30,7 +30,7 @@ export async function addToWatchlist(req, res) {
   // the same real symbol, each refreshed independently by "refresh all".
   const alreadyTracked = db.financial_watchlist.where((w) => w.symbol === normalizedSymbol).length > 0;
   if (alreadyTracked) {
-    return res.status(409).json({ error: `${normalizedSymbol} is already on the watchlist` });
+    return res.status(409).json({ error: `${normalizedSymbol} כבר נמצא ברשימת המעקב` });
   }
 
   let quote = null;
@@ -38,7 +38,7 @@ export async function addToWatchlist(req, res) {
     try {
       quote = await fetchQuote(normalizedSymbol);
     } catch (err) {
-      return res.status(502).json({ error: `could not fetch a quote: ${err.message}` });
+      return res.status(502).json({ error: `לא ניתן היה לקבל מחיר: ${err.message}` });
     }
   }
 
@@ -63,14 +63,14 @@ export async function addToWatchlist(req, res) {
 // no delete route either).
 export async function refreshWatchlistEntry(req, res) {
   const entry = db.financial_watchlist.get(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'not found' });
-  if (!isMarketDataConnected()) return res.status(503).json({ error: 'market data source is not connected' });
+  if (!entry) return res.status(404).json({ error: 'לא נמצא' });
+  if (!isMarketDataConnected()) return res.status(503).json({ error: 'מקור נתוני שוק לא מחובר' });
 
   let quote;
   try {
     quote = await fetchQuote(entry.symbol);
   } catch (err) {
-    return res.status(502).json({ error: `could not fetch a quote: ${err.message}` });
+    return res.status(502).json({ error: `לא ניתן היה לקבל מחיר: ${err.message}` });
   }
 
   const updated = db.financial_watchlist.update(entry.id, {
@@ -84,7 +84,7 @@ export async function refreshWatchlistEntry(req, res) {
 
 export function deleteWatchlistEntry(req, res) {
   const existed = db.financial_watchlist.delete(req.params.id);
-  if (!existed) return res.status(404).json({ error: 'not found' });
+  if (!existed) return res.status(404).json({ error: 'לא נמצא' });
   res.status(204).end();
 }
 
@@ -99,19 +99,19 @@ export function createPaperTrade(req, res) {
   // client sends trade.symbol.toUpperCase() with no trim either) would pass
   // straight through and get stored as a paper trade with a blank-looking
   // symbol in the list below.
-  if (!symbol || typeof symbol !== 'string' || !symbol.trim()) return res.status(400).json({ error: 'symbol is required' });
+  if (!symbol || typeof symbol !== 'string' || !symbol.trim()) return res.status(400).json({ error: 'סימבול הוא שדה חובה' });
   const normalizedSymbol = symbol.trim().toUpperCase();
   // simulateTradeResult silently treats anything other than 'long' as a
   // short, so a typo like "Long" or "buy" would otherwise produce a
   // confidently wrong simulated result instead of an error.
-  if (!VALID_SIDES.includes(side)) return res.status(400).json({ error: `side must be one of ${VALID_SIDES.join(', ')}` });
+  if (!VALID_SIDES.includes(side)) return res.status(400).json({ error: `הצד חייב להיות אחד מ: ${VALID_SIDES.join(', ')}` });
 
   const entry = Number(entryPrice);
   const exit = Number(exitPrice);
   const qty = Number(quantity);
-  if (!Number.isFinite(entry) || entry <= 0) return res.status(400).json({ error: 'entryPrice must be a positive number' });
-  if (!Number.isFinite(exit) || exit <= 0) return res.status(400).json({ error: 'exitPrice must be a positive number' });
-  if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'quantity must be a positive number' });
+  if (!Number.isFinite(entry) || entry <= 0) return res.status(400).json({ error: 'מחיר כניסה חייב להיות מספר חיובי' });
+  if (!Number.isFinite(exit) || exit <= 0) return res.status(400).json({ error: 'מחיר יציאה חייב להיות מספר חיובי' });
+  if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'כמות חייבת להיות מספר חיובי' });
 
   const result = simulateTradeResult({ side, entryPrice: entry, exitPrice: exit, quantity: qty });
   const trade = db.paper_trades.insert({
