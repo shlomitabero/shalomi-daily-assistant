@@ -16776,6 +16776,55 @@ test("EntityPanel's table cell renders a phone-like-named number field as raw di
 });
 
 /**
+ * Round 1716: in Hebrew (RTL) mode, a table cell inherits dir="rtl" from
+ * <html> with no per-cell bidi isolation -- the browser's Unicode Bidi
+ * Algorithm then reorders a hyphen/parenthesis-separated phone number's
+ * own groups relative to each other (confirmed live: a stored
+ * "(555) 987-6543" visually rendered as "987-6543 (555)"). Wrapping the
+ * value in <bdi dir="ltr"> forces it to keep its own internal LTR
+ * ordering regardless of the surrounding direction. Covers both branches
+ * that hit a phone-like-named field: the "number"-typed one (round 1657's
+ * own raw-digits fix, right above) and the "text"-typed one (the generic
+ * fallback, the common case since an AI-generated spec usually types
+ * "phone" as text) -- an ordinary non-phone text field must NOT get this
+ * wrapper at all, since it would be pointless (and visually wrong) for
+ * genuine RTL text like a Hebrew name.
+ */
+test("EntityPanel's table cell wraps a phone-like-named field's value in a bidi-isolating <bdi dir=\"ltr\">, for both text and number field types, but not an ordinary text field", async () => {
+  await withJsdom(async () => {
+    const contactEntity: Entity = {
+      name: "Contact",
+      label: "Contact",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "text", required: false },
+        { name: "mobile", label: "Mobile", type: "number", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana Levi", phone: "(555) 987-6543", mobile: 972501234567 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Contact") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const bdiElements = [...document.querySelectorAll("table tbody bdi[dir='ltr']")] as HTMLElement[];
+      const bdiTexts = bdiElements.map((el) => el.textContent);
+      assert.ok(bdiTexts.includes("(555) 987-6543"), "the text-typed phone field's value must be wrapped in <bdi dir=\"ltr\">");
+      assert.ok(bdiTexts.includes("972501234567"), "the number-typed phone field's value must also be wrapped in <bdi dir=\"ltr\">");
+      assert.equal(bdiElements.length, 2, "exactly the two phone-like fields must get the wrapper, not the ordinary Name field");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: grouping the table by an enum/boolean field (round
  * ~286-ish) and the numeric totals row (round 297) each shipped
  * independently and were never wired together -- grouping Orders by Status

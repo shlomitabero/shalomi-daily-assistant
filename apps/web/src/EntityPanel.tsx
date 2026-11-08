@@ -353,7 +353,17 @@ function Cell({
     // record's label, but this cell renders the field on its OWN record's
     // row in the main table/Kanban board/print output, a separate code
     // path recordDisplayLabel never touches.
-    if (isPhoneFieldName(field.name)) return <>{String(value)}</>;
+    // Round 1716: in RTL (Hebrew) mode this cell inherits dir="rtl" from
+    // <html> with no per-cell bidi isolation, so the browser's Unicode
+    // Bidi Algorithm reorders a hyphen/parenthesis-separated phone number's
+    // own groups relative to each other (e.g. stored "(555) 987-6543"
+    // visually renders as "987-6543 (555)") -- confirmed via a live
+    // screenshot, not visible to jsdom-based unit tests or to reading the
+    // source. <bdi dir="ltr"> forces this value's own internal ordering to
+    // stay LTR regardless of the surrounding RTL context, the same
+    // technique styles.css's own .shortcut-hint/.shortcuts-keys already use
+    // for an unrelated element, just never applied to a data field before.
+    if (isPhoneFieldName(field.name)) return <bdi dir="ltr">{String(value)}</bdi>;
     return <>{formatNumberValue(Number(value), lang)}</>;
   }
   if (field.type === "longtext") {
@@ -383,6 +393,17 @@ function Cell({
           </span>
         )}
       </a>
+    );
+  }
+  // Round 1716: the generic text fallback is what a phone-like field
+  // actually hits in the common case -- the AI spec generator usually
+  // types "phone" as `text`, not `number` -- so it needs the same bidi
+  // isolation as the number branch above, for the identical reason.
+  if (isPhoneFieldName(field.name)) {
+    return (
+      <bdi dir="ltr">
+        <Linkified text={String(value)} query={highlightQuery} />
+      </bdi>
     );
   }
   return <Linkified text={String(value)} query={highlightQuery} />;
