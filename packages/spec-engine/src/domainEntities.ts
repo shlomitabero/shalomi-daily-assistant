@@ -834,6 +834,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // in this file. A plural-only phrasing matched no Course-specific
       // keyword at all.
       "כיתות",
+      // Round 1727: this entity's own description reads "A course or
+      // class the business teaches," but had no English "class" keyword
+      // at all -- flagged but deliberately deferred by round 1708. Bare
+      // plural /\bclasses\b/ is safe (no common idiom pluralizes "class"
+      // the way "of course"/"golf course" do singular "course"), same
+      // plural-is-safe reasoning as "courses" above. Deliberately not
+      // adding a singular "class" keyword: it would collide with
+      // "world-class"/"first-class"/"middle class"/"weight class"/"asset
+      // class"/"class action", none of which have anything to do with a
+      // business's course offerings. "class schedule(s)" is added
+      // separately so the common singular phrasing ("a weekly class
+      // schedule") still matches without touching bare singular "class".
+      /\bclasses\b/, /\bclass schedules?\b/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",

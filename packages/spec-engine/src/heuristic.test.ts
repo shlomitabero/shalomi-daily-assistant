@@ -287,6 +287,46 @@ test("recognizes 'trainers'/'מאמנים' as Employee staff, in both the Englis
   assert.ok(he.entities.some((e) => e.name === "Employee"), "the Hebrew Fitness studio example must match the Employee entity");
 });
 
+test("recognizes 'classes'/'class schedule' as the Course entity, in both the English and Hebrew built-in 'Fitness studio' example descriptions", async () => {
+  // Round 1727: the Course entity's own description reads "A course or
+  // class the business teaches," but the keyword array had no English
+  // "class" term at all -- only the Hebrew "כיתה"/"כיתות" and the
+  // education-specific "curriculum"/"lesson(s)". Flagged but deliberately
+  // deferred by round 1708's own comment on this exact test's sentence;
+  // this closes that follow-up. The Hebrew half already passes today via
+  // the existing "שיעורים" keyword -- this is a baseline-confirm for it,
+  // not a new failure.
+  const provider = new HeuristicSpecProvider();
+  const en = await provider.generate(
+    "An app for managing memberships and classes at a fitness studio, with customers, trainers, and a weekly class schedule.",
+  );
+  assert.ok(en.entities.some((e) => e.name === "Course"), "the English Fitness studio example must match the Course entity");
+
+  const he = await provider.generate(
+    "אפליקציה לניהול מנויים ושיעורים בסטודיו כושר, עם לקוחות, מאמנים ולוח שיעורים שבועי.",
+  );
+  assert.ok(he.entities.some((e) => e.name === "Course"), "the Hebrew Fitness studio example must match the Course entity");
+});
+
+test("recognizes plain 'classes'/'class schedules' phrasing as the Course entity outside the built-in example, without matching bare singular 'class'", async () => {
+  // Round 1727: same gap as the Fitness studio example above, but checked
+  // against independent phrasings (dance studio, yoga studio) to confirm
+  // the fix isn't narrowly tied to the one built-in sentence. Also locks
+  // in the deliberate exclusion of bare singular "class", mirroring this
+  // same keyword array's own "course" (not "courses") exclusion reasoning:
+  // "world-class" is far more common in real app descriptions than any
+  // phrasing that would need a bare "class" match.
+  const provider = new HeuristicSpecProvider();
+  const dance = await provider.generate("An app to manage dance classes and schedules.");
+  assert.ok(dance.entities.some((e) => e.name === "Course"), "'dance classes' must match the Course entity");
+
+  const yoga = await provider.generate("A yoga studio offering group fitness classes and workshops.");
+  assert.ok(yoga.entities.some((e) => e.name === "Course"), "'fitness classes' must match the Course entity");
+
+  const worldClass = await provider.generate("a world-class customer service platform");
+  assert.ok(!worldClass.entities.some((e) => e.name === "Course"), "'world-class' must not spuriously match the Course entity");
+});
+
 test("recognizes 'opportunity'/'הזדמנויות' and 'לידים' as Deal-shaped sales pipeline terms, in both the English and Hebrew built-in 'Sales CRM' example descriptions", async () => {
   // Round 1722: the app's own home-screen built-in example
   // (apps/web/src/i18n/language.ts, home.examples.crm.text/[he]) reads
@@ -710,6 +750,12 @@ test("Order's keyword match does not spuriously trigger on the common idiom 'in 
     "An app for a yoga studio to manage class schedules, in order to help instructors plan their week.",
   );
   assert.ok(!yoga.entities.some((e) => e.name === "Order"), "a yoga studio's class-schedule app must not get a spurious Order entity from 'in order to'");
+  // Round 1727: this exact sentence already exposed the Course entity's
+  // missing "class"/"class schedule" keyword, but this test only ever
+  // checked for the absence of a spurious Order entity -- it never
+  // checked that a real Course entity actually got created, so that gap
+  // slipped through unnoticed right next to this very assertion.
+  assert.ok(yoga.entities.some((e) => e.name === "Course"), "a yoga studio's 'class schedules' description must match the Course entity");
 
   const compliance = await provider.generate("A tool to track employee certifications in order to stay compliant.");
   assert.ok(
