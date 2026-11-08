@@ -92,7 +92,18 @@ export function formatWhatsAppLog(
     const who = m.matchedLabel ?? (m.direction === "in" ? m.fromNumber : m.toNumber);
     const entitySuffix = m.matchedEntityName ? ` — ${matchedEntityLabel(m.matchedEntityName, entities)}` : "";
     const time = new Date(m.createdAt).toLocaleString(LOCALE[lang]);
-    const status = m.status === "failed" ? ` [${t("whatsapp.log.failed")}]` : "";
+    // Round 1702: mirrors WhatsAppPanel.tsx's own round-1634 delivered/read
+    // badges exactly -- this report previously special-cased only
+    // "failed", so a delivered or read outgoing message rendered
+    // identically to one that was merely sent with no delivery
+    // confirmation at all, even though the live panel right above it
+    // already distinguishes all three outcomes.
+    const status =
+      m.status === "failed"
+        ? ` [${t("whatsapp.log.failed")}]`
+        : m.status === "delivered" || m.status === "read"
+          ? ` [${m.status === "read" ? t("whatsapp.log.read") : t("whatsapp.log.delivered")}]`
+          : "";
     lines.push(`[${time}] ${direction} — ${who}${entitySuffix}${status}`);
     lines.push(m.body);
     lines.push("");

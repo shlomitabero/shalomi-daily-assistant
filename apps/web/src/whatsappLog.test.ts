@@ -59,6 +59,29 @@ test("formatWhatsAppLog marks a failed message so it's distinguishable in the ex
   assert.match(report, /This one failed/);
 });
 
+/**
+ * Round 1702: the live panel (WhatsAppPanel.tsx, round 1634) already
+ * distinguishes delivered/read/failed with three separate badges, but
+ * this report -- the one artifact a person actually keeps/shares -- only
+ * ever special-cased "failed", so a delivered or read message rendered
+ * byte-identical to one merely sent with no delivery confirmation at all.
+ */
+test("formatWhatsAppLog distinguishes delivered and read messages too, not just failed ones", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const messages = [
+    makeMessage({ id: "m1", direction: "out", status: "delivered", body: "This one was delivered" }),
+    makeMessage({ id: "m2", direction: "out", status: "read", body: "This one was read" }),
+    makeMessage({ id: "m3", direction: "out", status: "sent", body: "This one is merely sent" }),
+  ];
+  const report = formatWhatsAppLog(messages, [], "Flower Shop", "en", t);
+
+  assert.match(report, /\[Delivered\]/);
+  assert.match(report, /\[Read\]/);
+  const sentLine = report.split("\n").find((line) => line.includes("This one is merely sent"));
+  assert.ok(sentLine);
+  assert.doesNotMatch(sentLine!, /\[(Delivered|Read|Failed)\]/, "a plain 'sent' message must not get any delivery-status tag");
+});
+
 test("formatWhatsAppLog shows the empty-log message instead of an empty body when there are no messages", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   const report = formatWhatsAppLog([], [], "Flower Shop", "en", t);
