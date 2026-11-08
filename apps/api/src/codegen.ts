@@ -10307,7 +10307,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .file-cell-name { color: var(--accent-deep); text-decoration: underline; }
 .file-cell-thumbnail { max-width: 48px; max-height: 48px; border-radius: 4px; object-fit: cover; }
 .file-field-input { display: flex; flex-direction: column; gap: 4px; }
-.file-field-current { display: flex; align-items: center; gap: 8px; }
+.file-field-current { display: flex; align-items: center; flex-wrap: wrap; overflow-wrap: anywhere; gap: 8px; }
 .search-match { background: var(--accent-soft); color: var(--accent-deep); border-radius: 3px; padding: 0 1px; }
 .link-button:hover { opacity: 0.85; }
 .entity-search { max-width: 280px; margin-bottom: 14px; }

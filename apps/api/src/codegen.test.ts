@@ -29328,6 +29328,26 @@ test("the exported app's Global Search input can shrink below its default minimu
 });
 
 /**
+ * Round 1693: the exported app's `.file-field-current` -- the row pairing
+ * a file-type field's current filename with its "Remove" button -- is
+ * `display: flex` with no `flex-wrap`/`overflow-wrap` of its own, the
+ * same defect class as round 1376's `.entity-undo-toast` fix just above.
+ * The filename is the end user's own original uploaded filename,
+ * completely unbounded: one long unbroken token can force this row past
+ * its grid-column allotment and push the Remove button out of reach.
+ * Never ported from the live preview's own round-1693 fix.
+ */
+test("the exported app's file field current-filename row can wrap onto multiple lines instead of letting a long filename push the Remove button off-screen", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const fileFieldCurrent = stylesCss.match(/\.file-field-current \{[^}]*\}/)?.[0];
+  assert.ok(fileFieldCurrent, "expected a .file-field-current rule in the generated styles.css");
+  assert.match(fileFieldCurrent!, /flex-wrap:\s*wrap/, ".file-field-current must wrap so the Remove button can drop to its own line instead of being pushed off by an unbreakable filename");
+  assert.match(fileFieldCurrent!, /overflow-wrap:\s*anywhere/, ".file-field-current must allow a long unbreakable filename to wrap instead of overflowing the row");
+});
+
+/**
  * Round 670: round 615 ported the orderedFields fix (honoring the user's
  * drag-reordered column order) to Export CSV, Copy, and per-record Print
  * in the exported app, and round 621 ported it to the Columns menu -- but

@@ -2391,6 +2391,15 @@ button.sort-header:hover:not(:disabled) {
 .file-field-current {
   display: flex;
   align-items: center;
+  /* Round 1693: the filename and the Remove button are direct flex
+     children with no wrap guard -- an uploaded file's own original
+     filename is completely unbounded user input (unlike the sibling
+     .entity-undo-toast's fix at round 1376 for the structurally
+     identical "unbreakable text + button" shape), and a long one-token
+     filename forced this row wider than its ~140px grid-column
+     allotment, pushing the Remove button out of easy reach. */
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   gap: 8px;
 }
 

@@ -8086,6 +8086,29 @@ test("the delete-undo toast can wrap onto multiple lines instead of letting a lo
 });
 
 /**
+ * Round 1693: the same defect class as the delete-undo toast test just
+ * above (round 1376), found on a different surface. `.file-field-current`
+ * -- the row pairing a file-type field's current filename with its
+ * "Remove" button, in both the record add/edit form (EntityPanel.tsx) and
+ * WhatsAppPanel's test-send attachment picker, since both share this one
+ * class -- is `display: flex` with no `flex-wrap`/`overflow-wrap` of its
+ * own. The filename is the end user's own original uploaded filename,
+ * completely unbounded: one long unbroken token (no spaces/hyphens) can
+ * force this row wider than its grid-column allotment and squeeze or push
+ * the Remove button out of reach, the same way an unbroken record label
+ * could push the delete-undo toast's own Undo button off-screen before
+ * round 1376's fix.
+ */
+test("the file field's current-filename row can wrap onto multiple lines instead of letting a long filename push the Remove button off-screen", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const fileFieldCurrent = stylesCss.match(/\.file-field-current \{[\s\S]*?\}/)?.[0];
+  assert.ok(fileFieldCurrent, "expected a .file-field-current rule in styles.css");
+  assert.match(fileFieldCurrent!, /flex-wrap:\s*wrap/, ".file-field-current must wrap so the Remove button can drop to its own line instead of being pushed off by an unbreakable filename");
+  assert.match(fileFieldCurrent!, /overflow-wrap:\s*anywhere/, ".file-field-current must allow a long unbreakable filename to wrap instead of overflowing the row");
+});
+
+/**
  * CSV sibling of the print-list test above: stubs URL.createObjectURL the
  * same way BuildProgress.test.ts's own download test does (jsdom has no
  * real Blob-URL machinery) to read back the actual generated CSV content,
