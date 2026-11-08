@@ -859,6 +859,61 @@ test("the same start/end pair's second record, whose status is 'Active', is stil
 });
 
 /**
+ * Round 1738's finding: rounds 1713/1728 only fixed the "upcoming status ->
+ * future date" idea for exactly ONE date field, or exactly TWO where
+ * exactly one is a recognized end-of-range field -- round 1728's own
+ * comment said so outright ("scoped narrowly enough to never touch ...
+ * any entity shape with 0 or 2+ end-like date fields"). An entity with
+ * THREE date fields (e.g. an AI-generated Workshop with a
+ * registrationDeadline/startDate/endDate) still got every date seeded
+ * into the past even when its status says "Scheduled".
+ */
+test("an entity with THREE date fields paired with an upcoming status (not just one or a start/end pair) is seeded with every date in the future", () => {
+  const workshop: Entity = {
+    name: "Workshop",
+    fields: [
+      { name: "registrationDeadline", type: "date", required: false },
+      { name: "startDate", type: "date", required: false },
+      { name: "endDate", type: "date", required: false },
+      { name: "status", type: "enum", required: true, enumValues: ["Scheduled", "InProgress", "Completed"] },
+    ],
+  };
+  const [record] = generateSeedRecords(workshop, 1);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(record.status, "Scheduled");
+  assert.ok(
+    (record.registrationDeadline as string) > today,
+    `a 'Scheduled' workshop's registrationDeadline ("${record.registrationDeadline}") must be in the future, not today or earlier ("${today}")`,
+  );
+  assert.ok(
+    (record.startDate as string) > today,
+    `a 'Scheduled' workshop's startDate ("${record.startDate}") must be in the future, not today or earlier ("${today}")`,
+  );
+  assert.ok(
+    (record.endDate as string) > today,
+    `a 'Scheduled' workshop's endDate ("${record.endDate}") must be in the future, not today or earlier ("${today}")`,
+  );
+});
+
+test("the same three-date-field shape's second record, whose status is 'Completed', is still seeded entirely in the past, unchanged", () => {
+  const workshop: Entity = {
+    name: "Workshop",
+    fields: [
+      { name: "registrationDeadline", type: "date", required: false },
+      { name: "startDate", type: "date", required: false },
+      { name: "endDate", type: "date", required: false },
+      { name: "status", type: "enum", required: true, enumValues: ["Scheduled", "InProgress", "Completed"] },
+    ],
+  };
+  const [, , record] = generateSeedRecords(workshop, 3);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(record.status, "Completed");
+  assert.ok((record.registrationDeadline as string) <= today, `a 'Completed' workshop's registrationDeadline ("${record.registrationDeadline}") must still be today or earlier`);
+  assert.ok((record.startDate as string) <= today, `a 'Completed' workshop's startDate ("${record.startDate}") must still be today or earlier`);
+  assert.ok((record.endDate as string) <= today, `a 'Completed' workshop's endDate ("${record.endDate}") must still be today or earlier`);
+});
+
+/**
  * Round 1709's finding: the same collapse the "date" case's dateFieldOrdinal
  * fix above already covers was never ported to its sibling "number" case.
  * The Appointments & Clients template's own Service entity (templates.ts),

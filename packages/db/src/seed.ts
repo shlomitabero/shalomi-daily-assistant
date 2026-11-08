@@ -282,36 +282,29 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
         .findIndex((f) => f.name === field.name);
       const baseOffset = (index + 1) * 3;
       // Round 1713 handled an entity with exactly ONE date field. Round
-      // 1728 extends the same "upcoming status -> future date" idea to
-      // the one other shape this platform's own domain library actually
-      // has: exactly TWO date fields where exactly one is a recognized
-      // end-of-range field (Rental's startDate/endDate) -- round 1713's
-      // own comment explicitly deferred this pair case, since naively
-      // flipping both fields' existing past-oriented offsets into the
-      // future would put the end-like field BEFORE the start-like one
-      // (their existing offsets are deliberately close together so the
-      // end-like field lands only 3 days after start in the past; negating
-      // both keeps that same 3-day gap but reverses its direction). The
-      // isStartEndPair branch below uses a future-oriented offset formula
-      // instead, scoped narrowly enough to never touch isOnlyDateField's
-      // own case (dateFieldOrdinal is always 0 there, so both formulas
-      // agree) or any entity shape with 0 or 2+ end-like date fields.
-      const dateFieldsCount = entity.fields.filter((f) => f.type === "date").length;
-      const endLikeFieldsCount = entity.fields.filter(
-        (f) => f.type === "date" && END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()),
-      ).length;
-      const isOnlyDateField = dateFieldsCount === 1;
-      const isStartEndPair = dateFieldsCount === 2 && endLikeFieldsCount === 1;
-      const hasUpcoming = (isOnlyDateField || isStartEndPair) && hasUpcomingStatusAt(entity, index);
-      const intoFuture = isOnlyDateField ? hasUpcoming && !isEndLike : hasUpcoming;
-      const dayOffset =
-        intoFuture && isStartEndPair
-          ? isEndLike
-            ? baseOffset + dateFieldOrdinal + 3
-            : baseOffset + dateFieldOrdinal
-          : isEndLike
-            ? baseOffset - 3 + endLikeOrdinal
-            : baseOffset + dateFieldOrdinal;
+      // 1728 extended the same "upcoming status -> future date" idea to
+      // exactly TWO date fields where exactly one is a recognized
+      // end-of-range field (Rental's startDate/endDate), but explicitly
+      // scoped itself to never touch any OTHER shape (3+ date fields, or
+      // 2 fields with 0 or 2 end-like ones) -- round 1728's own comment
+      // said so outright. That left the exact same self-contradiction
+      // (a "Scheduled"/"Planned"/"Reserved" record whose date fields are
+      // all still in the past) reachable for any such shape, which an
+      // AI-generated spec can easily produce (e.g. a Workshop entity with
+      // registrationDeadline/startDate/endDate) even though no entity in
+      // this platform's own curated template library currently has it.
+      // Round 1738 generalizes: the future-oriented offset below reduces
+      // to byte-identical values for both already-fixed shapes (verified
+      // against rounds 1713's and 1728's own tests), so dropping the
+      // cardinality gate entirely is safe and now covers every shape.
+      const intoFuture = hasUpcomingStatusAt(entity, index);
+      const dayOffset = intoFuture
+        ? isEndLike
+          ? baseOffset + dateFieldOrdinal + 3
+          : baseOffset + dateFieldOrdinal
+        : isEndLike
+          ? baseOffset - 3 + endLikeOrdinal
+          : baseOffset + dateFieldOrdinal;
       const d = new Date(Date.now() + (intoFuture ? dayOffset : -dayOffset) * 86_400_000);
       return d.toISOString().slice(0, 10);
     }
