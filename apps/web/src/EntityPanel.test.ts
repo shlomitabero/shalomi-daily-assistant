@@ -8164,6 +8164,33 @@ test("the delete-undo toast can wrap onto multiple lines instead of letting a lo
 });
 
 /**
+ * Round 1718: `.app`'s base `max-width: 880px` wraps the entire app,
+ * including the entity table/board view. `.table-scroll` has its own
+ * `overflow-x: auto`, so on a wide desktop monitor (e.g. 1280px+) the table
+ * scrolls horizontally inside that 880px box while hundreds of px of the
+ * browser window sit empty beside it -- confirmed live against a running
+ * build, not just inferred from reading code. jsdom has no layout engine
+ * and can't measure real viewport-relative widths, so this reads
+ * styles.css's own source directly, the same discipline this routine
+ * already uses for its other CSS-only fixes (see this file's print-sheet
+ * and undo-toast tests above). The fix is purely additive: a new, wider
+ * breakpoint that raises the cap only on viewports that have room for it,
+ * leaving the base 880px (and the 640px padding breakpoint) untouched for
+ * everyone else.
+ */
+test("a wide-viewport breakpoint raises .app's max-width so the entity table isn't squeezed into an 880px box on desktop monitors with room to spare", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const baseApp = stylesCss.match(/\.app \{[\s\S]*?\}/)?.[0];
+  assert.ok(baseApp, "expected a base .app rule in styles.css");
+  assert.match(baseApp!, /max-width:\s*880px/, "the base .app max-width must stay 880px for narrower viewports -- this fix must be additive, not a replacement");
+
+  const wideBreakpoint = stylesCss.match(/@media \(min-width: 1300px\) \{\s*\.app \{[\s\S]*?\}\s*\}/)?.[0];
+  assert.ok(wideBreakpoint, "expected a @media (min-width: 1300px) breakpoint widening .app in styles.css");
+  assert.match(wideBreakpoint!, /max-width:\s*1200px/, "the wide-viewport breakpoint must raise .app's max-width above 880px");
+});
+
+/**
  * Round 1693: the same defect class as the delete-undo toast test just
  * above (round 1376), found on a different surface. `.file-field-current`
  * -- the row pairing a file-type field's current filename with its

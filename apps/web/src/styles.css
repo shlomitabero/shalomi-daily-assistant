@@ -61,6 +61,18 @@ body {
   }
 }
 
+/* Round 1718: the 880px cap above keeps prose-heavy views (forms, docs)
+   readable, but it also squeezes the entity table/board view, whose
+   .table-scroll wrapper (see below) then scrolls horizontally even when
+   hundreds of px of the browser window sit empty beside it. Raise the cap
+   only on genuinely wide viewports, purely additive -- narrower screens are
+   unaffected. */
+@media (min-width: 1300px) {
+  .app {
+    max-width: 1200px;
+  }
+}
+
 .topbar {
   display: flex;
   flex-direction: row;
