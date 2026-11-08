@@ -4294,11 +4294,35 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         }
         record[field.name] = raw;
       } else if (field.type === "number") {
-        if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        // Round 1739: mirrors the live preview's own round-1739 fix
+        // (entityFormatting.ts) -- the same CSV_NUMBER_FORMATTING/
+        // CSV_PARENTHESIZED_NEGATIVE leniency buildImportRecords above
+        // already has for CSV cells, just missing here for a hand-edited
+        // JSON file. Declared locally since that function's own copies
+        // are out of scope (same reason BOOLEAN_TRUE_VALUES/
+        // BOOLEAN_FALSE_VALUES above are redeclared locally too).
+        // Double-backslash escapes for the same reason as the CSV
+        // versions above -- this whole function body is itself emitted
+        // from inside generateExportFiles' own outer template literal.
+        // numberIsCoercible mirrors round 1293's idIsCoercible guard
+        // elsewhere in this function, so a boolean/array/object value
+        // (where a bare Number(raw) would otherwise silently coerce,
+        // e.g. Number(true) === 1) is still rejected outright.
+        const CSV_NUMBER_FORMATTING = /[,$€£₪\\s]/g;
+        const CSV_PARENTHESIZED_NEGATIVE = /^\\((.*)\\)$/;
+        const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
+        let n = numberIsCoercible ? Number(raw) : NaN;
+        if (!Number.isFinite(n) && typeof raw === "string") {
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
+          const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
+          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
+        }
+        if (!Number.isFinite(n)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
           break;
         }
-        record[field.name] = raw;
+        record[field.name] = n;
       } else if (field.type === "enum") {
         if (typeof raw !== "string") {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;

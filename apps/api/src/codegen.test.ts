@@ -14007,6 +14007,99 @@ test("the exported EntityView's own generated buildImportRecordsFromJson still r
 });
 
 /**
+ * Round 1739: ports the live preview's own round-1739 fix
+ * (entityFormatting.ts) to the exported app's generated
+ * buildImportRecordsFromJson -- the sibling boolean (round 1724) and
+ * enum (round 1698 live / below) branches already got "hand-edited JSON
+ * file" leniency here, but the number branch never did, despite this
+ * function's own doc comment promising to round-trip "a hand-edited
+ * copy of" a recordsToJson export and every number cell displaying
+ * locale-formatted on screen.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson still rejects a number field's value that isn't a real number or a recognized numeric string, instead of silently coercing it", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: "abc" }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a number/);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson still accepts a genuine real number for a number field, the pre-existing round-trip path, unchanged by the new string leniency", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: 120 }, { amount: -3.5 }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 120 }, { amount: -3.5 }]);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson accepts a hand-typed bare numeral string for a number field, mirroring the sibling boolean/enum leniency", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: "120" }, { amount: "-3.5" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 120 }, { amount: -3.5 }]);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson accepts a hand-typed comma/currency-formatted numeral string for a number field, matching the same CSV leniency CSV import already has", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: "$1,234.56" }, { amount: "(42)" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 1234.56 }, { amount: -42 }]);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson still rejects a boolean/array/object value for a number field, instead of silently coercing it the way a bare Number(raw) would (e.g. Number(true) === 1)", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: true }, { amount: [5] }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /isn't a number/);
+  assert.match(result.errors[1], /isn't a number/);
+});
+
+/**
  * Round 1316: an empty string fell through to the catch-all text branch,
  * which only checks `typeof raw !== "string"` -- true for "" too -- so a
  * required text field with raw === "" was accepted with zero validation

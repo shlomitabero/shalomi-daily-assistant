@@ -3533,13 +3533,55 @@ test("buildImportRecordsFromJson reports a row error when a row isn't a JSON obj
   assert.match(result.errors[0], /Row 1/);
 });
 
-test("buildImportRecordsFromJson rejects a number field's value when it isn't actually a JSON number, instead of silently coercing it", () => {
+test("buildImportRecordsFromJson still rejects a number field's value that isn't a real number or a recognized numeric string, instead of silently coercing it", () => {
   const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
-  const rows = [{ amount: "120" }];
+  const rows = [{ amount: "abc" }];
   const result = buildImportRecordsFromJson(fields, rows);
   assert.deepEqual(result.records, []);
   assert.equal(result.errors.length, 1);
   assert.match(result.errors[0], /isn't a number/);
+});
+
+test("buildImportRecordsFromJson still accepts a genuine real number for a number field, the pre-existing round-trip path, unchanged by the new string leniency", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: 120 }, { amount: -3.5 }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 120 }, { amount: -3.5 }]);
+});
+
+/**
+ * Round 1739's finding: this function's own doc comment promises to
+ * round-trip "a hand-edited copy of" a recordsToJson export, and a
+ * person hand-editing a number field's value naturally types a bare
+ * numeral string, or a comma/currency-formatted one the way the app
+ * itself displays it -- the sibling boolean (1715) and enum (1698)
+ * branches already got this leniency, but this one never did.
+ */
+test("buildImportRecordsFromJson accepts a hand-typed bare numeral string for a number field, mirroring the sibling boolean/enum leniency", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: "120" }, { amount: "-3.5" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 120 }, { amount: -3.5 }]);
+});
+
+test("buildImportRecordsFromJson accepts a hand-typed comma/currency-formatted numeral string for a number field, matching the same CSV_NUMBER_FORMATTING/CSV_PARENTHESIZED_NEGATIVE leniency CSV import already has", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: "$1,234.56" }, { amount: "(42)" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 1234.56 }, { amount: -42 }]);
+});
+
+test("buildImportRecordsFromJson still rejects a boolean/array/object value for a number field, instead of silently coercing it the way a bare Number(raw) would (e.g. Number(true) === 1)", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: true }, { amount: [5] }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /isn't a number/);
+  assert.match(result.errors[1], /isn't a number/);
 });
 
 /**

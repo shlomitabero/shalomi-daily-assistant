@@ -2571,11 +2571,36 @@ export function buildImportRecordsFromJson(
         }
         record[field.name] = raw;
       } else if (field.type === "number") {
-        if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        // Round 1739: mirrors the sibling boolean (round 1715) and enum
+        // (round 1698) branches' own leniency, for the same reason -- a
+        // genuine recordsToJson export always emits a real number, but
+        // this function's own doc comment also promises to round-trip "a
+        // hand-edited copy of" one, and every number cell displays
+        // locale-formatted on screen (table cells, CSV export, print
+        // sheets), so a person hand-editing the file can easily type a
+        // bare numeral string (e.g. "120") instead of the bare JSON
+        // number, or a comma/currency-formatted one the way the app
+        // itself displays it. Reuses the same CSV_NUMBER_FORMATTING/
+        // CSV_PARENTHESIZED_NEGATIVE regexes buildImportRecords' own
+        // number branch (above) already relies on for the identical CSV
+        // case. Guards with the same idIsCoercible-style typeof check
+        // round 1293 established elsewhere in this function, so a
+        // boolean/array/object value (where a bare Number(raw) would
+        // otherwise silently coerce, e.g. Number(true) === 1) is still
+        // rejected outright rather than silently accepted.
+        const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
+        let n = numberIsCoercible ? Number(raw) : NaN;
+        if (!Number.isFinite(n) && typeof raw === "string") {
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
+          const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
+          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
+        }
+        if (!Number.isFinite(n)) {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;
           break;
         }
-        record[field.name] = raw;
+        record[field.name] = n;
       } else if (field.type === "enum") {
         if (typeof raw !== "string") {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid option for field "${field.label ?? field.name}".`;
