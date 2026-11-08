@@ -244,7 +244,10 @@ test("the Vendor, Expense, and Review entities each get believable seed values, 
   // back to the generic person-name pool every other unrecognized "name"
   // field gets.
   assert.notEqual(vendorRecord.name, "Dana Levi");
-  assert.equal(vendorRecord.contactPerson, "Dana Levi");
+  // Round 1742: contactPerson now gets its own pool, disjoint from
+  // Customer's generic PERSON_NAMES_HE/EN -- "Dana Levi" was only ever
+  // this field's value because Vendor had no pool of its own before.
+  assert.equal(vendorRecord.contactPerson, "Efrat Goldstein");
 
   const [expenseRecord] = generateSeedRecords(expense, 1);
   assert.doesNotMatch(expenseRecord.description as string, /Expense description/);
@@ -571,6 +574,53 @@ test("Contact's 'name', 'email', and 'phone' seed values are their own pool, not
     assert.ok(!customerNames.has(record.name as string), `Contact's name "${record.name}" must not be one of Customer's own sample names`);
     assert.ok(!customerEmails.has(record.email as string), `Contact's email "${record.email}" must not be one of Customer's own sample emails`);
     assert.ok(!customerPhones.has(record.phone as string), `Contact's phone "${record.phone}" must not be one of Customer's own sample phones`);
+  }
+});
+
+/**
+ * Round 1742's finding: Vendor (domainEntities.ts) and Supplier
+ * (templates.ts's Inventory & Products template) already have their own
+ * "name" pool (rounds 1107/1244), but their contactPerson/email/phone
+ * fields -- a person at that vendor/supplier's own company -- still fell
+ * through to the exact same generic PERSON_NAMES_HE/EN/EMAIL_LOCAL_PARTS/
+ * PHONES_HE/EN pools Customer uses. A spec combining Customer with Vendor
+ * or Supplier (an ordinary reachable shape, e.g. "track customers and the
+ * vendors I buy from") seeded the vendor's own contact person as the
+ * literal same name/email/phone as an unrelated customer.
+ */
+test("Vendor's and Supplier's 'contactPerson', 'email', and 'phone' seed values are their own pool, not Customer's exact same values", () => {
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+  const customerRecords = generateSeedRecords(customerPerson, 4);
+  const customerNames = new Set(customerRecords.map((r) => r.name as string));
+  const customerEmails = new Set(customerRecords.map((r) => r.email as string));
+  const customerPhones = new Set(customerRecords.map((r) => r.phone as string));
+
+  for (const entityName of ["Vendor", "Supplier"]) {
+    const entity: Entity = {
+      name: entityName,
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "contactPerson", type: "text", required: false },
+        { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+      ],
+    };
+    const records = generateSeedRecords(entity, 4);
+    for (const record of records) {
+      assert.ok(
+        !customerNames.has(record.contactPerson as string),
+        `${entityName}'s contactPerson "${record.contactPerson}" must not be one of Customer's own sample names`,
+      );
+      assert.ok(!customerEmails.has(record.email as string), `${entityName}'s email "${record.email}" must not be one of Customer's own sample emails`);
+      assert.ok(!customerPhones.has(record.phone as string), `${entityName}'s phone "${record.phone}" must not be one of Customer's own sample phones`);
+    }
   }
 });
 

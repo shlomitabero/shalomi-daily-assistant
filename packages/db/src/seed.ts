@@ -100,6 +100,21 @@ const CONTACT_NAMES_EN = ["Elinor Weiss", "Guy Sosson", "Sivan Amit", "Barak Har
 const CONTACT_EMAIL_LOCAL_PARTS = ["elinor.weiss", "guy.sosson", "sivan.amit", "barak.harel"];
 const CONTACT_PHONES_HE = ["054-888-1133", "058-999-2244", "050-111-3355", "052-222-4466"];
 const CONTACT_PHONES_EN = ["(555) 888-1133", "(555) 999-2244", "(555) 111-3355", "(555) 222-4466"];
+// Round 1742: Vendor (domainEntities.ts) and Supplier (templates.ts's
+// Inventory & Products template) both have the same "name" field pool gap
+// rounds 1107/1244 already fixed (VENDOR_NAMES_HE/EN, further down this
+// file) -- but their OWN contactPerson/email/phone fields, a person at the
+// vendor/supplier's company, never got the same treatment and fell
+// through to the exact same generic PERSON_NAMES_HE/EN/EMAIL_LOCAL_PARTS/
+// PHONES_HE/EN pools Customer uses. A spec combining Customer with Vendor
+// or Supplier (an ordinary, reachable shape -- "track customers and the
+// vendors I buy from") seeded the vendor's own contact person as the
+// literal same name/email/phone as an unrelated customer.
+const VENDOR_CONTACT_NAMES_HE = ["אפרת גולדשטיין", "נדב אבירם", "שירה בן-חיים", "איתן פרידמן"];
+const VENDOR_CONTACT_NAMES_EN = ["Efrat Goldstein", "Nadav Aviram", "Shira Ben-Haim", "Eitan Friedman"];
+const VENDOR_EMAIL_LOCAL_PARTS = ["efrat.goldstein", "nadav.aviram", "shira.benhaim", "eitan.friedman"];
+const VENDOR_PHONES_HE = ["053-333-9988", "057-444-8877", "050-555-7766", "052-666-6655"];
+const VENDOR_PHONES_EN = ["(555) 333-9988", "(555) 444-8877", "(555) 555-7766", "(555) 666-6655"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -368,6 +383,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Volunteer") return `${pick(VOLUNTEER_EMAIL_LOCAL_PARTS, index)}@example.com`;
       if (entityName === "JobApplicant") return `${pick(JOB_APPLICANT_EMAIL_LOCAL_PARTS, index)}@example.com`;
       if (entityName === "Contact") return `${pick(CONTACT_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Vendor" || entityName === "Supplier") return `${pick(VENDOR_EMAIL_LOCAL_PARTS, index)}@example.com`;
       return `${pick(EMAIL_LOCAL_PARTS, index)}@example.com`;
     case "phone":
       if (entityName === "Courier") return pick(isHebrew ? COURIER_PHONES_HE : COURIER_PHONES_EN, index);
@@ -378,6 +394,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_PHONES_HE : VOLUNTEER_PHONES_EN, index);
       if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_PHONES_HE : JOB_APPLICANT_PHONES_EN, index);
       if (entityName === "Contact") return pick(isHebrew ? CONTACT_PHONES_HE : CONTACT_PHONES_EN, index);
+      if (entityName === "Vendor" || entityName === "Supplier") return pick(isHebrew ? VENDOR_PHONES_HE : VENDOR_PHONES_EN, index);
       return pick(isHebrew ? PHONES_HE : PHONES_EN, index);
     case "source":
       return pick(isHebrew ? SOURCES_HE : SOURCES_EN, index);
@@ -427,8 +444,16 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "renterName":
     case "donorName":
     case "claimant":
-    case "contactPerson":
     case "reviewerName":
+      return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
+    case "contactPerson":
+      // Round 1742: Vendor (domainEntities.ts) and Supplier (templates.ts)
+      // both have their own "name" field pool already (VENDOR_NAMES_HE/EN,
+      // rounds 1107/1244), but this field -- the person AT that vendor's
+      // own company -- still fell through to the same generic
+      // PERSON_NAMES_HE/EN pool Customer uses, same gap as this field's
+      // sibling email/phone cases above.
+      if (entityName === "Vendor" || entityName === "Supplier") return pick(isHebrew ? VENDOR_CONTACT_NAMES_HE : VENDOR_CONTACT_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "service":
     case "itemName":
