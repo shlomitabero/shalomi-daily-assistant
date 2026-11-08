@@ -25,6 +25,12 @@ test('sets Referrer-Policy to no-referrer', () => {
   assert.equal(res.headers['Referrer-Policy'], 'no-referrer');
 });
 
+test('sets Strict-Transport-Security to force HTTPS for a year', () => {
+  const res = makeRes();
+  securityHeaders({}, res, () => {});
+  assert.equal(res.headers['Strict-Transport-Security'], 'max-age=31536000');
+});
+
 test('always calls next() so the request continues to the real route', () => {
   const res = makeRes();
   let nextCalled = false;
