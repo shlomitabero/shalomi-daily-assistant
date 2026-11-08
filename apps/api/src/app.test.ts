@@ -6940,6 +6940,139 @@ test("re-inviting an existing collaborator is a no-op that sends no notification
   );
 });
 
+/**
+ * Round 1719: the invite route's own notification email (tested just above)
+ * only ever fires once, gated on isNewGrant -- re-submitting the same
+ * invite is a silent no-op with no second email (the "re-inviting an
+ * existing collaborator" test just above). An invitee who never actually
+ * received that first email had no way to get it resent until this new
+ * route. Confirms it re-sends the exact same template, naming the project
+ * and the collaborator's CURRENT role, without requiring (or changing)
+ * anything about the existing grant.
+ */
+test("the owner can resend a collaborator's invite notification, naming the project and their current role", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-collab-resend-${Date.now()}@example.com`);
+      const invitedEmail = `collab-resend-${Date.now()}@example.com`;
+      await signup(baseUrl, invitedEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string; name: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: invitedEmail, role: "viewer", lang: "en" }),
+      });
+      const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await collabListRes.json()) as { collaborators: { userId: string }[] };
+      const collabUserId = collaborators[0].userId;
+      emailSender.sentTo.length = 0; // only the resend below matters here
+
+      const resendRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/resend-invite`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ lang: "en" }),
+      });
+      assert.equal(resendRes.status, 204);
+      assert.equal(emailSender.sentTo.length, 1, "exactly one resend notification must be sent");
+      assert.equal(emailSender.sentTo[0].to, invitedEmail);
+      assert.match(emailSender.sentTo[0].text, new RegExp(project.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the body must name the real project");
+      assert.match(emailSender.sentTo[0].text, /view-only/, "the body must name the collaborator's CURRENT role");
+    },
+    { emailSender },
+  );
+});
+
+test("resending an invite fails with 503 when no email provider is configured, instead of silently succeeding with nothing actually sent", async () => {
+  const emailSender = createFakeEmailSender({ configured: false });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `owner-collab-resend-unconfigured-${Date.now()}@example.com`);
+      const invitedEmail = `collab-resend-unconfigured-${Date.now()}@example.com`;
+      await signup(baseUrl, invitedEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: invitedEmail }),
+      });
+      const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await collabListRes.json()) as { collaborators: { userId: string }[] };
+
+      const resendRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collaborators[0].userId}/resend-invite`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({}),
+      });
+      assert.equal(resendRes.status, 503);
+      assert.equal(((await resendRes.json()) as { code?: string }).code, "COLLABORATOR_EMAIL_NOT_CONFIGURED");
+    },
+    { emailSender },
+  );
+});
+
+test("resending an invite to a user who isn't actually a collaborator on this project 404s, instead of sending a notification to them anyway", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab-resend-notfound@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const resendRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/not-a-real-user-id/resend-invite`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({}),
+    });
+    assert.equal(resendRes.status, 404);
+    assert.equal(((await resendRes.json()) as { code?: string }).code, "COLLABORATOR_NOT_FOUND");
+  });
+});
+
+test("a collaborator (not the owner) cannot resend another collaborator's invite", async () => {
+  await withServer(async (baseUrl) => {
+    const ownerToken = await signup(baseUrl, "owner-collab-resend-notowner@example.com");
+    const collabToken = await signup(baseUrl, "collab-resend-notowner@example.com");
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "collab-resend-notowner@example.com" }),
+    });
+    const collabListRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await collabListRes.json()) as { collaborators: { userId: string }[] };
+
+    const resendAsCollab = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collaborators[0].userId}/resend-invite`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+      body: JSON.stringify({}),
+    });
+    assert.equal(resendAsCollab.status, 404, "managing invites stays owner-only -- same existence-hiding 404 as inviting/removing");
+  });
+});
+
 test("the owner can remove a collaborator, which revokes their access again", async () => {
   await withServer(async (baseUrl) => {
     const ownerToken = await signup(baseUrl, "owner-collab2@example.com");

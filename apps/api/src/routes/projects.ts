@@ -526,6 +526,13 @@ const UpdateCollaboratorRoleSchema = z.object({
   lang: z.enum(["he", "en"]).optional(),
 });
 
+// Round 1719: same optional client-language hint every sibling collaborator-
+// mutation schema in this file already carries, for the resend route's own
+// notification email just below.
+const ResendInviteSchema = z.object({
+  lang: z.enum(["he", "en"]).optional(),
+});
+
 const TransferOwnershipSchema = z.object({
   userId: z.string().min(1, "userId is required"),
   // Round 1255: same optional client-language hint UpdateCollaboratorRoleSchema
@@ -2813,6 +2820,69 @@ export function createProjectsRouter(
         return { status: 200, body: { collaborators: listCollaborators(db, project.id), owner: getOwnerInfo(db, project) } };
       });
       res.status(status).json(body);
+    }),
+  );
+
+  /**
+   * Round 1719: the invite route's own notification email (just above) only
+   * ever fires once, gated on isNewGrant -- addCollaborator is deliberately
+   * idempotent (its own doc comment, packages/db/src/collaborators.ts), so
+   * re-submitting the same invite is a silent no-op with no second email.
+   * An invitee who never actually received that first email (the send
+   * above is best-effort and swallows its own failures; RESEND_API_KEY may
+   * not have been configured yet at invite time) had no way to get it
+   * resent -- the only existing workaround, removing then re-inviting
+   * them, fires its own "you were removed" email first (the DELETE route
+   * below), so even that sends a confusing extra message just to resend
+   * one notification.
+   *
+   * Deliberately does NOT touch collaborator_access_changes (no access
+   * actually changed here) or addedAt/role (unlike the role-change route
+   * just above, nothing here is a real mutation to log) -- this route's
+   * only job is re-sending the exact same template the invite route above
+   * already sends, for the role the collaborator currently holds. Mirrors
+   * /auth/resend-verification's own shape (routes/auth.ts): a 503
+   * *_EMAIL_NOT_CONFIGURED when there's no provider to send through at
+   * all, and a real send failure surfaces as an explicit error instead of
+   * being swallowed -- unlike every other best-effort notification in this
+   * file, this route's entire purpose IS the email, so silently returning
+   * success when nothing was actually sent would be worse than an error.
+   */
+  router.post(
+    "/projects/:id/collaborators/:userId/resend-invite",
+    inviteCollaboratorRateLimiter,
+    asyncRoute(async (req, res) => {
+      const project = requireProjectOwner(db, req.params.id, req.userId!);
+      const parsed = ResendInviteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+      }
+      const role = getCollaboratorRole(db, project.id, req.params.userId);
+      if (role === null) {
+        throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
+      }
+      if (!emailSender.configured) {
+        throw new HttpError(
+          503,
+          "Collaborator invite emails aren't available on this deployment yet -- no email provider is configured",
+          "COLLABORATOR_EMAIL_NOT_CONFIGURED",
+        );
+      }
+      const target = findUserById(db, req.params.userId);
+      if (!target) {
+        throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
+      }
+      const isHebrew = parsed.data.lang !== "en";
+      const subject = isHebrew ? `הוזמנת לפרויקט "${project.name}" ב-Forge AI` : `You were invited to "${project.name}" on Forge AI`;
+      const body = isHebrew
+        ? `הוזמנת לשתף פעולה בפרויקט "${project.name}" ב-Forge AI, עם הרשאת ${role === "viewer" ? "צפייה בלבד" : "עריכה"}.\n\nהיכנסו לחשבונכם כדי לראות אותו.`
+        : `You were invited to collaborate on "${project.name}" on Forge AI, with ${role === "viewer" ? "view-only" : "editor"} access.\n\nSign in to your account to see it.`;
+      try {
+        await emailSender.send(target.email, subject, body);
+      } catch (err) {
+        throw new HttpError(502, `Failed to resend the invite email: ${(err as Error).message}`, "COLLABORATOR_EMAIL_SEND_FAILED");
+      }
+      res.status(204).end();
     }),
   );
 

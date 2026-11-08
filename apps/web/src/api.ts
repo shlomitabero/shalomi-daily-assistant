@@ -1526,6 +1526,24 @@ export function updateCollaboratorRole(
 }
 
 /**
+ * Round 1719: re-sends the exact same invite notification email the invite
+ * route itself already sends, for a collaborator who already has access --
+ * addCollaborator's own idempotency means re-submitting the invite form
+ * never sends a second email, and the only prior workaround (remove, then
+ * re-invite) fired its own confusing "you were removed" email first. `lang`
+ * mirrors every sibling collaborator-mutation call's own convention. No
+ * X-Idempotency-Key: unlike those siblings, this route makes no database
+ * write to protect against a retry -- at worst a double-fire just resends
+ * the same email a second time.
+ */
+export function resendCollaboratorInvite(projectId: string, userId: string, lang?: "he" | "en"): Promise<void> {
+  return request(`/projects/${projectId}/collaborators/${userId}/resend-invite`, {
+    method: "POST",
+    body: JSON.stringify({ lang }),
+  });
+}
+
+/**
  * The caller (CollaboratorsPanel) is no longer the project's own owner once
  * this succeeds -- the returned `project` has the new ownerId, so the
  * caller can update its own held Project state (e.g. via setProject) the

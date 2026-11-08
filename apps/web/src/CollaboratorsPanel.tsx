@@ -12,6 +12,7 @@ import {
   regenerateCalendarFeedToken,
   regenerateInboundWebhookToken,
   removeCollaborator,
+  resendCollaboratorInvite,
   transferProjectOwnership,
   updateCollaboratorRole,
   type AutomationRuleDeletion,
@@ -152,6 +153,8 @@ export function CollaboratorsPanel({
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
   const [transferringUserId, setTransferringUserId] = useState<string | null>(null);
   const [transferInfo, setTransferInfo] = useState<string | null>(null);
+  const [resendingUserId, setResendingUserId] = useState<string | null>(null);
+  const [resendInfo, setResendInfo] = useState<string | null>(null);
   const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
   const [regeneratingWebhookToken, setRegeneratingWebhookToken] = useState(false);
@@ -434,6 +437,33 @@ export function CollaboratorsPanel({
       setError((err as Error).message);
     } finally {
       setTransferringUserId(null);
+    }
+  }
+
+  /**
+   * Round 1719: re-sends the invite route's own notification email, for a
+   * collaborator who already has access but never actually received it
+   * (RESEND_API_KEY not configured yet at invite time, or a one-off
+   * delivery failure -- that send is best-effort and swallows its own
+   * errors). Previously the only workaround was removing then re-inviting
+   * them, which fires its own confusing "you were removed" email first.
+   * No server mutation here to cross-gate against the others' full-replace
+   * race (see the role-change/remove/transfer-ownership comment above this
+   * row's own JSX) -- this route touches no shared state, so it's gated
+   * only against its own reentrancy, same as handleTransferOwnership.
+   */
+  async function handleResendInvite(userId: string, email: string) {
+    if (resendingUserId !== null) return;
+    setResendingUserId(userId);
+    setError(null);
+    setResendInfo(null);
+    try {
+      await resendCollaboratorInvite(projectId, userId, lang);
+      setResendInfo(t("collab.resendInvite.success", { email }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setResendingUserId(null);
     }
   }
 
@@ -853,6 +883,12 @@ export function CollaboratorsPanel({
           </p>
         )}
 
+        {resendInfo && (
+          <p className="muted small" role="status">
+            {resendInfo}
+          </p>
+        )}
+
         {collaborators === null && !error ? (
           loadError ? null : (
             <p className="muted" role="status">
@@ -928,6 +964,14 @@ export function CollaboratorsPanel({
                         disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
                       >
                         {transferringUserId === c.userId ? t("collab.transferOwnership.busy") : t("collab.transferOwnership")}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => handleResendInvite(c.userId, c.email)}
+                        disabled={resendingUserId !== null}
+                      >
+                        {resendingUserId === c.userId ? t("collab.resendInvite.busy") : t("collab.resendInvite")}
                       </button>
                     </>
                   ) : (
