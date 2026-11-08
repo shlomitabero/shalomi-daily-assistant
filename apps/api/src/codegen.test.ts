@@ -20065,20 +20065,27 @@ test("the exported EntityView's Cell, matchesSearch, and fieldDisplayValue all s
     "expected to find parseFileFieldValue/isImageMimeType/matchesSearch/fieldDisplayValue in generated output",
   );
 
-  const fileValue = JSON.stringify({ url: "https://files.example.com/invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
+  const fileValue = JSON.stringify({ url: "/api/uploads/proj1/Task/abc123-invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
+  const unsafeFileValue = JSON.stringify({ url: "https://files.example.com/invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
 
   const { matchesSearch } = new Function(`${parseFileFieldValueSrc}\n${matchesSearchSrc}\nreturn { matchesSearch };`)() as {
     matchesSearch: (record: unknown, fields: unknown[], query: string) => boolean;
   };
   const fields = [{ name: "attachment", type: "file" }];
   assert.equal(matchesSearch({ attachment: fileValue }, fields, "invoice"), true, "the real filename shown in the table cell must be searchable");
-  assert.equal(matchesSearch({ attachment: fileValue }, fields, "files.example.com"), false, "the raw stored URL is never shown on screen, so it must not match");
+  assert.equal(matchesSearch({ attachment: fileValue }, fields, "proj1"), false, "the raw stored URL is never shown on screen, so it must not match");
   assert.equal(matchesSearch({ attachment: fileValue }, fields, "application/pdf"), false, "the raw stored mimetype is never shown on screen, so it must not match");
+  // Round 908's own SAFE_FILE_URL check (defense-in-depth against a
+  // "javascript:..."/absolute-URL descriptor written directly through this
+  // app's own record API) means a non-upload url is treated as no file at
+  // all -- not searchable by its claimed name, same as an empty field.
+  assert.equal(matchesSearch({ attachment: unsafeFileValue }, fields, "invoice"), false, "a file descriptor whose url isn't this app's own /api/uploads/... shape must be treated as no file, per round 908's stored-XSS guard");
 
   const { fieldDisplayValue } = new Function(`${parseFileFieldValueSrc}\n${fieldDisplayValueSrc}\nreturn { fieldDisplayValue };`)() as {
     fieldDisplayValue: (field: unknown, value: unknown) => string;
   };
   assert.equal(fieldDisplayValue({ type: "file" }, fileValue), "invoice.pdf", "the CSV export must show just the filename, not the raw JSON descriptor");
+  assert.equal(fieldDisplayValue({ type: "file" }, unsafeFileValue), "", "an unsafe file url must display as no file, per round 908's stored-XSS guard");
 
   const transformed = transformSync(`${isImageMimeTypeSrc}\n${parseFileFieldValueSrc}\nfunction Highlighted({ text }) { return text; }\n${entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)![0]}`, {
     loader: "jsx",
@@ -20092,7 +20099,7 @@ test("the exported EntityView's Cell, matchesSearch, and fieldDisplayValue all s
   ) as (props: { field: unknown; value: unknown }) => unknown;
 
   const rendered = Cell({ field: { type: "file" }, value: fileValue }) as { href: string; children: unknown };
-  assert.equal(rendered.href, "https://files.example.com/invoice.pdf", "the table cell must link straight to the real file, not render the raw JSON as plain text");
+  assert.equal(rendered.href, "/api/uploads/proj1/Task/abc123-invoice.pdf", "the table cell must link straight to the real file, not render the raw JSON as plain text");
 });
 
 /**
@@ -20982,14 +20989,20 @@ test("the exported EntityView's FieldInput shows a file field's existing attachm
     Symbol("Fragment"),
   ) as (props: { field: unknown; value: unknown }) => { type: unknown; props: Record<string, unknown> | null; children: unknown[] };
 
-  const fileValue = JSON.stringify({ url: "https://files.example.com/invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
+  const fileValue = JSON.stringify({ url: "/api/uploads/proj1/Task/abc123-invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
   const withFile = FieldInput({ field: { type: "file" }, value: fileValue });
   const withFileJson = JSON.stringify(withFile);
   assert.match(withFileJson, /invoice\.pdf/, "the existing attachment's real filename must still be shown");
-  assert.match(withFileJson, /https:\/\/files\.example\.com\/invoice\.pdf/, "the existing attachment's real link must still be shown");
+  assert.match(withFileJson, /\/api\/uploads\/proj1\/Task\/abc123-invoice\.pdf/, "the existing attachment's real link must still be shown");
 
   const withoutFile = FieldInput({ field: { type: "file" }, value: "" });
   assert.doesNotMatch(JSON.stringify(withoutFile), /invoice\.pdf/, "with no current file, nothing from a previous call must leak through");
+
+  // Round 908's own SAFE_FILE_URL check: an unsafe/non-upload url must be
+  // treated identically to having no file at all, not rendered as a link.
+  const unsafeFileValue = JSON.stringify({ url: "https://files.example.com/invoice.pdf", name: "invoice.pdf", size: 1024, mimeType: "application/pdf" });
+  const withUnsafeFile = FieldInput({ field: { type: "file" }, value: unsafeFileValue });
+  assert.doesNotMatch(JSON.stringify(withUnsafeFile), /invoice\.pdf/, "a file descriptor whose url isn't this app's own /api/uploads/... shape must render as no file, per round 908's stored-XSS guard");
 });
 
 /**
