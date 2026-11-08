@@ -7847,6 +7847,53 @@ test("POST /projects/from-template without lang (defaulting to Hebrew) keeps the
   });
 });
 
+/**
+ * Round 1714: a live-tested repro found that /refine's own candidate spec
+ * (generateSpec, called with the project's stored description + the new
+ * instruction, with zero awareness of the CURRENT spec) routinely drops
+ * whole entities a Templates-Gallery project's curated spec already has --
+ * the CRM template's stored description is just its own short marketing
+ * blurb ("Customers, contacts, deals and follow-up tasks."), not the richer
+ * text that actually produced its curated Customer/Contact/Deal/Task
+ * entities, so the heuristic provider's own re-derivation from that blurb
+ * alone already lands on a different, smaller entity set. Confirms
+ * mergeRefinedSpec (routes/projects.ts's own refine handler) keeps every
+ * original entity even though the candidate the heuristic produces for
+ * this exact instruction does not include "Contact".
+ */
+test("refining a Templates-Gallery project never drops an entity the template's curated spec already had, even when the refine candidate's own re-derivation would have", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "templates-refine-preserve@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm", lang: "en" }),
+    });
+    assert.equal(createRes.status, 201);
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const originalNames = project.spec.entities.map((e) => e.name).sort();
+    assert.deepEqual(originalNames, ["Contact", "Customer", "Deal", "Task"], "the CRM template's own curated entity list");
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    await collectSSE(buildRes);
+
+    const refineRes = await fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ instruction: "Track which sales rep closed each deal." }),
+    });
+    assert.equal(refineRes.status, 200);
+    const refineEvents = await collectSSE(refineRes);
+    assert.ok(refineEvents.every((e) => e.status !== "failed"), "refine should succeed");
+    const refineFinal = refineEvents[refineEvents.length - 1];
+    const refinedProject = (refineFinal.detail as { project: { spec: { entities: { name: string }[] } } }).project;
+    const refinedNames = refinedProject.spec.entities.map((e) => e.name);
+    for (const original of originalNames) {
+      assert.ok(refinedNames.includes(original), `refine must not drop the original "${original}" entity`);
+    }
+  });
+});
+
 test("POST /projects/from-template 404s on an unknown templateId", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-use3@example.com");

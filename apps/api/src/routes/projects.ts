@@ -6,7 +6,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer, { MulterError } from "multer";
 import { z } from "zod";
 import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
-import { CollaboratorRoleSchema, FIELD_TYPES } from "@forge/shared";
+import { CollaboratorRoleSchema, FIELD_TYPES, findOversizedGeneratedSpecField } from "@forge/shared";
 import {
   tryGetCheckpoint,
   getProject,
@@ -77,7 +77,7 @@ import {
   type AutomationFieldOperator,
 } from "@forge/db";
 import type { SpecProvider } from "@forge/spec-engine";
-import { enhancePrompt, generateSpec, isHebrewText, TEMPLATES } from "@forge/spec-engine";
+import { enhancePrompt, generateSpec, isHebrewText, mergeRefinedSpec, TEMPLATES } from "@forge/spec-engine";
 import { formatValidationError, HttpError } from "../httpError.js";
 import { requireAuth } from "../auth/middleware.js";
 import { createRateLimiter } from "../auth/rateLimit.js";
@@ -3206,7 +3206,24 @@ export function createProjectsRouter(
         // project's ENTIRE set of labels to that script, not just whatever
         // the instruction was actually about (see SpecProvider.generate's
         // own doc comment).
-        const { spec: nextSpec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
+        const { spec: candidateSpec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
+        // Round 1714: see mergeRefinedSpec's own doc comment -- generateSpec
+        // has no awareness of the CURRENT spec, so a candidate it returns
+        // can silently omit entities/fields/roles the project already has
+        // (confirmed live: the very first refine of a Templates-Gallery
+        // project routinely dropped whole curated entities). Merging keeps
+        // every current entity/field/role and only adds what the candidate
+        // introduces that doesn't already exist, instead of replacing
+        // outright.
+        const nextSpec = mergeRefinedSpec(project.spec, candidateSpec);
+        const oversizedField = findOversizedGeneratedSpecField(nextSpec);
+        if (oversizedField) {
+          throw new HttpError(
+            422,
+            `This refinement would grow the app's ${oversizedField}, past what a single app can safely hold. Try a more focused request, or remove an existing entity/field first.`,
+            "REFINED_SPEC_TOO_LARGE",
+          );
+        }
         await streamPipeline(res, db, project, {
           previousSpec: project.spec,
           nextSpec,

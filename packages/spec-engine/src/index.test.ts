@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ProductSpec } from "@forge/shared";
 import { AnthropicSpecProvider, SYSTEM_PROMPT } from "./anthropic.js";
-import { selectProvider, generateSpec } from "./index.js";
+import { selectProvider, generateSpec, mergeRefinedSpec } from "./index.js";
+
+function baseSpec(overrides: Partial<ProductSpec> = {}): ProductSpec {
+  return {
+    summary: "base",
+    personas: [],
+    roles: ["Admin"],
+    entities: [],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    ...overrides,
+  };
+}
 
 test("the Product Manager Agent's system prompt tells the model to be thorough, not to minimize", () => {
   // Direct product feedback: the platform should not default to recommending
@@ -230,4 +244,102 @@ test("generateSpec still throws when the heuristic provider itself fails (no fur
     },
   };
   await assert.rejects(() => generateSpec("x", failingHeuristic), /should propagate/);
+});
+
+/**
+ * Round 1714: a live-tested repro found that /refine's own candidate spec
+ * (generateSpec's return value, with zero awareness of the project's
+ * CURRENT spec) can silently drop whole entities the current spec already
+ * has -- e.g. the Sales CRM template's Contact entity vanished outright on
+ * the very first refine of a Templates-Gallery project. mergeRefinedSpec
+ * is the safety net: the CURRENT spec's entities/fields/roles always
+ * survive; the candidate only ever ADDS what it introduces that doesn't
+ * already exist.
+ */
+test("mergeRefinedSpec keeps an entity the candidate dropped entirely", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Contact", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  });
+  // The candidate re-derived only Customer -- Contact is gone, exactly the
+  // live-repro'd failure.
+  const candidate = baseSpec({
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name).sort(),
+    ["Contact", "Customer"],
+  );
+});
+
+test("mergeRefinedSpec still adds a genuinely new entity the candidate introduces", () => {
+  const current = baseSpec({ entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name).sort(),
+    ["Customer", "Invoice"],
+  );
+});
+
+test("mergeRefinedSpec adds a new field to an existing entity, but keeps that entity's current fields too", () => {
+  const current = baseSpec({
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "notes", type: "longtext", required: false },
+        ],
+      },
+    ],
+  });
+  // The candidate re-derived Customer without "notes" at all, but introduced a new "phone" field.
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "Customer",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "phone", type: "text", required: false },
+        ],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  const customer = merged.entities.find((e) => e.name === "Customer")!;
+  assert.deepEqual(
+    customer.fields.map((f) => f.name).sort(),
+    ["name", "notes", "phone"],
+  );
+});
+
+test("mergeRefinedSpec matches entity/role names case-insensitively, so a mere casing difference doesn't duplicate", () => {
+  const current = baseSpec({ roles: ["Admin"], entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const candidate = baseSpec({ roles: ["admin"], entities: [{ name: "customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.equal(merged.roles.length, 1);
+  assert.equal(merged.entities.length, 1);
+});
+
+test("mergeRefinedSpec unions roles the same way as entities", () => {
+  const current = baseSpec({ roles: ["Admin"] });
+  const candidate = baseSpec({ roles: ["Admin", "Manager"] });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(merged.roles, ["Admin", "Manager"]);
+});
+
+test("mergeRefinedSpec takes the candidate's own summary/personas/screens/assumptions/openQuestions, not the current spec's", () => {
+  const current = baseSpec({ summary: "old summary" });
+  const candidate = baseSpec({ summary: "new summary reflecting the refine instruction" });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.equal(merged.summary, "new summary reflecting the refine instruction");
 });

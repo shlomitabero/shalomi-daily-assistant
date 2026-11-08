@@ -1,4 +1,4 @@
-import type { ProductSpec } from "@forge/shared";
+import type { Entity, ProductSpec } from "@forge/shared";
 import { AnthropicSpecProvider } from "./anthropic.js";
 import { HeuristicSpecProvider } from "./heuristic.js";
 import type { SpecProvider } from "./provider.js";
@@ -73,4 +73,60 @@ export async function generateSpec(
     const spec = await new HeuristicSpecProvider().generate(description, isHebrewOverride);
     return { spec, providerName: `${provider.name}-fallback` };
   }
+}
+
+/**
+ * Round 1714: /projects/:id/refine (apps/api/src/routes/projects.ts) calls
+ * generateSpec with the project's own description plus the new instruction
+ * appended -- but SpecProvider.generate (both HeuristicSpecProvider and
+ * AnthropicSpecProvider) takes plain text only, with zero awareness of the
+ * CURRENT spec it is refining. A live-tested repro confirmed the heuristic
+ * provider's own keyword matching alone, re-run on the same description it
+ * originally produced a spec from, already yields a materially different
+ * entity set -- so the first "Improve the app" on a Templates-Gallery
+ * project (whose stored description is the template's own short marketing
+ * blurb, not the richer text that produced its curated entities) silently
+ * replaced the whole candidate spec, dropping entire entities (e.g. the
+ * Sales CRM template's Contact entity vanished outright) and relations the
+ * user never asked to remove.
+ *
+ * This merges the freshly generated candidate spec INTO the current one
+ * instead of replacing it outright: every entity and role the current spec
+ * already has survives, candidate entities/fields/roles that don't already
+ * exist are added. This can't apply a request to CHANGE an existing field
+ * (e.g. "make X required") -- generateSpec's own re-derivation already
+ * couldn't reliably do that before this fix either -- but it stops refine
+ * from silently deleting unrelated, already-built parts of the app, which
+ * is the far more damaging failure mode. A full fix (passing the live spec
+ * as structured context into generation itself) is a bigger redesign left
+ * for a future round.
+ */
+export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): ProductSpec {
+  const mergedEntities: Entity[] = current.entities.map((entity) => ({ ...entity, fields: [...entity.fields] }));
+  const entityByLowerName = new Map(mergedEntities.map((entity) => [entity.name.toLowerCase(), entity]));
+  for (const candidateEntity of candidate.entities) {
+    const existingEntity = entityByLowerName.get(candidateEntity.name.toLowerCase());
+    if (!existingEntity) {
+      const addedEntity = { ...candidateEntity, fields: [...candidateEntity.fields] };
+      mergedEntities.push(addedEntity);
+      entityByLowerName.set(addedEntity.name.toLowerCase(), addedEntity);
+      continue;
+    }
+    const fieldNameSet = new Set(existingEntity.fields.map((field) => field.name.toLowerCase()));
+    for (const candidateField of candidateEntity.fields) {
+      if (!fieldNameSet.has(candidateField.name.toLowerCase())) {
+        existingEntity.fields.push(candidateField);
+        fieldNameSet.add(candidateField.name.toLowerCase());
+      }
+    }
+  }
+  const roleSet = new Set(current.roles.map((role) => role.toLowerCase()));
+  const mergedRoles = [...current.roles];
+  for (const candidateRole of candidate.roles) {
+    if (!roleSet.has(candidateRole.toLowerCase())) {
+      mergedRoles.push(candidateRole);
+      roleSet.add(candidateRole.toLowerCase());
+    }
+  }
+  return { ...candidate, entities: mergedEntities, roles: mergedRoles };
 }
