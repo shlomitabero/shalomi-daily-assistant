@@ -20926,10 +20926,11 @@ test("the exported EntityView's FieldInput wires field.required into the real re
 
   // round 440 added a disabled, loading-placeholder <select> branch ahead
   // of the real, option-backed one (rendered while relatedEntityRecords
-  // hasn't resolved yet) -- anchor on filteredRecords.map (round 698's own
-  // client-side filter over relatedEntityRecords) to land in the real
-  // branch specifically, not the loading placeholder.
-  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity\)[\s\S]*?filteredRecords\.map/)?.[0];
+  // hasn't resolved yet) -- anchor on displayedRecords.map (the relation-
+  // picker option-cap feature's own capped/truncated array, which
+  // replaced the plain filteredRecords.map this anchor used to read) to
+  // land in the real branch specifically, not the loading placeholder.
+  const relationSelectBranch = fieldInputSrc!.match(/field\.type === "relation" && relatedEntity\)[\s\S]*?displayedRecords\.map/)?.[0];
   assert.match(relationSelectBranch ?? "", /required=\{field\.required\}/, "the relation <select> branch must be required-wired");
 
   const booleanBranch = fieldInputSrc!.match(/field\.type === "boolean"[\s\S]{0,200}\}\n\s*\}/)?.[0];
@@ -20944,10 +20945,19 @@ test("the exported EntityView's FieldInput wires field.required into the real re
   const dateBranch = fieldInputSrc!.match(/field\.type === "date"[\s\S]{0,150}/)?.[0];
   assert.match(dateBranch ?? "", /required=\{field\.required\}/, "the date input branch must be required-wired");
 
-  const numberBranch = fieldInputSrc!.match(/field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,400}/)?.[0];
+  // round 980's own negative-number-input fix comment sits between this
+  // branch's condition and its actual JSX, so the window has to clear
+  // that whole explanatory comment, not just the attributes themselves.
+  const numberBranch = fieldInputSrc!.match(/field\.type === "number" \|\| field\.type === "relation"[\s\S]{0,1000}/)?.[0];
   assert.match(numberBranch ?? "", /required=\{field\.required\}/, "the number/relation-fallback input branch must be required-wired");
 
-  const textBranch = fieldInputSrc!.match(/return <input id=\{id\} type="text"[\s\S]{0,100}/)?.[0];
+  // The real fallback's <input> is formatted across multiple lines (id,
+  // then type="text", then required), never as the single-line literal
+  // this anchor used to look for. Anchored on id={id} immediately
+  // followed by type="text" to land specifically on this fallback and
+  // not the relation branch's own unrelated search <input type="text">
+  // (which has no id attribute at all).
+  const textBranch = fieldInputSrc!.match(/id=\{id\}\s*\n\s*type="text"[\s\S]{0,200}/)?.[0];
   assert.match(textBranch ?? "", /required=\{field\.required\}/, "the plain text input fallback branch must be required-wired");
 });
 
