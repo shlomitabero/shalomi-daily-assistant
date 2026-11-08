@@ -58,6 +58,13 @@ test("setWhatsAppLogFilter('delivered') and ('read') also round trip -- the two 
   });
 });
 
+test("setWhatsAppLogFilter('sent') also round trips -- isWhatsAppLogFilter's own validation must accept it, not fall back to 'all' on reload", async () => {
+  await withJsdom(() => {
+    setWhatsAppLogFilter("proj1", "userA", "sent");
+    assert.equal(getWhatsAppLogFilter("proj1", "userA"), "sent", "must actually be written to and read back from storage, not just the return value");
+  });
+});
+
 test("setWhatsAppLogFilter back to 'all' clears the persisted entry instead of storing it", async () => {
   await withJsdom(() => {
     setWhatsAppLogFilter("proj1", "userA", "failed");

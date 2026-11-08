@@ -26,6 +26,7 @@ function isWhatsAppLogFilter(value: unknown): value is WhatsAppLogFilter {
     value === "all" ||
     value === "in" ||
     value === "out" ||
+    value === "sent" ||
     value === "failed" ||
     value === "delivered" ||
     value === "read"

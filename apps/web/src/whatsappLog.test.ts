@@ -285,6 +285,20 @@ test("filterWhatsAppMessagesByDirection('read') keeps only read sends -- a merel
   );
 });
 
+test("filterWhatsAppMessagesByDirection('sent') keeps only sent-but-not-yet-acknowledged sends -- 'out' alone can't isolate these from delivered/read/failed", () => {
+  const messages = [
+    makeMessage({ id: "m1", direction: "in", status: "received" }),
+    makeMessage({ id: "m2", direction: "out", status: "sent" }),
+    makeMessage({ id: "m3", direction: "out", status: "delivered" }),
+    makeMessage({ id: "m4", direction: "out", status: "read" }),
+    makeMessage({ id: "m5", direction: "out", status: "failed" }),
+  ];
+  assert.deepEqual(
+    filterWhatsAppMessagesByDirection(messages, "sent").map((m) => m.id),
+    ["m2"],
+  );
+});
+
 test("formatWhatsAppMessageCount reports a plain total when the search hasn't narrowed anything out", () => {
   const tr = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
   assert.equal(formatWhatsAppMessageCount(6, 6, tr), "6 messages");
