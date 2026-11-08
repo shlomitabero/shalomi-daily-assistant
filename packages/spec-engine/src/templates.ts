@@ -363,7 +363,12 @@ const CRM_ENTITIES: EntitySpec[] = [
       { name: "jobTitle", label: "תפקיד", type: "text" },
       { name: "email", label: "אימייל", type: "text" },
       { name: "phone", label: "טלפון", type: "text" },
-      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer" },
+      // Round 1706: same shape as rounds 1704/1705 -- a contact person with
+      // no linked customer, or a deal with no linked customer, isn't a
+      // meaningful CRM record (unlike Task.deal/Project.owner/Task.assignee
+      // elsewhere in this file, deliberately left optional: an unassigned
+      // task or an unowned project are normal, legitimate states).
+      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer", required: true },
     ],
   },
   {
@@ -371,7 +376,7 @@ const CRM_ENTITIES: EntitySpec[] = [
     label: "עסקה",
     fields: [
       { name: "title", label: "כותרת", type: "text", required: true },
-      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer" },
+      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer", required: true },
       {
         name: "stage",
         label: "שלב",
@@ -433,7 +438,8 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
       { name: "jobTitle", label: "Job Title", type: "text" },
       { name: "email", label: "Email", type: "text" },
       { name: "phone", label: "Phone", type: "text" },
-      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
+      // Round 1706: see the Hebrew CRM_ENTITIES' own comment above.
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer", required: true },
     ],
   },
   {
@@ -441,7 +447,7 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
     label: "Deal",
     fields: [
       { name: "title", label: "Title", type: "text", required: true },
-      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer", required: true },
       {
         name: "stage",
         label: "Stage",
@@ -512,7 +518,11 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
       { name: "title", label: "כותרת", type: "text", required: true },
       { name: "dueDate", label: "תאריך יעד", type: "date" },
       { name: "done", label: "הושלם", type: "boolean" },
-      { name: "project", label: "פרויקט", type: "relation", relationTo: "Project" },
+      // Round 1706: a milestone or task with no linked project isn't a
+      // meaningful record (unlike Task.assignee/Project.owner below,
+      // deliberately left optional: an unassigned task or an unowned
+      // project are normal, legitimate states).
+      { name: "project", label: "פרויקט", type: "relation", relationTo: "Project", required: true },
     ],
   },
   {
@@ -521,7 +531,7 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
     fields: [
       { name: "title", label: "כותרת", type: "text", required: true },
       { name: "assignee", label: "מבצע", type: "relation", relationTo: "TeamMember" },
-      { name: "project", label: "פרויקט", type: "relation", relationTo: "Project" },
+      { name: "project", label: "פרויקט", type: "relation", relationTo: "Project", required: true },
       {
         name: "status",
         label: "סטטוס",
@@ -580,7 +590,8 @@ const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
       { name: "title", label: "Title", type: "text", required: true },
       { name: "dueDate", label: "Due Date", type: "date" },
       { name: "done", label: "Completed", type: "boolean" },
-      { name: "project", label: "Project", type: "relation", relationTo: "Project" },
+      // Round 1706: see the Hebrew PROJECT_TRACKER_ENTITIES' own comment above.
+      { name: "project", label: "Project", type: "relation", relationTo: "Project", required: true },
     ],
   },
   {
@@ -589,7 +600,7 @@ const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
     fields: [
       { name: "title", label: "Title", type: "text", required: true },
       { name: "assignee", label: "Assignee", type: "relation", relationTo: "TeamMember" },
-      { name: "project", label: "Project", type: "relation", relationTo: "Project" },
+      { name: "project", label: "Project", type: "relation", relationTo: "Project", required: true },
       {
         name: "status",
         label: "Status",
@@ -645,8 +656,11 @@ const VOLUNTEER_ENTITIES: EntitySpec[] = [
     name: "Shift",
     label: "משמרת",
     fields: [
-      { name: "event", label: "אירוע", type: "relation", relationTo: "VolunteerEvent" },
-      { name: "volunteer", label: "מתנדב/ת", type: "relation", relationTo: "Volunteer" },
+      // Round 1706: a shift with no linked event and no linked volunteer
+      // isn't a meaningful record at all -- same severity as round 1705's
+      // Appointment fix (both relations are core to what a Shift even is).
+      { name: "event", label: "אירוע", type: "relation", relationTo: "VolunteerEvent", required: true },
+      { name: "volunteer", label: "מתנדב/ת", type: "relation", relationTo: "Volunteer", required: true },
       { name: "timeRange", label: "טווח שעות", type: "text" },
       { name: "confirmed", label: "מאושרת", type: "boolean" },
     ],
@@ -688,8 +702,9 @@ const VOLUNTEER_ENTITIES_EN: EntitySpec[] = [
     name: "Shift",
     label: "Shift",
     fields: [
-      { name: "event", label: "Event", type: "relation", relationTo: "VolunteerEvent" },
-      { name: "volunteer", label: "Volunteer", type: "relation", relationTo: "Volunteer" },
+      // Round 1706: see the Hebrew VOLUNTEER_ENTITIES' own comment above.
+      { name: "event", label: "Event", type: "relation", relationTo: "VolunteerEvent", required: true },
+      { name: "volunteer", label: "Volunteer", type: "relation", relationTo: "Volunteer", required: true },
       { name: "timeRange", label: "Time Range", type: "text" },
       { name: "confirmed", label: "Confirmed", type: "boolean" },
     ],
@@ -849,7 +864,11 @@ const INVENTORY_ENTITIES: EntitySpec[] = [
     name: "PurchaseOrder",
     label: "הזמנת רכש",
     fields: [
-      { name: "supplier", label: "ספק", type: "relation", relationTo: "Supplier" },
+      // Round 1706: a purchase order with no supplier, or a stock movement
+      // with no product, isn't a meaningful record (unlike Product.supplier
+      // below, deliberately left optional: a product can legitimately exist
+      // with no tracked supplier yet, e.g. in-house manufactured goods).
+      { name: "supplier", label: "ספק", type: "relation", relationTo: "Supplier", required: true },
       {
         name: "status",
         label: "סטטוס",
@@ -868,7 +887,7 @@ const INVENTORY_ENTITIES: EntitySpec[] = [
     name: "StockMovement",
     label: "תנועת מלאי",
     fields: [
-      { name: "product", label: "מוצר", type: "relation", relationTo: "Product" },
+      { name: "product", label: "מוצר", type: "relation", relationTo: "Product", required: true },
       {
         name: "movementType",
         label: "סוג תנועה",
@@ -926,7 +945,8 @@ const INVENTORY_ENTITIES_EN: EntitySpec[] = [
     name: "PurchaseOrder",
     label: "Purchase Order",
     fields: [
-      { name: "supplier", label: "Supplier", type: "relation", relationTo: "Supplier" },
+      // Round 1706: see the Hebrew INVENTORY_ENTITIES' own comment above.
+      { name: "supplier", label: "Supplier", type: "relation", relationTo: "Supplier", required: true },
       {
         name: "status",
         label: "Status",
@@ -945,7 +965,7 @@ const INVENTORY_ENTITIES_EN: EntitySpec[] = [
     name: "StockMovement",
     label: "Stock Movement",
     fields: [
-      { name: "product", label: "Product", type: "relation", relationTo: "Product" },
+      { name: "product", label: "Product", type: "relation", relationTo: "Product", required: true },
       {
         name: "movementType",
         label: "Movement Type",

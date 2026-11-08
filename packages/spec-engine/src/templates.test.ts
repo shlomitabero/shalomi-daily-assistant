@@ -983,3 +983,122 @@ test("the Appointments template's Appointment entity's \"no-show\" status enum V
     );
   }
 });
+
+/**
+ * Round 1706: follow-up sweep after rounds 1704/1705 found via live browser
+ * testing that the Restaurant Order entity's and Appointments Appointment
+ * entity's relation fields weren't marked `required`, so seed.ts's
+ * seedValueFor left them blank even though real related rows existed. This
+ * is the same shape across three more templates: the CRM template's Contact
+ * and Deal entities each have a `customer` relation that isn't required --
+ * a contact or a deal with no linked customer isn't a meaningful CRM
+ * record, unlike this file's Task.deal/Project.owner/Task.assignee
+ * (deliberately left optional elsewhere in this sweep: an unassigned task
+ * or an unowned project are normal states).
+ */
+test("the Sales CRM template's Contact and Deal entities mark their customer relation required, so seed.ts seeds a real id instead of leaving it blank", () => {
+  const crmTemplate = TEMPLATES.find((t) => t.id === "crm");
+  assert.ok(crmTemplate, "expected a \"crm\" template to exist");
+
+  for (const spec of [crmTemplate!.spec, crmTemplate!.specEn]) {
+    const contact = spec.entities.find((e) => e.name === "Contact");
+    assert.ok(contact, "expected the CRM template to have a Contact entity");
+    const contactCustomer = contact!.fields.find((f) => f.name === "customer");
+    assert.ok(contactCustomer, "expected the Contact entity to have a customer field");
+    assert.equal(contactCustomer!.required, true, "a contact with no linked customer isn't a meaningful CRM record");
+
+    const deal = spec.entities.find((e) => e.name === "Deal");
+    assert.ok(deal, "expected the CRM template to have a Deal entity");
+    const dealCustomer = deal!.fields.find((f) => f.name === "customer");
+    assert.ok(dealCustomer, "expected the Deal entity to have a customer field");
+    assert.equal(dealCustomer!.required, true, "a deal with no linked customer isn't a meaningful CRM record");
+  }
+});
+
+/**
+ * Round 1706: same sweep as above -- the Project & Team Tracker template's
+ * Milestone and Task entities each have a `project` relation that isn't
+ * required, even though a milestone or task with no linked project isn't
+ * a meaningful record. Task.assignee and Project.owner are deliberately
+ * left optional: an unassigned task or an unowned project are normal,
+ * legitimate states, unlike "which project is this even for".
+ */
+test("the Project & Team Tracker template's Milestone and Task entities mark their project relation required, so seed.ts seeds a real id instead of leaving it blank", () => {
+  const projectTrackerTemplate = TEMPLATES.find((t) => t.id === "project-tracker");
+  assert.ok(projectTrackerTemplate, "expected a \"project-tracker\" template to exist");
+
+  for (const spec of [projectTrackerTemplate!.spec, projectTrackerTemplate!.specEn]) {
+    const milestone = spec.entities.find((e) => e.name === "Milestone");
+    assert.ok(milestone, "expected the Project Tracker template to have a Milestone entity");
+    const milestoneProject = milestone!.fields.find((f) => f.name === "project");
+    assert.ok(milestoneProject, "expected the Milestone entity to have a project field");
+    assert.equal(milestoneProject!.required, true, "a milestone with no linked project isn't a meaningful record");
+
+    const task = spec.entities.find((e) => e.name === "Task");
+    assert.ok(task, "expected the Project Tracker template to have a Task entity");
+    const taskProject = task!.fields.find((f) => f.name === "project");
+    assert.ok(taskProject, "expected the Task entity to have a project field");
+    assert.equal(taskProject!.required, true, "a task with no linked project isn't a meaningful record");
+
+    const taskAssignee = task!.fields.find((f) => f.name === "assignee");
+    assert.ok(taskAssignee, "expected the Task entity to have an assignee field");
+    assert.equal(taskAssignee!.required, false, "an unassigned task is a normal, legitimate state -- deliberately left optional");
+  }
+});
+
+/**
+ * Round 1706: same sweep -- the Volunteer & Shift Management template's
+ * Shift entity has BOTH its `event` and `volunteer` relations non-required,
+ * the most severe instance in this sweep (same shape as round 1705's
+ * Appointment fix): a shift with no linked event and no linked volunteer
+ * isn't a meaningful record at all.
+ */
+test("the Volunteer & Shift Management template's Shift entity marks its event and volunteer relations required, so seed.ts seeds real ids instead of leaving them blank", () => {
+  const volunteersTemplate = TEMPLATES.find((t) => t.id === "volunteers");
+  assert.ok(volunteersTemplate, "expected a \"volunteers\" template to exist");
+
+  for (const spec of [volunteersTemplate!.spec, volunteersTemplate!.specEn]) {
+    const shift = spec.entities.find((e) => e.name === "Shift");
+    assert.ok(shift, "expected the Volunteer template to have a Shift entity");
+    const shiftEvent = shift!.fields.find((f) => f.name === "event");
+    const shiftVolunteer = shift!.fields.find((f) => f.name === "volunteer");
+    assert.ok(shiftEvent, "expected the Shift entity to have an event field");
+    assert.ok(shiftVolunteer, "expected the Shift entity to have a volunteer field");
+    assert.equal(shiftEvent!.required, true, "a shift with no linked event isn't a meaningful record");
+    assert.equal(shiftVolunteer!.required, true, "a shift with no linked volunteer isn't a meaningful record");
+  }
+});
+
+/**
+ * Round 1706: same sweep -- the Inventory & Products template's
+ * PurchaseOrder and StockMovement entities each have a relation
+ * (supplier/product respectively) that isn't required, even though a
+ * purchase order with no supplier, or a stock movement with no product,
+ * isn't a meaningful record. Product.supplier is deliberately left
+ * optional: a product can legitimately exist with no tracked supplier yet
+ * (e.g. in-house manufactured goods).
+ */
+test("the Inventory & Products template's PurchaseOrder and StockMovement entities mark their supplier/product relations required, so seed.ts seeds real ids instead of leaving them blank", () => {
+  const inventoryTemplate = TEMPLATES.find((t) => t.id === "inventory");
+  assert.ok(inventoryTemplate, "expected an \"inventory\" template to exist");
+
+  for (const spec of [inventoryTemplate!.spec, inventoryTemplate!.specEn]) {
+    const purchaseOrder = spec.entities.find((e) => e.name === "PurchaseOrder");
+    assert.ok(purchaseOrder, "expected the Inventory template to have a PurchaseOrder entity");
+    const poSupplier = purchaseOrder!.fields.find((f) => f.name === "supplier");
+    assert.ok(poSupplier, "expected the PurchaseOrder entity to have a supplier field");
+    assert.equal(poSupplier!.required, true, "a purchase order with no supplier isn't a meaningful record");
+
+    const stockMovement = spec.entities.find((e) => e.name === "StockMovement");
+    assert.ok(stockMovement, "expected the Inventory template to have a StockMovement entity");
+    const smProduct = stockMovement!.fields.find((f) => f.name === "product");
+    assert.ok(smProduct, "expected the StockMovement entity to have a product field");
+    assert.equal(smProduct!.required, true, "a stock movement with no product isn't a meaningful record");
+
+    const product = spec.entities.find((e) => e.name === "Product");
+    assert.ok(product, "expected the Inventory template to have a Product entity");
+    const productSupplier = product!.fields.find((f) => f.name === "supplier");
+    assert.ok(productSupplier, "expected the Product entity to have a supplier field");
+    assert.equal(productSupplier!.required, false, "a product with no tracked supplier yet is a normal, legitimate state -- deliberately left optional");
+  }
+});
