@@ -4212,11 +4212,31 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         }
         record[field.name] = raw;
       } else if (field.type === "enum") {
-        if (typeof raw !== "string" || !field.enumValues || !field.enumValues.includes(raw)) {
+        if (typeof raw !== "string") {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
           break;
         }
-        record[field.name] = raw;
+        // Round 1698: mirrors the live preview's own round-1698 fix
+        // (entityFormatting.ts) -- the same byValue/labelMatches fallback
+        // buildImportRecords above already has (round 1084), just missing
+        // here. A hand-edited JSON file naturally carries a field's
+        // displayed label (e.g. a translated enumLabels value), not its
+        // raw internal value.
+        const byValue = field.enumValues && field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
+        if (byValue) {
+          record[field.name] = byValue;
+          continue;
+        }
+        const labelMatches = (field.enumValues || []).filter((v) => ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase());
+        if (labelMatches.length === 0) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
+          break;
+        }
+        if (labelMatches.length > 1) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one option for field "\${field.label || field.name}" -- use the option's own underlying value (not its label) instead.\`;
+          break;
+        }
+        record[field.name] = labelMatches[0];
       } else if (field.type === "date") {
         if (typeof raw !== "string" || !isValidDate(raw)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;

@@ -13885,6 +13885,36 @@ test("the exported EntityView's own generated buildImportRecordsFromJson treats 
 });
 
 /**
+ * Round 1698: the generated app's own buildImportRecordsFromJson required
+ * an exact, raw enum value -- unlike its own sibling buildImportRecords
+ * (round 1084) and the live preview's own entityFormatting.ts
+ * buildImportRecordsFromJson (round 1698), neither of which this function
+ * ever had a label-fallback at all. Mirrors the live preview's own
+ * round-1698 fix for the identical gap.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson resolves an enum cell by its displayed label, and still rejects a genuinely ambiguous one", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "won"], enumLabels: { new: "חדש", won: "זכייה" } }];
+  const resolved = buildImportRecordsFromJson(fields, [{ status: "זכייה" }], {});
+  assert.deepEqual(resolved.errors, []);
+  assert.deepEqual(resolved.records, [{ status: "won" }]);
+
+  const ambiguousFields = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "open"], enumLabels: { new: "פתוח", open: "פתוח" } }];
+  const ambiguous = buildImportRecordsFromJson(ambiguousFields, [{ status: "פתוח" }], {});
+  assert.deepEqual(ambiguous.records, []);
+  assert.equal(ambiguous.errors.length, 1);
+  assert.match(ambiguous.errors[0], /matches more than one option for field "Status"/);
+});
+
+/**
  * Round 1293: the identical Number(true)/Number([5]) hazard also exists on
  * a relation field's own value (a few lines further down in this same
  * function), so a boolean relation value silently matched whichever

@@ -2476,11 +2476,35 @@ export function buildImportRecordsFromJson(
         }
         record[field.name] = raw;
       } else if (field.type === "enum") {
-        if (typeof raw !== "string" || !field.enumValues?.includes(raw)) {
+        if (typeof raw !== "string") {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid option for field "${field.label ?? field.name}".`;
           break;
         }
-        record[field.name] = raw;
+        // Round 1698: mirrors buildImportRecords' own round-1084 byValue/
+        // labelMatches fallback exactly (see that branch's own doc comment
+        // for the full reasoning). This function's own doc comment above
+        // says it round-trips either a genuine recordsToJson export (which
+        // only ever emits a raw value, so byValue alone always resolves
+        // it) or "a hand-edited copy of" one -- and a person hand-editing
+        // such a file naturally types the label they see in the UI (e.g. a
+        // Hebrew enumLabels translation), not the raw internal value, the
+        // exact same gap round 1084 closed for CSV import and round 1541
+        // closed for the inbound-webhook route.
+        const byValue = field.enumValues?.find((v) => v.toLowerCase() === raw.toLowerCase());
+        if (byValue) {
+          record[field.name] = byValue;
+          continue;
+        }
+        const labelMatches = field.enumValues?.filter((v) => (field.enumLabels?.[v] ?? v).toLowerCase() === raw.toLowerCase()) ?? [];
+        if (labelMatches.length === 0) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid option for field "${field.label ?? field.name}".`;
+          break;
+        }
+        if (labelMatches.length > 1) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" matches more than one option for field "${field.label ?? field.name}" -- use the option's own underlying value (not its label) instead.`;
+          break;
+        }
+        record[field.name] = labelMatches[0];
       } else if (field.type === "date") {
         if (typeof raw !== "string" || !isValidDateString(raw)) {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;

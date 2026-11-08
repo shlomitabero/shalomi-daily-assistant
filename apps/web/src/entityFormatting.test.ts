@@ -3336,6 +3336,42 @@ test("buildImportRecordsFromJson rejects an enum value not among the field's own
   assert.match(result.errors[0], /isn't a valid option/);
 });
 
+/**
+ * Round 1698: this function's own doc comment says it round-trips either
+ * a genuine recordsToJson export (which only ever emits a raw value) OR
+ * "a hand-edited copy of" one -- but unlike its CSV sibling
+ * buildImportRecords (round 1084) and the inbound-webhook route (round
+ * 1541), the enum branch had NO fallback to the field's own enumLabels
+ * display text at all, only the raw stored value. A person hand-editing
+ * an exported JSON file naturally types the label they see in the UI
+ * (e.g. a Hebrew translation of an English internal value), not the raw
+ * value, and got a bare "isn't a valid option" error.
+ */
+test("buildImportRecordsFromJson resolves an enum cell by its displayed label, mirroring buildImportRecords' own round-1084 fallback", () => {
+  const fields: Field[] = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "won"], enumLabels: { new: "חדש", won: "זכייה" } }];
+  const rows = [{ status: "זכייה" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ status: "won" }]);
+});
+
+test("buildImportRecordsFromJson rejects an ambiguous enum label that matches more than one declared value, instead of silently resolving to whichever comes first", () => {
+  const fields: Field[] = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "open"], enumLabels: { new: "פתוח", open: "פתוח" } }];
+  const rows = [{ status: "פתוח" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /matches more than one option for field "Status"/);
+});
+
+test("buildImportRecordsFromJson still resolves an enum cell matched by its own raw value unambiguously, even when a DIFFERENT value's label collides with another", () => {
+  const fields: Field[] = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "open"], enumLabels: { new: "פתוח", open: "פתוח" } }];
+  const rows = [{ status: "open" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ status: "open" }]);
+});
+
 test("buildImportRecordsFromJson refuses the whole import for an entity with a required file field, since no JSON descriptor can supply a real uploaded file", () => {
   const fields: Field[] = [
     { name: "title", label: "Title", type: "text", required: true },
