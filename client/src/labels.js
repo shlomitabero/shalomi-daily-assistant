@@ -123,7 +123,9 @@ export function reasonLabel(reason) {
 // log to find the one entry that actually answers "is my scanner
 // working" - this gives the Opportunities page's own scan card the same
 // answer directly, in the one place someone asking that question would
-// actually look.
+// actually look. Every branch below builds its own full Hebrew sentence
+// from the entry's structured detail instead of reusing any English
+// free text straight from the result string.
 export function autonomousScanSummary(action) {
   if (!action) return 'עדיין לא רצה סריקה אוטונומית.';
   const { result, detail } = action;
@@ -134,10 +136,25 @@ export function autonomousScanSummary(action) {
     return 'המקור "מוצרים דיגיטליים מבוססי AI" לא מחובר — ראה עמוד "מקורות הכנסה".';
   }
   if (typeof result === 'string' && result.startsWith('skipped:')) {
-    return `הסריקה הושהתה — ${result.slice('skipped: '.length)}.`;
+    // The raw result string's own free-text detail ('N drafts already
+    // awaiting review', from autonomousScan.js's logAction call) is
+    // English — slicing it straight into this sentence (the previous
+    // approach) left "הסריקה הושהתה — 5 drafts already awaiting review."
+    // on the Opportunities page and the activity log, for the single most
+    // common real reason the scan ever pauses itself (Guide.jsx documents
+    // this exact 5-draft cap as expected behavior, not a rare edge case).
+    // detail.pendingDrafts is the same number, logged as real data rather
+    // than baked into an English sentence - build the Hebrew sentence
+    // from that instead of the result string's own wording.
+    return `הסריקה הושהתה — ${detail?.pendingDrafts ?? '?'} הזדמנויות כבר ממתינות לסקירה שלך.`;
   }
   if (typeof result === 'string' && result.startsWith('failed')) {
-    return `נכשלה: ${detail?.error ?? result}.`;
+    // detail.error is raw English straight from whatever failed
+    // (the AI call or the draft-creation service) - not fit to show the
+    // owner directly, and autonomousScan.js already console.errors the
+    // same detail for Railway's own log viewer, same split as every other
+    // service-level failure in this app.
+    return 'הסריקה נכשלה — בדוק את לוגי השרת לפרטים.';
   }
   return resultLabel(result);
 }
