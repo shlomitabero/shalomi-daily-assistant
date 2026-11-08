@@ -1036,6 +1036,23 @@ export function FieldChip({
   const [typeBusy, setTypeBusy] = useState(false);
   const [typeError, setTypeError] = useState<string | null>(null);
 
+  // Round 1741: mirrors useRenamableSpecItem's own round-1653 fix, just
+  // above -- this chip's OTHER draft (changing an existing field's type to
+  // enum/relation, opened by openDraftFor below) was never wired up to this
+  // mechanism at all. AddFieldForm's own enum-values textbox already warns
+  // for the identical scenario when ADDING a brand-new field (see its own
+  // useBeforeUnloadWarning call further down this file), but editing an
+  // EXISTING field's enum values or relation target via this chip's pencil
+  // button did not -- a tab close/refresh while a typed-but-unsubmitted
+  // correction sits in draftEnumValues/draftRelationTo silently discarded
+  // it with no warning. Compares against the pre-filled baseline (the same
+  // values openDraftFor seeded the draft with) so a reopened-but-unedited
+  // draft doesn't spuriously warn.
+  useBeforeUnloadWarning(
+    (draftType === "enum" && draftEnumValues.trim() !== (field.enumValues?.join(", ") ?? "").trim()) ||
+      (draftType === "relation" && draftRelationTo !== (field.relationTo ?? allEntities[0]?.name ?? "")),
+  );
+
   // Round 1026: this chip's own three actions (remove, required-toggle,
   // type-change) each PATCH/DELETE independently and each eventually call
   // the same onChanged(project) -- a full project-state replace, the same

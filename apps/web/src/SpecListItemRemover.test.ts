@@ -4445,3 +4445,41 @@ test("warns before a tab close/refresh while a role chip's rename draft is in pr
     assert.equal(eventBackToOriginal.defaultPrevented, false, "must not warn once the draft is edited back to match the current role text");
   });
 });
+
+/**
+ * Round 1741: round 1653 (just above) closed useRenamableSpecItem's own
+ * rename draft, but FieldChip has a SEPARATE draft -- draftType/
+ * draftEnumValues/draftRelationTo, opened by openDraftFor (either by
+ * switching an existing field's type to enum/relation, or via the
+ * "edit values"/"edit target" pencil button) -- that round 1653's own
+ * enumeration never looked at, since it's a different piece of state in
+ * the same component. AddFieldForm's own enum-values textbox already
+ * warns for the identical scenario when ADDING a brand-new field (see
+ * the round-1496 test above), but editing an EXISTING field's enum
+ * values via this pencil button did not.
+ */
+test("warns before a tab close/refresh while editing an existing enum field's values via the pencil button, and stops once it matches the field's current values again", async () => {
+  await withJsdom(async () => {
+    renderFieldChip(() => {}, true, { name: "status", type: "enum", required: true, enumValues: ["New", "Done"] });
+
+    const editButton = document.querySelector(".chip-field-edit-values") as HTMLButtonElement;
+    fireEvent.click(editButton);
+    const confirmForm = document.querySelector(".chip-field-type-confirm") as HTMLFormElement;
+    assert.ok(confirmForm, "expected the draft confirm step to open");
+    const enumInput = confirmForm.querySelector("input") as HTMLInputElement;
+
+    const eventWhilePristine = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhilePristine);
+    assert.equal(eventWhilePristine.defaultPrevented, false, "must not warn while the draft still matches the field's current enum values");
+
+    fireEvent.change(enumInput, { target: { value: "New, Contacted, Done" } });
+    const eventWhileDirty = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventWhileDirty);
+    assert.equal(eventWhileDirty.defaultPrevented, true, "must warn while an unsaved enum-values correction differs from the field's current values");
+
+    fireEvent.change(enumInput, { target: { value: "New, Done" } });
+    const eventBackToOriginal = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(eventBackToOriginal);
+    assert.equal(eventBackToOriginal.defaultPrevented, false, "must not warn once the draft is edited back to match the field's current enum values");
+  });
+});
