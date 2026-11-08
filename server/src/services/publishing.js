@@ -15,7 +15,14 @@ export async function publishOpportunity(opportunity) {
   // Paddle checkout and charge a real customer real money for content this
   // app itself admits isn't real.
   if (opportunity.productDraft?.demo) {
-    logAction({ type: 'publish_product', detail: { opportunityId: opportunity.id }, result: 'blocked: demo content can never be published for real money' });
+    // Keeps the English 'blocked:' prefix (resultLabel()'s own convention
+    // translates just that leading word) but writes the free-text detail
+    // after it in Hebrew — without this, the activity log's generic
+    // resultLabel() rendering showed "נחסם: demo content can never be
+    // published for real money", English dropped mid-sentence into an
+    // otherwise all-Hebrew log, same bug class already fixed for
+    // autonomous_scan and sale_confirmed entries.
+    logAction({ type: 'publish_product', detail: { opportunityId: opportunity.id }, result: 'blocked: תוכן דמו (ללא AI אמיתי מחובר) לא ניתן לפרסום בתשלום אמיתי' });
     return { allowed: false, reason: 'מוצר דמו (ללא AI אמיתי מחובר) — אסור לפרסם ולגבות כסף על תוכן דמו' };
   }
   return executeGatedAction({

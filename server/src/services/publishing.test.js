@@ -57,7 +57,7 @@ test('publishOpportunity refuses to publish demo content, never opening a real P
     assert.equal(stillDraft.status, 'draft');
     assert.equal(stillDraft.paddlePriceId, null);
     const logged = db.actions_log.where((a) => a.type === 'publish_product')[0];
-    assert.match(logged.result, /blocked: demo/);
+    assert.match(logged.result, /blocked: תוכן דמו/);
   } finally {
     restore();
   }
