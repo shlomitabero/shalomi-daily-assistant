@@ -1168,7 +1168,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     keywords: [
-      "subscription", "membership plan", "recurring billing", "subscription plan", "member management",
+      // Round 1690: "membership fee" -- the single most natural English
+      // phrase for what a gym/studio/co-working-space business actually
+      // charges -- was missing, even though "membership plan" and "member
+      // management" (round 1007-era fixes for the same underlying gap)
+      // already matched. Without it, a description like "members pay a
+      // monthly membership fee" fell through to the generic catch-all
+      // entity entirely (no Subscription match at all), and separately
+      // got the wrong "No payments" recommendation on buildOpenQuestions'
+      // own payment question -- even though the Hebrew equivalent ("דמי
+      // חבר") already matched correctly.
+      "subscription", "membership plan", "membership fee", "recurring billing", "subscription plan", "member management",
       // Bare "מנוי" (round 563) is a substring of the ordinary plural
       // "אומנויות"/"אמנויות" ("arts"/"crafts", as in "אומנויות לחימה" --
       // martial arts), so a plain arts/crafts-school description spuriously

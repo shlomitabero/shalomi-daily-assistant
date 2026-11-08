@@ -236,6 +236,22 @@ test("asks about payments for a membership/subscription description phrased with
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
+  // Round 1690: "membership fee" is the single most natural English
+  // phrase for what a gym/studio/co-working-space business charges, but
+  // was missing from the Subscription entity's keyword list even though
+  // "membership plan" and "member management" already matched -- the
+  // Hebrew equivalent ("דמי חבר") already worked correctly. Without this
+  // fix, the description below fell through to the generic catch-all
+  // entity entirely, with no Subscription match at all.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("A gym app to manage members who pay a monthly membership fee.");
+  assert.deepEqual(spec.entities.map((e) => e.name), ["Subscription"]);
+  const paymentQuestion = spec.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "Stripe");
+});
+
 test("asks about payments (recommending Stripe) for a rental-business description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "tool rental"/"rental business" match the Rental entity but share no
   // substring with "payment"/"billing"/"invoice"/"checkout"/"stripe"/
