@@ -393,6 +393,44 @@ test("findOversizedGeneratedSpecField flags an oversized roles/openQuestions/ope
   assert.match(findOversizedGeneratedSpecField(oversizedEnumValues)!, /enumValues list/);
 });
 
+/**
+ * Round 1710: round 1695's own array-count sweep above never touched
+ * enumLabels -- a z.record (FieldSchema's own declaration), not an array --
+ * even though it's exposed to the identical token-repetition failure mode:
+ * many distinct, individually-short entries still balloon this field's
+ * total size with nothing to catch it, since nothing anywhere ties its key
+ * count to enumValues' own (already-capped) one either.
+ */
+test("findOversizedGeneratedSpecField flags an oversized enumLabels map, and leaves a normal one alone", () => {
+  const normalEnumLabels = ProductSpecSchema.parse({
+    ...baseSpec([
+      {
+        name: "Order",
+        fields: [{ name: "status", type: "enum", required: true, enumValues: ["Active"], enumLabels: { Active: "פעיל" } }],
+      },
+    ]),
+  });
+  assert.equal(findOversizedGeneratedSpecField(normalEnumLabels), null, "a normal, correctly-sized enumLabels map must not be flagged");
+
+  const oversizedEnumLabels = ProductSpecSchema.parse({
+    ...baseSpec([
+      {
+        name: "Order",
+        fields: [
+          {
+            name: "status",
+            type: "enum",
+            required: true,
+            enumValues: ["Active"],
+            enumLabels: Object.fromEntries(Array.from({ length: GENERATED_SPEC_MAX_ENUM_VALUES + 1 }, (_, i) => [`v${i}`, `Label ${i}`])),
+          },
+        ],
+      },
+    ]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedEnumLabels)!, /enumLabels map/);
+});
+
 test("ProductSpecSchema rejects two entities whose names collide case-insensitively", () => {
   const result = ProductSpecSchema.safeParse(
     baseSpec([

@@ -468,6 +468,26 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
           return `an enumValue on field "${field.name}" in entity "${entity.name}" (${value.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
         }
       }
+      // Round 1710: every check above this point (and the enumValues-list
+      // check just above) guards a STRING's length or an ARRAY's item
+      // count, but enumLabels is a z.record (FieldSchema's own declaration
+      // above), not an array -- round 1695's own "a token-repetition loop
+      // can repeat a whole list element, not just characters within one
+      // string" fix swept every array in this schema (roles, personas,
+      // assumptions, openQuestions, openQuestions.options, entities,
+      // fields, enumValues) but never touched this one record-shaped
+      // field, which is exactly as exposed: a model stuck in that same
+      // failure mode re-emitting many distinct, individually-short
+      // enumLabel entries (each key/value passing the length checks below
+      // on its own) still balloons this field's total size unboundedly,
+      // with nothing here to catch it -- and unlike enumValues, nothing
+      // anywhere even ties enumLabels' key count to it, so this can't be
+      // caught as a side effect of the enumValues check either. Capped at
+      // the same GENERATED_SPEC_MAX_ENUM_VALUES bound as enumValues itself,
+      // since enumLabels is conceptually keyed by that same list.
+      if (Object.keys(field.enumLabels ?? {}).length > GENERATED_SPEC_MAX_ENUM_VALUES) {
+        return `field "${field.name}"'s enumLabels map in entity "${entity.name}" (${Object.keys(field.enumLabels ?? {}).length} entries, max ${GENERATED_SPEC_MAX_ENUM_VALUES})`;
+      }
       for (const value of Object.values(field.enumLabels ?? {})) {
         if (value.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
           return `an enumLabel on field "${field.name}" in entity "${entity.name}" (${value.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
