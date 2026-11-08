@@ -1203,6 +1203,51 @@ test("an incoming call that goes unanswered (rejected or timed out) is logged as
   assert.equal(messages[1].body, "[Missed call]");
 });
 
+/**
+ * Round 1731: WhatsApp's own privacy-mode "LID" addressing applies to
+ * calls exactly the way it applies to messages (Baileys' own
+ * Call.d.ts/messages-recv.js carry a `callerPn` field, populated and
+ * propagated across a call's repeated status events the same way
+ * `remoteJidAlt` is for a message) -- but `handleIncomingCalls` never
+ * got the LID resolution `handleIncomingMessages` has. Before this fix,
+ * `call.from.split("@")[0]` fed the caller's opaque LID digits straight
+ * into findMatchingRecord as if it were a phone number, so a privacy-mode
+ * caller's missed call could never match their real customer record, and
+ * the logged `fromNumber` was a meaningless LID digit string instead of
+ * their real number. Covers both resolution paths, mirroring the
+ * message-LID test above: (1) `callerPn` present -- used directly; (2)
+ * `callerPn` absent, resolved via the async
+ * signalRepository.lidMapping.getPNForLID() lookup.
+ */
+test("a missed call from a WhatsApp privacy-mode 'LID' caller is matched by the caller's real phone number, resolved via callerPn or the async LID-to-phone-number lookup", async () => {
+  const { manager, createdSockets, db } = setupManager({
+    getPNForLID: async (lid) => (lid === "987654321098765@lid" ? "972507654321@s.whatsapp.net" : null),
+  });
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Dana Levi", phone: "050-123-4567" });
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Yossi Cohen", phone: "050-765-4321" });
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  // Path 1: callerPn is present -- used directly, no lidMapping lookup needed.
+  createdSockets[0].emitCall([{ from: "123456789012345@lid", callerPn: "972501234567@s.whatsapp.net", status: "reject" }]);
+
+  // Path 2: no callerPn, resolved via the async lidMapping.getPNForLID lookup.
+  createdSockets[0].emitCall([{ from: "987654321098765@lid", status: "timeout" }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order above.
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].fromNumber, "972507654321");
+  assert.equal(messages[0].matchedLabel, "Yossi Cohen");
+  assert.equal(messages[1].fromNumber, "972501234567");
+  assert.equal(messages[1].matchedLabel, "Dana Levi");
+});
+
 test("an incoming call is NOT logged while it is still ringing, once it's answered, or when it's a group call", async () => {
   const { manager, createdSockets, db } = setupManager();
   insertProject(db, project);

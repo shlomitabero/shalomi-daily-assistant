@@ -218,6 +218,16 @@ export interface BaileysMessageUpdate {
  */
 export interface BaileysCallEvent {
   from: string;
+  // Round 1731: WhatsApp's own privacy-mode "LID" addressing applies to
+  // calls exactly the way it applies to messages (see handleIncomingMessages'
+  // own `remoteJidAlt`/`lidMapping` handling) -- `from` is the caller's
+  // opaque `@lid` id when they have phone-number privacy enabled, and
+  // `callerPn` (confirmed in the installed @whiskeysockets/baileys's own
+  // Call.d.ts/messages-recv.js, populated from the call node's own
+  // "caller_pn" attribute and carried forward across the call's repeated
+  // status events the same way `remoteJidAlt` is for messages) is the real
+  // phone-number JID, when WhatsApp's server attaches it.
+  callerPn?: string;
   status: "offer" | "ringing" | "preaccept" | "transport" | "relaylatency" | "timeout" | "reject" | "accept" | "terminate";
   isVideo?: boolean;
   isGroup?: boolean;
@@ -1239,9 +1249,14 @@ export class WhatsAppWebManager {
     if (this.sessions.get(projectId) !== session) return;
     const project = getProject(this.db, projectId);
     if (!project || project.status !== "built") return;
-    // Round 1729: built once for the whole batch, not once per call.
-    const candidates = buildPhoneMatchCandidates(this.db, project);
 
+    // Round 1731: resolve every call's real "from" number first -- same
+    // two-pass shape round 1730 gave handleIncomingMessages, and for the
+    // same reason: a privacy-mode "LID" caller with no `callerPn` yet
+    // needs the same async lidMapping.getPNForLID lookup a LID message
+    // does, and building `candidates` before that await finished would
+    // reopen round 1730's own stale-candidates-across-an-await bug.
+    const resolved: { from: string; isVideo: boolean | undefined }[] = [];
     for (const call of calls) {
       // Baileys emits this same event repeatedly as a single call's status
       // progresses (see BaileysCallEvent's own doc comment) -- "accept"
@@ -1255,14 +1270,33 @@ export class WhatsAppWebManager {
       // reasoning as handleIncomingMessages' own "@g.us" exclusion above.
       if (call.isGroup) continue;
 
-      const from = call.from.split("@")[0];
+      // Mirrors handleIncomingMessages' own LID resolution: prefer the
+      // real-number JID WhatsApp's server attaches (here, `callerPn`,
+      // this event's own counterpart to a message's `remoteJidAlt`) over
+      // the async lidMapping lookup; fall back to raw-LID-as-"from" only
+      // when neither resolves (e.g. the very first call from a contact,
+      // before any mapping exists).
+      let resolvedFrom = call.from;
+      if (call.from.endsWith("@lid")) {
+        if (call.callerPn) {
+          resolvedFrom = call.callerPn;
+        } else if (session.sock?.signalRepository) {
+          const pn = await session.sock.signalRepository.lidMapping.getPNForLID(call.from);
+          if (pn) resolvedFrom = pn;
+        }
+      }
+      resolved.push({ from: resolvedFrom.split("@")[0], isVideo: call.isVideo });
+    }
+
+    const candidates = buildPhoneMatchCandidates(this.db, project);
+    for (const { from, isVideo } of resolved) {
       const match = findMatchingRecord(this.db, project, from, candidates);
       insertWhatsAppMessage(this.db, {
         projectId,
         direction: "in",
         fromNumber: from,
         toNumber: session?.phoneNumber ?? "",
-        body: call.isVideo ? "[Missed video call]" : "[Missed call]",
+        body: isVideo ? "[Missed video call]" : "[Missed call]",
         matchedEntityName: match?.entityName ?? null,
         matchedRecordId: match?.recordId ?? null,
         matchedLabel: match?.label ?? null,
