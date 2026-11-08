@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EntitySchema, FieldSchema, OpenQuestionSchema, ProductSpecSchema, findOversizedGeneratedSpecField, GENERATED_SPEC_LABEL_MAX_LENGTH, GENERATED_SPEC_PHRASE_MAX_LENGTH, GENERATED_SPEC_SUMMARY_MAX_LENGTH } from "./index.js";
+import { EntitySchema, FieldSchema, OpenQuestionSchema, ProductSpecSchema, findOversizedGeneratedSpecField, GENERATED_SPEC_LABEL_MAX_LENGTH, GENERATED_SPEC_PHRASE_MAX_LENGTH, GENERATED_SPEC_SUMMARY_MAX_LENGTH, GENERATED_SPEC_MAX_ENTITIES, GENERATED_SPEC_MAX_FIELDS_PER_ENTITY, GENERATED_SPEC_MAX_ENUM_VALUES, GENERATED_SPEC_MAX_LIST_ITEMS } from "./index.js";
 
 /**
  * FieldSchema's two `.refine()` checks -- an enum field must declare
@@ -331,6 +331,66 @@ test("findOversizedGeneratedSpecField flags an oversized summary, phrase array e
     ]),
   });
   assert.match(findOversizedGeneratedSpecField(oversizedRelationTo)!, /field "customer"'s relationTo/);
+});
+
+/**
+ * Round 1695: every check above only guards a STRING's length -- a
+ * token-repetition loop is just as capable of repeating a whole list
+ * element (the same array item, or an entity/field block, many times)
+ * as it is of repeating characters within one string. These tests cover
+ * the new array-count checks this round added, one per list this
+ * function now guards.
+ */
+test("findOversizedGeneratedSpecField flags an oversized roles/openQuestions/openQuestions.options/entities/fields/enumValues list, and leaves a normal spec alone", () => {
+  const normalEntity = { name: "Order", fields: [{ name: "total", type: "number", required: true }] };
+
+  const oversizedRoles = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    roles: Array.from({ length: GENERATED_SPEC_MAX_LIST_ITEMS + 1 }, (_, i) => `Role ${i}`),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedRoles)!, /roles list/);
+
+  const oversizedOpenQuestions = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    openQuestions: Array.from({ length: GENERATED_SPEC_MAX_LIST_ITEMS + 1 }, (_, i) => ({ question: `Q${i}?`, options: [] })),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedOpenQuestions)!, /openQuestions list/);
+
+  const oversizedOpenQuestionOptions = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    openQuestions: [{ question: "Which?", options: Array.from({ length: GENERATED_SPEC_MAX_LIST_ITEMS + 1 }, (_, i) => `Option ${i}`) }],
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedOpenQuestionOptions)!, /openQuestions options list/);
+
+  const oversizedEntities = ProductSpecSchema.parse(
+    baseSpec(
+      Array.from({ length: GENERATED_SPEC_MAX_ENTITIES + 1 }, (_, i) => ({
+        name: `Entity${i}`,
+        fields: [{ name: "total", type: "number", required: true }],
+      })),
+    ),
+  );
+  assert.match(findOversizedGeneratedSpecField(oversizedEntities)!, /entities list/);
+
+  const oversizedFields = ProductSpecSchema.parse({
+    ...baseSpec([
+      {
+        name: "Order",
+        fields: Array.from({ length: GENERATED_SPEC_MAX_FIELDS_PER_ENTITY + 1 }, (_, i) => ({ name: `field${i}`, type: "number", required: true })),
+      },
+    ]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedFields)!, /entity "Order"'s fields list/);
+
+  const oversizedEnumValues = ProductSpecSchema.parse({
+    ...baseSpec([
+      {
+        name: "Order",
+        fields: [{ name: "status", type: "enum", required: true, enumValues: Array.from({ length: GENERATED_SPEC_MAX_ENUM_VALUES + 1 }, (_, i) => `v${i}`) }],
+      },
+    ]),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedEnumValues)!, /enumValues list/);
 });
 
 test("ProductSpecSchema rejects two entities whose names collide case-insensitively", () => {

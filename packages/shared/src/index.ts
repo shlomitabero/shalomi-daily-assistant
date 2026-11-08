@@ -372,6 +372,23 @@ export type ProductSpec = z.infer<typeof ProductSpecSchema>;
 export const GENERATED_SPEC_LABEL_MAX_LENGTH = 200;
 export const GENERATED_SPEC_PHRASE_MAX_LENGTH = 500;
 export const GENERATED_SPEC_SUMMARY_MAX_LENGTH = 2000;
+// Round 1695: every check above this point guards a STRING's length -- a
+// token-repetition loop (the same real, documented LLM failure mode this
+// whole function exists to catch) is just as capable of repeating a LIST
+// ELEMENT as it is of repeating characters within one string (re-emitting
+// the same array item, or an entity/field block, many times instead of
+// stopping). Nothing anywhere caps the number of entities, fields per
+// entity, enumValues per field, or roles/personas/assumptions/
+// openQuestions/options -- each is a ProductSpecSchema z.array() with only
+// `.min(1)`, never a `.max()` (see this function's own doc comment above
+// for why a schema-level `.max()` can never be added safely). These are
+// picked generously above any real legitimate spec (the built-in domain
+// templates top out well under 20 entities/fields) so no genuine spec is
+// ever rejected.
+export const GENERATED_SPEC_MAX_ENTITIES = 40;
+export const GENERATED_SPEC_MAX_FIELDS_PER_ENTITY = 40;
+export const GENERATED_SPEC_MAX_ENUM_VALUES = 60;
+export const GENERATED_SPEC_MAX_LIST_ITEMS = 40;
 
 export function findOversizedGeneratedSpecField(spec: ProductSpec): string | null {
   if (spec.summary.length > GENERATED_SPEC_SUMMARY_MAX_LENGTH) {
@@ -382,15 +399,24 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
     ["persona", spec.personas],
     ["assumption", spec.assumptions],
   ] as const) {
+    if (phrases.length > GENERATED_SPEC_MAX_LIST_ITEMS) {
+      return `the ${kind}s list (${phrases.length} items, max ${GENERATED_SPEC_MAX_LIST_ITEMS})`;
+    }
     for (const phrase of phrases) {
       if (phrase.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
         return `a ${kind} (${phrase.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
       }
     }
   }
+  if (spec.openQuestions.length > GENERATED_SPEC_MAX_LIST_ITEMS) {
+    return `the openQuestions list (${spec.openQuestions.length} items, max ${GENERATED_SPEC_MAX_LIST_ITEMS})`;
+  }
   for (const q of spec.openQuestions) {
     if (q.question.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
       return `an openQuestions question (${q.question.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+    }
+    if (q.options.length > GENERATED_SPEC_MAX_LIST_ITEMS) {
+      return `an openQuestions options list (${q.options.length} items, max ${GENERATED_SPEC_MAX_LIST_ITEMS})`;
     }
     for (const option of q.options) {
       if (option.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
@@ -401,6 +427,9 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
       return `an openQuestions recommendation (${q.recommendation.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
     }
   }
+  if (spec.entities.length > GENERATED_SPEC_MAX_ENTITIES) {
+    return `the entities list (${spec.entities.length} items, max ${GENERATED_SPEC_MAX_ENTITIES})`;
+  }
   for (const entity of spec.entities) {
     if (entity.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
       return `entity name "${entity.name.slice(0, 40)}..." (${entity.name.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
@@ -410,6 +439,9 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
     }
     if (entity.description && entity.description.length > GENERATED_SPEC_PHRASE_MAX_LENGTH) {
       return `entity "${entity.name}"'s description (${entity.description.length} characters, max ${GENERATED_SPEC_PHRASE_MAX_LENGTH})`;
+    }
+    if (entity.fields.length > GENERATED_SPEC_MAX_FIELDS_PER_ENTITY) {
+      return `entity "${entity.name}"'s fields list (${entity.fields.length} items, max ${GENERATED_SPEC_MAX_FIELDS_PER_ENTITY})`;
     }
     for (const field of entity.fields) {
       if (field.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
@@ -427,6 +459,9 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
       // shape as field.name/entity.name above), not the longer phrase cap.
       if (field.relationTo && field.relationTo.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
         return `field "${field.name}"'s relationTo in entity "${entity.name}" (${field.relationTo.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+      }
+      if ((field.enumValues ?? []).length > GENERATED_SPEC_MAX_ENUM_VALUES) {
+        return `field "${field.name}"'s enumValues list in entity "${entity.name}" (${(field.enumValues ?? []).length} items, max ${GENERATED_SPEC_MAX_ENUM_VALUES})`;
       }
       for (const value of field.enumValues ?? []) {
         if (value.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
