@@ -87,6 +87,42 @@ test('getLedgerSummary includes unrecordedSales, the count of real payments bill
   assert.equal(summary.unrecordedSales, 1);
 });
 
+test('getLedgerSummary groups verified revenue by the opportunity source that produced it', () => {
+  // Dashboard.jsx's "מקורות הכנסה" list needs to know which source
+  // actually produced money vs. which only cost without result - this
+  // sum has to cover the entire lifetime ledger (not just today), so it
+  // must never silently drop an old entry the way a capped "recent N"
+  // list safely could.
+  __resetForTests();
+  const oppA = db.opportunities.insert({ id: makeId('opp'), title: 'a', source: 'ai_digital_products' });
+  const oppB = db.opportunities.insert({ id: makeId('opp'), title: 'b', source: 'financial_markets' });
+  addLedgerEntry({ type: 'revenue', amount: 10, verified: true, description: 'sale 1', opportunityId: oppA.id });
+  addLedgerEntry({ type: 'revenue', amount: 5, verified: true, description: 'sale 2', opportunityId: oppA.id });
+  addLedgerEntry({ type: 'revenue', amount: 20, verified: true, description: 'sale 3', opportunityId: oppB.id });
+  const summary = getLedgerSummary();
+  assert.equal(summary.revenueBySource.ai_digital_products, 15);
+  assert.equal(summary.revenueBySource.financial_markets, 20);
+});
+
+test('getLedgerSummary excludes unverified revenue and non-revenue entries from revenueBySource', () => {
+  __resetForTests();
+  const opp = db.opportunities.insert({ id: makeId('opp'), title: 'a', source: 'ai_digital_products' });
+  addLedgerEntry({ type: 'revenue', amount: 100, verified: false, description: 'invoiced, not paid', opportunityId: opp.id });
+  addLedgerEntry({ type: 'cost', amount: 5, verified: true, description: 'ai usage', opportunityId: opp.id });
+  const summary = getLedgerSummary();
+  assert.equal(summary.revenueBySource.ai_digital_products, undefined);
+});
+
+test('getLedgerSummary groups revenue with no matching opportunity under "unknown" instead of dropping it', () => {
+  // There's no delete route for opportunities, but a corrupted/legacy
+  // ledger entry pointing at an opportunityId that no longer resolves
+  // must still be counted somewhere, not silently vanish from the total.
+  __resetForTests();
+  addLedgerEntry({ type: 'revenue', amount: 9, verified: true, description: 'sale', opportunityId: 'opp_missing' });
+  const summary = getLedgerSummary();
+  assert.equal(summary.revenueBySource.unknown, 9);
+});
+
 test('totalLossSoFar ignores unverified revenue when computing the loss', () => {
   // Forecast/invoiced-but-unpaid revenue must never mask a real loss —
   // otherwise the kill-switch/maxLoss gate could be fooled into allowing

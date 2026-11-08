@@ -14,7 +14,6 @@ export default function Dashboard() {
   const [opportunities, setOpportunities] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [sources, setSources] = useState([]);
-  const [entries, setEntries] = useState([]);
   const [settings, setSettings] = useState(null);
   const [error, setError] = useState('');
 
@@ -24,15 +23,13 @@ export default function Dashboard() {
       api.getOpportunities(),
       api.getApprovals(),
       api.getSources(),
-      api.getLedgerEntries(),
       api.getSettings(),
     ])
-      .then(([s, o, a, src, led, set]) => {
+      .then(([s, o, a, src, set]) => {
         setSummary(s.summary);
         setOpportunities(o.opportunities);
         setApprovals(a.approvals.filter((x) => x.status === 'approved'));
         setSources(src.sources);
-        setEntries(led.entries);
         setSettings(set.settings);
       })
       .catch((err) => setError(err.data?.error || err.message));
@@ -54,18 +51,6 @@ export default function Dashboard() {
   // "what should I look at" surface left out of that pattern.
   const activeOpportunities = opportunities.filter((o) => o.status !== 'published' && o.status !== 'rejected' && !o.productDraft?.demo);
 
-  // Which source actually produced verified revenue vs. which only cost money with nothing to show.
-  const revenueBySource = {};
-  for (const e of entries) {
-    // Number.isFinite, not a bare add — a single corrupted entry's amount
-    // would otherwise turn that source's whole total into NaN, showing
-    // "$NaN נכנס" to the owner instead of just excluding the bad entry.
-    if (e.type !== 'revenue' || !e.verified || !e.opportunityId || !Number.isFinite(e.amount)) continue;
-    const opp = opportunities.find((o) => o.id === e.opportunityId);
-    const key = opp?.source ?? 'unknown';
-    revenueBySource[key] = (revenueBySource[key] ?? 0) + e.amount;
-  }
-
   if (error) return <div className="page"><p className="form-error">{error}</p></div>;
   if (!summary || !settings) return <div className="page-loading">טוען…</div>;
 
@@ -79,6 +64,11 @@ export default function Dashboard() {
   const maxLossRatio = settings.maxLoss > 0 ? summary.lossSoFar / settings.maxLoss : null;
   const nearMaxLoss = maxLossRatio != null && maxLossRatio >= 0.8;
   const unrecordedSales = summary.unrecordedSales ?? 0;
+  // Computed server-side now (services/ledger.js's getLedgerSummary) over
+  // the entire lifetime ledger - this page used to fetch every raw ledger
+  // entry ever created via a separate call just to reduce them into this
+  // same shape client-side.
+  const revenueBySource = summary.revenueBySource ?? {};
 
   const connectedCount = sources.filter((s) => s.connected).length;
 

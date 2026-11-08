@@ -31,7 +31,29 @@ export function getLedgerSummary() {
   return {
     ...summarizeLedger(db.ledger.all(), todayKey()),
     spentSoFar: totalSpentSoFar(), lossSoFar: totalLossSoFar(), unrecordedSales: countUnrecordedSales(),
+    revenueBySource: revenueBySource(),
   };
+}
+
+// Dashboard.jsx used to fetch every ledger entry ever created via a
+// separate /ledger/entries call and reduce them client-side just to show
+// which source actually produced verified revenue - unlike actions/
+// digests/approvals (capped "most recent N" lists, safe to truncate since
+// an older row just scrolls off), this is a running sum over the ENTIRE
+// lifetime ledger, so capping the entries sent to the client would
+// silently understate a real total rather than just shortening a list -
+// exactly the kind of wrong number this app promises never to show.
+// Computing it here instead ships one small { source: total } object,
+// with no correctness tradeoff: the server still sums every entry, it
+// just never sends each raw row over the wire to do it.
+function revenueBySource() {
+  const bySource = {};
+  for (const e of db.ledger.all()) {
+    if (e.type !== 'revenue' || !e.verified || !e.opportunityId || !Number.isFinite(e.amount)) continue;
+    const source = db.opportunities.get(e.opportunityId)?.source ?? 'unknown';
+    bySource[source] = (bySource[source] ?? 0) + e.amount;
+  }
+  return bySource;
 }
 
 // billing.js's webhook handler logs a 'blocked: <error>' sale_confirmed
