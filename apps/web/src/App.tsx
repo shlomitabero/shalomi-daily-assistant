@@ -1639,6 +1639,72 @@ function AppContent() {
   }, [backupDone]);
 
   /**
+   * Round 1703: these three effects (added in rounds 1566/1640, for the
+   * unverified-email "Resend" and "log out of other devices" actions) used
+   * to be declared further down, after the `if (checkingSession) return`
+   * / `if (!user) return <AuthScreen />` early returns below. Because
+   * `checkingSession` and `user` are set via two SEPARATE sequential state
+   * updates on mount (`me().then(({user}) => setUser(user))...finally(()
+   * => setCheckingSession(false))`), React renders this component once
+   * with `user` already set but `checkingSession` still true (hits the
+   * `checkingSession` early return, so these hooks are SKIPPED), then
+   * again immediately after with both resolved (hits neither early return,
+   * so these hooks DO run) -- two renders of the same component instance
+   * calling a different number of hooks between them, which is an
+   * unconditional React invariant violation ("Rendered more hooks than
+   * during the previous render") that crashed the entire app on every
+   * single login/signup/session-restore, caught only by the top-level
+   * ErrorBoundary's generic "Something went wrong" fallback. Moved up
+   * here, above both early returns, like every other hook in this
+   * component already must be (see the exportDone/backupDone comment just
+   * above) -- their own internal `if (!user) ...` guards already handle
+   * the signed-out case correctly, so only the hooks' declaration
+   * POSITION needed to change, not their bodies. The ordinary (non-hook)
+   * handleRevokeOtherSessions/handleResendVerification functions these
+   * pair with are left in place further down with their own callers,
+   * since only hooks -- not plain functions -- are call-order-sensitive.
+   */
+  useEffect(() => {
+    if (!user) {
+      setOtherSessionCount(null);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadOtherSessionCount() {
+      try {
+        const { count } = await getOtherSessionCount();
+        if (!cancelled) setOtherSessionCount(count);
+      } catch {
+        // A single failed background check isn't worth surfacing to the
+        // user -- the button just stays in its always-enabled (null) state.
+      }
+    }
+
+    loadOtherSessionCount();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // Fades the button's own "done"/"failed" text back to its idle label a
+  // couple seconds later, same cleanup-on-unmount discipline as
+  // BusinessTwinPanel's own copyStatus effect.
+  useEffect(() => {
+    if (revokeOtherSessionsStatus === "idle" || revokeOtherSessionsStatus === "busy") return;
+    const timer = setTimeout(() => setRevokeOtherSessionsStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [revokeOtherSessionsStatus]);
+
+  // Same fade-back-to-idle shape as revokeOtherSessionsStatus's own effect
+  // just above.
+  useEffect(() => {
+    if (resendVerificationStatus === "idle" || resendVerificationStatus === "busy") return;
+    const timer = setTimeout(() => setResendVerificationStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [resendVerificationStatus]);
+
+  /**
    * The browser tab title otherwise stays a static "Forge AI" the entire
    * session, whether or not a project is open -- with two or more projects
    * open in separate tabs there's no way to tell them apart from the tab
@@ -2326,45 +2392,6 @@ function AppContent() {
   }
 
   /**
-   * Round 1640: populates otherSessionCount once the real signed-in user
-   * is known, the same "wait for user?.id, not the pre-auth render" shape
-   * as the myRole poll and the other per-user effects in this file. A
-   * failure here (e.g. a flaky request) just leaves the button in its
-   * pre-round-1640 always-enabled state (null), never disabled.
-   */
-  useEffect(() => {
-    if (!user) {
-      setOtherSessionCount(null);
-      return;
-    }
-    let cancelled = false;
-
-    async function loadOtherSessionCount() {
-      try {
-        const { count } = await getOtherSessionCount();
-        if (!cancelled) setOtherSessionCount(count);
-      } catch {
-        // A single failed background check isn't worth surfacing to the
-        // user -- the button just stays in its always-enabled (null) state.
-      }
-    }
-
-    loadOtherSessionCount();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
-
-  // Fades the button's own "done"/"failed" text back to its idle label a
-  // couple seconds later, same cleanup-on-unmount discipline as
-  // BusinessTwinPanel's own copyStatus effect.
-  useEffect(() => {
-    if (revokeOtherSessionsStatus === "idle" || revokeOtherSessionsStatus === "busy") return;
-    const timer = setTimeout(() => setRevokeOtherSessionsStatus("idle"), 2000);
-    return () => clearTimeout(timer);
-  }, [revokeOtherSessionsStatus]);
-
-  /**
    * Round 1566: the unverified-email banner's own "Resend" button. Own-
    * click reentrancy guard mirrors handleRevokeOtherSessions just above,
    * minus the confirm() dialog -- re-requesting a verification email is
@@ -2381,14 +2408,6 @@ function AppContent() {
       setResendVerificationStatus("failed");
     }
   }
-
-  // Same fade-back-to-idle shape as revokeOtherSessionsStatus's own effect
-  // just above.
-  useEffect(() => {
-    if (resendVerificationStatus === "idle" || resendVerificationStatus === "busy") return;
-    const timer = setTimeout(() => setResendVerificationStatus("idle"), 2000);
-    return () => clearTimeout(timer);
-  }, [resendVerificationStatus]);
 
   /**
    * Runs once DeleteAccountPanel's own DELETE /auth/account call has

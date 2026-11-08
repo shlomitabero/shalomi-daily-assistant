@@ -4201,6 +4201,60 @@ test("App's handleResendVerification is gated by its own busy flag, and only cal
 });
 
 /**
+ * Round 1703: a genuine production crash found via live browser testing --
+ * signing up or logging in threw "Rendered more hooks than during the
+ * previous render" and took down the whole app behind the top-level
+ * ErrorBoundary's generic fallback, on EVERY signup/login/session-restore.
+ * `checkingSession` and `user` are set via two separate sequential state
+ * updates on mount (`me().then(({user}) => setUser(user))...finally(() =>
+ * setCheckingSession(false))`), so AppContent renders once with `user`
+ * already set but `checkingSession` still true (hitting the
+ * `checkingSession` early return, a hook below it never calls), then again
+ * immediately after with both resolved (hitting neither early return, so
+ * that hook DOES run) -- a different number of hooks called between two
+ * renders of the same component instance, which is an unconditional React
+ * invariant violation. The three otherSessionCount/revokeOtherSessionsStatus/
+ * resendVerificationStatus effects (rounds 1566/1640) had slipped below
+ * both early returns; this is a structural regression test for the
+ * invariant the file's own comment above the exportDone/backupDone effects
+ * already documents ("declared here... so these two hooks run on every
+ * render regardless of auth state... declaring them further down... would
+ * crash React") -- verified via source-position extraction (the same
+ * convention every other App.tsx-area test in this file uses, since
+ * App.tsx has no full-render harness here) rather than instantiating the
+ * full 3000+-line component tree.
+ */
+test("App.tsx declares every hook above the checkingSession/user early returns, so no hook's call count can differ between the signed-out and signed-in renders", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const checkingSessionReturnIndex = appSrc.indexOf("  if (checkingSession) {");
+  assert.ok(checkingSessionReturnIndex > 0, "expected to find the checkingSession early return in App.tsx");
+  const userReturnIndex = appSrc.indexOf("  if (!user) {", checkingSessionReturnIndex);
+  assert.ok(userReturnIndex > checkingSessionReturnIndex, "expected to find the !user early return after the checkingSession one");
+
+  // The three hooks round 1703 moved back above both early returns -- each
+  // must now appear (be declared) strictly before the first early return,
+  // not merely be called by something declared above it.
+  const otherSessionCountEffectIndex = appSrc.indexOf("setOtherSessionCount(null);");
+  const revokeFadeEffectIndex = appSrc.indexOf('if (revokeOtherSessionsStatus === "idle" || revokeOtherSessionsStatus === "busy") return;');
+  const resendFadeEffectIndex = appSrc.indexOf('if (resendVerificationStatus === "idle" || resendVerificationStatus === "busy") return;');
+  assert.ok(otherSessionCountEffectIndex > 0, "expected to find the otherSessionCount effect in App.tsx");
+  assert.ok(revokeFadeEffectIndex > 0, "expected to find the revokeOtherSessionsStatus fade effect in App.tsx");
+  assert.ok(resendFadeEffectIndex > 0, "expected to find the resendVerificationStatus fade effect in App.tsx");
+  assert.ok(
+    otherSessionCountEffectIndex < checkingSessionReturnIndex,
+    "the otherSessionCount effect must be declared before the checkingSession early return, or its hook gets skipped on one of the two post-login renders",
+  );
+  assert.ok(
+    revokeFadeEffectIndex < checkingSessionReturnIndex,
+    "the revokeOtherSessionsStatus fade effect must be declared before the checkingSession early return, or its hook gets skipped on one of the two post-login renders",
+  );
+  assert.ok(
+    resendFadeEffectIndex < checkingSessionReturnIndex,
+    "the resendVerificationStatus fade effect must be declared before the checkingSession early return, or its hook gets skipped on one of the two post-login renders",
+  );
+});
+
+/**
  * Round 1566: the mount-time effect that reads `?verifyToken=` off the URL
  * (the link signup/resend-verification emails) and consumes it against the
  * real POST /auth/verify-email endpoint -- extracts the real effect
