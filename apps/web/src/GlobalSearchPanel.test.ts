@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
-import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
+import { entityDisplayLabel, entityLabelOccurrences, searchEntityRecords } from "./entityFormatting.js";
 import { GlobalSearchPanel } from "./GlobalSearchPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -26,9 +26,13 @@ const globalSearchPanelSrc = readFileSync(new URL("./GlobalSearchPanel.tsx", imp
  * with a mock listRecords that fails for exactly one of three entities.
  */
 test("GlobalSearchPanel's runSearch shows results from every entity that succeeded, instead of Promise.all's all-or-nothing blanking everything on one entity's failure", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
   const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -118,9 +122,13 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
  * the silent-miss case this flag exists to surface.
  */
 test("GlobalSearchPanel's runSearch collects every truncated entity's name, even one with zero matches, instead of silently discarding listRecords' own truncated flag", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
   const entityB = { name: "Beta", label: "Beta", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -200,9 +208,13 @@ test("GlobalSearchPanel's runSearch collects every truncated entity's name, even
  * name in this one banner alone.
  */
 test("GlobalSearchPanel's runSearch names a truncated entity by its own display label, not its raw internal name", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   // A real entity-rename scenario: the internal identifier stayed
   // "customer_v2" (can't change without breaking existing data), but the
@@ -269,8 +281,12 @@ test("GlobalSearchPanel's runSearch names a truncated entity by its own display 
 });
 
 test("GlobalSearchPanel's runSearch still surfaces the raw error message when every entity fails", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
   const rejection = new Error("network error");
@@ -337,9 +353,13 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
  * not by array position.
  */
 test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descending, not by declaration order", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
   const entityB = { name: "Beta", label: "Beta", fields: [] };
@@ -422,8 +442,12 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
  * arrival can't clobber the newer result.
  */
 test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's results once a newer search has already completed", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
 
@@ -519,9 +543,13 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
  * moved past.
  */
 test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch once a newer search has already completed", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
 
@@ -600,9 +628,13 @@ test("GlobalSearchPanel's handleShowAll ignores a stale, still-in-flight fetch o
  * a different casing than the entityName argument.
  */
 test("GlobalSearchPanel's handleShowAll still runs when its entity was only recased (not removed) by a refine completing while the panel is still open", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   // The live entities array now holds "Alpha" recased to "ALPHA" -- the
   // same entity a refine just recased, not a different one.
@@ -674,9 +706,13 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
  * put on screen.
  */
 test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight fetch's error once a newer search has already completed", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
 
@@ -756,9 +792,13 @@ test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight 
  * array was set at the original, smaller count.
  */
 test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMatches changes, so it can't end up rendered below a group it now outnumbers", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityOrder = { name: "Order", label: "Order", fields: [] };
   const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
@@ -856,9 +896,13 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
  * effect would sit on whatever landed there instead.
  */
 test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group identified by its entity, not its old array slot, after a resort", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityOrder = { name: "Order", label: "Order", fields: [] };
   const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
@@ -961,9 +1005,13 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
  * Customer's earlier one.
  */
 test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches patch to a second group's concurrent 'Show all', regardless of which one's fetch resolves first", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityOrder = { name: "Order", label: "Order", fields: [] };
   const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
@@ -1070,9 +1118,13 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
  * nothing had happened at all.
  */
 test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, instead of silently swallowing it", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
   const rejection = new Error("network error");
@@ -1139,9 +1191,13 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
  * now fits under the cap.
  */
 test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set when its fresh fetch is capped, and removes it again once a later fetch isn't", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
   const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
-  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [] };
   let truncatedNames: string[] = ["Beta"];
@@ -3384,5 +3440,106 @@ test("a global search group header's entity-label text wraps mid-word instead of
     entityLabel!,
     /overflow-wrap:\s*anywhere/,
     ".global-search-entity-label must allow a long unbreakable entity name to wrap mid-word instead of overflowing the search dialog",
+  );
+});
+
+/**
+ * Round 1744: matchesSearch/relationDisplayLabel (entityFormatting.ts) look
+ * up a relation field's target records by the field's own raw `relationTo`
+ * string, not by the target entity's current canonical name -- because a
+ * case-only entity rename never rewrites a sibling field's relationTo to
+ * match (migrate.ts treats it as a no-op). runSearch's own recordsByEntity
+ * cache was the one place in the codebase that instead built this cache
+ * keyed by each entity's own canonical `name`, so a relation field whose
+ * relationTo had case-drifted from its target silently missed every
+ * lookup here, even though an identical query from that entity's own
+ * per-tab search box (which uses EntityPanel.tsx's correctly
+ * relationTo-keyed cache) matched fine. Extracts the real withRelationTo
+ * Aliases + runSearch from GlobalSearchPanel.tsx (same technique as the
+ * tests above) and the REAL searchEntityRecords from entityFormatting.ts,
+ * so this is an end-to-end proof, not a mock of the function under test.
+ */
+test("GlobalSearchPanel's runSearch finds a relation-field match even when the field's relationTo has case-drifted from its target entity's current name", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function runSearch\(q: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find runSearch in GlobalSearchPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const customer = { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Name", type: "text" }] };
+  // Case-drifted on purpose: this entity is really "Customer", but the
+  // relation field below still points at the lowercase spelling it had
+  // before a case-only rename.
+  const order = {
+    name: "Order",
+    label: "Order",
+    fields: [{ name: "customer", label: "Customer", type: "relation", relationTo: "customer" }],
+  };
+
+  const customerRecord = { id: 1, name: "Dana Levi" };
+  const orderRecord = { id: 1, customer: 1 };
+
+  let capturedResults: unknown[] | undefined;
+  let capturedLastRecordsByEntity: unknown;
+  const lastRecordsByEntityRef = { current: {} };
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "t",
+    "setLoading",
+    "setError",
+    "setResults",
+    "setSearched",
+    "setHighlightQuery",
+    "setSelectedIndex",
+    "setTruncatedEntityNames",
+    "searchRequestId",
+    "lastRecordsByEntityRef",
+    "errorFromShowAllRef",
+    "lang",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
+    `${code}\nreturn runSearch;`,
+  )(
+    [customer, order],
+    "proj1",
+    async (_projectId: string, entityName: string) =>
+      entityName === "Customer" ? { records: [customerRecord] } : { records: [orderRecord] },
+    searchEntityRecords,
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    () => {},
+    () => {},
+    (results: unknown[]) => {
+      capturedResults = results;
+    },
+    () => {},
+    () => {},
+    () => {},
+    () => {},
+    { current: 0 },
+    lastRecordsByEntityRef,
+    { current: false },
+    "en",
+    entityLabelOccurrences,
+    entityDisplayLabel,
+  ) as (q: string) => Promise<void>;
+
+  await fn("Dana Levi");
+  capturedLastRecordsByEntity = lastRecordsByEntityRef.current;
+
+  const orderGroup = (capturedResults ?? []).find((r) => (r as { entityName: string }).entityName === "Order") as
+    | { sample: unknown[] }
+    | undefined;
+  assert.ok(orderGroup, "Order's relation field to Customer (relationTo: \"customer\") must resolve to Customer's seeded record and surface a match, not be silently missed");
+  assert.deepEqual(orderGroup!.sample, [orderRecord]);
+  assert.deepEqual(
+    (capturedLastRecordsByEntity as Record<string, unknown>)["customer"],
+    [customerRecord],
+    "lastRecordsByEntityRef must also be aliased under the raw relationTo spelling, not just the canonical entity name, so a later Show-all/relation lookup for this entity doesn't regress",
   );
 });

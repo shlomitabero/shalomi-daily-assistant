@@ -18,6 +18,40 @@ import { addRecentSearch, clearRecentSearches, getRecentSearches, removeRecentSe
 import { downloadSearchResults, formatSearchResults } from "./searchReport.js";
 
 /**
+ * Round 1744: matchesSearch/relationDisplayLabel (entityFormatting.ts)
+ * deliberately look up a relation field's target records by the field's
+ * own raw `relationTo` string, not by the target entity's current
+ * canonical name -- because migrate.ts treats a case-only entity rename
+ * as a no-op and never rewrites a sibling field's relationTo to match,
+ * so the two can differ in letter case indefinitely (the same reasoning
+ * EntityPanel.tsx's own relationTargets/round-1237 comment documents).
+ * This panel's recordsByEntity/lastRecordsByEntityRef was the one place
+ * in the codebase that instead built this exact cache keyed by each
+ * entity's own canonical `name` -- "working by coincidence" until any
+ * entity had ever been case-renamed, at which point a sibling's relation
+ * field pointing at it (still spelled the old way) silently missed every
+ * lookup and fell back to the raw "#<id>", even though the identical
+ * query from that entity's own per-tab search box (which uses the
+ * correctly-relationTo-keyed cache EntityPanel.tsx builds) matched fine --
+ * directly contradicting this file's own doc comment that search here
+ * and in a tab never disagree about what counts as a match. Aliasing
+ * every observed relationTo spelling onto its already-fetched target's
+ * records (case-insensitively resolved) closes the gap with no extra
+ * network calls, since every entity is already fetched here.
+ */
+function withRelationToAliases(entities: Entity[], recordsByEntity: RelatedRecordsByEntity): RelatedRecordsByEntity {
+  const aliased = { ...recordsByEntity };
+  for (const e of entities) {
+    for (const f of e.fields) {
+      if (f.type !== "relation" || !f.relationTo || aliased[f.relationTo]) continue;
+      const target = entities.find((te) => te.name.toLowerCase() === f.relationTo!.toLowerCase());
+      if (target && recordsByEntity[target.name]) aliased[f.relationTo] = recordsByEntity[target.name];
+    }
+  }
+  return aliased;
+}
+
+/**
  * Mirrors EntityPanel.tsx's own Highlighted wrapper (round 195) around the
  * same splitHighlightSegments -- a result row here already told you a
  * record matched, but not where within its own display label the match
@@ -216,11 +250,12 @@ export function GlobalSearchPanel({
       }
     }
     setTruncatedEntityNames(truncatedNames);
-    lastRecordsByEntityRef.current = recordsByEntity;
+    const recordsByEntityWithAliases = withRelationToAliases(entities, recordsByEntity);
+    lastRecordsByEntityRef.current = recordsByEntityWithAliases;
     const succeeded = entities
       .map((entity) =>
         recordsByEntity[entity.name]
-          ? searchEntityRecords(entity, recordsByEntity[entity.name], q, 5, entities, recordsByEntity, lang)
+          ? searchEntityRecords(entity, recordsByEntity[entity.name], q, 5, entities, recordsByEntityWithAliases, lang)
           : null,
       )
       .filter((r): r is EntitySearchResult => r !== null);
@@ -339,7 +374,7 @@ export function GlobalSearchPanel({
       // relation field pointing at entityName) kept matching against this
       // entity's data as it stood at the ORIGINAL search, not the fresh
       // snapshot already sitting right here in memory.
-      lastRecordsByEntityRef.current = { ...lastRecordsByEntityRef.current, [entityName]: records };
+      lastRecordsByEntityRef.current = withRelationToAliases(entities, { ...lastRecordsByEntityRef.current, [entity.name]: records });
       const full = searchEntityRecords(
         entity,
         records,

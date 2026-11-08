@@ -17231,6 +17231,86 @@ test("the exported GlobalSearch's searchAllEntities names a truncated entity by 
 });
 
 /**
+ * Round 1744: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+ * matchesSearch/relationDisplayLabel (both in EntityView.jsx) look up a
+ * relation field's target records by the field's own raw `relationTo`
+ * string, not by the target entity's current canonical name, because a
+ * case-only entity rename never rewrites a sibling field's relationTo to
+ * match (migrate.ts treats it as a no-op). The exported app's own
+ * searchAllEntities was the one place that instead built its
+ * recordsByEntity cache keyed by each entity's own canonical `name`, so a
+ * relation field whose relationTo had case-drifted from its target
+ * silently missed every lookup here. Runs the real generated
+ * withRelationToAliases/searchAllEntities/matchesSearch together against
+ * an Order entity whose own "customer" relation field still points at the
+ * lowercase "customer" spelling a real Customer entity had before a
+ * case-only rename.
+ */
+test("the exported GlobalSearch's searchAllEntities finds a relation-field match even when the field's relationTo has case-drifted from its target entity's current name", async () => {
+  const files = generateExportFiles(project);
+  const globalSearchJsx = files.find((f) => f.path === "web/src/components/GlobalSearch.jsx")!.content;
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
+  const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const relationDisplayLabelSrc = entityViewJsx.match(/function relationDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const relationIndexSrc = entityViewJsx.match(/const relationIndexCache = new WeakMap\(\);\nfunction relationIndexFor\([\s\S]*?\n\}\n/)?.[0];
+  const displayFieldHintsSrc = entityViewJsx.match(/const DISPLAY_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  const recordDisplayLabelSrc = entityViewJsx.match(/export function recordDisplayLabel\(entity, record\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
+  const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    matchesSearchSrc &&
+      entityLabelOccurrencesSrc &&
+      entityDisplayLabelSrc &&
+      relationDisplayLabelSrc &&
+      relationIndexSrc &&
+      displayFieldHintsSrc &&
+      recordDisplayLabelSrc &&
+      pickDisplaySrc &&
+      withRelationToAliasesSrc &&
+      searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/relationDisplayLabel/relationIndexFor/DISPLAY_FIELD_NAME_HINTS/recordDisplayLabel/pickDisplayField/withRelationToAliases/searchAllEntities in generated output",
+  );
+
+  const customer = { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Name", type: "text" }] };
+  // Case-drifted on purpose: really "Customer", but this relation field
+  // still points at the lowercase spelling it had before a case-only
+  // rename.
+  const order = {
+    name: "Order",
+    label: "Order",
+    fields: [{ name: "customer", label: "Customer", type: "relation", relationTo: "customer" }],
+  };
+
+  const customerRecord = { id: 1, name: "Dana Levi" };
+  const orderRecord = { id: 1, customer: 1 };
+
+  // ALL_ENTITIES is a real module-level const in the generated file; this
+  // test supplies its own equivalent directly, the same shape
+  // relationDisplayLabel's own ALL_ENTITIES.find lookup expects to find it in.
+  const allEntitiesDecl = `const ALL_ENTITIES = ${JSON.stringify([customer, order])};`;
+
+  const searchAllEntities = new Function(
+    "listRecords",
+    `${allEntitiesDecl}\n${displayFieldHintsSrc}\n${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${pickDisplaySrc}\n${recordDisplayLabelSrc}\n${relationIndexSrc}\n${relationDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+  )(async (entityName: string) => (entityName === "Customer" ? { records: [customerRecord] } : { records: [orderRecord] })) as (
+    entities: unknown[],
+    query: string,
+  ) => Promise<{ results: { entityName: string; sample: unknown[] }[] }>;
+
+  const { results } = await searchAllEntities([customer, order], "Dana Levi");
+  const orderGroup = results.find((r) => r.entityName === "Order");
+  assert.ok(
+    orderGroup,
+    'Order\'s relation field to Customer (relationTo: "customer") must resolve to Customer\'s seeded record and surface a match, not be silently missed',
+  );
+  assert.deepEqual(orderGroup!.sample, [orderRecord]);
+});
+
+/**
  * New in this round: the exported app's own GlobalSearch.jsx is a
  * deliberate duplicate of the live-preview GlobalSearchPanel.tsx's
  * runSearch, and it had the exact same ordering gap that round's own fix

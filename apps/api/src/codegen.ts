@@ -8937,6 +8937,27 @@ function LinkifiedHighlighted({ text, query }) {
   );
 }
 
+// Round 1744: mirrors the live preview's own GlobalSearchPanel.tsx fix --
+// matchesSearch (and relationDisplayLabel) look up a relation field's
+// target records by the field's own raw relationTo string, not by the
+// target entity's current canonical name, because a case-only entity
+// rename never rewrites a sibling field's relationTo to match. Without
+// this, recordsByEntity -- built keyed by each entity's own canonical
+// name -- silently misses any relation field whose relationTo has
+// case-drifted from its target, even though that same entity's own data
+// was already fetched right here.
+function withRelationToAliases(entities, recordsByEntity) {
+  const aliased = { ...recordsByEntity };
+  for (const e of entities) {
+    for (const f of e.fields) {
+      if (f.type !== "relation" || !f.relationTo || aliased[f.relationTo]) continue;
+      const target = entities.find((te) => te.name.toLowerCase() === f.relationTo.toLowerCase());
+      if (target && recordsByEntity[target.name]) aliased[f.relationTo] = recordsByEntity[target.name];
+    }
+  }
+  return aliased;
+}
+
 // Fetches every entity's own records once, then searches all of them using
 // that same result set as matchesSearch's relatedRecords -- so a relation
 // field's search match resolves to its real display label (e.g. "Dana
@@ -8971,11 +8992,12 @@ async function searchAllEntities(entities, query) {
       if (truncated) truncatedNames.push(entityDisplayLabel(entity, entityLabelCounts));
     }
   }
+  const recordsByEntityWithAliases = withRelationToAliases(entities, recordsByEntity);
   const results = entities
     .map((entity) => {
       const records = recordsByEntity[entity.name];
       if (!records) return null;
-      const matches = records.filter((r) => matchesSearch(r, entity.fields, query, recordsByEntity));
+      const matches = records.filter((r) => matchesSearch(r, entity.fields, query, recordsByEntityWithAliases));
       if (matches.length === 0) return null;
       return {
         entityName: entity.name,
@@ -8992,7 +9014,7 @@ async function searchAllEntities(entities, query) {
   // original declared order.
   results.sort((a, b) => b.totalMatches - a.totalMatches);
   const failures = settled.filter((r) => r.status === "rejected");
-  return { results, failures, recordsByEntity, truncatedNames };
+  return { results, failures, recordsByEntity: recordsByEntityWithAliases, truncatedNames };
 }
 
 // Renders the already-fetched results as a plain, shareable text snapshot --
@@ -9298,7 +9320,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // relation field pointing at entityName) kept matching against this
       // entity's data as it stood at the ORIGINAL search, not the fresh
       // snapshot already sitting right here in memory.
-      lastRecordsByEntityRef.current = { ...lastRecordsByEntityRef.current, [entityName]: records };
+      lastRecordsByEntityRef.current = withRelationToAliases(entities, { ...lastRecordsByEntityRef.current, [entity.name]: records });
       const full = records.filter((r) => matchesSearch(r, entity.fields, highlightQuery, lastRecordsByEntityRef.current));
       if (full.length === 0) {
         // Round 983: mirrors the live preview's own fix (GlobalSearchPanel.tsx)
