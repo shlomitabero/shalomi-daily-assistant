@@ -287,6 +287,28 @@ test("recognizes 'trainers'/'מאמנים' as Employee staff, in both the Englis
   assert.ok(he.entities.some((e) => e.name === "Employee"), "the Hebrew Fitness studio example must match the Employee entity");
 });
 
+test("recognizes 'opportunity'/'הזדמנויות' and 'לידים' as Deal-shaped sales pipeline terms, in both the English and Hebrew built-in 'Sales CRM' example descriptions", async () => {
+  // Round 1722: the app's own home-screen built-in example
+  // (apps/web/src/i18n/language.ts, home.examples.crm.text/[he]) reads
+  // "...with sales stages, meetings, and opportunity tracking" / "...עם
+  // שלבי מכירה, פגישות ומעקב הזדמנויות" -- but the Deal entity rule's
+  // keywords had no "opportunity"/"לידים"/"הזדמנות" term at all (only
+  // "deals"/"negotiation"/"עסקה"/"עסקאות"/"משא ומתן"), even though the
+  // Deal entity's own `stage` enum literally includes "Lead" as a value.
+  // The engine's own showcased CRM example produced no Deal entity in
+  // either language before this fix.
+  const provider = new HeuristicSpecProvider();
+  const en = await provider.generate(
+    "A CRM for managing leads and customers, with sales stages, meetings, and opportunity tracking.",
+  );
+  assert.ok(en.entities.some((e) => e.name === "Deal"), "the English Sales CRM example must match the Deal entity");
+
+  const he = await provider.generate(
+    "מערכת CRM לניהול לידים ולקוחות, עם שלבי מכירה, פגישות ומעקב הזדמנויות.",
+  );
+  assert.ok(he.entities.some((e) => e.name === "Deal"), "the Hebrew Sales CRM example must match the Deal entity");
+});
+
 test("asks about payments (recommending Stripe) for a rental-business description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "tool rental"/"rental business" match the Rental entity but share no
   // substring with "payment"/"billing"/"invoice"/"checkout"/"stripe"/

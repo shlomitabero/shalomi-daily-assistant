@@ -487,12 +487,44 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // reading, where "deals" itself is the sentence's own main verb) is
     // excluded, the same two-independent-exclusions shape MenuItem's own
     // "dish" entry above already uses for an analogous idiom collision.
+    // "opportunity"/"opportunities" (round 1722): the app's own built-in
+    // "Sales CRM" home-screen example (home.examples.crm.text, both
+    // languages) reads "...with sales stages, meetings, and opportunity
+    // tracking" / "...עם שלבי מכירה, פגישות ומעקב הזדמנויות" -- live-
+    // confirmed via HeuristicSpecProvider.generate() that this exact
+    // sentence produced no Deal entity at all before this fix, in either
+    // language, despite the Deal entity's own `stage` enum literally
+    // including "Lead" as a value. "lead"/"leads" itself is deliberately
+    // NOT added here: unlike "deals" above (whose one false-positive
+    // idiom, "deals with", is cleanly excludable by what follows it),
+    // "lead(s)" collides with the ordinary English verb "to lead" in far
+    // too many common, unrelated app-description shapes to exclude with
+    // one or two lookaheads ("an app that leads users through...", "leads
+    // the team", "leads to", "takes the lead", "lead guitarist") -- no
+    // single-exclusion guard meaningfully separates the CRM-noun reading
+    // from the verb reading the way "deals with" vs "close deals with"
+    // could be told apart by what came immediately before it.
     keywords: [
       /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+\S+){0,2}\s)\bdeals\b(?=\s+with\b)/,
       "negotiation",
+      /\bopportunit(?:y|ies)\b/,
       "עסקה",
       "עסקאות",
       "משא ומתן",
+      // "לידים" (plural "leads", round 1722): the Hebrew half of the same
+      // CRM example gap above -- unlike the English noun, this Hebrew
+      // plural has no competing everyday meaning, so no collision guard
+      // is needed. The bare SINGULAR "ליד" is deliberately excluded: it's
+      // also the extremely common preposition "near/beside" ("חדר ליד
+      // המטבח" = "a room near the kitchen"), an ambiguity at the word
+      // level itself (not a substring-boundary issue regex lookbehind/
+      // lookahead can resolve, since both readings are the identical
+      // standalone word) -- adding it unguarded would spuriously tag
+      // nearly any description mentioning something being near something
+      // else as a sales CRM.
+      "לידים",
+      "הזדמנות",
+      "הזדמנויות",
     ],
     labelHe: "עסקאות",
     descriptionHe: "עסקת מכירה פוטנציאלית.",
