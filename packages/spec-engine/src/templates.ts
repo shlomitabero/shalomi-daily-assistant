@@ -731,9 +731,14 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
     name: "Appointment",
     label: "תור",
     fields: [
-      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer" },
-      { name: "staff", label: "איש צוות", type: "relation", relationTo: "Staff" },
-      { name: "service", label: "שירות", type: "relation", relationTo: "Service" },
+      // Round 1705: same shape as round 1704's Restaurant Order fix -- an
+      // appointment with no customer, no staff member, and no service
+      // isn't a meaningful record, but none of these three relations were
+      // required, so seed.ts's seedValueFor left all three null instead of
+      // linking to the real Customer/Staff/Service rows that do exist.
+      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer", required: true },
+      { name: "staff", label: "איש צוות", type: "relation", relationTo: "Staff", required: true },
+      { name: "service", label: "שירות", type: "relation", relationTo: "Service", required: true },
       { name: "date", label: "תאריך", type: "date", required: true },
       {
         name: "status",
@@ -783,9 +788,11 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
     name: "Appointment",
     label: "Appointment",
     fields: [
-      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
-      { name: "staff", label: "Staff Member", type: "relation", relationTo: "Staff" },
-      { name: "service", label: "Service", type: "relation", relationTo: "Service" },
+      // Round 1705: see the Hebrew APPOINTMENTS_ENTITIES' own comment above
+      // -- same fix, same reasoning, kept in sync with its own Appointment entity.
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer", required: true },
+      { name: "staff", label: "Staff Member", type: "relation", relationTo: "Staff", required: true },
+      { name: "service", label: "Service", type: "relation", relationTo: "Service", required: true },
       { name: "date", label: "Date", type: "date", required: true },
       {
         name: "status",

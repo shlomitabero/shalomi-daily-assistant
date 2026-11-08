@@ -293,6 +293,46 @@ test("the Appointments & Clients template's Service entity has a description fie
 });
 
 /**
+ * Round 1705: found via live browser testing -- building the Appointments &
+ * Clients template and opening its Appointment tab shows every seeded
+ * Appointment row with a blank Customer, blank Staff Member, and blank
+ * Service, even though real Customer/Staff/Service rows exist two tabs
+ * away. Same shape and same root cause as round 1704's Restaurant Order
+ * fix (seed.ts's seedValueFor only guesses row 1 for a REQUIRED relation),
+ * just with all three of this entity's relations missing `required`
+ * instead of two -- an appointment with no customer, no staff member, and
+ * no service isn't a meaningful record.
+ */
+test("the Appointments & Clients template's Appointment entity marks its customer/staff/service relations required, so seed.ts seeds real ids into all three instead of leaving them blank", () => {
+  const appointmentsTemplate = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointmentsTemplate, "expected an \"appointments\" template to exist");
+
+  const appointment = appointmentsTemplate!.spec.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointment, "expected the Appointments & Clients template to have an Appointment entity");
+  const customer = appointment!.fields.find((f) => f.name === "customer");
+  const staff = appointment!.fields.find((f) => f.name === "staff");
+  const service = appointment!.fields.find((f) => f.name === "service");
+  assert.ok(customer, "expected the Appointment entity to have a customer field");
+  assert.ok(staff, "expected the Appointment entity to have a staff field");
+  assert.ok(service, "expected the Appointment entity to have a service field");
+  assert.equal(customer!.required, true, "an appointment with no customer isn't a meaningful record");
+  assert.equal(staff!.required, true, "an appointment with no staff member isn't a meaningful record");
+  assert.equal(service!.required, true, "an appointment with no service isn't a meaningful record");
+
+  const appointmentEn2 = appointmentsTemplate!.specEn.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointmentEn2, "expected the Appointments & Clients specEn to have an Appointment entity");
+  const customerEn = appointmentEn2!.fields.find((f) => f.name === "customer");
+  const staffEn = appointmentEn2!.fields.find((f) => f.name === "staff");
+  const serviceEn = appointmentEn2!.fields.find((f) => f.name === "service");
+  assert.ok(customerEn, "expected the Appointment specEn entity to have a customer field");
+  assert.ok(staffEn, "expected the Appointment specEn entity to have a staff field");
+  assert.ok(serviceEn, "expected the Appointment specEn entity to have a service field");
+  assert.equal(customerEn!.required, true);
+  assert.equal(staffEn!.required, true);
+  assert.equal(serviceEn!.required, true);
+});
+
+/**
  * Round 1288: the exact same "curated template vs. its own matching domain
  * rule" gap class as the test above, for Inventory & Products' own Supplier
  * entity. domainEntities.ts's real Vendor domain rule (keywords "vendor",
