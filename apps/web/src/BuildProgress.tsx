@@ -603,7 +603,14 @@ export function BuildProgress({
       </ol>
       {!compact && <p className="muted small">{t("build.footer")}</p>}
       {error && (
-        <p className="error banner" role="status">
+        // Round 1694: this is a genuine error (run() itself rejecting), the
+        // same "error banner" class App.tsx's own top-level error uses with
+        // role="alert" (round 1168) -- every other genuine error surface in
+        // this app follows that convention. role="status" (implicit polite
+        // live region) is reserved here for informational, non-error text
+        // (the per-agent caption just above, round 1558's own addition),
+        // never for a real failure.
+        <p className="error banner" role="alert">
           {error}
         </p>
       )}

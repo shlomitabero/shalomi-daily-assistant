@@ -1001,7 +1001,14 @@ test("BuildProgress still offers Retry and Back when run() itself rejects before
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(runCallCount, 1, "expected run to have been called once on mount");
-    assert.ok(document.querySelector("p.error.banner"), "expected the raw error banner to show");
+    const errorBanner = document.querySelector("p.error.banner");
+    assert.ok(errorBanner, "expected the raw error banner to show");
+    // Round 1694: this is a genuine error, the same "error banner" class
+    // App.tsx's own top-level error already uses with role="alert" (round
+    // 1168) -- every other genuine error surface in this app follows that
+    // convention; role="status" is reserved for informational, non-error
+    // text (the per-agent caption, round 1558).
+    assert.equal(errorBanner!.getAttribute("role"), "alert", "the error banner must carry role=\"alert\", the same convention every other error surface in this app already follows");
     assert.equal(document.querySelector("p.error:not(.banner)"), null, "no agent ever reported failed, so the separate failed-build banner must not show");
 
     const retryButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Try again"));
