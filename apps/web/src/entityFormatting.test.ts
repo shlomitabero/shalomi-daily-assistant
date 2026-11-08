@@ -4453,3 +4453,43 @@ test("isRecordClosedStatus also recognizes a sibling 'stage' field (round 1725),
     "a still-open Deal stage leaves the date-only overdue classification untouched",
   );
 });
+
+test("isRecordClosedStatus also recognizes a sibling BOOLEAN completion field (round 1737), matching the built-in Project Tracker template's Milestone entity", () => {
+  const milestoneFields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "done", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", done: true }, milestoneFields),
+    true,
+    "a milestone already marked done is resolved even though it has no status/stage enum at all",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", done: false }, milestoneFields),
+    false,
+    "a not-yet-done milestone leaves the date-only overdue classification untouched",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01" }, milestoneFields),
+    false,
+    "a missing boolean value (shouldn't happen, but defensively) is never treated as closed",
+  );
+  const completedFields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "Completed", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", Completed: true }, completedFields),
+    true,
+    "the boolean field name match is case-insensitive, same convention as status/stage",
+  );
+  const activeFields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "active", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", active: false }, activeFields),
+    false,
+    "an unrelated boolean field like 'active' must never be mistaken for a completion flag",
+  );
+});

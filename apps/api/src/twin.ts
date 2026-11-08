@@ -795,6 +795,14 @@ function isDeadlineFieldName(fieldName: string): boolean {
  * computeOverdueObservations/computeDueSoonObservations below -- it's
  * already resolved, so a past/near deadline on it isn't a fact worth
  * surfacing as still-outstanding.
+ *
+ * Round 1737 widens this to also recognize a sibling BOOLEAN completion
+ * field (matched the same case-insensitive way, against "done"/
+ * "completed"/"isdone"/"iscomplete") whose value is true -- mirrors
+ * entityFormatting.ts's own round-1737 widening. The Project Tracker
+ * template's Milestone entity has a `done` boolean and a `dueDate`, no
+ * status/stage enum at all, so a completed milestone was still counted in
+ * computeOverdueObservations/computeDueSoonObservations below.
  */
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
@@ -802,9 +810,15 @@ const CLOSED_STATUS_VALUES = new Set([
 ]);
 function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): boolean {
   const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
-  if (!statusField) return false;
-  const value = record[statusField.name];
-  return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());
+  if (statusField) {
+    const value = record[statusField.name];
+    if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
+  }
+  const doneField = fields.find(
+    (f) => f.type === "boolean" && ["done", "completed", "isdone", "iscomplete"].includes(f.name.toLowerCase()),
+  );
+  if (doneField && record[doneField.name] === true) return true;
+  return false;
 }
 
 /**

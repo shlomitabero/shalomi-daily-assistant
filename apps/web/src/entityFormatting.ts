@@ -460,12 +460,28 @@ const CLOSED_STATUS_VALUES = new Set([
  * suppression) when the entity has no status/stage field at all, or the
  * value isn't a recognized terminal one -- the pre-existing date-only
  * behavior is the correct default for every entity without this ambiguity.
+ *
+ * Round 1737 widens this to also recognize a sibling BOOLEAN completion
+ * field (matched the same case-insensitive way, against "done"/
+ * "completed"/"isdone"/"iscomplete") whose value is true -- this app's own
+ * built-in Project Tracker template's Milestone entity (packages/spec-
+ * engine/src/templates.ts) has exactly this shape: a `done` boolean and a
+ * `dueDate`, no status/stage enum at all. Without this, a milestone marked
+ * done still rendered with the red "overdue" date styling the moment its
+ * dueDate was in the past -- a self-contradicting, visibly wrong state for
+ * the exact same reason a "Paid" Invoice or "Won" Deal is exempted above.
  */
 export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boolean {
   const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
-  if (!statusField) return false;
-  const value = record[statusField.name];
-  return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());
+  if (statusField) {
+    const value = record[statusField.name];
+    if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
+  }
+  const doneField = fields.find(
+    (f) => f.type === "boolean" && ["done", "completed", "isdone", "iscomplete"].includes(f.name.toLowerCase()),
+  );
+  if (doneField && record[doneField.name] === true) return true;
+  return false;
 }
 
 /**

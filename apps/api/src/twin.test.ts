@@ -2073,6 +2073,44 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the Won record must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1737: isRecordClosedStatus only recognized a sibling status/stage
+ * ENUM field, so a Milestone-shaped entity (the built-in Project Tracker
+ * template's own Milestone entity: a `dueDate` and a `done` boolean, no
+ * status/stage field at all) got no such exclusion -- a done milestone with
+ * a past dueDate stayed in both the numerator and denominator forever.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own boolean completion field is already true (e.g. done)", () => {
+  const milestoneProject: Project = {
+    ...project,
+    description: "Project milestones",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Milestone",
+          label: "Milestones",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+            { name: "done", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, milestoneProject.id, milestoneProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, milestoneProject.id, milestoneProject.spec.entities[0], { title: "Kickoff", dueDate: "2026-01-01", done: false }); // genuinely overdue
+  insertRecord(db, milestoneProject.id, milestoneProject.spec.entities[0], { title: "Design review", dueDate: "2026-01-01", done: true }); // already resolved
+
+  const twin = computeBusinessTwin(db, milestoneProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the done milestone must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

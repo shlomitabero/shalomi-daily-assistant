@@ -28341,6 +28341,81 @@ test("the exported EntityView does not flag a record with a terminal stage as ov
 });
 
 /**
+ * Round 1737: isRecordClosedStatus's exported-app copy only matched a
+ * sibling status/stage ENUM field, so a Milestone-shaped entity (the
+ * built-in Project Tracker template's own Milestone entity -- a `dueDate`
+ * and a `done` boolean, no status/stage field at all) got no such
+ * exclusion. Same shape as the status/stage tests above, but with a
+ * boolean field: a record with `done: true` and a 5-day-past dueDate must
+ * NOT be flagged overdue, while `done: false` with the identical past
+ * dueDate still must be.
+ */
+test("the exported EntityView does not flag a record with a true boolean completion field as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const milestoneEntity = {
+    name: "Milestone",
+    label: "Milestone",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due date", type: "date", required: false },
+      { name: "done", label: "Done", type: "boolean", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Still open milestone", dueDate: isoDateOffset(-5), done: false },
+    { id: 2, title: "Closed milestone", dueDate: isoDateOffset(-5), done: true },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Milestone") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: milestoneEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Still open milestone/.test(r.textContent ?? ""))!;
+      const closedRow = rows.find((r) => /Closed milestone/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "a done:false record with a 5-day-past dueDate must still be flagged overdue");
+      assert.equal(closedRow.querySelector(".date-overdue"), null, "a done:true record with the identical past dueDate must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1323: ports the live preview's own new findFilterableFields fix
  * (a deadline-named date field's overdue/due-soon classification, already
  * used for the table cell's own red/amber styling right above, is now
