@@ -542,6 +542,21 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
             throw err;
           }
           recordInboundWebhookDelivery(db, projectId);
+          // Round 1699: mirrors the authenticated PATCH route's own
+          // unchained deleteReplacedFileFields call (routes/projects.ts)
+          // exactly -- deleteReplacedFileFields only ever deletes the OLD
+          // value of a file field that actually changed, never the new
+          // one, so there's no race against the "updated" automation
+          // below reading the file off the NEW record (unlike the sibling
+          // delete route's own round-1696 fix, which has to chain via
+          // `.finally()` because it deletes every file field unconditionally
+          // and the "deleted" automation reads the record being removed).
+          // Before this round, a webhook-driven update that replaced or
+          // cleared a file field (e.g. `{"photo": ""}`) never cleaned up
+          // the old uploaded file at all -- the same storage-leak class
+          // round 1696 closed for this file's sibling delete route, just
+          // never audited for this route too.
+          void deleteReplacedFileFields(uploadsDir, projectId, entity, before, record);
           void runAutomationsForRecordChange(
             db,
             whatsapp,

@@ -22366,6 +22366,75 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete also clean
 });
 
 /**
+ * Round 1699: the sibling gap to round 1696's fix just above, but on the
+ * UPDATE route instead of the delete route -- the authenticated PATCH
+ * route (routes/projects.ts) has cleaned up a record's OLD file when a
+ * `file`-type field is replaced or cleared since round 685, but this
+ * public, token-authed webhook update route never called
+ * deleteReplacedFileFields at all. A webhook-driven update clearing or
+ * replacing a file field (e.g. a follow-up event sending `{"receipt": ""}`)
+ * leaked the old uploaded file on disk forever, the exact same storage-leak
+ * class round 1696 fixed for this file's own delete route.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId also cleans up the OLD uploaded file when a webhook-driven update clears a file field, mirroring the authenticated PATCH route's own behavior", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `webhook-in-update-file-cleanup-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "receipt", type: "file" }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-fake-receipt-bytes"], "receipt.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/fields/receipt/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+    assert.equal(uploadRes.status, 200);
+    const upload = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+    const storedFilename = upload.file.url.slice(upload.file.url.lastIndexOf("/") + 1);
+    const onDiskPath = path.join(uploadsDir, projectId, "Order", storedFilename);
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+      method: "POST",
+      headers: authHeaders(authToken),
+      body: JSON.stringify({ status: "pending", receipt: JSON.stringify(upload.file) }),
+    });
+    assert.equal(createRes.status, 201);
+    const { record } = (await createRes.json()) as { record: { id: number } };
+    assert.ok(existsSync(onDiskPath), "the uploaded receipt must be a real file on disk before anything else runs");
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const updateRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${record.id}?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "cancelled", receipt: "" }),
+    });
+    assert.equal(updateRes.status, 200);
+
+    for (let i = 0; i < 40 && existsSync(onDiskPath); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(existsSync(onDiskPath), false, "the OLD uploaded file must actually be deleted from disk after a webhook-driven update clears the field, same as the authenticated PATCH route");
+  });
+});
+
+/**
  * Round 1683: the same "never leak which part of the lookup failed"
  * convention the create/update routes' own 404s already follow.
  */
