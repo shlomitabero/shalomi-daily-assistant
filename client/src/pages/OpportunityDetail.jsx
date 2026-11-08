@@ -89,6 +89,13 @@ export default function OpportunityDetail() {
   }
 
   async function onPublish() {
+    // Every other action on this page (onSave, onApprove, onReject) clears
+    // a stale `error` from a previous attempt before starting its own -
+    // this was the one exception, so a past failed save's error message
+    // could keep showing at the top of the page indefinitely even after a
+    // later publish attempt (success or its own separate failure), no
+    // longer reflecting anything currently true.
+    setError('');
     setBusy(true);
     setPublishResult(null);
     try {
