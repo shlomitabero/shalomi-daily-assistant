@@ -32,6 +32,13 @@ export default function Opportunities() {
     e.preventDefault();
     if (!topic.trim() || !audience.trim()) return;
     setError('');
+    // These two cards' own result states live side by side on this same
+    // page but were never cleared by each other's action - a scan
+    // failure/result shown in the "סריקה אוטונומית" card above kept
+    // showing indefinitely even after a later, unrelated manual create
+    // succeeded or failed on its own. Same staleness bug already fixed
+    // this session for OpportunityDetail.jsx's error/publishResult pair.
+    setScanResult(null);
     setBusy(true);
     try {
       await api.createDigitalProduct(topic.trim(), audience.trim());
@@ -48,6 +55,10 @@ export default function Opportunities() {
   async function onScanNow() {
     setScanBusy(true);
     setScanResult(null);
+    // Mirrors the clear above: a failed manual "new digital product"
+    // attempt's error (shown in the card below this one) must not keep
+    // showing once the owner has moved on to running a scan instead.
+    setError('');
     try {
       const result = await api.runAutonomousScan();
       setScanResult(result);
