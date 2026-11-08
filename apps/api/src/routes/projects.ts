@@ -1239,7 +1239,7 @@ export async function deleteProjectUploads(uploadsDir: string, projectId: string
  * touches a given file field leaves its upload alone). Always deletes the
  * OLD value's file, never whatever the new one might be.
  */
-async function deleteReplacedFileFields(
+export async function deleteReplacedFileFields(
   uploadsDir: string,
   projectId: string,
   entity: Entity,

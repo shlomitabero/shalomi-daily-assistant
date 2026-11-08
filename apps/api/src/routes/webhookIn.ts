@@ -11,7 +11,7 @@ import { createRateLimiter } from "../auth/rateLimit.js";
 import { withIdempotency } from "../idempotency.js";
 import { HttpError } from "../httpError.js";
 import { recordDisplayLabel } from "../displayField.js";
-import { computeChangedFields, parseRecordId } from "./projects.js";
+import { computeChangedFields, deleteReplacedFileFields, parseRecordId } from "./projects.js";
 
 /**
  * Round 1607: shared by both the create route below and its new sibling
@@ -635,7 +635,23 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
             recordLabel: recordDisplayLabel(entity, before, isHebrewText(project.description) ? "he" : "en"),
             deletedByUserId: null,
           });
-          void runAutomationsForRecordChange(
+          // Round 1696: mirrors the authenticated DELETE route's own
+          // round-1015 fix exactly -- deleteReplacedFileFields's own
+          // `deleteUploadedFile` does a real `await rm` against the same
+          // path a "record_deleted" automation can independently read back
+          // off disk (fireEmailAction's own `await readFile`, or
+          // whatsappWeb.ts's sendMessage doing the same before handing off
+          // to the socket). Before this round, this route's own file
+          // cleanup didn't exist at all -- a record with a file-type field
+          // deleted through this public, token-authed route (any built
+          // entity can have one issued against it) leaked its uploaded
+          // file on disk forever, the exact storage-leak class
+          // deleteReplacedFileFields exists everywhere else to prevent.
+          // Chaining via `.finally()` (never racing an independent call)
+          // guarantees the automation's own file read always happens
+          // before the unlink, for the same reason round 1015's own
+          // comment on the authenticated route gives.
+          const automationsRun = runAutomationsForRecordChange(
             db,
             whatsapp,
             emailSender,
@@ -648,6 +664,7 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
             `${req.protocol}://${req.get("host")}`,
             "inbound_webhook",
           );
+          void automationsRun.finally(() => deleteReplacedFileFields(uploadsDir, projectId, entity, before, null));
           return { status: 204, body: null };
         },
       );

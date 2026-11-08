@@ -22302,6 +22302,70 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete removes th
 });
 
 /**
+ * Round 1696: the authenticated DELETE route (routes/projects.ts) has
+ * cleaned up a deleted record's own uploaded file(s) since round 685
+ * (sequenced after automations via round 1015's own `.finally()` fix),
+ * but this public, token-authed webhook delete route never called
+ * deleteReplacedFileFields at all -- a record with a file-type field
+ * deleted through this route leaked its uploaded file on disk forever.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete also cleans up the deleted record's uploaded file, mirroring the authenticated DELETE route's own behavior", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `webhook-in-delete-file-cleanup-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "receipt", type: "file" }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-fake-receipt-bytes"], "receipt.pdf", { type: "application/pdf" }));
+    const uploadRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/fields/receipt/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+    assert.equal(uploadRes.status, 200);
+    const upload = (await uploadRes.json()) as { file: { url: string; name: string; mimeType: string } };
+    const storedFilename = upload.file.url.slice(upload.file.url.lastIndexOf("/") + 1);
+    const onDiskPath = path.join(uploadsDir, projectId, "Order", storedFilename);
+
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+      method: "POST",
+      headers: authHeaders(authToken),
+      body: JSON.stringify({ status: "pending", receipt: JSON.stringify(upload.file) }),
+    });
+    assert.equal(createRes.status, 201);
+    const { record } = (await createRes.json()) as { record: { id: number } };
+    assert.ok(existsSync(onDiskPath), "the uploaded receipt must be a real file on disk before anything else runs");
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const deleteRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${record.id}/delete?token=${webhookToken}`, {
+      method: "POST",
+    });
+    assert.equal(deleteRes.status, 204);
+
+    for (let i = 0; i < 40 && existsSync(onDiskPath); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(existsSync(onDiskPath), false, "the uploaded file must actually be deleted from disk after a webhook-driven delete, same as the authenticated DELETE route");
+  });
+});
+
+/**
  * Round 1683: the same "never leak which part of the lookup failed"
  * convention the create/update routes' own 404s already follow.
  */
