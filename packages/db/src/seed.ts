@@ -45,6 +45,49 @@ const COURIER_NAMES_EN = ["Avi Sagi", "Tamar Golan", "Idan Barak", "Shira Nahum"
 const COURIER_EMAIL_LOCAL_PARTS = ["avi.sagi", "tamar.golan", "idan.barak", "shira.nahum"];
 const COURIER_PHONES_HE = ["053-444-7788", "057-111-2299", "050-888-3344", "052-666-5511"];
 const COURIER_PHONES_EN = ["(555) 444-7788", "(555) 111-2299", "(555) 888-3344", "(555) 666-5511"];
+// Round 1736: the exact same gap round 1707 fixed for Courier vs. Customer
+// exists for every OTHER person-shaped entity in domainEntities.ts/
+// templates.ts that also has name/email/phone text fields -- Employee,
+// Staff (the Appointments & Clients template's own entity), Student,
+// Patient, Volunteer, and JobApplicant all fell through to the exact same
+// generic PERSON_NAMES_HE/EN, EMAIL_LOCAL_PARTS, and PHONES_HE/EN pools,
+// index-aligned with Customer. Several of these entities routinely
+// co-occur with Customer in the app's own built-in examples/templates
+// (the home screen's "Salon"/"Fitness studio" examples both produce
+// Customer+Employee; the Appointments & Clients template has Customer+
+// Staff) -- a freshly seeded app showed the customer and the employee/
+// staff member who served them as the literal same name/email/phone on
+// row 1. Own pools per entity, same shape as Courier's.
+const EMPLOYEE_NAMES_HE = ["ליאור בן-דוד", "קרן אזולאי", "עומר וקנין", "שני פלג"];
+const EMPLOYEE_NAMES_EN = ["Lior Ben-David", "Keren Azoulay", "Omer Vaknin", "Shani Peleg"];
+const EMPLOYEE_EMAIL_LOCAL_PARTS = ["lior.bendavid", "keren.azoulay", "omer.vaknin", "shani.peleg"];
+const EMPLOYEE_PHONES_HE = ["050-333-2211", "052-444-3322", "054-555-4433", "058-666-5544"];
+const EMPLOYEE_PHONES_EN = ["(555) 333-2211", "(555) 444-3322", "(555) 555-4433", "(555) 666-5544"];
+const STAFF_NAMES_HE = ["נדב כספי", "אורטל חדד", "אסף רוזן", "מאיה גבאי"];
+const STAFF_NAMES_EN = ["Nadav Kaspi", "Ortal Hadad", "Asaf Rozen", "Maya Gabay"];
+const STAFF_EMAIL_LOCAL_PARTS = ["nadav.kaspi", "ortal.hadad", "asaf.rozen", "maya.gabay"];
+const STAFF_PHONES_HE = ["053-111-9922", "057-222-8833", "050-333-7744", "052-444-6655"];
+const STAFF_PHONES_EN = ["(555) 111-9922", "(555) 222-8833", "(555) 333-7744", "(555) 444-6655"];
+const STUDENT_NAMES_HE = ["טל אוחנה", "רותם שפירא", "דניאל מלכה", "הילה צרפתי"];
+const STUDENT_NAMES_EN = ["Tal Ohana", "Rotem Shapira", "Daniel Malka", "Hila Tsarfati"];
+const STUDENT_EMAIL_LOCAL_PARTS = ["tal.ohana", "rotem.shapira", "daniel.malka", "hila.tsarfati"];
+const STUDENT_PHONES_HE = ["054-777-1122", "058-888-2233", "050-999-3344", "052-111-4455"];
+const STUDENT_PHONES_EN = ["(555) 777-1122", "(555) 888-2233", "(555) 999-3344", "(555) 111-4455"];
+const PATIENT_NAMES_HE = ["יעל ברוך", "איתי סגל", "נטע פרידמן", "בן עמרם"];
+const PATIENT_NAMES_EN = ["Yael Baruch", "Itai Segal", "Neta Friedman", "Ben Amram"];
+const PATIENT_EMAIL_LOCAL_PARTS = ["yael.baruch", "itai.segal", "neta.friedman", "ben.amram"];
+const PATIENT_PHONES_HE = ["053-222-5566", "057-333-6677", "050-444-7788", "052-555-8899"];
+const PATIENT_PHONES_EN = ["(555) 222-5566", "(555) 333-6677", "(555) 444-7788", "(555) 555-8899"];
+const VOLUNTEER_NAMES_HE = ["אביגיל נוי", "יונתן אשכנזי", "שירן דגן", "רועי קורן"];
+const VOLUNTEER_NAMES_EN = ["Avigail Noy", "Yonatan Ashkenazi", "Shiran Dagan", "Roi Koren"];
+const VOLUNTEER_EMAIL_LOCAL_PARTS = ["avigail.noy", "yonatan.ashkenazi", "shiran.dagan", "roi.koren"];
+const VOLUNTEER_PHONES_HE = ["054-666-9911", "058-777-1022", "050-888-2133", "052-999-3244"];
+const VOLUNTEER_PHONES_EN = ["(555) 666-9911", "(555) 777-1022", "(555) 888-2133", "(555) 999-3244"];
+const JOB_APPLICANT_NAMES_HE = ["גלית שלו", "אוראל בכר", "נויה אדרי", "שחר לביא"];
+const JOB_APPLICANT_NAMES_EN = ["Galit Shalev", "Orel Bachar", "Noya Edri", "Shahar Lavi"];
+const JOB_APPLICANT_EMAIL_LOCAL_PARTS = ["galit.shalev", "orel.bachar", "noya.edri", "shahar.lavi"];
+const JOB_APPLICANT_PHONES_HE = ["053-444-5511", "057-555-6622", "050-666-7733", "052-777-8844"];
+const JOB_APPLICANT_PHONES_EN = ["(555) 444-5511", "(555) 555-6622", "(555) 666-7733", "(555) 777-8844"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -313,9 +356,21 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
   switch (fieldName) {
     case "email":
       if (entityName === "Courier") return `${pick(COURIER_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Employee") return `${pick(EMPLOYEE_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Staff") return `${pick(STAFF_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Student") return `${pick(STUDENT_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Patient") return `${pick(PATIENT_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Volunteer") return `${pick(VOLUNTEER_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "JobApplicant") return `${pick(JOB_APPLICANT_EMAIL_LOCAL_PARTS, index)}@example.com`;
       return `${pick(EMAIL_LOCAL_PARTS, index)}@example.com`;
     case "phone":
       if (entityName === "Courier") return pick(isHebrew ? COURIER_PHONES_HE : COURIER_PHONES_EN, index);
+      if (entityName === "Employee") return pick(isHebrew ? EMPLOYEE_PHONES_HE : EMPLOYEE_PHONES_EN, index);
+      if (entityName === "Staff") return pick(isHebrew ? STAFF_PHONES_HE : STAFF_PHONES_EN, index);
+      if (entityName === "Student") return pick(isHebrew ? STUDENT_PHONES_HE : STUDENT_PHONES_EN, index);
+      if (entityName === "Patient") return pick(isHebrew ? PATIENT_PHONES_HE : PATIENT_PHONES_EN, index);
+      if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_PHONES_HE : VOLUNTEER_PHONES_EN, index);
+      if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_PHONES_HE : JOB_APPLICANT_PHONES_EN, index);
       return pick(isHebrew ? PHONES_HE : PHONES_EN, index);
     case "source":
       return pick(isHebrew ? SOURCES_HE : SOURCES_EN, index);
@@ -490,6 +545,12 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       // courier reading as the literal same name/email/phone on the same
       // row defeats the whole point of the two being separate roles.
       if (entityName === "Courier") return pick(isHebrew ? COURIER_NAMES_HE : COURIER_NAMES_EN, index);
+      if (entityName === "Employee") return pick(isHebrew ? EMPLOYEE_NAMES_HE : EMPLOYEE_NAMES_EN, index);
+      if (entityName === "Staff") return pick(isHebrew ? STAFF_NAMES_HE : STAFF_NAMES_EN, index);
+      if (entityName === "Student") return pick(isHebrew ? STUDENT_NAMES_HE : STUDENT_NAMES_EN, index);
+      if (entityName === "Patient") return pick(isHebrew ? PATIENT_NAMES_HE : PATIENT_NAMES_EN, index);
+      if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_NAMES_HE : VOLUNTEER_NAMES_EN, index);
+      if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_NAMES_HE : JOB_APPLICANT_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an

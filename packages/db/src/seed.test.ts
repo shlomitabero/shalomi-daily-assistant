@@ -171,8 +171,9 @@ test("the Ticket, Subscription, and JobApplicant entities each get believable se
   assert.doesNotMatch(subscriptionRecord.planName as string, /Subscription planName/);
 
   const [applicantRecord] = generateSeedRecords(jobApplicant, 1);
-  // "name" means a person here (not a catalog item), same as Customer.
-  assert.equal(applicantRecord.name, "Dana Levi");
+  // "name" means a person here (not a catalog item). JobApplicant has its
+  // own dedicated name pool (round 1736), not Customer's/the generic pool's.
+  assert.equal(applicantRecord.name, "Galit Shalev");
   assert.doesNotMatch(applicantRecord.appliedFor as string, /JobApplicant appliedFor/);
 });
 
@@ -467,6 +468,68 @@ test("Courier's 'name', 'email', and 'phone' seed values are their own pool, not
     assert.ok(!customerNames.has(record.name as string), `Courier's name "${record.name}" must not be one of Customer's own sample names`);
     assert.ok(!customerEmails.has(record.email as string), `Courier's email "${record.email}" must not be one of Customer's own sample emails`);
     assert.ok(!customerPhones.has(record.phone as string), `Courier's phone "${record.phone}" must not be one of Customer's own sample phones`);
+  }
+});
+
+/**
+ * Round 1736's finding: the exact same gap round 1707 fixed for Courier
+ * vs. Customer existed, independently, for every OTHER person-shaped
+ * entity with the identical name/email/phone text-field shape --
+ * Employee, Staff (templates.ts's Appointments & Clients template),
+ * Student, Patient, Volunteer, and JobApplicant (all domainEntities.ts
+ * except Staff) all fell through to the same generic PERSON_NAMES/
+ * EMAIL_LOCAL_PARTS/PHONES pools, index-aligned with Customer. Several
+ * of these routinely co-occur with Customer in the app's own built-in
+ * examples/templates (the home screen's "Salon"/"Fitness studio"
+ * examples both produce Customer+Employee; the Appointments & Clients
+ * template has Customer+Staff), so a freshly seeded app showed the
+ * customer and the employee/staff member who served them as the
+ * literal same person on row 1.
+ */
+test("Employee's, Staff's, Student's, Patient's, Volunteer's, and JobApplicant's 'name'/'email'/'phone' seed values are each their own pool, not Customer's exact same values", () => {
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+  const customerRecords = generateSeedRecords(customerPerson, 4);
+  const customerNames = new Set(customerRecords.map((r) => r.name as string));
+  const customerEmails = new Set(customerRecords.map((r) => r.email as string));
+  const customerPhones = new Set(customerRecords.map((r) => r.phone as string));
+
+  const personShapedEntities = ["Employee", "Staff", "Student", "Patient", "Volunteer", "JobApplicant"];
+  const perEntityNames = new Map<string, Set<string>>();
+  for (const entityName of personShapedEntities) {
+    const entity: Entity = {
+      name: entityName,
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "email", type: "text", required: false },
+        { name: "phone", type: "text", required: false },
+      ],
+    };
+    const records = generateSeedRecords(entity, 4);
+    const names = new Set(records.map((r) => r.name as string));
+    perEntityNames.set(entityName, names);
+    for (const record of records) {
+      assert.ok(!customerNames.has(record.name as string), `${entityName}'s name "${record.name}" must not be one of Customer's own sample names`);
+      assert.ok(!customerEmails.has(record.email as string), `${entityName}'s email "${record.email}" must not be one of Customer's own sample emails`);
+      assert.ok(!customerPhones.has(record.phone as string), `${entityName}'s phone "${record.phone}" must not be one of Customer's own sample phones`);
+    }
+  }
+
+  // Employee and Volunteer are the pair most likely to co-occur in a real
+  // spec alongside Customer (e.g. a volunteer organization with paid
+  // staff) -- cross-check at least this one pair against each other too,
+  // the same "could plausibly co-occur" reasoning Courier vs. Customer
+  // was fixed for.
+  const employeeNames = perEntityNames.get("Employee")!;
+  const volunteerNames = perEntityNames.get("Volunteer")!;
+  for (const name of volunteerNames) {
+    assert.ok(!employeeNames.has(name), `Volunteer's name "${name}" must not be one of Employee's own sample names`);
   }
 });
 
