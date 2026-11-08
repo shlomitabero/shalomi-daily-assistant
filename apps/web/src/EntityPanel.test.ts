@@ -16825,6 +16825,61 @@ test("EntityPanel's table cell wraps a phone-like-named field's value in a bidi-
 });
 
 /**
+ * Round 1717: a wholly different surface from the test directly above --
+ * a RELATION cell's label (recordDisplayLabel on the TARGET entity, via
+ * relationDisplayLabel), not a phone field's own cell. Here the Courier
+ * entity has no name/title field at all, only a "phone" text field, so
+ * pickDisplayField falls through to it and recordDisplayLabel returns
+ * the raw phone string as Courier's own display label. Confirms the
+ * Order table's courierId relation cell wraps that phone-shaped label in
+ * <bdi dir="ltr"> too, while an ordinary relation (pointing at an entity
+ * with a real name field, the common case) stays unwrapped.
+ */
+test("EntityPanel's relation cell wraps a phone-shaped related-record label in <bdi dir=\"ltr\">, when the related entity has no name field and falls back to a phone-like text field", async () => {
+  await withJsdom(async () => {
+    const orderEntity: Entity = {
+      name: "Order",
+      label: "Order",
+      fields: [
+        { name: "item", label: "Item", type: "text", required: true },
+        { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+      ],
+    };
+    const courierEntity: Entity = {
+      name: "Courier",
+      label: "Courier",
+      fields: [
+        { name: "phone", label: "Phone", type: "text", required: true },
+        { name: "email", label: "Email", type: "text", required: false },
+      ],
+    };
+    const courierRecords: EntityRecord[] = [{ id: 9, createdAt: "x", phone: "(555) 987-6543", email: "dana@acme.example.com" }];
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", item: "Pizza", courierId: 9 }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Order") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (input === "/api/projects/proj1/entities/Courier") {
+        return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      await waitForCondition(() => document.querySelector("table tbody")!.textContent?.includes("987-6543") ?? false);
+
+      const bdiElements = [...document.querySelectorAll("table tbody bdi[dir='ltr']")] as HTMLElement[];
+      assert.equal(bdiElements.length, 1, "exactly the one phone-shaped relation label must get the wrapper");
+      assert.equal(bdiElements[0].textContent, "(555) 987-6543");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: grouping the table by an enum/boolean field (round
  * ~286-ish) and the numeric totals row (round 297) each shipped
  * independently and were never wired together -- grouping Orders by Status

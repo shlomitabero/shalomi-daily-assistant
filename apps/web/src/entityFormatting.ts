@@ -1137,6 +1137,27 @@ export function isPhoneFieldName(name: string): boolean {
   return PHONE_FIELD_NAME_HINTS.includes(name.toLowerCase());
 }
 
+/**
+ * Round 1717: unlike isPhoneFieldName above, this tests a VALUE's own
+ * shape, not a field's name -- needed where the phone-ness belongs to a
+ * RELATED record's own display field, not the field EntityPanel's Cell is
+ * actually rendering (a relation field's own name, e.g. "customerId",
+ * tells you nothing about what recordDisplayLabel picked for the target
+ * entity). pickDisplayField falls through to an entity's first plain
+ * `text` field when it has no name/title-hinted one -- a Contact/Vendor/
+ * Lead-shaped entity with only `phone`+`email` (no dedicated "name"
+ * field) lands here, and recordDisplayLabel's own final-line fallback
+ * (`return String(value)`) then returns that raw hyphen/parenthesis
+ * phone string verbatim, with the same RTL bidi-reordering hazard round
+ * 1716 fixed for a phone field's own cell. Deliberately narrow (the
+ * WHOLE label must look like just digits/phone punctuation) so an
+ * ordinary RTL text label -- a Hebrew name, an address -- is never
+ * wrapped.
+ */
+export function looksLikePhoneNumber(label: string): boolean {
+  return /^[+]?[\d\s().-]{5,}$/.test(label);
+}
+
 // Round 1380: AutomationsPanel's "Send an email" action reused this exact
 // toField defaulting logic with findPhoneField, the only such helper that
 // existed -- round 1362 added the phone preference for "Send WhatsApp" but

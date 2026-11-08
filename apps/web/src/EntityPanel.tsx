@@ -73,6 +73,7 @@ import {
   isGroupableField,
   isInlineEditableField,
   isPhoneFieldName,
+  looksLikePhoneNumber,
   isSameDay,
   isSameMonth,
   isImageMimeType,
@@ -298,6 +299,17 @@ function Cell({
   }
   if (field.type === "relation") {
     const label = relationLabel || `#${value}`;
+    // Round 1717: a relation's label comes from the TARGET entity's own
+    // recordDisplayLabel, resolved via relationDisplayLabel -- when that
+    // entity has no name/title field, pickDisplayField falls through to
+    // its first plain text field (e.g. a Contact { phone, email } entity
+    // with no dedicated name field), and recordDisplayLabel returns that
+    // raw phone string verbatim. Same RTL bidi-reordering hazard round
+    // 1716 fixed for a phone field's own cell, but this field's own name
+    // (e.g. "customerId") tells isPhoneFieldName nothing -- the phone-ness
+    // belongs to the related record's display field, so this checks the
+    // LABEL's own shape instead (see looksLikePhoneNumber's doc comment).
+    const labelContent = looksLikePhoneNumber(label) ? <bdi dir="ltr">{label}</bdi> : label;
     if (onJumpToRecord && field.relationTo) {
       const resolvedTarget =
         allEntities?.find((e) => e.name === field.relationTo) ??
@@ -305,11 +317,11 @@ function Cell({
       const targetEntity = resolvedTarget ? resolvedTarget.name : field.relationTo;
       return (
         <button type="button" className="link-button relation-jump-link" onClick={() => onJumpToRecord(targetEntity, Number(value))}>
-          {label}
+          {labelContent}
         </button>
       );
     }
-    return <>{label}</>;
+    return <>{labelContent}</>;
   }
   if (field.type === "boolean") {
     // Every other field type here renders its real value as text a screen

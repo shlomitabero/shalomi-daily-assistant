@@ -33,6 +33,7 @@ import {
   isSameDay,
   isSameMonth,
   isTypingTarget,
+  looksLikePhoneNumber,
   matchesSearch,
   parseCsv,
   pickDisplayField,
@@ -2127,6 +2128,49 @@ test("recordDisplayLabel renders a phone-like-named number display field as raw 
     "972501234567",
     "a phone-like-named number display field must render as raw digits, not \"972,501,234,567\"",
   );
+});
+
+/**
+ * Round 1717: unlike the number-typed case above, a phone-like-named TEXT
+ * field (the common case -- an AI-generated spec usually types "phone" as
+ * text, not number) hits pickDisplayField's own first-plain-text-field
+ * step when the entity has no name/title field, and recordDisplayLabel's
+ * final-line fallback (`return String(value)`) returns the raw
+ * hyphen/parenthesis phone string verbatim -- correct in itself (there's
+ * no formatting to strip here, unlike the number case), but this string
+ * is exactly what needs bidi isolation at render time (EntityPanel.tsx's
+ * Cell, relation branch) to avoid the RTL reordering round 1716 fixed for
+ * a phone field's own cell. looksLikePhoneNumber is the shape-based check
+ * that render-time fix relies on, since the relation FIELD's own name
+ * (e.g. "customerId") can't tell you the TARGET entity's display field
+ * was phone-shaped.
+ */
+test("recordDisplayLabel returns a phone-like-named TEXT display field's raw value verbatim, the input looksLikePhoneNumber must detect at render time", () => {
+  const entity: Entity = {
+    name: "Contact",
+    fields: [
+      { name: "phone", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+    ],
+  };
+  const label = recordDisplayLabel(entity, { id: 7, phone: "(555) 987-6543", email: "dana@acme.example.com" });
+  assert.equal(label, "(555) 987-6543");
+  assert.ok(looksLikePhoneNumber(label), "recordDisplayLabel's own output for this entity must be detected as phone-shaped");
+});
+
+test("looksLikePhoneNumber matches a bare digit string and common phone punctuation, with or without a leading +", () => {
+  assert.ok(looksLikePhoneNumber("(555) 987-6543"));
+  assert.ok(looksLikePhoneNumber("050-1234567"));
+  assert.ok(looksLikePhoneNumber("+972 50 123 4567"));
+  assert.ok(looksLikePhoneNumber("972501234567"));
+});
+
+test("looksLikePhoneNumber rejects ordinary text labels, including short digit strings and ones mixing in letters", () => {
+  assert.ok(!looksLikePhoneNumber("Dana Levi"), "an ordinary name must never be treated as phone-shaped");
+  assert.ok(!looksLikePhoneNumber("דנה לוי"), "a Hebrew name must never be treated as phone-shaped");
+  assert.ok(!looksLikePhoneNumber("123"), "fewer than 5 characters must not match, to avoid a short numeric id/code false positive");
+  assert.ok(!looksLikePhoneNumber("Unit 123"), "a label mixing letters and digits must not match");
+  assert.ok(!looksLikePhoneNumber("dana@acme.example.com"), "an email address must not match");
 });
 
 const courierEntity: Entity = {
