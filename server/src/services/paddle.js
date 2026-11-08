@@ -21,7 +21,19 @@ async function fetchWithTimeout(url, options, timeoutMs = FETCH_TIMEOUT_MS) {
   try {
     res = await fetch(url, { ...options, signal: controller.signal });
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error('Paddle request timed out');
+    // Reaches the owner verbatim via routes/opportunities.js's publish
+    // route (`הפרסום נכשל: ${err.message}`) on "פרסם מוצר" - the one
+    // action that actually moves toward real money in this app. A plain
+    // network-layer failure (the other branch, an ENOTFOUND/connection
+    // reset) is deliberately NOT wrapped here (see this file's own test
+    // "propagates a real network failure as-is, not mislabeled as a
+    // timeout") - showing the real underlying error is more useful to
+    // the owner than a generic message, and this app's whole philosophy
+    // is never to disguise a real failure as something else. A timeout
+    // has no such "real" message to preserve, so it's safe - and more
+    // honest - to give it a clean Hebrew one instead of this file's own
+    // English wording.
+    if (err.name === 'AbortError') throw new Error('הבקשה ל-Paddle לא קיבלה מענה בזמן');
     throw err;
   } finally {
     clearTimeout(timeout);
@@ -54,7 +66,10 @@ export async function createOneTimePrice({ name, amountCents, currencyCode = 'US
     headers: paddleHeaders(),
     body: JSON.stringify({ name, tax_category: 'standard' }),
   }, timeoutMs);
-  if (!productRes.ok) throw new Error(`Paddle product creation failed: ${await productRes.text()}`);
+  // The lead-in text is this file's own wording, translated; Paddle's own
+  // response body stays as-is (real third-party diagnostic content, not
+  // ours to translate — same reasoning as the network-failure case above).
+  if (!productRes.ok) throw new Error(`יצירת מוצר ב-Paddle נכשלה: ${await productRes.text()}`);
   const { data: product } = await productRes.json();
 
   const priceRes = await fetchWithTimeout(`${paddleApiBase()}/prices`, {
@@ -66,7 +81,7 @@ export async function createOneTimePrice({ name, amountCents, currencyCode = 'US
       unit_price: { amount: String(amountCents), currency_code: currencyCode },
     }),
   }, timeoutMs);
-  if (!priceRes.ok) throw new Error(`Paddle price creation failed: ${await priceRes.text()}`);
+  if (!priceRes.ok) throw new Error(`יצירת מחיר ב-Paddle נכשלה: ${await priceRes.text()}`);
   const { data: price } = await priceRes.json();
   return { productId: product.id, priceId: price.id };
 }
