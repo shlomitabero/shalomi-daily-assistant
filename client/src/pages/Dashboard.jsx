@@ -254,7 +254,18 @@ export default function Dashboard() {
             <span className={`dot ${s.connected ? 'dot-on' : 'dot-off'}`} />
             <span className="source-name">{s.name}</span>
             <span className="source-revenue">
-              {revenueBySource[s.key] ? `$${revenueBySource[s.key].toFixed(0)} נכנס` : s.connected ? 'עדיין ללא תוצאה' : 'לא מחובר'}
+              {revenueBySource[s.key]
+                ? `$${revenueBySource[s.key].toFixed(0)} נכנס`
+                : s.key === 'financial_markets'
+                  // Unlike every other source, this one structurally can never
+                  // show real revenue here, connected or not - README.md is
+                  // explicit that real trading (the only way this source could
+                  // ever produce a real ledger entry) requires a broker
+                  // connection this build deliberately doesn't include.
+                  // "עדיין ללא תוצאה" ("no result YET") would imply that's just
+                  // a matter of time, which isn't honest for this one source.
+                  ? 'מסחר מדומה בלבד — לא מייצר הכנסה אמיתית'
+                  : s.connected ? 'עדיין ללא תוצאה' : 'לא מחובר'}
             </span>
           </div>
         ))}
