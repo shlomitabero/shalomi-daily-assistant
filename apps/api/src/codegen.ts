@@ -10358,6 +10358,7 @@ function renderStylesCss(): string {
 * { box-sizing: border-box; }
 body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
 .app { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+@media (min-width: 1300px) { .app { max-width: 1200px; } }
 h1 { font-size: 26px; margin: 0 0 20px; }
 nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; }
 nav button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }

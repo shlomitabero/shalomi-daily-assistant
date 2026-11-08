@@ -30286,3 +30286,27 @@ test("the exported ErrorBoundary.jsx renders its children normally when nothing 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * New in this round (1726): round 1718's wide-viewport `.app` max-width
+ * widening (apps/web/src/styles.css) was never ported to codegen.ts's own
+ * renderStylesCss. The exported app wraps its whole UI (nav + EntityView's
+ * table/board/calendar) in the same single `.app` div the live preview
+ * does, and its `.table-scroll` wrapper has the same `overflow-x: auto`,
+ * so on a desktop monitor >=1300px wide the entity table was needlessly
+ * squeezed into an 880px box with a horizontal scrollbar while hundreds of
+ * px of the window sat empty -- the exact UX round 1718 fixed in the live
+ * preview, still shipping unfixed in every downloaded/deployed app.
+ */
+test("the exported app's styles.css widens .app's max-width on wide viewports, matching round 1718's live-preview fix", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const appBase = stylesCss.match(/\.app \{[^}]*\}/)?.[0];
+  assert.ok(appBase, "expected a .app rule in the generated styles.css");
+  assert.match(appBase!, /max-width:\s*880px/, "the base .app rule must still cap at 880px for narrower viewports");
+
+  const wideViewport = stylesCss.match(/@media \(min-width:\s*1300px\)\s*\{\s*\.app \{[^}]*\}\s*\}/)?.[0];
+  assert.ok(wideViewport, "expected a @media (min-width: 1300px) breakpoint widening .app, matching round 1718's live-preview fix");
+  assert.match(wideViewport!, /max-width:\s*1200px/, "the wide-viewport breakpoint must widen .app's max-width to 1200px");
+});
