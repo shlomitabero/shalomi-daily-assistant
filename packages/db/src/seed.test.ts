@@ -431,6 +431,46 @@ test("Milestone's 'title' and Supplier's 'name' seed values are entity-appropria
 });
 
 /**
+ * Round 1707's finding: Courier (domainEntities.ts, "the person who
+ * delivers an order to a customer") has its own name/email/phone fields,
+ * same shape as Customer, but had no entity-aware branch of its own in any
+ * of the three cases, so it fell through to the exact same generic
+ * person-name/email/phone pools, index-aligned, as Customer -- a freshly
+ * seeded Order showed the literal same name/email/phone for both its
+ * customer and its courier on the same row.
+ */
+test("Courier's 'name', 'email', and 'phone' seed values are their own pool, not Customer's exact same values", () => {
+  const courier: Entity = {
+    name: "Courier",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+
+  const customerRecords = generateSeedRecords(customerPerson, 4);
+  const customerNames = new Set(customerRecords.map((r) => r.name as string));
+  const customerEmails = new Set(customerRecords.map((r) => r.email as string));
+  const customerPhones = new Set(customerRecords.map((r) => r.phone as string));
+
+  const courierRecords = generateSeedRecords(courier, 4);
+  for (const record of courierRecords) {
+    assert.ok(!customerNames.has(record.name as string), `Courier's name "${record.name}" must not be one of Customer's own sample names`);
+    assert.ok(!customerEmails.has(record.email as string), `Courier's email "${record.email}" must not be one of Customer's own sample emails`);
+    assert.ok(!customerPhones.has(record.phone as string), `Courier's phone "${record.phone}" must not be one of Customer's own sample phones`);
+  }
+});
+
+/**
  * Round 1114's finding: the CRM template's own Contact entity and the
  * Project Tracker template's own TeamMember entity (both templates.ts
  * hand-authored entities, same provenance as round 1107's Milestone/

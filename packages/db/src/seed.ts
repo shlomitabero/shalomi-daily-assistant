@@ -32,6 +32,19 @@ const PRODUCT_NAMES_EN = ["Wireless Mouse", "Office Chair", "Yoga Mat", "Phone C
 const EMAIL_LOCAL_PARTS = ["dana.levi", "yossi.cohen", "michal.abraham", "ron.peretz", "noa.sharon", "alon.mizrahi"];
 const PHONES_HE = ["050-123-4567", "052-987-6543", "054-222-1188", "058-765-4321"];
 const PHONES_EN = ["(555) 123-4567", "(555) 987-6543", "(555) 222-1188", "(555) 765-4321"];
+// Round 1707: Courier (domainEntities.ts, "The person who delivers an order
+// to a customer") has its own name/email/phone fields, same as Customer, but
+// had no entity-aware branch of its own in any of the "name"/"email"/"phone"
+// cases below -- so it fell through to the exact same generic PERSON_NAMES/
+// EMAIL_LOCAL_PARTS/PHONES pools, index-aligned, as Customer. In an app whose
+// whole premise is "the customer who ordered" vs. "the courier who delivers"
+// being different people, a freshly seeded Order showed the identical name,
+// email, and phone for both roles on the same row -- own pools instead.
+const COURIER_NAMES_HE = ["אבי שגיא", "תמר גולן", "עידן ברק", "שירה נחום"];
+const COURIER_NAMES_EN = ["Avi Sagi", "Tamar Golan", "Idan Barak", "Shira Nahum"];
+const COURIER_EMAIL_LOCAL_PARTS = ["avi.sagi", "tamar.golan", "idan.barak", "shira.nahum"];
+const COURIER_PHONES_HE = ["053-444-7788", "057-111-2299", "050-888-3344", "052-666-5511"];
+const COURIER_PHONES_EN = ["(555) 444-7788", "(555) 111-2299", "(555) 888-3344", "(555) 666-5511"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -230,8 +243,10 @@ const CATALOG_NAME_ENTITIES = new Set(["Service", "Item"]);
 function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boolean, index: number): string {
   switch (fieldName) {
     case "email":
+      if (entityName === "Courier") return `${pick(COURIER_EMAIL_LOCAL_PARTS, index)}@example.com`;
       return `${pick(EMAIL_LOCAL_PARTS, index)}@example.com`;
     case "phone":
+      if (entityName === "Courier") return pick(isHebrew ? COURIER_PHONES_HE : COURIER_PHONES_EN, index);
       return pick(isHebrew ? PHONES_HE : PHONES_EN, index);
     case "source":
       return pick(isHebrew ? SOURCES_HE : SOURCES_EN, index);
@@ -400,6 +415,12 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       // a company name. Reuses Vendor's own pool rather than inventing a
       // near-duplicate one.
       if (entityName === "Vendor" || entityName === "Supplier") return pick(isHebrew ? VENDOR_NAMES_HE : VENDOR_NAMES_EN, index);
+      // Round 1707: Courier (domainEntities.ts, "the person who delivers an
+      // order to a customer") is a real person like Customer, but must not
+      // share Customer's own name pool -- an order's customer and its
+      // courier reading as the literal same name/email/phone on the same
+      // row defeats the whole point of the two being separate roles.
+      if (entityName === "Courier") return pick(isHebrew ? COURIER_NAMES_HE : COURIER_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an
