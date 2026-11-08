@@ -524,7 +524,22 @@ export function matchesTrigger(
     // sequence after the first. Mirrors record_updated's own no-op guard
     // just below -- a webhook update that changes nothing shouldn't fire
     // this either.
-    return event === "updated" && changedFields.size > 0;
+    if (event === "updated") return changedFields.size > 0;
+    // Round 1688: round 1683 added the public webhook-in DELETE route
+    // (routes/webhookIn.ts), which already correctly calls this with
+    // event: "deleted", source: "inbound_webhook" -- but this branch never
+    // got a case for it, so it fell through to the final `return false`
+    // below. A rule scoped to "anything this integration does to this
+    // record" (the exact reason this trigger exists as its own type rather
+    // than a record_created/record_updated variant) silently never fired
+    // for the one CRUD verb a webhook-triggered deletion represents (e.g. a
+    // Stripe subscription cancellation, a Typeform response deletion),
+    // even though the identical rule already fires correctly for a create
+    // or update reaching the record through that same route. No
+    // changedFields guard needed, mirroring record_deleted's own
+    // unconditional `return event === "deleted"` just below -- a DELETE
+    // can't be a meaningless no-op the way a PATCH can.
+    return event === "deleted";
   }
   if (rule.trigger === "record_deleted") {
     return event === "deleted";

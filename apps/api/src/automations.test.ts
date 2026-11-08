@@ -695,6 +695,13 @@ test("matchesTrigger: record_deleted only matches the 'deleted' event, never 'cr
  * genuinely produces that exact combination. See the dedicated test below
  * for the corrected (now source- and lifecycle-aware, not creation-only)
  * expectation.
+ *
+ * Round 1688: likewise, the "deleted" assertion just below used to expect
+ * `false` -- true when this test was written (round 1470, before
+ * webhookIn.ts had any delete route at all), but stale now that round
+ * 1683's own delete route (DELETE .../:recordId) genuinely produces that
+ * exact combination too. See the dedicated test below for the corrected
+ * expectation.
  */
 test("matchesTrigger: inbound_webhook only matches a 'created'/'updated' event whose source is itself 'inbound_webhook', never the default 'app' source", () => {
   const rule = insertAutomationRule(openDbForRuleOnly(), {
@@ -709,7 +716,6 @@ test("matchesTrigger: inbound_webhook only matches a 'created'/'updated' event w
   assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), true);
   assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity, "app"), false);
   assert.equal(matchesTrigger(rule, "created", { orderId: "A1" }, new Set(), orderEntity), false, "source defaults to 'app', not 'inbound_webhook'");
-  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), false);
 });
 
 /**
@@ -736,6 +742,31 @@ test("matchesTrigger: inbound_webhook also matches a genuine 'updated' event via
   assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["status"]), orderEntity, "inbound_webhook"), true);
   assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), false, "a no-op webhook update (nothing actually changed) must not fire");
   assert.equal(matchesTrigger(rule, "updated", { orderId: "A1" }, new Set(["status"]), orderEntity, "app"), false, "source must still be 'inbound_webhook', not the default 'app'");
+});
+
+/**
+ * Round 1688: webhookIn.ts's own round-1683 delete route (DELETE
+ * .../:recordId) passes source: "inbound_webhook" with event === "deleted"
+ * -- matchesTrigger's inbound_webhook branch never had a case for it, so a
+ * rule meant to react to a webhook-delivered record's whole lifecycle
+ * (not just its creation/updates) silently never fired for a deletion
+ * reaching the record through that same route (e.g. a Stripe subscription
+ * cancellation, a Typeform response deletion). No no-op guard needed here,
+ * unlike the "updated" case above -- a DELETE can't be a meaningless no-op
+ * the way a PATCH can, mirroring record_deleted's own unconditional match.
+ */
+test("matchesTrigger: inbound_webhook also matches a 'deleted' event via source 'inbound_webhook', unconditionally", () => {
+  const rule = insertAutomationRule(openDbForRuleOnly(), {
+    projectId: "p",
+    entityName: "Order",
+    trigger: "inbound_webhook",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972500000000",
+    messageTemplate: "Order {{orderId}} was removed via webhook.",
+  });
+  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity, "inbound_webhook"), true);
+  assert.equal(matchesTrigger(rule, "deleted", { orderId: "A1" }, new Set(), orderEntity, "app"), false, "source must still be 'inbound_webhook', not the default 'app'");
 });
 
 /**
