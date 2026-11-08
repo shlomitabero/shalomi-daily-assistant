@@ -202,6 +202,14 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // `\b`-bounded the same way "worker" already is, right above.
     keywords: [
       "employee", /\bstaff\b/, "team member", /\bworkers?\b/,
+      // "trainer"/"מאמן" (round 1720): a fitness-studio app's own staff are
+      // its trainers/coaches, not generic "employees" -- without this the
+      // heuristic generator produces no Employee entity at all for a gym
+      // description that explicitly names trainers. "מאמן"/"מאמנת"/"מאמנים"
+      // don't collide with "מאמין" (believer) or "מתאמן"/"להתאמן" (to
+      // practice/work out) as bare substrings, so no lookbehind guard is
+      // needed here (unlike עובד/צוות below).
+      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים",
       // Bare "עובד"/"עובדת"/"עובדים" (round 565) are substrings of the
       // pu'al passive-participle adjective "מעובד"/"מעובדת"/"מעובדים"/
       // "מעובדות" ("processed", as in processed food/data/materials), an
@@ -1761,6 +1769,9 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   Employee: {
     keywords: [
       "employee", /\bstaff\b/, /\bworkers?\b/, "team member",
+      // Round 1720: kept in sync with the Employee entity rule's own
+      // "trainer"/"מאמן" addition above.
+      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים",
       /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, /(?<!מ)צוות/,
     ],
     labelHe: "עובד/ת",

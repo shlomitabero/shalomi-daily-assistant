@@ -266,6 +266,27 @@ test("recognizes the app's own built-in 'Fitness studio' example description as 
   assert.ok(spec.entities.some((e) => e.name === "Subscription"), "the built-in Fitness studio example must match the Subscription entity");
 });
 
+test("recognizes 'trainers'/'מאמנים' as Employee staff, in both the English and Hebrew built-in 'Fitness studio' example descriptions", async () => {
+  // Round 1720: the app's own home-screen built-in example (apps/web/src/
+  // i18n/language.ts, home.examples.gym.text/home.examples.gym.text [he])
+  // explicitly names "trainers"/"מאמנים" as the gym's own staff, but the
+  // Employee entity rule's keywords had no trainer/מאמן term at all --
+  // generic/"staff"/"worker" are nowhere in the description either, so the
+  // engine's own showcased example produced no Employee entity in either
+  // language.
+  const provider = new HeuristicSpecProvider();
+  const en = await provider.generate(
+    "An app for managing memberships and classes at a fitness studio, with customers, trainers, and a weekly class schedule.",
+  );
+  assert.ok(en.entities.some((e) => e.name === "Employee"), "the English Fitness studio example must match the Employee entity");
+  assert.ok(en.roles.includes("Employee"), "the English Fitness studio example must include an Employee role");
+
+  const he = await provider.generate(
+    "אפליקציה לניהול מנויים ושיעורים בסטודיו כושר, עם לקוחות, מאמנים ולוח שיעורים שבועי.",
+  );
+  assert.ok(he.entities.some((e) => e.name === "Employee"), "the Hebrew Fitness studio example must match the Employee entity");
+});
+
 test("asks about payments (recommending Stripe) for a rental-business description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "tool rental"/"rental business" match the Rental entity but share no
   // substring with "payment"/"billing"/"invoice"/"checkout"/"stripe"/
