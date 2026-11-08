@@ -1179,6 +1179,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // own payment question -- even though the Hebrew equivalent ("דמי
       // חבר") already matched correctly.
       "subscription", "membership plan", "membership fee", "recurring billing", "subscription plan", "member management",
+      // Round 1708: this very file's own built-in "Fitness studio" example
+      // description ("managing memberships and classes...") used the plain
+      // plural "memberships" -- a word round 1690's "membership fee"/
+      // "membership plan" additions didn't cover, since neither is a
+      // substring of "memberships". The bare singular "membership" is a
+      // substring of "memberships" too, so one addition covers both.
+      "membership",
       // Bare "מנוי" (round 563) is a substring of the ordinary plural
       // "אומנויות"/"אמנויות" ("arts"/"crafts", as in "אומנויות לחימה" --
       // martial arts), so a plain arts/crafts-school description spuriously

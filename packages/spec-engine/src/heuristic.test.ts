@@ -252,6 +252,20 @@ test("recognizes a membership-fee description as the Subscription entity, even t
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+test("recognizes the app's own built-in 'Fitness studio' example description as the Subscription entity", async () => {
+  // Round 1708: this is the app's own home-screen built-in example
+  // (apps/web/src/i18n/language.ts, home.examples.gym.text). It uses the
+  // plain plural "memberships", which neither round 1690's "membership
+  // fee"/"membership plan" nor any other existing keyword is a substring
+  // match for, so the engine's own showcased example used to produce only
+  // a bare Customer entity with no Subscription at all.
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate(
+    "An app for managing memberships and classes at a fitness studio, with customers, trainers, and a weekly class schedule.",
+  );
+  assert.ok(spec.entities.some((e) => e.name === "Subscription"), "the built-in Fitness studio example must match the Subscription entity");
+});
+
 test("asks about payments (recommending Stripe) for a rental-business description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "tool rental"/"rental business" match the Rental entity but share no
   // substring with "payment"/"billing"/"invoice"/"checkout"/"stripe"/
