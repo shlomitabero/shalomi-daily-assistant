@@ -752,7 +752,16 @@ test("the same shape's second record, whose status is 'Completed', is still seed
   assert.ok((record.date as string) <= today, `a 'Completed' appointment's date ("${record.date}") must still be today or earlier`);
 });
 
-test("an entity with TWO date fields (e.g. Rental's startDate/endDate) keeps the pre-existing past-only behavior even with a 'Reserved' status -- deliberately deferred, see hasUpcomingStatusAt's own comment", () => {
+/**
+ * Round 1728's finding: the deferral above was itself the bug. Rental's
+ * own status convention is "the first value means it hasn't happened yet"
+ * (identical to Appointment/Event/WorkOrder), but a freshly built Rental-
+ * tracking app still opened to a "Reserved" rental whose startDate was
+ * already in the past -- the exact same self-contradicting value round
+ * 1713 fixed for the lone-date-field shape, just not yet for this
+ * start/end pair shape.
+ */
+test("a start/end date pair paired with a 'status' enum whose first value means 'hasn't happened yet' (e.g. Rental's Reserved) is seeded with BOTH dates in the future, end after start", () => {
   const rental: Entity = {
     name: "Rental",
     fields: [
@@ -764,7 +773,26 @@ test("an entity with TWO date fields (e.g. Rental's startDate/endDate) keeps the
   const [record] = generateSeedRecords(rental, 1);
   const today = new Date().toISOString().slice(0, 10);
   assert.equal(record.status, "Reserved");
-  assert.ok((record.startDate as string) <= today, "a multi-date-field entity's dates are intentionally untouched by round 1713's fix");
+  assert.ok((record.startDate as string) > today, `a 'Reserved' rental's startDate ("${record.startDate}") must be in the future, not today or earlier ("${today}")`);
+  assert.ok((record.endDate as string) > today, `a 'Reserved' rental's endDate ("${record.endDate}") must be in the future, not today or earlier ("${today}")`);
+  assert.ok((record.endDate as string) > (record.startDate as string), `a 'Reserved' rental's endDate ("${record.endDate}") must still land after its startDate ("${record.startDate}")`);
+});
+
+test("the same start/end pair's second record, whose status is 'Active', is still seeded in the past unchanged, end after start", () => {
+  const rental: Entity = {
+    name: "Rental",
+    fields: [
+      { name: "startDate", type: "date", required: false },
+      { name: "endDate", type: "date", required: false },
+      { name: "status", type: "enum", required: true, enumValues: ["Reserved", "Active", "Returned"] },
+    ],
+  };
+  const [, record] = generateSeedRecords(rental, 2);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(record.status, "Active");
+  assert.ok((record.startDate as string) <= today, `an 'Active' rental's startDate ("${record.startDate}") must still be today or earlier`);
+  assert.ok((record.endDate as string) <= today, `an 'Active' rental's endDate ("${record.endDate}") must still be today or earlier`);
+  assert.ok((record.endDate as string) > (record.startDate as string), `an 'Active' rental's endDate ("${record.endDate}") must still land after its startDate ("${record.startDate}")`);
 });
 
 /**

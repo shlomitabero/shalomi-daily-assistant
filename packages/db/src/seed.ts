@@ -238,16 +238,37 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
         .filter((f) => f.type === "date" && END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()))
         .findIndex((f) => f.name === field.name);
       const baseOffset = (index + 1) * 3;
-      const dayOffset = isEndLike ? baseOffset - 3 + endLikeOrdinal : baseOffset + dateFieldOrdinal;
-      // Round 1713: see hasUpcomingStatusAt's own comment above. Scoped to
-      // an entity with exactly ONE date field -- a start/end pair (e.g.
-      // Rental) would need its end date pushed even further into the
-      // future than its start date to keep "end after start" true, a
-      // second cross-field coordination this fix deliberately leaves for
-      // a follow-up round rather than risk introducing a new, opposite
-      // "end before start" bug here.
-      const isOnlyDateField = entity.fields.filter((f) => f.type === "date").length === 1;
-      const intoFuture = isOnlyDateField && !isEndLike && hasUpcomingStatusAt(entity, index);
+      // Round 1713 handled an entity with exactly ONE date field. Round
+      // 1728 extends the same "upcoming status -> future date" idea to
+      // the one other shape this platform's own domain library actually
+      // has: exactly TWO date fields where exactly one is a recognized
+      // end-of-range field (Rental's startDate/endDate) -- round 1713's
+      // own comment explicitly deferred this pair case, since naively
+      // flipping both fields' existing past-oriented offsets into the
+      // future would put the end-like field BEFORE the start-like one
+      // (their existing offsets are deliberately close together so the
+      // end-like field lands only 3 days after start in the past; negating
+      // both keeps that same 3-day gap but reverses its direction). The
+      // isStartEndPair branch below uses a future-oriented offset formula
+      // instead, scoped narrowly enough to never touch isOnlyDateField's
+      // own case (dateFieldOrdinal is always 0 there, so both formulas
+      // agree) or any entity shape with 0 or 2+ end-like date fields.
+      const dateFieldsCount = entity.fields.filter((f) => f.type === "date").length;
+      const endLikeFieldsCount = entity.fields.filter(
+        (f) => f.type === "date" && END_DATE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()),
+      ).length;
+      const isOnlyDateField = dateFieldsCount === 1;
+      const isStartEndPair = dateFieldsCount === 2 && endLikeFieldsCount === 1;
+      const hasUpcoming = (isOnlyDateField || isStartEndPair) && hasUpcomingStatusAt(entity, index);
+      const intoFuture = isOnlyDateField ? hasUpcoming && !isEndLike : hasUpcoming;
+      const dayOffset =
+        intoFuture && isStartEndPair
+          ? isEndLike
+            ? baseOffset + dateFieldOrdinal + 3
+            : baseOffset + dateFieldOrdinal
+          : isEndLike
+            ? baseOffset - 3 + endLikeOrdinal
+            : baseOffset + dateFieldOrdinal;
       const d = new Date(Date.now() + (intoFuture ? dayOffset : -dayOffset) * 86_400_000);
       return d.toISOString().slice(0, 10);
     }
