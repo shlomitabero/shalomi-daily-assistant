@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentStepEvent, Field, OpenQuestion, Project, User } from "@forge/shared";
+import type { AgentStepEvent, Entity, Field, OpenQuestion, Project, User } from "@forge/shared";
 import {
   answerQuestions,
   backupProject,
@@ -464,11 +464,33 @@ export function maybeNotifyNewWhatsAppMessages(
  * (not a single id) is the right baseline for rules, which can recover and
  * fail again, unlike WhatsApp's append-only message log.
  */
+/**
+ * Round 1692: AutomationRuleView.entityName is always the entity's raw
+ * stored internal name, never its display `label` -- but AI-generated
+ * specs commonly keep an English/dev-style internal name while giving the
+ * entity a Hebrew (or otherwise distinct) display label, the exact shape
+ * AutomationsPanel.tsx's own entityLabel()/ruleEntity() helper already
+ * resolves for the rule list, and automationsReport.ts's entityLabel()
+ * already resolves for the Copy/Download report. Without this, a desktop
+ * notification -- the most visible surface a failing rule has, since it's
+ * a real OS-level alert, not just in-page text -- showed the bare raw
+ * name, e.g. "Automation failed in customer" instead of "Automation
+ * failed in Customers". Mirrors ruleEntity's own case-insensitive
+ * fallback (round 1485), for the same reason: a case-only entity rename
+ * is a true no-op at the db layer, so a rule's stored entityName can be
+ * stale-cased relative to the live entity list.
+ */
+function resolveFailingEntityLabel(entityName: string, entities: Entity[]): string {
+  const entity = entities.find((e) => e.name === entityName) ?? entities.find((e) => e.name.toLowerCase() === entityName.toLowerCase());
+  return entity ? entityDisplayLabel(entity, entityLabelOccurrences(entities)) : entityName;
+}
+
 export function maybeNotifyFailingAutomations(
   rules: AutomationRuleView[],
   previouslyFailingIdsRef: { current: Set<string> | null },
   isTabHidden: boolean,
   t: (key: string, params?: Record<string, string>) => string,
+  entities: Entity[] = [],
 ): void {
   const newlyFailing = findNewlyFailingAutomations(rules, previouslyFailingIdsRef.current);
   // Round 1240: this baseline used to also require r.enabled -- but
@@ -496,7 +518,7 @@ export function maybeNotifyFailingAutomations(
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const title =
     newlyFailing.count === 1
-      ? t("automations.notification.title.one", { entity: newlyFailing.entityName })
+      ? t("automations.notification.title.one", { entity: resolveFailingEntityLabel(newlyFailing.entityName, entities) })
       : t("automations.notification.title.many", { count: String(newlyFailing.count) });
   new Notification(title);
 }
@@ -693,6 +715,18 @@ function AppContent() {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+  // Round 1692: same stale-closure idiom as showWhatsAppRef/tRef above --
+  // checkFailingAutomations' poll effect below only (re)starts on
+  // project?.id/project?.status, never on the entity list itself, but a
+  // Refine (handleBuildComplete) can add/rename/remove entities on an
+  // already-built project without restarting that poll -- so without
+  // this ref, maybeNotifyFailingAutomations's entity-label resolution
+  // would resolve against whatever entity list existed when the poll
+  // last (re)started, not the live one.
+  const entitiesRef = useRef<Entity[]>(project?.spec.entities ?? []);
+  useEffect(() => {
+    entitiesRef.current = project?.spec.entities ?? [];
+  }, [project?.spec.entities]);
   // Round 1044: same stale-closure idiom as showWhatsAppRef/tRef above --
   // subscribeAuthExpired's own effect below only ever subscribes once
   // (deps: []), so its callback's ordinary closure over `user` is frozen at
@@ -1167,7 +1201,7 @@ function AppContent() {
         const { rules } = await listAutomationRules(projectId);
         if (cancelled) return;
         setAutomationsFailingCount(rules.filter((r) => r.enabled && r.lastStatus === "failed").length);
-        maybeNotifyFailingAutomations(rules, lastFailingAutomationIdsRef, document.hidden, tRef.current);
+        maybeNotifyFailingAutomations(rules, lastFailingAutomationIdsRef, document.hidden, tRef.current, entitiesRef.current);
       } catch {
         // A single failed background check isn't worth surfacing to the
         // user -- just skip this tick and try again on the next one.

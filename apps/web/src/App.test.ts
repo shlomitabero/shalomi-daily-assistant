@@ -1711,6 +1711,63 @@ test("maybeNotifyFailingAutomations fires a real Notification with the correct t
   }
 });
 
+/**
+ * Round 1692: AutomationRuleView.entityName is always the entity's raw
+ * internal name, never its display label -- but AutomationsPanel's own
+ * rule list and automationsReport.ts's Copy/Download report both already
+ * resolve a rule's entityName to its display label before showing it to
+ * the user. This desktop notification was the one surface that never
+ * did, interpolating the bare raw name straight into the title. Confirms
+ * the fix: when the failing rule's entity has a label distinct from its
+ * raw name, the notification shows the label.
+ */
+test("maybeNotifyFailingAutomations resolves the failing rule's raw entityName to its display label, not the raw internal name", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: string[] = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string) {
+      calls.push(title);
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", entityName: "customer", lastStatus: "failed" })];
+    const entities: Entity[] = [{ name: "customer", label: "Customers", fields: [] }];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT, entities);
+    assert.deepEqual(calls, ['automations.notification.title.one:{"entity":"Customers"}']);
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
+/**
+ * Mirrors ruleEntity's own case-insensitive fallback (round 1485): a
+ * case-only entity rename is a true no-op at the db layer, so a rule's
+ * stored entityName can be stale-cased relative to the live entity list.
+ */
+test("maybeNotifyFailingAutomations resolves the failing rule's entityName to its label even when the stored casing is stale", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: string[] = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string) {
+      calls.push(title);
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [automationRule({ id: "r1", entityName: "Customer", lastStatus: "failed" })];
+    const entities: Entity[] = [{ name: "customer", label: "Customers", fields: [] }];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT, entities);
+    assert.deepEqual(calls, ['automations.notification.title.one:{"entity":"Customers"}']);
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
 test("maybeNotifyFailingAutomations never calls Notification when the tab is NOT hidden, even with a newly-failing rule and granted permission -- but still advances the ref", () => {
   const originalNotification = (globalThis as { Notification?: unknown }).Notification;
   let constructed = 0;
@@ -6170,6 +6227,7 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
       "lastFailingAutomationIdsRef",
       "document",
       "tRef",
+      "entitiesRef",
       `${code}\nreturn checkFailingAutomations;`,
     )(
       "project-1",
@@ -6180,6 +6238,7 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
       { current: null },
       { hidden: false },
       { current: (key: string) => key },
+      { current: [] },
     ) as () => Promise<void>;
     return { fn, state, notifyCalls };
   }
