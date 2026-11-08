@@ -1030,6 +1030,7 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
     };
     const fn = new Function(
       "project",
+      "busy",
       "selectedAnswers",
       "additionalRequest",
       "setBusy",
@@ -1042,6 +1043,7 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
       `${code}\nreturn handleBuild;`,
     )(
       state.project,
+      state.busy,
       selectedAnswers,
       additionalRequest,
       (v: boolean) => (state.busy = v),
@@ -1083,6 +1085,89 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
 });
 
 /**
+ * Round 1691: handleBuild had no reentrancy guard at all, unlike ~20 other
+ * busy-gated handlers in this codebase (rounds 1117/1118/1260/1264/1363-1372/
+ * 1522/1534/1555). A fast double-click on the "Build" button fired a second
+ * real POST /answers request before React had committed the button's own
+ * `disabled={busy}`. The server's activePipelines guard rejects the second
+ * call with a 409 PIPELINE_IN_PROGRESS, but since that rejection resolves
+ * almost immediately while the first call's real AI request is still in
+ * flight, the second call's catch block set a false "already running" error
+ * that outlived the first call's own success -- leaving a permanent error
+ * banner on top of a build that actually succeeded. Confirms the fix: a
+ * second call made while `busy` is already true must return immediately,
+ * never calling answerQuestions and never touching error/view state at all.
+ */
+test("App's handleBuild does nothing when a build is already in progress (busy), closing the own-click reentrancy gap", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBuild\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuild in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(
+    project: Project,
+    busy: boolean,
+    selectedAnswers: Record<string, string>,
+    additionalRequest: string,
+    answerQuestionsFn: (
+      projectId: string,
+      answers: { question: string; answer: string }[],
+      additionalRequest?: string,
+    ) => Promise<{ project: Project; providerName?: string }>,
+  ) {
+    const state: { project: Project | null; view: string | null; error: string | null; calls: number } = {
+      project,
+      view: null,
+      error: null,
+      calls: 0,
+    };
+    const fn = new Function(
+      "project",
+      "busy",
+      "selectedAnswers",
+      "additionalRequest",
+      "setBusy",
+      "setError",
+      "answerQuestions",
+      "setProject",
+      "setSpecProvider",
+      "setBuildWarning",
+      "setView",
+      `${code}\nreturn handleBuild;`,
+    )(
+      state.project,
+      busy,
+      selectedAnswers,
+      additionalRequest,
+      () => {},
+      (v: string | null) => (state.error = v),
+      (...args: [string, { question: string; answer: string }[], string | undefined]) => {
+        state.calls += 1;
+        return answerQuestionsFn(...args);
+      },
+      (p: Project) => (state.project = p),
+      () => {},
+      () => {},
+      (v: string) => (state.view = v),
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const project = makeProject([makeEntity("Customer")]);
+  project.spec.openQuestions = [{ question: "Use Stripe?", options: ["Yes", "No"] }];
+
+  const { fn, state } = run(project, true, { "0": "yes" }, "", async () => ({
+    project: makeProject([makeEntity("Customer"), makeEntity("Invoice")]),
+    providerName: "anthropic-fallback",
+  }));
+  await fn();
+  assert.equal(state.calls, 0, "a build already in progress must never let a second click call answerQuestions");
+  assert.equal(state.error, null, "a second click while busy must never set an error");
+  assert.equal(state.view, null, "a second click while busy must never advance the view");
+  assert.equal(state.project, project, "a second click while busy must never touch the project state");
+});
+
+/**
  * Round 776: handleBuild used to build its `answers` payload straight from
  * `Object.entries(selectedAnswers)`, keyed by question TEXT -- so two open
  * questions sharing identical wording (OpenQuestionSchema has no
@@ -1113,6 +1198,7 @@ test("App's handleBuild sends each open question's own answer by position, so tw
   };
   const fn = new Function(
     "project",
+    "busy",
     "selectedAnswers",
     "additionalRequest",
     "setBusy",
@@ -1125,6 +1211,7 @@ test("App's handleBuild sends each open question's own answer by position, so tw
     `${code}\nreturn handleBuild;`,
   )(
     state.project,
+    false,
     { "0": "Basic", "1": "Pro" },
     "",
     () => {},

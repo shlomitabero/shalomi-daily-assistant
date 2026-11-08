@@ -2078,7 +2078,21 @@ function AppContent() {
   }
 
   async function handleBuild() {
-    if (!project) return;
+    // Round 1691: the same own-click reentrancy gap this codebase has
+    // already closed by name in ~20 other handlers (rounds 1117/1118/1260/
+    // 1264/1363-1372/1522/1534/1555) -- a fast double-click (or a double-tap
+    // mis-fire on mobile) used to fire a second real POST /answers request
+    // before React had committed the button's own `disabled={busy}`. The
+    // server's own activePipelines guard (routes/projects.ts) rejects the
+    // second call with a 409 before it ever reaches generateSpec(), so no
+    // duplicate AI call or corrupted spec results -- but because that
+    // rejection resolves almost immediately while the first call's real AI
+    // request is still in flight, the second call's catch block set a
+    // false "a build or refine is already running" error that outlived the
+    // first call's own success and setView("building"), leaving a
+    // confusing, permanent error banner on top of a build that actually
+    // succeeded.
+    if (!project || busy) return;
     // Pairs each answer with its own question's text, by array index (see
     // selectedAnswers' own comment above countAnsweredOpenQuestions) --
     // never by the question text itself, so two identically-worded
