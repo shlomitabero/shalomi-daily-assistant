@@ -30,6 +30,7 @@ import {
   isDeadlineFieldName,
   isGroupableField,
   isInlineEditableField,
+  isRecordClosedStatus,
   isSameDay,
   isSameMonth,
   isTypingTarget,
@@ -4402,4 +4403,31 @@ test("getDateUrgency classifies a date relative to a fixed reference day, not re
   assert.equal(getDateUrgency("2026-06-17", today), "dueSoon", "the day after tomorrow is still within the 3-day window");
   assert.equal(getDateUrgency("2026-06-18", today), null, "4 days out is far enough away to need no styling at all");
   assert.equal(getDateUrgency("not-a-date", today), null, "an unparseable value must never be flagged");
+});
+
+test("isRecordClosedStatus recognizes a record whose sibling status field already holds a terminal value", () => {
+  const fields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Draft", "Sent", "Paid", "Overdue"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", status: "Paid" }, fields),
+    true,
+    "a terminal status value (case-insensitively) means the record is already resolved",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", status: "Sent" }, fields),
+    false,
+    "a non-terminal status value leaves the date-only classification untouched",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01" }, [{ name: "dueDate", type: "date", required: false }]),
+    false,
+    "an entity with no status field at all is never treated as closed",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", status: 42 }, fields),
+    false,
+    "a non-string status value (shouldn't happen, but defensively) is never treated as closed",
+  );
 });

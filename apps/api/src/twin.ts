@@ -786,6 +786,26 @@ function isDeadlineFieldName(fieldName: string): boolean {
 }
 
 /**
+ * Mirrors entityFormatting.ts's own isRecordClosedStatus (round 1721) --
+ * duplicated here for the same cross-package reason isDeadlineFieldName
+ * just above already is. A record whose sibling `status` enum field
+ * already holds a terminal value (e.g. an Invoice "Paid", a Ticket
+ * "Closed") shouldn't count toward computeOverdueObservations/
+ * computeDueSoonObservations below -- it's already resolved, so a past/
+ * near deadline on it isn't a fact worth surfacing as still-outstanding.
+ */
+const CLOSED_STATUS_VALUES = new Set([
+  "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
+  "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
+]);
+function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): boolean {
+  const statusField = fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  if (!statusField) return false;
+  const value = record[statusField.name];
+  return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());
+}
+
+/**
  * Round 1392: resolves `instant`'s own calendar date in `timeZone` via
  * Intl, instead of the plain `Date.getFullYear()/getMonth()/getDate()`
  * getters computeOverdueObservations/computeDueSoonObservations used to
@@ -864,6 +884,7 @@ function computeOverdueObservations(
       let recordCount = 0;
       let overdueCount = 0;
       for (const record of records) {
+        if (isRecordClosedStatus(record, entity.fields)) continue;
         const raw = record[field.name];
         if (typeof raw !== "string" || raw === "") continue;
         const date = parseFieldDate(raw);
@@ -940,6 +961,7 @@ function computeDueSoonObservations(
       let recordCount = 0;
       let dueSoonCount = 0;
       for (const record of records) {
+        if (isRecordClosedStatus(record, entity.fields)) continue;
         const raw = record[field.name];
         if (typeof raw !== "string" || raw === "") continue;
         const date = parseFieldDate(raw);

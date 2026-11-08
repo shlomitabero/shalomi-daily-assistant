@@ -17812,6 +17812,60 @@ test("a date field named like a deadline is visually flagged overdue/due-soon in
 });
 
 /**
+ * Round 1721: a record whose own sibling `status` enum field already holds
+ * a terminal value (e.g. "Paid", "Done") is already resolved -- flagging
+ * its past dueDate red is actively misleading, since the record's own data
+ * already says it's no longer outstanding. Same Task fixture as the test
+ * above, with a `status` field added and a `status: "Done"` record whose
+ * dueDate is also 5 days in the past (so, absent this fix, it would read
+ * identically to the genuinely-overdue record).
+ */
+test("an overdue/dueSoon-shaped date on a record whose own status is already terminal (Paid/Done/etc.) is never flagged", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+        { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Todo", "InProgress", "Done"] },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Still overdue task", dueDate: isoDateOffset(-5), status: "Todo" },
+      { id: 2, title: "Done task", dueDate: isoDateOffset(-5), status: "Done" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const rows = Array.from(document.querySelectorAll("table tbody tr"));
+      const stillOverdueRow = rows.find((r) => /Still overdue task/.test(r.textContent ?? ""))!;
+      const doneRow = rows.find((r) => /Done task/.test(r.textContent ?? ""))!;
+
+      assert.ok(stillOverdueRow.querySelector(".date-overdue"), "a genuinely outstanding (non-terminal status) record's past dueDate must still be flagged overdue");
+      assert.equal(doneRow.querySelector(".date-overdue"), null, "a record whose own status is already 'Done' must not be flagged overdue even with an identical past dueDate");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1323: the table above already classifies and visually flags every
  * deadline-named date field's value as overdue/due-soon/neither via
  * getDateUrgency -- but that classification was never offered as a

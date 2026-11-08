@@ -73,6 +73,7 @@ import {
   isGroupableField,
   isInlineEditableField,
   isPhoneFieldName,
+  isRecordClosedStatus,
   looksLikePhoneNumber,
   isSameDay,
   isSameMonth,
@@ -263,6 +264,7 @@ function Cell({
   highlightQuery,
   onJumpToRecord,
   allEntities,
+  recordClosed = false,
 }: {
   field: Field;
   value: unknown;
@@ -293,6 +295,13 @@ function Cell({
    * this case-insensitively; only passed when `onJumpToRecord` is, so it
    * can resolve the click target the same way before calling it. */
   allEntities?: Entity[];
+  /** Round 1721: true when this record's own sibling `status` enum field
+   * already holds a terminal value (see entityFormatting.ts's
+   * isRecordClosedStatus) -- e.g. an Invoice marked "Paid" or a Ticket
+   * marked "Closed". Suppresses the date branch's overdue/dueSoon styling
+   * below: a past deadline on an already-resolved record isn't something
+   * still worth flagging red/amber. */
+  recordClosed?: boolean;
 }) {
   if (value === null || value === undefined || value === "") {
     return <span className="muted">{t("entity.empty")}</span>;
@@ -349,7 +358,7 @@ function Cell({
   }
   if (field.type === "date") {
     const formatted = formatDateValue(String(value), lang);
-    const urgency = isDeadlineFieldName(field.name) ? getDateUrgency(String(value)) : null;
+    const urgency = isDeadlineFieldName(field.name) && !recordClosed ? getDateUrgency(String(value)) : null;
     if (!urgency) return <>{formatted}</>;
     return (
       <span className={`date-${urgency === "overdue" ? "overdue" : "due-soon"}`} title={t(urgency === "overdue" ? "entity.dateOverdue" : "entity.dateDueSoon")}>
@@ -471,6 +480,7 @@ function RecordPrintSheet({
                 relationLabel={
                   f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined
                 }
+                recordClosed={isRecordClosedStatus(record, fields)}
               />
             </dd>
           </div>
@@ -535,6 +545,7 @@ function RecordListPrintSheet({
   const hasNumericField = fields.some((f) => f.type === "number" && !isPhoneFieldName(f.name));
   const totals = hasNumericField ? sumNumericFields(records, fields) : {};
   function renderRow(record: EntityRecord) {
+    const recordClosed = isRecordClosedStatus(record, fields);
     return (
       <tr key={record.id as number}>
         {fields.map((f) => (
@@ -545,6 +556,7 @@ function RecordListPrintSheet({
               lang={lang}
               t={t}
               relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined}
+              recordClosed={recordClosed}
             />
           </td>
         ))}
@@ -735,6 +747,7 @@ function BoardCard({
             highlightQuery={highlightQuery}
             onJumpToRecord={onJumpToRecord}
             allEntities={allEntities}
+            recordClosed={isRecordClosedStatus(record, orderedFields)}
           />
         </div>
       ))}
@@ -3381,6 +3394,7 @@ export function EntityPanel({
         // "YYYY-MM-DD" string, which is what the generic fallback below
         // would otherwise compare "overdue"/"dueSoon" against.
         if (field?.type === "date" && isDeadlineFieldName(field.name)) {
+          if (isRecordClosedStatus(r, entity.fields)) return false;
           return getDateUrgency(String(r[fieldName] ?? "")) === value;
         }
         return String(r[fieldName] ?? "") === value;
@@ -5054,6 +5068,7 @@ export function EntityPanel({
   // is flat or grouped (see recordGroups above) -- grouping only changes
   // what wraps the rows, never the rows themselves.
   function renderRecordRow(record: EntityRecord) {
+    const recordClosed = isRecordClosedStatus(record, entity.fields);
     return (
       <tr
         key={record.id as number}
@@ -5152,6 +5167,7 @@ export function EntityPanel({
                   highlightQuery={search}
                   onJumpToRecord={onJumpToRecord}
                   allEntities={allEntities}
+                  recordClosed={recordClosed}
                 />
               )}
             </td>

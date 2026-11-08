@@ -1996,6 +1996,44 @@ test("computeBusinessTwin's overdue-deadline observation uses the singular 'reco
   assert.ok(!overdue!.text.includes("records"), `must not say "records" for a single record, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1721: a record whose own sibling `status` enum field already holds
+ * a terminal value (e.g. "Paid") is already resolved -- it must not count
+ * toward either the numerator or the denominator of computeOverdueObservations'
+ * "N of M records" sentence, since it isn't a genuinely outstanding record
+ * for this entity's deadline anymore.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own status is already terminal (e.g. Paid)", () => {
+  const invoiceProject: Project = {
+    ...project,
+    description: "Invoices for a small business",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoices",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+            { name: "status", type: "enum", required: true, enumValues: ["Draft", "Sent", "Paid", "Overdue"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, invoiceProject.id, invoiceProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, invoiceProject.id, invoiceProject.spec.entities[0], { customer: "Dana", dueDate: "2026-01-01", status: "Sent" }); // genuinely overdue
+  insertRecord(db, invoiceProject.id, invoiceProject.spec.entities[0], { customer: "Omer", dueDate: "2026-01-01", status: "Paid" }); // already resolved
+
+  const twin = computeBusinessTwin(db, invoiceProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the Paid record must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

@@ -432,6 +432,36 @@ export function getDateUrgency(value: string, today: Date = new Date()): DateUrg
   return null;
 }
 
+// Round 1721: the app's own built-in domain library (domainEntities.ts)
+// ships entities whose `status` enum already has a terminal value that
+// contradicts a plain date-only overdue/dueSoon reading -- an Invoice
+// marked "Paid", an Order "Delivered", a Ticket "Closed"/"Resolved", a
+// Task "Done" -- but getDateUrgency above has no way to know that: it only
+// ever sees the raw date string. Gathered from every `status` enum this
+// file's own domain library actually ships (domainEntities.ts), not
+// invented speculatively.
+const CLOSED_STATUS_VALUES = new Set([
+  "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
+  "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
+]);
+
+/**
+ * True when `record` has a sibling `status` enum field (matched by name,
+ * case-insensitively, same convention findField-style lookups elsewhere in
+ * this app already use) whose current value is one of CLOSED_STATUS_VALUES
+ * -- i.e. this record is already resolved, so a past/near deadline on it is
+ * no longer something to flag as overdue/dueSoon. Returns false (no
+ * suppression) when the entity has no status field at all, or the status
+ * value isn't a recognized terminal one -- the pre-existing date-only
+ * behavior is the correct default for every entity without this ambiguity.
+ */
+export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boolean {
+  const statusField = fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  if (!statusField) return false;
+  const value = record[statusField.name];
+  return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());
+}
+
 /**
  * Formats a record's own `createdAt` (a real server-assigned ISO
  * timestamp -- see repository.ts's insertRecord, which always stamps
