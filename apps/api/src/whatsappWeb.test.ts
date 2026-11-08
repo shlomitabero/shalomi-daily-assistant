@@ -1362,6 +1362,62 @@ test("an incoming message from a WhatsApp privacy-mode 'LID' sender is matched b
 });
 
 /**
+ * Round 1730: round 1729 built the phone-match candidate list once per
+ * `upsert.messages` batch instead of once per message, justified entirely
+ * by "nothing can change mid-synchronous-batch." That's false for THIS
+ * handler: the LID-resolution branch above awaits a real async lookup
+ * (Baileys' lidMapping.getPNForLID, confirmed to hit its own keys store
+ * when the LID isn't cached yet -- exactly "the very first message from a
+ * contact" case this file's own doc comment already calls out). Any
+ * await inside the batch loop yields to the event loop, during which a
+ * genuinely concurrent write on this same single-process server (another
+ * HTTP request inserting/updating a record, say) could create exactly
+ * the record a LATER message in the SAME batch should match -- and the
+ * pre-built candidate list would never see it. This test puts the
+ * LID-resolution message FIRST and reproduces that concurrent write
+ * happening during its await, then a second, ordinary message from the
+ * newly-created record's own phone number right after it in the same
+ * batch.
+ */
+test("a concurrent record insert that happens during one message's LID-resolution await is still visible to a later message in the SAME batch", async () => {
+  const { manager, createdSockets, db } = setupManager({
+    getPNForLID: async (lid) => {
+      // Simulates a genuinely concurrent write landing on this server
+      // while this message's async LID lookup is in flight -- a real
+      // `await` boundary, not a same-tick side effect.
+      await Promise.resolve();
+      insertRecord(db, project.id, project.spec.entities[0], { name: "Late Arrival", phone: "050-111-2222" });
+      return lid === "999888777666555@lid" ? null : null;
+    },
+  });
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "999888777666555@lid", fromMe: false }, message: { conversation: "triggers the LID lookup await" } },
+      { key: { remoteJid: "972501112222@s.whatsapp.net", fromMe: false }, message: { conversation: "from the record inserted during the await above" } },
+    ],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  // listWhatsAppMessages orders newest-first.
+  assert.equal(messages[0].fromNumber, "972501112222");
+  assert.equal(
+    messages[0].matchedLabel,
+    "Late Arrival",
+    "the second message's candidate list must be built AFTER the first message's LID-resolution await completes, not before it",
+  );
+});
+
+/**
  * Round 785: a photo/video/voice-note/document/sticker is shaped
  * completely differently from a plain text message (no conversation or
  * extendedTextMessage at all, only a type-specific key with its own

@@ -1141,10 +1141,25 @@ export class WhatsAppWebManager {
     if (upsert.type !== "notify") return;
     const project = getProject(this.db, projectId);
     if (!project || project.status !== "built") return;
-    // Round 1729: built once for the whole batch, not once per message --
-    // see findMatchingRecord's own doc comment for why that's safe.
-    const candidates = buildPhoneMatchCandidates(this.db, project);
 
+    // Round 1730: this first pass only resolves each message's real "from"
+    // number -- including the one genuinely async step below (LID lookup)
+    // -- and does NOT touch findMatchingRecord/candidates yet. Round 1729
+    // built the phone-match candidate list once per batch instead of once
+    // per message, justified by "nothing can change mid-synchronous-batch"
+    // -- but that assumption broke right here: the LID branch below awaits
+    // a real store read (Baileys' lidMapping.getPNForLID, confirmed to hit
+    // `this.keys.get(...)` when the LID isn't already cached, e.g. "the
+    // very first message from a contact" this same comment already called
+    // out as non-hypothetical), which yields to the event loop -- during
+    // which another request on this same single-process server could
+    // insert/update exactly the record a LATER message in this same batch
+    // should match, making the pre-built `candidates` stale for it. Doing
+    // every await first, then building `candidates` once ALL resolution is
+    // done, keeps round 1729's "build it once" win while restoring the
+    // invariant it actually depends on: no yield point between building
+    // `candidates` and using it.
+    const resolved: { from: string; text: string }[] = [];
     for (const msg of upsert.messages) {
       if (msg.key.fromMe) continue;
       const remoteJid = msg.key.remoteJid;
@@ -1188,8 +1203,14 @@ export class WhatsAppWebManager {
           if (pn) resolvedJid = pn;
         }
       }
-      const from = resolvedJid.split("@")[0];
+      resolved.push({ from: resolvedJid.split("@")[0], text });
+    }
 
+    // Round 1729's optimization, now correctly placed: every await above
+    // has already happened, so nothing from here on can race a concurrent
+    // write to the records `candidates` was built from.
+    const candidates = buildPhoneMatchCandidates(this.db, project);
+    for (const { from, text } of resolved) {
       const match = findMatchingRecord(this.db, project, from, candidates);
       insertWhatsAppMessage(this.db, {
         projectId,
