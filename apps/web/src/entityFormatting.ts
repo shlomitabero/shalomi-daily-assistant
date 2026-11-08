@@ -2472,6 +2472,26 @@ export function buildImportRecordsFromJson(
       }
 
       if (field.type === "boolean") {
+        // Round 1715: a genuine recordsToJson export always emits a real
+        // boolean here, so this cannot mask a round-trip bug -- but this
+        // function's own doc comment above also promises to round-trip "a
+        // hand-edited copy of" one, and this codebase displays every
+        // boolean cell as the literal text "TRUE"/"FALSE" everywhere (see
+        // fieldDisplayValue and friends), so a person hand-editing the
+        // file naturally types what they see on screen, e.g. "TRUE"/"כן"
+        // as a JSON string, not the bare JSON keyword `true`. The sibling
+        // enum branch right below was given this exact kind of leniency
+        // for hand-typed label text in round 1698; this mirrors it one
+        // field type over, reusing the same BOOLEAN_TRUE_VALUES/
+        // BOOLEAN_FALSE_VALUES lists CSV import already relies on.
+        if (typeof raw === "string" && BOOLEAN_TRUE_VALUES.includes(raw.toLowerCase())) {
+          record[field.name] = true;
+          continue;
+        }
+        if (typeof raw === "string" && BOOLEAN_FALSE_VALUES.includes(raw.toLowerCase())) {
+          record[field.name] = false;
+          continue;
+        }
         if (typeof raw !== "boolean") {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a true/false value for field "${field.label ?? field.name}".`;
           break;

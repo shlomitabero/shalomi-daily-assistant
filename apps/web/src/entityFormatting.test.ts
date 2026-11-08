@@ -3378,6 +3378,49 @@ test("buildImportRecordsFromJson still resolves an enum cell matched by its own 
   assert.deepEqual(result.records, [{ status: "open" }]);
 });
 
+/**
+ * Round 1715: this function's own doc comment says it round-trips either
+ * a genuine recordsToJson export (which only ever emits a real boolean)
+ * OR "a hand-edited copy of" one -- but unlike the enum branch right
+ * above (round 1698), the boolean branch had no fallback for hand-typed
+ * text at all. Every boolean cell in this app displays as the literal
+ * "TRUE"/"FALSE" everywhere (table cells, CSV export, calendar feed), so
+ * a person hand-editing their exported JSON naturally types what they
+ * see on screen -- a JSON string, not the bare JSON keyword `true`.
+ */
+test("buildImportRecordsFromJson accepts a hand-typed \"TRUE\"/\"FALSE\" string for a boolean field, mirroring buildImportRecords' own CSV leniency", () => {
+  const fields: Field[] = [{ name: "active", label: "Active", type: "boolean", required: true }];
+  const rows = [{ active: "TRUE" }, { active: "FALSE" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ active: true }, { active: false }]);
+});
+
+test("buildImportRecordsFromJson accepts a hand-typed Hebrew \"כן\"/\"לא\" string for a boolean field, matching the same CSV_BOOLEAN_TRUE_VALUES/BOOLEAN_FALSE_VALUES lists", () => {
+  const fields: Field[] = [{ name: "active", label: "Active", type: "boolean", required: true }];
+  const rows = [{ active: "כן" }, { active: "לא" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ active: true }, { active: false }]);
+});
+
+test("buildImportRecordsFromJson still rejects a boolean field's value that isn't a real boolean or a recognized true/false string, instead of silently coercing it", () => {
+  const fields: Field[] = [{ name: "active", label: "Active", type: "boolean", required: true }];
+  const rows = [{ active: "maybe" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a true\/false value/);
+});
+
+test("buildImportRecordsFromJson still accepts a genuine real boolean for a boolean field, the pre-existing round-trip path, unchanged by the new string leniency", () => {
+  const fields: Field[] = [{ name: "active", label: "Active", type: "boolean", required: true }];
+  const rows = [{ active: true }, { active: false }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ active: true }, { active: false }]);
+});
+
 test("buildImportRecordsFromJson refuses the whole import for an entity with a required file field, since no JSON descriptor can supply a real uploaded file", () => {
   const fields: Field[] = [
     { name: "title", label: "Title", type: "text", required: true },
