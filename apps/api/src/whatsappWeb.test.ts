@@ -1094,6 +1094,61 @@ test("an incoming text message is logged and matched to the right customer recor
   assert.equal(messages[0].matchedLabel, "Dana Levi");
 });
 
+/**
+ * Round 1729: findMatchingRecord's own per-call SELECT * (one per
+ * phone-bearing entity) is now built ONCE per upsert.messages batch and
+ * reused for every message in it -- Baileys can and does deliver several
+ * queued messages in one such batch. This proves both halves of that
+ * change at the integration level: (1) each message in a multi-message
+ * batch is still matched to the right, independent record, and (2) the
+ * underlying db.prepare count for the batch is bounded (does not grow
+ * with the number of messages), not just that the final matches look
+ * right.
+ */
+test("a batch of several incoming messages from different senders reuses one candidate list, matching each to its own record without re-querying per message", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  ensureProjectsTable(db);
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Dana Levi", phone: "050-123-4567" });
+  insertRecord(db, project.id, project.spec.entities[0], { name: "Noam Cohen", phone: "050-999-8888" });
+
+  await manager.connect(project.id);
+  createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  // Counts only the candidate-list query itself (listRecords' own `SELECT
+  // * FROM "entity_<project>_<entity>" ORDER BY id DESC`, confirmed by
+  // repository.ts) -- not insertWhatsAppMessage's own unrelated per-call
+  // prepares (its INSERT, and its own retention-prune DELETE), which are
+  // expected to scale with the number of messages regardless of this fix.
+  let candidateSelectCalls = 0;
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    if (sql.includes(`entity_${project.id}_Customer`)) candidateSelectCalls++;
+    return originalPrepare(sql);
+  }) as typeof db.prepare;
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { conversation: "היי, מתי התור שלי?" } },
+      { key: { remoteJid: "972509998888@s.whatsapp.net", fromMe: false }, message: { conversation: "אפשר לשנות שעה?" } },
+    ],
+  });
+
+  db.prepare = originalPrepare;
+
+  assert.equal(candidateSelectCalls, 1, "the candidate list's SELECT must be issued once for the whole batch, not once per message");
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2);
+  const byBody = new Map(messages.map((m) => [m.body, m]));
+  assert.equal(byBody.get("היי, מתי התור שלי?")?.matchedLabel, "Dana Levi");
+  assert.equal(byBody.get("אפשר לשנות שעה?")?.matchedLabel, "Noam Cohen");
+});
+
 test("an incoming message is skipped when it is from the linked device itself or from a group chat", async () => {
   const { manager, createdSockets, db } = setupManager();
   insertProject(db, project);

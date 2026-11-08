@@ -9,7 +9,7 @@ import {
   recordWhatsAppDisconnected,
   type ForgeDatabase,
 } from "@forge/db";
-import { findMatchingRecord, normalizePhone } from "./whatsapp.js";
+import { buildPhoneMatchCandidates, findMatchingRecord, normalizePhone } from "./whatsapp.js";
 
 /**
  * Manages a real WhatsApp Web connection per project -- the same "link a
@@ -1141,6 +1141,9 @@ export class WhatsAppWebManager {
     if (upsert.type !== "notify") return;
     const project = getProject(this.db, projectId);
     if (!project || project.status !== "built") return;
+    // Round 1729: built once for the whole batch, not once per message --
+    // see findMatchingRecord's own doc comment for why that's safe.
+    const candidates = buildPhoneMatchCandidates(this.db, project);
 
     for (const msg of upsert.messages) {
       if (msg.key.fromMe) continue;
@@ -1187,7 +1190,7 @@ export class WhatsAppWebManager {
       }
       const from = resolvedJid.split("@")[0];
 
-      const match = findMatchingRecord(this.db, project, from);
+      const match = findMatchingRecord(this.db, project, from, candidates);
       insertWhatsAppMessage(this.db, {
         projectId,
         direction: "in",
@@ -1215,6 +1218,8 @@ export class WhatsAppWebManager {
     if (this.sessions.get(projectId) !== session) return;
     const project = getProject(this.db, projectId);
     if (!project || project.status !== "built") return;
+    // Round 1729: built once for the whole batch, not once per call.
+    const candidates = buildPhoneMatchCandidates(this.db, project);
 
     for (const call of calls) {
       // Baileys emits this same event repeatedly as a single call's status
@@ -1230,7 +1235,7 @@ export class WhatsAppWebManager {
       if (call.isGroup) continue;
 
       const from = call.from.split("@")[0];
-      const match = findMatchingRecord(this.db, project, from);
+      const match = findMatchingRecord(this.db, project, from, candidates);
       insertWhatsAppMessage(this.db, {
         projectId,
         direction: "in",

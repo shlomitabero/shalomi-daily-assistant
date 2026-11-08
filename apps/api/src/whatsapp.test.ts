@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
 import { applyMigrations, insertRecord, openDatabase } from "@forge/db";
-import { findMatchingRecord, normalizePhone } from "./whatsapp.js";
+import { buildPhoneMatchCandidates, findMatchingRecord, normalizePhone } from "./whatsapp.js";
 
 test("normalizePhone strips non-digits and a single leading trunk zero", () => {
   assert.equal(normalizePhone("050-123-4567"), "501234567");
@@ -324,4 +324,61 @@ test("findMatchingRecord checks every phone-like field on an entity, not just th
   assert.ok(match, "must match via the second phone-like field (mobile) even though it's declared after the first (phone)");
   assert.equal(match!.recordId, inserted.id);
   assert.equal(match!.label, "Dana Levi");
+});
+
+/**
+ * Round 1729: findMatchingRecord's own per-call `listRecords` SELECT * is
+ * its only real cost. whatsappWeb.ts's handleIncomingMessages/
+ * handleIncomingCalls now build one `buildPhoneMatchCandidates` list per
+ * batch (Baileys can deliver several queued messages in one
+ * `upsert.messages` array) and pass it into every findMatchingRecord call
+ * for that batch, instead of letting each call re-run its own default
+ * `buildPhoneMatchCandidates(db, project)`. This counts `db.prepare`
+ * calls directly to prove that reuse actually skips the repeat SELECTs,
+ * not just that the matches still come out right.
+ */
+test("reusing one buildPhoneMatchCandidates list across several findMatchingRecord calls (a batch) issues the SELECT only once, not once per call", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  const dana = insertRecord(db, project.id, customer, { name: "Dana Levi", phone: "050-123-4567" });
+  const noam = insertRecord(db, project.id, customer, { name: "Noam Cohen", phone: "050-999-8888" });
+
+  let prepareCalls = 0;
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    prepareCalls++;
+    return originalPrepare(sql);
+  }) as typeof db.prepare;
+
+  const candidates = buildPhoneMatchCandidates(db, project);
+  assert.equal(prepareCalls, 1, "building the candidate list once should issue exactly one SELECT");
+
+  const first = findMatchingRecord(db, project, "972501234567", candidates);
+  const second = findMatchingRecord(db, project, "972509998888", candidates);
+  assert.equal(prepareCalls, 1, "reusing the same candidate list across two further calls must not re-run the SELECT");
+  assert.equal(first!.recordId, dana.id);
+  assert.equal(second!.recordId, noam.id);
+
+  db.prepare = originalPrepare;
+});
+
+test("findMatchingRecord without a candidates argument still builds its own (today's unchanged default behavior)", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  const dana = insertRecord(db, project.id, customer, { name: "Dana Levi", phone: "050-123-4567" });
+
+  let prepareCalls = 0;
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    prepareCalls++;
+    return originalPrepare(sql);
+  }) as typeof db.prepare;
+
+  const match = findMatchingRecord(db, project, "972501234567");
+  assert.equal(prepareCalls, 1, "an omitted candidates argument must still build (and query) its own list, same as before round 1729");
+  assert.equal(match!.recordId, dana.id);
+
+  db.prepare = originalPrepare;
 });

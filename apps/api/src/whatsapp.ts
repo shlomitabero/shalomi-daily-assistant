@@ -1,4 +1,4 @@
-import type { Project } from "@forge/shared";
+import type { Entity, EntityRecord, Field, Project } from "@forge/shared";
 import { listRecords, type ForgeDatabase } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
@@ -83,6 +83,31 @@ export interface MatchedRecord {
   label: string;
 }
 
+export interface PhoneMatchCandidate {
+  entity: Entity;
+  phoneFields: Field[];
+  records: EntityRecord[];
+}
+
+/**
+ * Round 1729: the per-entity "which fields look like a phone field, and
+ * what are this entity's current records" lookup findMatchingRecord does
+ * -- an unindexed, unbounded `listRecords` SELECT * per phone-bearing
+ * entity -- is its only real cost. Pulled out on its own so a caller that
+ * needs to match several numbers back-to-back against the SAME project
+ * state (see findMatchingRecord's own `candidates` param below) can build
+ * it exactly once instead of once per number.
+ */
+export function buildPhoneMatchCandidates(db: ForgeDatabase, project: Project): PhoneMatchCandidate[] {
+  const candidates: PhoneMatchCandidate[] = [];
+  for (const entity of project.spec.entities) {
+    const phoneFields = entity.fields.filter((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
+    if (phoneFields.length === 0) continue;
+    candidates.push({ entity, phoneFields, records: listRecords(db, project.id, entity) });
+  }
+  return candidates;
+}
+
 /**
  * Best-effort match: looks across every entity that has one or more
  * fields whose name matches a common phone-field convention (see
@@ -100,15 +125,29 @@ export interface MatchedRecord {
  * app's own seed data and real phone entry habits both produce. Returns
  * null rather than guessing when nothing matches, which is the normal
  * case for a brand-new contact.
+ *
+ * Round 1729: `candidates` defaults to a fresh `buildPhoneMatchCandidates`
+ * call, preserving every existing caller's exact old behavior (one DB
+ * read per call) -- but whatsappWeb.ts's handleIncomingMessages/
+ * handleIncomingCalls call this once per message/call in a loop, and
+ * Baileys can deliver several queued messages in a single
+ * `upsert.messages` batch. Without a way to reuse one already-built
+ * candidate list across that whole batch, every message in the same
+ * synchronous event-loop tick re-ran the identical unbounded `SELECT *`
+ * per phone-bearing entity, for state that cannot have changed mid-tick
+ * (node:sqlite's own `.all()` is synchronous) -- pure, repeated, wasted
+ * work with no staleness benefit to show for it.
  */
-export function findMatchingRecord(db: ForgeDatabase, project: Project, fromNumber: string): MatchedRecord | null {
+export function findMatchingRecord(
+  db: ForgeDatabase,
+  project: Project,
+  fromNumber: string,
+  candidates: PhoneMatchCandidate[] = buildPhoneMatchCandidates(db, project),
+): MatchedRecord | null {
   const normalizedFrom = normalizePhone(fromNumber);
   if (!normalizedFrom) return null;
 
-  for (const entity of project.spec.entities) {
-    const phoneFields = entity.fields.filter((f) => PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
-    if (phoneFields.length === 0) continue;
-    const records = listRecords(db, project.id, entity);
+  for (const { entity, phoneFields, records } of candidates) {
     for (const record of records) {
       for (const phoneField of phoneFields) {
         const raw = record[phoneField.name];
