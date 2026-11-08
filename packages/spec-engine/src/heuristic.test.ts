@@ -435,6 +435,60 @@ test("asks about payments (recommending Stripe) for a paid-course description, e
   );
 });
 
+/**
+ * Round 1700: the exact same drift round 1007's own comment documents for
+ * other Course wording ("monthly fee"/"tuition") -- a description that
+ * says the business sells or charges for courses, rather than using "fee"
+ * or "tuition", still fell through to "No payments" since it hit none of
+ * round 1007's specific fee-charging phrases. Fixed with two new, equally
+ * narrow patterns ("sell(ing) (online) courses", "paid (online) courses")
+ * plus their Hebrew equivalents -- bare "sell"/"selling" is still rejected
+ * (see the round-460 inventory-tracker test above, re-confirmed untouched
+ * below), so this stays scoped to the specific Course-selling phrasing.
+ */
+test("asks about payments (recommending Stripe) for a description that SELLS or charges for courses, even without round 1007's own 'fee'/'tuition' wording", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const sellsCourses = await provider.generate("A platform for creators to sell online courses and digital downloads.");
+  assert.deepEqual(sellsCourses.entities.map((e) => e.name), ["Course"]);
+  const sellsCoursesQuestion = sellsCourses.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(sellsCoursesQuestion);
+  assert.equal(sellsCoursesQuestion!.recommendation, "Stripe");
+
+  const paidCourses = await provider.generate("An app to manage paid online courses for students.");
+  assert.deepEqual(paidCourses.entities.map((e) => e.name).sort(), ["Course", "Student"]);
+  const paidCoursesQuestion = paidCourses.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paidCoursesQuestion);
+  assert.equal(paidCoursesQuestion!.recommendation, "Stripe");
+
+  const hebrewSellsCourses = await provider.generate("פלטפורמה למורים למכור קורסים אונליין לתלמידים.");
+  const hebrewQuestion = hebrewSellsCourses.openQuestions.find((q) => q.options.includes("Stripe"));
+  assert.ok(hebrewQuestion);
+  assert.equal(hebrewQuestion!.recommendation, "Stripe");
+
+  // Round 1007's own free-course regression, and round 893's own
+  // inventory-tracker regression, must both stay untouched by this fix.
+  const freeCourse = await provider.generate("A community center app to manage free weekly yoga courses and track who signed up.");
+  const freeCourseQuestion = freeCourse.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeCourseQuestion);
+  assert.equal(
+    freeCourseQuestion!.recommendation,
+    "No payments",
+    "a plain free-course description must not be swept up by the new 'sell'/'paid courses' phrases",
+  );
+
+  const inventoryTracker = await provider.generate(
+    "An inventory tracker for a clothing store selling striped shirts, scarves, and seasonal collections.",
+  );
+  const inventoryQuestion = inventoryTracker.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(inventoryQuestion);
+  assert.equal(
+    inventoryQuestion!.recommendation,
+    "No payments",
+    "bare 'selling' outside the narrow 'sell (online) courses' phrase must still not fire",
+  );
+});
+
 test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
   // Regression test for a real bug found by a round 460 Explore survey:
   // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),

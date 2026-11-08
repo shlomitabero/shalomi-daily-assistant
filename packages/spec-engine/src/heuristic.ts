@@ -97,6 +97,26 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // needs its own specific phrase rather than relying on Rental firing.
   "car dealership", "car rental", "vehicle rental", "rent out vehicles",
   "רכב להשכרה", "רכבים להשכרה", "מכירת רכבים",
+  // Round 1700: the same drift once more, this time for Course via
+  // "sell"/"paid" wording rather than round 1007's "fee"/"tuition"
+  // wording. "A platform for creators to sell online courses" matches
+  // only Course (deliberately not in BILLING_ENTITY_NAMES -- a course can
+  // genuinely be free, see round 1007's own comment) and hits none of
+  // round 1007's fee-specific phrases, so it got recommended "No
+  // payments" despite "selling" a course being definitionally a paid
+  // transaction -- the same reasoning round 893 already used for
+  // "store"/"selling" in the e-commerce case. Bare "sell"/"selling" was
+  // deliberately rejected there (the round-460 inventory-tracker test
+  // just above requires "selling striped shirts" to stay "No payments"),
+  // so this is scoped narrowly to "sell/paid + (optional online) +
+  // course(s)" rather than a bare keyword, mirroring round 1007's own
+  // "specific, low-ambiguity phrase" shape. Verified the existing
+  // round-1007 free-course regression test ("free weekly yoga courses")
+  // still correctly stays "No payments" -- neither new pattern fires on
+  // it.
+  /\bsell(?:ing)?\s+(?:online\s+)?courses?\b/,
+  /\bpaid\s+(?:online\s+)?courses?\b/,
+  "למכור קורסים", "מכירת קורסים", "קורסים בתשלום", "קורס בתשלום",
 ];
 
 /**
