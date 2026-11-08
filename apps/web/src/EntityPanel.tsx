@@ -1918,6 +1918,12 @@ export function EntityPanel({
   // Round 1405: the "Copy webhook URL" button's own status, mirroring
   // subscribeStatus's exact idle/copied/failed shape just above.
   const [webhookUrlStatus, setWebhookUrlStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // Round 1697: the update/delete webhook URL templates' own status,
+  // mirroring webhookUrlStatus's exact shape -- see handleCopyWebhookUpdateUrl/
+  // handleCopyWebhookDeleteUrl's own doc comment for why these two buttons
+  // exist at all.
+  const [webhookUpdateUrlStatus, setWebhookUpdateUrlStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const [webhookDeleteUrlStatus, setWebhookDeleteUrlStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
   // Round 1363: the one write path in this whole writesInFlight family that
@@ -4594,6 +4600,58 @@ export function EntityPanel({
   }, [webhookUrlStatus]);
 
   /**
+   * Round 1697: routes/webhookIn.ts has had a working update route
+   * (POST .../:recordId, round 1607) and delete route
+   * (POST .../:recordId/delete, round 1683) for a long time -- both
+   * rate-limited, idempotent, and automation-wired exactly like the
+   * create route handleCopyWebhookUrl already surfaces just above -- but
+   * neither one was ever exposed anywhere in the UI. The only place this
+   * whole feature is discoverable at all is this one "Copy inbound
+   * webhook URL" button, and it only ever built the CREATE url. A non-
+   * technical business owner wiring up Stripe/Typeform/Zapier to sync
+   * record updates or deletions (the exact scenario both routes' own doc
+   * comments describe) had no way to learn these URLs exist without
+   * reading the source code. The literal "{recordId}" placeholder mirrors
+   * how every webhook-documentation page shows a path template -- the
+   * create route's own response already returns `{ id }` (see its doc
+   * comment in webhookIn.ts) for the external service to substitute in.
+   */
+  async function handleCopyWebhookUpdateUrl() {
+    try {
+      const { token } = await getInboundWebhookToken(projectId);
+      const url = `${window.location.origin}/api/public/webhook-in/${projectId}/${encodeURIComponent(entity.name)}/{recordId}?token=${token}`;
+      await navigator.clipboard.writeText(url);
+      setWebhookUpdateUrlStatus("copied");
+    } catch {
+      setWebhookUpdateUrlStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (webhookUpdateUrlStatus === "idle") return;
+    const timer = setTimeout(() => setWebhookUpdateUrlStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [webhookUpdateUrlStatus]);
+
+  /** Round 1697: see handleCopyWebhookUpdateUrl's own doc comment just above. */
+  async function handleCopyWebhookDeleteUrl() {
+    try {
+      const { token } = await getInboundWebhookToken(projectId);
+      const url = `${window.location.origin}/api/public/webhook-in/${projectId}/${encodeURIComponent(entity.name)}/{recordId}/delete?token=${token}`;
+      await navigator.clipboard.writeText(url);
+      setWebhookDeleteUrlStatus("copied");
+    } catch {
+      setWebhookDeleteUrlStatus("failed");
+    }
+  }
+
+  useEffect(() => {
+    if (webhookDeleteUrlStatus === "idle") return;
+    const timer = setTimeout(() => setWebhookDeleteUrlStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [webhookDeleteUrlStatus]);
+
+  /**
    * The complement to CSV export: parses an uploaded file with parseCsv,
    * converts it to record payloads with buildImportRecords (which already
    * validates types/required fields client-side), then writes each valid
@@ -5662,6 +5720,38 @@ export function EntityPanel({
                   : webhookUrlStatus === "failed"
                     ? t("entity.webhookIn.failed")
                     : t("entity.webhookIn.button")}
+              </button>
+            )}
+            {!readOnly && (
+              <button
+                type="button"
+                className="secondary webhook-in-update-copy-btn"
+                onClick={handleCopyWebhookUpdateUrl}
+                aria-live="polite"
+                aria-atomic="true"
+                title={t("entity.webhookInUpdate.hint")}
+              >
+                {webhookUpdateUrlStatus === "copied"
+                  ? t("entity.webhookIn.copied")
+                  : webhookUpdateUrlStatus === "failed"
+                    ? t("entity.webhookIn.failed")
+                    : t("entity.webhookInUpdate.button")}
+              </button>
+            )}
+            {!readOnly && (
+              <button
+                type="button"
+                className="secondary webhook-in-delete-copy-btn"
+                onClick={handleCopyWebhookDeleteUrl}
+                aria-live="polite"
+                aria-atomic="true"
+                title={t("entity.webhookInDelete.hint")}
+              >
+                {webhookDeleteUrlStatus === "copied"
+                  ? t("entity.webhookIn.copied")
+                  : webhookDeleteUrlStatus === "failed"
+                    ? t("entity.webhookIn.failed")
+                    : t("entity.webhookInDelete.button")}
               </button>
             )}
             <button

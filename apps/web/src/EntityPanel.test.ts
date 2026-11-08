@@ -5730,8 +5730,86 @@ test("EntityPanel's webhook-URL button is hidden from a read-only collaborator",
       renderAppointmentPanel({ readOnly: true });
       await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
       assert.equal(document.querySelector(".webhook-in-copy-btn"), null, "a read-only viewer must never see a button that hands out a write-capable URL");
+      assert.equal(document.querySelector(".webhook-in-update-copy-btn"), null, "the update webhook URL button must also be hidden from a read-only viewer");
+      assert.equal(document.querySelector(".webhook-in-delete-copy-btn"), null, "the delete webhook URL button must also be hidden from a read-only viewer");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1697: routes/webhookIn.ts has had a working update route
+ * (POST .../:recordId, round 1607) and delete route
+ * (POST .../:recordId/delete, round 1683) for a long time, but neither
+ * was ever surfaced anywhere in the UI -- the only discoverable webhook
+ * URL was the create one, just above. Confirms both new buttons exist,
+ * are gated by !readOnly (see the test above), and copy the correct URL
+ * shape with a literal "{recordId}" placeholder for the external service
+ * to substitute (the create route's own response already returns the
+ * real id to use there).
+ */
+test("EntityPanel's update/delete webhook-URL buttons copy the correct URL templates", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const updateBtn = document.querySelector(".webhook-in-update-copy-btn") as HTMLButtonElement;
+      assert.ok(updateBtn, "expected an update webhook-URL button");
+      await act(async () => {
+        fireEvent.click(updateBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.match(
+        writtenText!,
+        /\/api\/public\/webhook-in\/proj1\/Appointment\/\{recordId\}\?token=real-webhook-token-abc$/,
+        "the update URL must carry a literal {recordId} placeholder before the token, with no /delete suffix",
+      );
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+
+      const deleteBtn = document.querySelector(".webhook-in-delete-copy-btn") as HTMLButtonElement;
+      assert.ok(deleteBtn, "expected a delete webhook-URL button");
+      await act(async () => {
+        fireEvent.click(deleteBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.match(
+        writtenText!,
+        /\/api\/public\/webhook-in\/proj1\/Appointment\/\{recordId\}\/delete\?token=real-webhook-token-abc$/,
+        "the delete URL must carry a literal {recordId} placeholder followed by /delete before the token",
+      );
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
     }
   });
 });
