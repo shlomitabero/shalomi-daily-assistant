@@ -280,12 +280,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
  * but the response was lost, and without a key the retry would 409
  * EMAIL_TAKEN on the user's own just-created account instead of
  * returning the same {user, token} it already produced).
+ *
+ * Round 1689: `lang` was missing here -- unlike every sibling auth
+ * function (login, forgotPassword, resetPassword, resendVerification),
+ * all of which forward the UI's own language so the server knows which
+ * language to write their email in. routes/auth.ts's signup handler
+ * (round 1566) already reads `CredentialsSchema`'s own optional `lang`
+ * field to pick the verification email's language, defaulting to Hebrew
+ * when it's absent -- so every signup, regardless of which language the
+ * person actually signed up in, got a Hebrew verification email. Same
+ * bug class round 1563 fixed for CollaboratorsPanel's self-leave path.
  */
-export function signup(email: string, password: string): Promise<{ user: User; token: string }> {
+export function signup(email: string, password: string, lang: "he" | "en"): Promise<{ user: User; token: string }> {
   return request("/auth/signup", {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, lang }),
   });
 }
 

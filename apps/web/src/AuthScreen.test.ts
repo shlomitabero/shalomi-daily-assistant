@@ -179,8 +179,63 @@ test("AuthScreen sends the exact typed email/password in the signup request body
         "correct-horse-battery",
         "the exact typed password must reach the signup request body, not a stale empty value",
       );
+      // Round 1689: signup used to be the sole auth call in this file that
+      // never sent `lang` at all, so the server's verification email
+      // always defaulted to Hebrew regardless of the UI's real language.
+      assert.equal(parsed.lang, "en", "the signup request must carry the UI's own current language, same as every sibling auth call");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1689: `signup()` (api.ts) never forwarded `lang` at all, so the
+ * server-side signup handler (routes/auth.ts, round 1566) -- which reads
+ * `CredentialsSchema`'s own optional `lang` field and defaults to Hebrew
+ * when it's absent -- sent every account's verification email in Hebrew,
+ * even when the person signed up with the UI set to English. Same bug
+ * class round 1563 fixed for CollaboratorsPanel's self-leave path (a
+ * `lang` variable already in scope via useTranslation(), forwarded by
+ * every sibling call except one). Confirms the real fix: with the UI
+ * explicitly switched to Hebrew before signing up, the request now
+ * carries `lang: "he"`, not the Hebrew-is-the-silent-default absence this
+ * bug used to produce.
+ */
+test("AuthScreen sends the UI's real 'he' language in the signup request body when the UI is switched to Hebrew", async () => {
+  await withJsdom(async () => {
+    localStorage.setItem("forge.lang", "he");
+    const originalFetch = globalThis.fetch;
+    let capturedBody: string | undefined;
+    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+      capturedBody = init?.body as string;
+      return new Response(JSON.stringify({ user: { id: 1, email: "dana@example.com" }, token: "tok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      renderAuthScreen(() => {});
+
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+      const [passwordInput, confirmPasswordInput] = document.querySelectorAll('input[type="password"]') as NodeListOf<HTMLInputElement>;
+      fireEvent.change(emailInput, { target: { value: "dana@example.com" } });
+      fireEvent.change(passwordInput, { target: { value: "correct-horse-battery" } });
+      fireEvent.change(confirmPasswordInput, { target: { value: "correct-horse-battery" } });
+
+      const form = document.querySelector("form.auth-form")!;
+      await act(async () => {
+        fireEvent.submit(form);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof capturedBody, "string", "the signup request must actually have been sent with a body");
+      const parsed = JSON.parse(capturedBody!);
+      assert.equal(parsed.lang, "he", "the signup request must carry the UI's real Hebrew language, not default to English or omit it");
+    } finally {
+      globalThis.fetch = originalFetch;
+      localStorage.removeItem("forge.lang");
     }
   });
 });

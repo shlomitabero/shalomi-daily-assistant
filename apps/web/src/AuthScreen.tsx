@@ -274,7 +274,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) 
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { user, token } = await signup(email, password);
+        const { user, token } = await signup(email, password, lang);
         setToken(token);
         onAuthenticated(user);
         return;
