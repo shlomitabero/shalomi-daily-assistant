@@ -21,6 +21,68 @@ function withEnv(vars, fn) {
   }
 }
 
+test('runAutonomousScan refuses to run again while a scan is already in progress', async () => {
+  // server.js runs catchUpAutonomousScanIfMissed() at startup AND registers
+  // the same '0 */4 * * *' cron tick in the same process - a redeploy
+  // landing within a few seconds of a 4-hour boundary could have both fire
+  // a real (billed) AI call nearly simultaneously before either call's
+  // pendingDraftCount() read reflects the other's write. This in-process
+  // flag must block the second call immediately, without it ever reaching
+  // the AI, while the first is still in flight.
+  __resetForTests();
+  let resolveFetch;
+  let callCount = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) return new Promise((resolve) => { resolveFetch = resolve; });
+    // Any call after the first resolves immediately (with the same
+    // topic-shaped body, which isValidDraftShape rejects once it's used
+    // as the second, "draft", AI call) so the first scan can actually
+    // finish once released below once the test's own assertions are
+    // done - this test only cares about the concurrency guard itself,
+    // not a full successful scan.
+    return new Response(JSON.stringify({
+      id: 'msg', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+      content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+      stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const originalConsoleError = console.error;
+  console.error = () => {}; // the first call's draft step is expected to fail by design above
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  try {
+    const firstCall = runAutonomousScan(); // not awaited - deliberately left in flight
+    // Give the first call's microtasks a tick to actually reach fetch()
+    // before the second call races it, so this test exercises the real
+    // "already in progress" state rather than racing two cold starts.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(callCount, 1);
+    const secondResult = await runAutonomousScan();
+    assert.equal(secondResult.ran, false);
+    assert.match(secondResult.reason, /כבר רצה/);
+    assert.equal(callCount, 1); // the second call never reached the AI at all
+    resolveFetch(new Response(JSON.stringify({
+      id: 'msg', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+      content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+      stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    await firstCall; // let the first call finish cleanly before the next test
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
 test('runAutonomousScan refuses to run when the ai_digital_products source is not connected', async () => {
   // The scan loop must never silently try to fabricate an opportunity on a
   // source it has no real credentials for — this is the one guard that

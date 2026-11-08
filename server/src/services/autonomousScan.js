@@ -15,7 +15,31 @@ import { logAction } from './execution.js';
 // to a real checkout with no per-action approval — only a real money spend
 // ever needs that. In research/approve mode it stops at a draft for the
 // owner to review.
+// server.js calls catchUpAutonomousScanIfMissed() once at startup AND
+// registers the '0 */4 * * *' cron tick in the same process - a redeploy
+// landing within a few seconds of one of those 4-hour boundaries (this app
+// redeploys roughly hourly, so this isn't a hypothetical over enough
+// deploys) could have both fire a real scan nearly simultaneously before
+// either call's pendingDraftCount() read reflects the other's write,
+// doubling a real, billed AI call and drafting two opportunities where
+// MAX_PENDING_DRAFTS meant to allow one. This in-process flag is enough to
+// close that specific race (both triggers run in the same Node process;
+// there is no multi-instance deployment here to coordinate across).
+let scanInProgress = false;
+
 export async function runAutonomousScan() {
+  if (scanInProgress) {
+    return { ran: false, reason: 'סריקה אחרת כבר רצה באותו רגע בדיוק — נסה שוב בעוד רגע' };
+  }
+  scanInProgress = true;
+  try {
+    return await runAutonomousScanOnce();
+  } finally {
+    scanInProgress = false;
+  }
+}
+
+async function runAutonomousScanOnce() {
   const digitalProductsDef = SOURCE_DEFINITIONS.find((d) => d.id === 'ai_digital_products');
   if (!isSourceConnected(digitalProductsDef)) {
     logAction({ type: 'autonomous_scan', detail: { source: 'ai_digital_products' }, result: 'blocked: source not connected' });
