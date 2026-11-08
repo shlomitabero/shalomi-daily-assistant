@@ -829,7 +829,7 @@ export async function* runBuildPipeline(
       );
       continue;
     }
-    for (const record of generateSeedRecords(entity)) {
+    for (const [recordIndex, record] of generateSeedRecords(entity).entries()) {
       // generateSeedRecords's required-relation guess is a static "row 1",
       // which orderForSeeding above only gets right by assuming the target
       // table's very first row genuinely has id 1 -- true for a target
@@ -843,11 +843,20 @@ export async function* runBuildPipeline(
       // the target before its dependent -- fixes that without touching the
       // self-relation/cycle case, where no real row exists yet and the
       // guess is left exactly as fragile as before.
+      //
+      // Round 1711: using existing[0] unconditionally made every seeded
+      // record of a dependent entity point at the SAME target row (e.g. a
+      // Restaurant template's two Order rows both showing Customer "Yossi
+      // Cohen" and Table "2", even though Customer/Table each have two
+      // distinct seeded rows) -- correct FKs, but visibly unrealistic demo
+      // data. Cycling by this record's own position among its siblings
+      // (wrapping if the target has fewer rows than the dependent) spreads
+      // seeded records across the target's available rows instead.
       for (const field of entity.fields) {
         if (field.type !== "relation" || !field.required || !field.relationTo) continue;
         const target = entityByName.get(field.relationTo.toLowerCase());
         const existing = target ? listRecords(db, project.id, target) : [];
-        if (existing.length > 0) record[field.name] = existing[0].id;
+        if (existing.length > 0) record[field.name] = existing[recordIndex % existing.length].id;
       }
       try {
         insertRecord(db, project.id, entity, record);

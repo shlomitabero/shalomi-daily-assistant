@@ -451,6 +451,72 @@ test("seeding a spec that lists a dependent entity before its required relation 
 });
 
 /**
+ * Round 1711: the Seed Data step's loop above (the one this very test file's
+ * comment just above already documents) overwrites seed.ts's static "row 1"
+ * guess with whichever real target row exists right now -- but it always
+ * used `existing[0]`, regardless of which seed record (0, 1, 2, ...) was
+ * being inserted. With the default 2 seeded rows per entity, that meant
+ * EVERY dependent record pointed at the exact same target row (e.g. a
+ * Restaurant template's two Order rows both showing the same Customer and
+ * the same Table, even though Customer/Table each have two distinct seeded
+ * rows) -- correct FKs, but visibly unrealistic demo data, not the varied
+ * "row 0 -> target row 0, row 1 -> target row 1" spread a real business
+ * would have.
+ */
+test("seeded records with a required relation point at DIFFERENT target rows, not the same one for every record", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        name: "Invoice",
+        fields: [
+          { name: "amount", type: "number", required: true },
+          { name: "customerId", type: "relation", relationTo: "Customer", required: true },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const [customer, invoice] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "success", "seeding must not report any failed inserts");
+
+  const customerRows = listRecords(db, project.id, customer);
+  const invoiceRows = listRecords(db, project.id, invoice);
+  assert.equal(customerRows.length, 2, "expected the default 2 seeded Customer rows");
+  assert.equal(invoiceRows.length, 2, "expected the default 2 seeded Invoice rows");
+
+  const customerIdsPointedAt = invoiceRows.map((r) => r.customerId);
+  assert.notEqual(
+    customerIdsPointedAt[0],
+    customerIdsPointedAt[1],
+    "the two seeded Invoice rows must point at different Customer rows, not collapse onto the same one",
+  );
+  assert.deepEqual(
+    new Set(customerIdsPointedAt),
+    new Set(customerRows.map((c) => c.id)),
+    "every seeded Customer row should be pointed at by exactly one seeded Invoice row",
+  );
+});
+
+/**
  * Round 753: seedValueFor (seed.ts) deliberately leaves every "file" field
  * null -- there's no real uploaded file to point a seeded record at. For
  * an entity with a REQUIRED file field, that used to mean every single
