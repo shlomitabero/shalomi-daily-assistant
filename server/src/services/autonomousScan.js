@@ -19,13 +19,18 @@ export async function runAutonomousScan() {
   const digitalProductsDef = SOURCE_DEFINITIONS.find((d) => d.id === 'ai_digital_products');
   if (!isSourceConnected(digitalProductsDef)) {
     logAction({ type: 'autonomous_scan', detail: { source: 'ai_digital_products' }, result: 'blocked: source not connected' });
-    return { ran: false, reason: 'ai_digital_products source is not connected' };
+    // This reason string (unlike the logAction result above, which
+    // autonomousScanSummary() in the client already translates) reaches
+    // the owner directly as scanResult.reason on Opportunities.jsx's
+    // manual "סרוק עכשיו" button, with no translation layer of its own -
+    // was raw English dropped straight into that page's Hebrew feedback.
+    return { ran: false, reason: 'המקור "מוצרים דיגיטליים מבוססי AI" לא מחובר' };
   }
 
   const pendingDrafts = pendingDraftCount();
   if (pendingDrafts >= MAX_PENDING_DRAFTS) {
     logAction({ type: 'autonomous_scan', detail: { pendingDrafts }, result: `skipped: ${pendingDrafts} drafts already awaiting review` });
-    return { ran: false, reason: `${pendingDrafts} drafts are already awaiting review` };
+    return { ran: false, reason: `${pendingDrafts} הזדמנויות כבר ממתינות לסקירה שלך` };
   }
 
   // Every opportunity ever created (published, rejected, and demo alike)

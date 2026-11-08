@@ -31,7 +31,7 @@ test('runAutonomousScan refuses to run when the ai_digital_products source is no
     async () => {
       const result = await runAutonomousScan();
       assert.equal(result.ran, false);
-      assert.match(result.reason, /not connected/);
+      assert.match(result.reason, /לא מחובר/);
       assert.equal(db.opportunities.all().length, 0);
     }
   );
@@ -150,7 +150,7 @@ test('runAutonomousScan reports a clean failure, with no opportunity created, wh
   try {
     const result = await runAutonomousScan();
     assert.equal(result.ran, false);
-    assert.match(result.reason, /topic\/audience/);
+    assert.match(result.reason, /שדות חסרים/);
     assert.equal(db.opportunities.all().length, 0);
     const logged = db.actions_log.where((a) => a.type === 'autonomous_scan')[0];
     assert.equal(logged.result, 'failed');

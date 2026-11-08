@@ -68,7 +68,12 @@ export async function generateTopicIdea({ avoidTitles = [], timeoutMs = API_TIME
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   const parsed = JSON.parse(extractJson(text));
   if (!isValidTopicIdea(parsed)) {
-    throw new Error('the AI returned a topic idea missing topic/audience');
+    // Reaches the owner verbatim as scanResult.reason on Opportunities.jsx's
+    // manual "סרוק עכשיו" button (runAutonomousScan's own catch block
+    // returns { ran: false, reason: err.message } with no translation
+    // layer of its own) - same leak already fixed for productDraft.js's
+    // own equivalent error.
+    throw new Error('ה-AI החזיר רעיון לנושא עם שדות חסרים (נושא/קהל מטרה)');
   }
   return { ...parsed, demo: false };
 }

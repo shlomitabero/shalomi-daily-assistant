@@ -154,7 +154,7 @@ test('triggerAutonomousScan runs the scan and returns its result as-is', async (
   await triggerAutonomousScan({}, res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.ran, false); // source not connected in this test env
-  assert.match(res.body.reason, /not connected/);
+  assert.match(res.body.reason, /לא מחובר/);
 });
 
 test('listOpportunities and getOpportunity attach feasibility and 404 for a missing id', () => {
