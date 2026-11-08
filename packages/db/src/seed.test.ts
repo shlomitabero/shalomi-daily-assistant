@@ -713,6 +713,38 @@ test("an entity with two RECOGNIZED end-of-range date fields (checkoutDate and r
   assert.ok((record.returnDate as string) > (record.startDate as string), "returnDate should still be after startDate");
 });
 
+/**
+ * Round 1709's finding: the same collapse the "date" case's dateFieldOrdinal
+ * fix above already covers was never ported to its sibling "number" case.
+ * The Appointments & Clients template's own Service entity (templates.ts),
+ * with both a durationMinutes and a price field, seeded byte-identical
+ * values for both on every record.
+ */
+test("an entity with two ordinary number fields (e.g. Service's durationMinutes/price) gets distinct values, not the same number for both", () => {
+  const service: Entity = {
+    name: "Service",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "durationMinutes", type: "number", required: false },
+      { name: "price", type: "number", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(service, 1);
+  assert.notEqual(record.durationMinutes, record.price, "durationMinutes and price must not collapse to the same value");
+});
+
+test("an entity with a single ordinary number field keeps its existing seeded value (no change for the common case)", () => {
+  const product: Entity = {
+    name: "Product",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "price", type: "number", required: false },
+    ],
+  };
+  const records = generateSeedRecords(product, 3);
+  assert.deepEqual(records.map((r) => r.price), [10, 20, 30], "a lone number field's seeded values must be unchanged by the multi-number-field fix");
+});
+
 test("the generic fallback entity (Item, used when no domain keyword matches) seeds its name field as an item, not a person", () => {
   // "Item" is DEFAULT_ENTITY's real name (packages/spec-engine/src/
   // domainEntities.ts) -- the fallback hit whenever a description doesn't

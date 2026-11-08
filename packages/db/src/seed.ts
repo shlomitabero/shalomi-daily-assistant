@@ -137,7 +137,7 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
   const isHebrew = HEBREW_PATTERN.test(entityName) || HEBREW_PATTERN.test(fieldLabel);
 
   switch (field.type) {
-    case "number":
+    case "number": {
       // A 1-5 star rating shouldn't seed as 10/20/30 like every other
       // numeric field (amount, capacity, price, ...) -- it has a real,
       // narrow domain range, and a value outside it would look broken the
@@ -161,7 +161,24 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // as obviously broken; a plain sequential counter starting at 1 is
       // the real-world convention for table numbers.
       if (field.name === "number") return index + 1;
-      return (index + 1) * 10;
+      // Round 1709: the same collapse the "date" case below already fixed
+      // (see dateFieldOrdinal's own comment) also applies here, unfixed
+      // until now -- two ordinary number fields on one entity (e.g. the
+      // Appointments & Clients template's Service.durationMinutes and
+      // Service.price, templates.ts) both fell through to this same
+      // index-only formula, seeding byte-identical values for two fields
+      // the template authors clearly intended to be independent (the
+      // Business Twin dashboard renders a separate chart for each). This
+      // mirrors dateFieldOrdinal exactly: a field's position among the
+      // entity's OTHER generic (non-special-cased) number fields offsets
+      // it by a few units, so the first such field is unaffected (ordinal
+      // 0 adds nothing, preserving every existing single-number-field
+      // entity's seeded values) while a second/third gets a distinct one.
+      const numberFieldOrdinal = entity.fields
+        .filter((f) => f.type === "number" && !["rating", "rooms", "seats", "number"].includes(f.name))
+        .findIndex((f) => f.name === field.name);
+      return (index + 1) * 10 + numberFieldOrdinal * 5;
+    }
     case "boolean":
       return index % 2 === 0;
     case "date": {
