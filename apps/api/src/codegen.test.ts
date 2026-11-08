@@ -5404,7 +5404,7 @@ test("the exported EntityView's table can be grouped by an enum/boolean field, n
   assert.match(entityViewJsx, /viewMode === "table" && groupableFields\.length > 0 &&/);
   assert.match(entityViewJsx, /className="entity-group-by"/);
   // Row rendering was extracted so both the flat and grouped tbody branches reuse it verbatim
-  assert.match(entityViewJsx, /const renderRow = \(r\) => \(/);
+  assert.match(entityViewJsx, /const renderRow = \(r\) => \{/);
   assert.match(entityViewJsx, /recordGroups\s*\n\s*\? recordGroups\.map\(\(group\) => \{/);
   assert.match(entityViewJsx, /className="entity-group-header-row"/);
   assert.match(entityViewJsx, /group\.records\.map\(renderRow\)/);
@@ -6660,7 +6660,7 @@ test("the exported record table's date cell shows the correct calendar day even 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
   // Cell also calls isDeadlineFieldName/getDateUrgency (round 340) --
   // needed here too, since this test evals Cell in isolation rather than
   // importing the whole generated module. isDeadlineFieldName's own
@@ -7148,7 +7148,7 @@ test("the exported record table's Cell renders a phone-like-named number field a
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
 
   const transformed = transformSync(`${phoneFieldHintsSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
@@ -13262,7 +13262,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   const files = generateExportFiles(withRelation);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(onJumpToRecord && field\.relationTo\) \{/);
   // Round 1533: field.relationTo can differ in letter case from its real
@@ -13325,7 +13325,7 @@ test("the exported EntityView's Cell renders a longtext field with a native hove
   const files = generateExportFiles(withLongtext);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(field\.type === "longtext"\) \{/);
   assert.match(cellSrc!, /<span className="longtext-cell" title=\{String\(value\)\}>/);
@@ -13376,7 +13376,7 @@ test("the exported EntityView's splitLinkSegments finds a URL and an email addre
 
 test("the exported EntityView's Cell renders a real clickable <a> for a URL/email embedded in a text or longtext field", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /<LinkifiedText text=\{String\(value\)\} query=\{highlightQuery\} \/>/, "both the longtext and plain-text branches must route through LinkifiedText");
   assert.match(entityViewJsx, /function LinkifiedText\(\{ text, query \}\) \{/, "expected the real generated LinkifiedText component");
@@ -19960,7 +19960,7 @@ test("the exported EntityView's Cell, matchesSearch, and fieldDisplayValue all s
   };
   assert.equal(fieldDisplayValue({ type: "file" }, fileValue), "invoice.pdf", "the CSV export must show just the filename, not the raw JSON descriptor");
 
-  const transformed = transformSync(`${isImageMimeTypeSrc}\n${parseFileFieldValueSrc}\nfunction Highlighted({ text }) { return text; }\n${entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord \}\) \{[\s\S]*?\n\}\n/)![0]}`, {
+  const transformed = transformSync(`${isImageMimeTypeSrc}\n${parseFileFieldValueSrc}\nfunction Highlighted({ text }) { return text; }\n${entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)![0]}`, {
     loader: "jsx",
     jsxFactory: "h",
     jsxFragment: "Frag",
@@ -28039,6 +28039,81 @@ test("the exported EntityView flags a deadline-named date field as overdue/due-s
       assert.ok(dueSoonRow.querySelector(".date-due-soon"), "a dueDate due tomorrow must be flagged due-soon");
       assert.equal(farRow.querySelector(".date-overdue"), null, "a dueDate a month out needs no overdue styling");
       assert.equal(farRow.querySelector(".date-due-soon"), null, "a dueDate a month out needs no due-soon styling either");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1723: ports the live preview's own isRecordClosedStatus fix (round
+ * 1721) to the exported app's EntityView.jsx -- a record whose own sibling
+ * `status` enum field already holds a terminal value (e.g. "Done") is
+ * already resolved, so a past dueDate on it shouldn't still read as
+ * overdue/due-soon. Same Task/dueDate fixture as the test above, but each
+ * record also carries a status: a "Done" record with a 5-day-past dueDate
+ * must NOT be flagged overdue, while a "Todo" record with the identical
+ * past dueDate still must be.
+ */
+test("the exported EntityView does not flag a record with a terminal status as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Todo", "Done"] },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Still open task", status: "Todo", dueDate: isoDateOffset(-5) },
+    { id: 2, title: "Closed task", status: "Done", dueDate: isoDateOffset(-5) },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Still open task/.test(r.textContent ?? ""))!;
+      const closedRow = rows.find((r) => /Closed task/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "a Todo record with a 5-day-past dueDate must still be flagged overdue");
+      assert.equal(closedRow.querySelector(".date-overdue"), null, "a Done record with the identical past dueDate must not be flagged overdue");
     });
   } finally {
     globalThis.fetch = originalFetch;

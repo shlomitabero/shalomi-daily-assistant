@@ -3169,6 +3169,24 @@ function getDateUrgency(value, today) {
   return null;
 }
 
+// Round 1723: mirrors the live preview's own entityFormatting.ts
+// isRecordClosedStatus (round 1721) -- a record whose own sibling
+// \`status\` enum field already holds a terminal value (e.g. an Invoice
+// "Paid", a Ticket "Closed") is already resolved, so a past/near deadline
+// on it isn't something still worth flagging red/amber. This exported
+// app's own getDateUrgency above had no such awareness until now, even
+// though the live preview already got this fix two rounds ago.
+const CLOSED_STATUS_VALUES = new Set([
+  "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
+  "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
+]);
+function isRecordClosedStatus(record, fields) {
+  const statusField = fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  if (!statusField) return false;
+  const value = record[statusField.name];
+  return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());
+}
+
 // A \`file\` field's stored value is a JSON-encoded {url, name, size,
 // mimeType} descriptor (set by the live Forge AI preview's own upload
 // endpoint), not a plain string like every other field type -- a record
@@ -3328,7 +3346,7 @@ function LinkifiedText({ text, query }) {
   );
 }
 
-function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
+function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   if (field.type === "relation") {
     const label = relationLabel || \`#\${value}\`;
@@ -3368,7 +3386,7 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord }) {
     // is behind UTC.
     const date = parseFieldDate(value);
     const formatted = Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
-    const urgency = isDeadlineFieldName(field.name) ? getDateUrgency(value) : null;
+    const urgency = isDeadlineFieldName(field.name) && !recordClosed ? getDateUrgency(value) : null;
     if (!urgency) return <>{formatted}</>;
     return (
       <span className={\`date-\${urgency === "overdue" ? "overdue" : "due-soon"}\`} title={urgency === "overdue" ? "Overdue" : "Due soon"}>
@@ -5074,6 +5092,7 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
                 field={f}
                 value={record[f.name]}
                 relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
+                recordClosed={isRecordClosedStatus(record, fields)}
               />
             </dd>
           </div>
@@ -5108,11 +5127,12 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
   const hasNumericField = fields.some((f) => f.type === "number" && !PHONE_FIELD_NAME_HINTS.includes(f.name.toLowerCase()));
   const totals = hasNumericField ? sumNumericFields(records, fields) : {};
   function renderRow(r) {
+    const recordClosed = isRecordClosedStatus(r, fields);
     return (
       <tr key={r.id}>
         {fields.map((f) => (
           <td key={f.name}>
-            <Cell field={f} value={r[f.name]} relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined} />
+            <Cell field={f} value={r[f.name]} relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined} recordClosed={recordClosed} />
           </td>
         ))}
       </tr>
@@ -5202,6 +5222,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
   // disabled "" option unconditionally.
   const hasEmptyBoardOption = currentBoardValue === "";
   const labelOccurrences = fieldLabelOccurrences(otherFields);
+  const recordClosed = isRecordClosedStatus(record, orderedFields);
   return (
     <div
       className={hasMoveError ? "board-card board-card-move-error" : "board-card"}
@@ -5221,6 +5242,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
             relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
             highlightQuery={highlightQuery}
             onJumpToRecord={onJumpToRecord}
+            recordClosed={recordClosed}
           />
         </div>
       ))}
@@ -6647,6 +6669,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         // cell's own red/amber styling by, so this must match against that
         // classification, not the raw stored "YYYY-MM-DD" string.
         if (field && field.type === "date" && isDeadlineFieldName(field.name)) {
+          // Round 1723: mirrors the live preview's own EntityPanel.tsx fix
+          // (round 1721) -- a record whose own status is already terminal
+          // (e.g. an Invoice "Paid") never classifies as overdue/dueSoon in
+          // the first place, so the filter must agree with that, not just
+          // the table cell's styling.
+          if (isRecordClosedStatus(r, entity.fields)) return false;
           return getDateUrgency(String(r[fieldName] ?? "")) === value;
         }
         return String(r[fieldName] ?? "") === value;
@@ -7877,7 +7905,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // recordGroups above) can render the identical row -- grouping only
   // changes which records a given <tbody> section lists, never how a
   // single row itself looks.
-  const renderRow = (r) => (
+  const renderRow = (r) => {
+    const recordClosed = isRecordClosedStatus(r, entity.fields);
+    return (
     <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === focusedRowId ? "record-row-focused" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
       <td className="select-col">
         <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} />
@@ -7929,6 +7959,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined}
                 highlightQuery={search}
                 onJumpToRecord={onJumpToRecord}
+                recordClosed={recordClosed}
               />
             )}
           </td>
@@ -7956,7 +7987,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         </button>
       </td>
     </tr>
-  );
+    );
+  };
 
   return (
     <div className="panel">
