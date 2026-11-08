@@ -447,10 +447,15 @@ export function CollaboratorsPanel({
    * delivery failure -- that send is best-effort and swallows its own
    * errors). Previously the only workaround was removing then re-inviting
    * them, which fires its own confusing "you were removed" email first.
-   * No server mutation here to cross-gate against the others' full-replace
-   * race (see the role-change/remove/transfer-ownership comment above this
-   * row's own JSX) -- this route touches no shared state, so it's gated
-   * only against its own reentrancy, same as handleTransferOwnership.
+   * This route itself touches no shared collaborator-list state, so it was
+   * originally gated only against its own reentrancy -- but round 1734
+   * folded it into the same disabled= cross-gate as the other four actions
+   * anyway (see the comment above this row's own JSX): with no cross-gate,
+   * clicking Resend on a row mid-Remove could race a "you were invited"
+   * email against the removal it's concurrent with, landing after the
+   * person already lost access (or, the other way round, surfacing a
+   * confusing unrelated "Collaborator not found" from the resend route's
+   * own 404 once the remove wins).
    */
   async function handleResendInvite(userId: string, email: string) {
     if (resendingUserId !== null) return;
@@ -863,6 +868,7 @@ export function CollaboratorsPanel({
                 removingUserId !== null ||
                 updatingRoleUserId !== null ||
                 transferringUserId !== null ||
+                resendingUserId !== null ||
                 collaborators === null
               }
             >
@@ -930,13 +936,26 @@ export function CollaboratorsPanel({
                       Mirrors HistoryPanel's own restore/delete cross-gate
                       for the identical hazard. Round 1170 extends the same
                       cross-gate to handleTransferOwnership, a fourth actor
-                      doing the identical full-replace. */}
+                      doing the identical full-replace. Round 1734 extends
+                      it again to handleResendInvite, a fifth actor -- not
+                      because it shares the same full-replace hazard (it
+                      touches no collaborator-list state at all), but
+                      because it can otherwise race a stale "you were
+                      invited" email against a concurrent remove/role-change
+                      on the exact same row (see handleResendInvite's own
+                      doc comment). */}
                   {isOwner ? (
                     <select
                       aria-label={t("collab.role.label")}
                       value={c.role}
                       onChange={(e) => handleRoleChange(c.userId, e.target.value as CollaboratorRole)}
-                      disabled={updatingRoleUserId !== null || removingUserId !== null || transferringUserId !== null || inviteBusy}
+                      disabled={
+                        updatingRoleUserId !== null ||
+                        removingUserId !== null ||
+                        transferringUserId !== null ||
+                        resendingUserId !== null ||
+                        inviteBusy
+                      }
                     >
                       <option value="editor">{t("collab.role.editor")}</option>
                       <option value="viewer">{t("collab.role.viewer")}</option>
@@ -953,7 +972,13 @@ export function CollaboratorsPanel({
                         type="button"
                         className="secondary"
                         onClick={() => handleRemove(c.userId, c.email)}
-                        disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
+                        disabled={
+                          removingUserId !== null ||
+                          updatingRoleUserId !== null ||
+                          transferringUserId !== null ||
+                          resendingUserId !== null ||
+                          inviteBusy
+                        }
                       >
                         {removingUserId === c.userId ? t("collab.remove.busy") : t("collab.remove")}
                       </button>
@@ -961,7 +986,13 @@ export function CollaboratorsPanel({
                         type="button"
                         className="secondary"
                         onClick={() => handleTransferOwnership(c.userId, c.email)}
-                        disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
+                        disabled={
+                          removingUserId !== null ||
+                          updatingRoleUserId !== null ||
+                          transferringUserId !== null ||
+                          resendingUserId !== null ||
+                          inviteBusy
+                        }
                       >
                         {transferringUserId === c.userId ? t("collab.transferOwnership.busy") : t("collab.transferOwnership")}
                       </button>
@@ -969,7 +1000,13 @@ export function CollaboratorsPanel({
                         type="button"
                         className="secondary"
                         onClick={() => handleResendInvite(c.userId, c.email)}
-                        disabled={resendingUserId !== null}
+                        disabled={
+                          resendingUserId !== null ||
+                          removingUserId !== null ||
+                          updatingRoleUserId !== null ||
+                          transferringUserId !== null ||
+                          inviteBusy
+                        }
                       >
                         {resendingUserId === c.userId ? t("collab.resendInvite.busy") : t("collab.resendInvite")}
                       </button>
@@ -980,7 +1017,13 @@ export function CollaboratorsPanel({
                         type="button"
                         className="secondary"
                         onClick={handleLeave}
-                        disabled={removingUserId !== null || updatingRoleUserId !== null || transferringUserId !== null || inviteBusy}
+                        disabled={
+                          removingUserId !== null ||
+                          updatingRoleUserId !== null ||
+                          transferringUserId !== null ||
+                          resendingUserId !== null ||
+                          inviteBusy
+                        }
                       >
                         {removingUserId === currentUserId ? t("collab.leave.busy") : t("collab.leave")}
                       </button>
