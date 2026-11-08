@@ -241,8 +241,14 @@ const RESTAURANT_ENTITIES: EntitySpec[] = [
     name: "Order",
     label: "הזמנה",
     fields: [
-      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer" },
-      { name: "table", label: "שולחן", type: "relation", relationTo: "RestaurantTable" },
+      // Round 1704: a restaurant order with no customer and no table isn't
+      // a meaningful record -- marking both required (matching this same
+      // entity's own `status` field) lets orderForSeeding (seed.ts) place
+      // Customer/RestaurantTable before Order and seed real ids into both,
+      // instead of seedValueFor's "relation" case returning null for an
+      // optional field with nothing to point at.
+      { name: "customer", label: "לקוח", type: "relation", relationTo: "Customer", required: true },
+      { name: "table", label: "שולחן", type: "relation", relationTo: "RestaurantTable", required: true },
       {
         name: "status",
         label: "סטטוס הזמנה",
@@ -309,8 +315,10 @@ const RESTAURANT_ENTITIES_EN: EntitySpec[] = [
     name: "Order",
     label: "Order",
     fields: [
-      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer" },
-      { name: "table", label: "Table", type: "relation", relationTo: "RestaurantTable" },
+      // Round 1704: see the Hebrew RESTAURANT_ENTITIES' own comment above --
+      // same fix, same reasoning, kept in sync with its own Order entity.
+      { name: "customer", label: "Customer", type: "relation", relationTo: "Customer", required: true },
+      { name: "table", label: "Table", type: "relation", relationTo: "RestaurantTable", required: true },
       {
         name: "status",
         label: "Order Status",

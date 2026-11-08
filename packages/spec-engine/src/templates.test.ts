@@ -363,6 +363,42 @@ test("the Restaurant Management template's Order entity has an items field, matc
 });
 
 /**
+ * Round 1704: found via live browser testing -- building the Restaurant
+ * Management template and opening its Order tab shows every seeded Order
+ * row with a blank Customer and blank Table, even though real Customer/
+ * RestaurantTable rows exist two tabs away. Root cause: Order's own
+ * `customer`/`table` relation fields were never marked `required`, unlike
+ * this same entity's own `status` field -- seed.ts's `seedValueFor`
+ * deliberately (and correctly, per its own test) only guesses row 1 for a
+ * REQUIRED relation, leaving an optional one `null` since there's no
+ * guaranteed related row to point at. A restaurant order with no customer
+ * and no table isn't a meaningful record, so this was a template-authoring
+ * oversight, not the same deliberate choice `seedValueFor` itself encodes.
+ */
+test("the Restaurant Management template's Order entity marks its customer/table relations required, so seed.ts seeds real ids into both instead of leaving them blank", () => {
+  const restaurantTemplate = TEMPLATES.find((t) => t.id === "restaurant");
+  assert.ok(restaurantTemplate, "expected a \"restaurant\" template to exist");
+
+  const order = restaurantTemplate!.spec.entities.find((e) => e.name === "Order");
+  assert.ok(order, "expected the Restaurant Management template to have an Order entity");
+  const customer = order!.fields.find((f) => f.name === "customer");
+  const table = order!.fields.find((f) => f.name === "table");
+  assert.ok(customer, "expected the Order entity to have a customer field");
+  assert.ok(table, "expected the Order entity to have a table field");
+  assert.equal(customer!.required, true, "a restaurant order with no customer isn't a meaningful record");
+  assert.equal(table!.required, true, "a restaurant order with no table isn't a meaningful record");
+
+  const orderEn = restaurantTemplate!.specEn.entities.find((e) => e.name === "Order");
+  assert.ok(orderEn, "expected the Restaurant Management specEn to have an Order entity");
+  const customerEn = orderEn!.fields.find((f) => f.name === "customer");
+  const tableEn = orderEn!.fields.find((f) => f.name === "table");
+  assert.ok(customerEn, "expected the Order specEn entity to have a customer field");
+  assert.ok(tableEn, "expected the Order specEn entity to have a table field");
+  assert.equal(customerEn!.required, true);
+  assert.equal(tableEn!.required, true);
+});
+
+/**
  * Round 1294: the same "curated template entity is missing a field every
  * sibling entity of the identical shape already has" pattern as rounds
  * 1271-1289, found in three more places after those six templates were
