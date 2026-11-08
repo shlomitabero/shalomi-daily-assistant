@@ -17,14 +17,16 @@ const FETCH_TIMEOUT_MS = 10_000;
 async function fetchWithTimeout(url, options, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    res = await fetch(url, { ...options, signal: controller.signal });
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('Paddle request timed out');
     throw err;
   } finally {
     clearTimeout(timeout);
   }
+  return res;
 }
 
 // All three must be set, not just the two that let a checkout open.
