@@ -4563,7 +4563,12 @@ function calendarLabelField(entity, dateField) {
 // every other date display in this file).
 function calendarLabelValue(labelField, record) {
   const value = record[labelField.name];
-  if (value === null || value === undefined) return "";
+  // Round 1712: mirrors the live apps/web/src/entityFormatting.ts's own
+  // round-1712 calendarChipLabelValue fix -- this used to return "" for a
+  // blank display value, leaving the chip with no text and no accessible
+  // name. recordDisplayLabel (above) already falls back to "#<id>" for
+  // the same empty-value case.
+  if (value === null || value === undefined || value === "") return \`#\${record.id}\`;
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[value]) || String(value);
   if (labelField.type === "date" && typeof value === "string") return String(formatIcsDescriptionDate(value));

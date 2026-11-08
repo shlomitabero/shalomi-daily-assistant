@@ -1249,7 +1249,15 @@ export function calendarChipLabelField(entity: Entity, dateField: Field): Field 
  */
 export function calendarChipLabelValue(labelField: Field, record: EntityRecord, lang: Lang): string {
   const value = record[labelField.name];
-  if (value === null || value === undefined) return "";
+  // Round 1712: this used to return "" for a blank display value, leaving
+  // the chip's own <button> with no text, no title, and no aria-label --
+  // an unnamed interactive control, and (for a sighted user) an
+  // unidentifiable blank sliver on the calendar. recordDisplayLabel, just
+  // below in this same file, already falls back to "#<id>" for the exact
+  // same empty-value case; mirroring that here keeps every calendar chip
+  // identifiable even when its display field (often an optional longtext
+  // "Notes" field -- see pickDisplayField) is blank on this record.
+  if (value === null || value === undefined || value === "") return `#${record.id}`;
   if (labelField.type === "boolean") return value ? "TRUE" : "FALSE";
   if (labelField.type === "enum") return (labelField.enumLabels && labelField.enumLabels[String(value)]) || String(value);
   if (labelField.type === "date" && typeof value === "string") return formatDateValue(value, lang);

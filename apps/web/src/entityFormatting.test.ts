@@ -1845,10 +1845,16 @@ test("calendarChipLabelValue resolves an enum display field through its own enum
   assert.equal(calendarChipLabelValue(field, { id: 1, stage: "in" }, "en"), "כניסה");
 });
 
-test("calendarChipLabelValue returns a blank string for a null/undefined/missing value, instead of the literal word 'null'", () => {
+test("calendarChipLabelValue falls back to '#<id>' for a null/undefined/empty-string value, instead of a blank unidentifiable chip", () => {
+  // Round 1712: this used to return "" for all three of these cases (and,
+  // before round 1048, the literal string "null" for the first two) --
+  // leaving the calendar chip's own <button> with no text and no
+  // accessible name at all. Mirrors recordDisplayLabel's own "#<id>"
+  // fallback for the identical empty-value case.
   const field: Field = { name: "notes", type: "text", required: false };
-  assert.equal(calendarChipLabelValue(field, { id: 1, notes: null }, "en"), "");
-  assert.equal(calendarChipLabelValue(field, { id: 1 }, "en"), "");
+  assert.equal(calendarChipLabelValue(field, { id: 1, notes: null }, "en"), "#1");
+  assert.equal(calendarChipLabelValue(field, { id: 2 }, "en"), "#2");
+  assert.equal(calendarChipLabelValue(field, { id: 3, notes: "" }, "en"), "#3");
 });
 
 /**

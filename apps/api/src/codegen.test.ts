@@ -7898,6 +7898,34 @@ test("the exported EntityView's calendarLabelValue renders a number display fiel
 });
 
 /**
+ * Round 1712: mirrors the live apps/web/src/entityFormatting.ts's own
+ * round-1712 calendarChipLabelValue fix -- calendarLabelValue used to
+ * return "" for a null/undefined/empty-string display value, leaving the
+ * exported app's own calendar day-chip <button> with no text and no
+ * accessible name at all (a blank, unidentifiable clickable sliver).
+ */
+test("the exported EntityView's calendarLabelValue falls back to '#<id>' for a null/undefined/empty-string value, instead of a blank unidentifiable chip", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const calendarLabelValueSrc = entityViewJsx.match(/function calendarLabelValue\(labelField, record\) \{[\s\S]*?\n\}\n/)?.[0];
+  const stripBidiMarksSrc = entityViewJsx.match(/function stripBidiMarks\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const descNumberSrc = entityViewJsx.match(/function formatIcsDescriptionNumber\(value, fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = .*;\n/)?.[0];
+  assert.ok(
+    calendarLabelValueSrc && stripBidiMarksSrc && descNumberSrc && phoneFieldHintsSrc,
+    "expected to find calendarLabelValue/stripBidiMarks/formatIcsDescriptionNumber in generated output",
+  );
+
+  const calendarLabelValue = new Function(
+    `${stripBidiMarksSrc}\n${phoneFieldHintsSrc}\n${descNumberSrc}\n${calendarLabelValueSrc}\nreturn calendarLabelValue;`,
+  )() as (labelField: unknown, record: unknown) => string;
+
+  const notesField = { name: "notes", type: "text" };
+  assert.equal(calendarLabelValue(notesField, { id: 1, notes: null }), "#1");
+  assert.equal(calendarLabelValue(notesField, { id: 2 }), "#2");
+  assert.equal(calendarLabelValue(notesField, { id: 3, notes: "" }), "#3");
+});
+
+/**
  * Round 1660: the client-side counterpart to the server.js test above --
  * calendarLabelValue's/buildCalendarIcs's own descriptionLines map render
  * the CURRENT record's own field value directly, a structurally different
