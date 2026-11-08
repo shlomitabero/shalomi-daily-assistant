@@ -4218,6 +4218,27 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
       }
 
       if (field.type === "boolean") {
+        // Round 1724: mirrors the live preview's own round-1715 fix
+        // (entityFormatting.ts) -- a genuine recordsToJson export always
+        // emits a real boolean, but this function's own doc comment also
+        // promises to round-trip a hand-edited copy, and every boolean
+        // cell displays as the literal text "TRUE"/"FALSE" everywhere, so
+        // a person hand-editing the file naturally types what they see on
+        // screen (or "כן"/"לא") as a JSON string, not the bare JSON
+        // keyword true/false. Reuses the same BOOLEAN_TRUE_VALUES/
+        // BOOLEAN_FALSE_VALUES lists this file's own CSV import
+        // (buildImportRecords) already relies on, declared locally here
+        // since that function's own copy is out of scope.
+        const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
+        const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
+        if (typeof raw === "string" && BOOLEAN_TRUE_VALUES.includes(raw.toLowerCase())) {
+          record[field.name] = true;
+          continue;
+        }
+        if (typeof raw === "string" && BOOLEAN_FALSE_VALUES.includes(raw.toLowerCase())) {
+          record[field.name] = false;
+          continue;
+        }
         if (typeof raw !== "boolean") {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a true/false value for field "\${field.label || field.name}".\`;
           break;

@@ -13887,6 +13887,54 @@ test("the exported EntityView's own generated buildImportRecordsFromJson rejects
 });
 
 /**
+ * Round 1724: ports the live preview's own round-1715 fix
+ * (entityFormatting.ts) to the exported app's generated
+ * buildImportRecordsFromJson -- a genuine recordsToJson export always
+ * emits a real boolean, but this function's own doc comment also promises
+ * to round-trip a hand-edited copy, and every boolean cell displays as the
+ * literal text "TRUE"/"FALSE" everywhere, so a person hand-editing the
+ * file naturally types what they see on screen (or "כן"/"לא") as a JSON
+ * string, not the bare JSON keyword true/false. The live preview got this
+ * leniency in round 1715; this exported app's own copy never did.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson accepts a hand-typed \"TRUE\"/\"FALSE\" or Hebrew \"כן\"/\"לא\" string for a boolean field, mirroring buildImportRecords' own CSV leniency", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "active", label: "Active", type: "boolean", required: true }];
+  const result = buildImportRecordsFromJson(
+    fields,
+    [{ active: "TRUE" }, { active: "FALSE" }, { active: "כן" }, { active: "לא" }],
+    {},
+  );
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ active: true }, { active: false }, { active: true }, { active: false }]);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson still rejects a boolean field's value that isn't a real boolean or a recognized true/false string", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "active", label: "Active", type: "boolean", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ active: "maybe" }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /isn't a true\/false value/);
+});
+
+/**
  * Round 1316: an empty string fell through to the catch-all text branch,
  * which only checks `typeof raw !== "string"` -- true for "" too -- so a
  * required text field with raw === "" was accepted with zero validation
