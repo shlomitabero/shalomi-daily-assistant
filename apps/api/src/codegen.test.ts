@@ -7170,6 +7170,78 @@ test("the exported record table's Cell renders a phone-like-named number field a
 });
 
 /**
+ * Round 1732: mirrors the live app's own identical fix (EntityPanel.tsx,
+ * rounds 1716/1717) -- previously missing from this exported app entirely,
+ * even though every other EntityPanel.tsx fix (rounds 1723/1724/1726, etc.)
+ * had already been ported here. The exported app's own `renderWebIndexHtml`
+ * sets `<html lang="he" dir="rtl">` for a Hebrew-described project
+ * (confirmed directly, not assumed), so this cell inherits dir="rtl" with no
+ * per-cell bidi isolation, and the browser's Unicode Bidi Algorithm reorders
+ * a hyphen/parenthesis-separated phone number's own groups relative to each
+ * other. A custom `h` stub captures whether a `<bdi dir="ltr">` wrapper was
+ * actually used (not just the rendered string), since the string value alone
+ * is identical with or without the wrapper.
+ */
+test("the exported record table's Cell wraps a phone-like field's value in <bdi dir=\"ltr\"> (number branch and generic text fallback), but not an ordinary field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
+
+  const transformed = transformSync(
+    `${phoneFieldHintsSrc}\nfunction LinkifiedText({ text }) { return text; }\n${cellSrc}`,
+    { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" },
+  ).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) =>
+      type === "bdi" ? { bdi: true, dir: props?.dir, value: children.length === 1 ? children[0] : children } : children.length === 1 ? children[0] : children,
+    Symbol("Fragment"),
+  ) as (props: unknown) => unknown;
+
+  const numberPhoneCell = Cell({ field: { type: "number", name: "phone" }, value: "972501234567" }) as { bdi: boolean; dir: string; value: unknown };
+  assert.equal(numberPhoneCell.bdi, true, "a phone-like-named NUMBER field's own table cell must be wrapped in <bdi>");
+  assert.equal(numberPhoneCell.dir, "ltr", "the <bdi> wrapper must force dir=\"ltr\" regardless of the surrounding RTL context");
+
+  const textPhoneCell = Cell({ field: { type: "text", name: "phone" }, value: "050-123-4567" }) as { bdi: boolean; dir: string };
+  assert.equal(textPhoneCell.bdi, true, "a phone-like-named TEXT field (the common case -- AI specs usually type \"phone\" as text) must also be wrapped in <bdi>");
+  assert.equal(textPhoneCell.dir, "ltr");
+
+  const ordinaryTextCell = Cell({ field: { type: "text", name: "notes" }, value: "call back later" });
+  assert.notEqual((ordinaryTextCell as { bdi?: boolean })?.bdi, true, "an ordinary (non-phone-named) text field must not be wrapped in <bdi>");
+});
+
+/**
+ * Round 1732: the relation branch's own counterpart to the test above,
+ * mirroring EntityPanel.tsx's round-1717 fix. A relation's label comes from
+ * the TARGET entity's own display label, which falls through to a raw
+ * phone string when that entity has no name/title field -- this field's own
+ * name (e.g. "courierId") tells PHONE_FIELD_NAME_HINTS nothing, so the
+ * LABEL's own shape must be checked instead (looksLikePhoneNumber).
+ */
+test("the exported record table's Cell wraps a relation's phone-shaped display label in <bdi dir=\"ltr\">, but not an ordinary (name-shaped) label", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const looksLikePhoneNumberSrc = entityViewJsx.match(/function looksLikePhoneNumber\(label\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(looksLikePhoneNumberSrc && cellSrc, "expected to find looksLikePhoneNumber/Cell in generated output");
+
+  const transformed = transformSync(`${looksLikePhoneNumberSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) =>
+      type === "bdi" ? { bdi: true, dir: props?.dir, value: children.length === 1 ? children[0] : children } : children.length === 1 ? children[0] : children,
+    Symbol("Fragment"),
+  ) as (props: unknown) => unknown;
+
+  const phoneLabelCell = Cell({ field: { type: "relation", relationTo: "Courier" }, value: 5, relationLabel: "050-123-4567" }) as { bdi: boolean; dir: string };
+  assert.equal(phoneLabelCell.bdi, true, "a relation label that's entirely digits/phone punctuation must be wrapped in <bdi>");
+  assert.equal(phoneLabelCell.dir, "ltr");
+
+  const nameLabelCell = Cell({ field: { type: "relation", relationTo: "Customer" }, value: 7, relationLabel: "Dana Levi" });
+  assert.notEqual((nameLabelCell as { bdi?: boolean })?.bdi, true, "an ordinary name-shaped relation label must not be wrapped in <bdi>");
+});
+
+/**
  * Round 762: mirrors the live preview's own fix -- pickDisplayField's
  * "first text field" step only ever checked "text", never "longtext",
  * even though the two are the same free-text kind everywhere else in

@@ -3350,6 +3350,13 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   if (field.type === "relation") {
     const label = relationLabel || \`#\${value}\`;
+    // Round 1732: mirrors the live app's own identical fix (EntityPanel.tsx,
+    // round 1717) -- a relation's label comes from the TARGET entity's own
+    // display label, which can fall through to a raw phone string when that
+    // entity has no name/title field; this field's own name tells
+    // PHONE_FIELD_NAME_HINTS nothing, so the LABEL's own shape is checked
+    // instead (see looksLikePhoneNumber above).
+    const labelContent = looksLikePhoneNumber(label) ? <bdi dir="ltr">{label}</bdi> : label;
     if (onJumpToRecord && field.relationTo) {
       // Round 1533: field.relationTo can differ in letter case from its
       // real target entity's name (migrate.ts never rewrites a sibling
@@ -3361,11 +3368,11 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
       const targetEntity = resolvedTarget ? resolvedTarget.name : field.relationTo;
       return (
         <button type="button" className="link-button" onClick={() => onJumpToRecord(targetEntity, Number(value))}>
-          {label}
+          {labelContent}
         </button>
       );
     }
-    return <>{label}</>;
+    return <>{labelContent}</>;
   }
   if (field.type === "boolean") return value ? <span className="bool-yes" aria-label="Yes">✓</span> : <span className="muted" aria-label="No">–</span>;
   if (field.type === "enum") {
@@ -3400,7 +3407,13 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
     // (defined further down, hoisted the same safe way this same
     // template's round-1642 fix already relies on) must never be
     // locale-grouped here either.
-    if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return <>{String(value)}</>;
+    // Round 1732: mirrors the live app's own identical fix (EntityPanel.tsx,
+    // round 1716) -- in RTL (Hebrew) mode this cell inherits dir="rtl" from
+    // <html> with no per-cell bidi isolation, so the browser's Unicode Bidi
+    // Algorithm reorders a hyphen/parenthesis-separated phone number's own
+    // groups relative to each other. <bdi dir="ltr"> forces this value's own
+    // internal ordering to stay LTR regardless of the surrounding RTL context.
+    if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return <bdi dir="ltr">{String(value)}</bdi>;
     return <>{Number(value).toLocaleString()}</>;
   }
   if (field.type === "longtext") {
@@ -3423,6 +3436,18 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
           </span>
         )}
       </a>
+    );
+  }
+  // Round 1732: mirrors the live app's own identical fix (EntityPanel.tsx,
+  // round 1716) -- the generic text fallback is what a phone-like field
+  // actually hits in the common case (the AI spec generator usually types
+  // "phone" as text, not number), so it needs the same bidi isolation as
+  // the number branch above.
+  if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) {
+    return (
+      <bdi dir="ltr">
+        <LinkifiedText text={String(value)} query={highlightQuery} />
+      </bdi>
     );
   }
   return <LinkifiedText text={String(value)} query={highlightQuery} />;
@@ -3619,6 +3644,17 @@ function selectedOrAllRecords(allRecords, visibleRecords, selectedIds) {
 // without this exclusion its digits get summed into a meaningless "total
 // phone number" below.
 const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber", "cellphone", "cell", "telephone", "tel"];
+
+// Round 1732: mirrors the live app's own identical fix (entityFormatting.ts,
+// round 1717) -- tests a VALUE's own shape, not a field's name, needed where
+// the phone-ness belongs to a RELATED record's own display field (an entity
+// with only phone+email and no name/title field falls through to a raw
+// phone string as its display label). Deliberately narrow (the whole label
+// must look like just digits/phone punctuation) so an ordinary RTL text
+// label is never wrapped.
+function looksLikePhoneNumber(label) {
+  return /^[+]?[\\d\\s().-]{5,}$/.test(label);
+}
 
 // Sums every number-type field across a set of records, for the table's
 // own totals row -- driven off whatever is passed in (the already-
