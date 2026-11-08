@@ -60,6 +60,16 @@ export function generateDailyDigest(now = new Date()) {
   const pendingDrafts = pendingDraftCount();
   const scanPaused = pendingDrafts >= MAX_PENDING_DRAFTS;
 
+  // Directly answers "is the scanner even running" every single day,
+  // without the owner having to open the activity log and count entries
+  // themselves - every 'autonomous_scan' entry logged today counts here
+  // regardless of outcome (success/blocked/skipped/failed), unlike
+  // actionsToday above which only counts 'success' results across every
+  // action type.
+  const scanEntriesToday = db.actions_log.where((a) => todayKey(new Date(a.createdAt)) === today && a.type === 'autonomous_scan');
+  const scansRanToday = scanEntriesToday.length;
+  const scansSucceededToday = scanEntriesToday.filter((a) => a.result === 'success').length;
+
   // getLedgerSummary() now also computes this (so Dashboard.jsx can warn
   // about it too, from the same API call it already makes) - reusing it
   // here instead of a second, separate query keeps a real-money problem
@@ -71,7 +81,7 @@ export function generateDailyDigest(now = new Date()) {
     ledgerSummary, actionsToday, failuresToday, topOpportunity,
     emergencyStop: settings.emergencyStop, mode: settings.mode, approvedAwaitingPublish,
     budget: settings.budget, budgetConfigured: settings.budgetConfigured, maxLoss: settings.maxLoss,
-    scanPaused, pendingDrafts, unrecordedSales,
+    scanPaused, pendingDrafts, unrecordedSales, scansRanToday, scansSucceededToday,
   });
 
   // The owner can click "generate now" on the Digests page any number of

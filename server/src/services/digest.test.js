@@ -10,6 +10,20 @@ test('generateDailyDigest creates exactly one row for today on first run', () =>
   assert.equal(db.digests.all().length, 1);
 });
 
+test('generateDailyDigest counts every real autonomous_scan entry logged today, regardless of its outcome', () => {
+  // Unlike actionsToday (only 'success' results, across every action
+  // type), this count must include a blocked/skipped/failed scan too -
+  // the whole point is answering "did the scan even run today", not just
+  // "did it succeed".
+  __resetForTests();
+  const now = new Date().toISOString();
+  db.actions_log.insert({ id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'blocked: source not connected', createdAt: now });
+  db.actions_log.insert({ id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'success', createdAt: now });
+  db.actions_log.insert({ id: makeId('act'), type: 'draft_product', detail: {}, result: 'success', createdAt: now }); // a different action type must not be counted here
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /סריקות אוטונומיות היום: 2 \(1 מתוכן יצרו הזדמנות חדשה\)/);
+});
+
 test('generateDailyDigest counts an action logged in the Israel-midnight-to-UTC-midnight gap as today, not yesterday', () => {
   // createdAt is always a plain new Date().toISOString() (UTC). Now that
   // "today" is Israel-local, a naive createdAt.slice(0, 10) comparison

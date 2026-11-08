@@ -3,7 +3,7 @@
 export function buildDailyDigest({
   ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null,
   approvedAwaitingPublish = 0, budget = null, budgetConfigured = false, maxLoss = null,
-  scanPaused = false, pendingDrafts = 0, unrecordedSales = 0,
+  scanPaused = false, pendingDrafts = 0, unrecordedSales = 0, scansRanToday = 0, scansSucceededToday = 0,
 }) {
   // Dashboard.jsx warns the owner in the app itself once spentSoFar/
   // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
@@ -54,6 +54,15 @@ export function buildDailyDigest({
     ...(unrecordedSales > 0
       ? [`🚨 ${unrecordedSales} תשלומים אמיתיים התקבלו אך לא נרשמו ביומן בגלל שגיאה בעיבוד — בדוק ביומן הפעולות ואת לוגי השרת.`]
       : []),
+    // Answers "is the scanner even running" directly, every single day,
+    // without the owner having to open the activity log and count entries
+    // themselves - the one question that actually prompted this app's
+    // owner to complain the scanner "doesn't work". Always shown (not just
+    // when something's wrong), same neutral tone as "בעיות: אין" below -
+    // a 0 here on a digest generated manually early in the day (before the
+    // scan's next 4-hour tick) is a normal, honest reading, not a fault to
+    // alarm over.
+    `סריקות אוטונומיות היום: ${scansRanToday} (${scansSucceededToday} מתוכן יצרו הזדמנות חדשה)`,
     `פעולות שבוצעו: ${actionsToday.length}`,
     failuresToday.length
       ? `בעיות: ${failuresToday.map((f) => f.summary).join('; ')}`

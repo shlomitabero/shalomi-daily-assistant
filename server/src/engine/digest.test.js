@@ -20,6 +20,20 @@ test('reports a negative net profit with a minus sign, not a fabricated positive
   assert.match(digest.text, /רווח נטו מאומת היום: -\$45\.50/);
 });
 
+test('reports today\'s autonomous scan count even when it is zero, in the same neutral tone as "בעיות: אין"', () => {
+  // Directly answers "is the scanner even running" every single day,
+  // without the owner having to open the activity log and count entries
+  // themselves - always present (not just on a problem), since a zero
+  // here early in the day is a normal reading, not necessarily a fault.
+  const digest = buildDailyDigest({ ledgerSummary });
+  assert.match(digest.text, /סריקות אוטונומיות היום: 0 \(0 מתוכן יצרו הזדמנות חדשה\)/);
+});
+
+test('reports a non-zero autonomous scan count and how many of them actually created an opportunity', () => {
+  const digest = buildDailyDigest({ ledgerSummary, scansRanToday: 3, scansSucceededToday: 1 });
+  assert.match(digest.text, /סריקות אוטונומיות היום: 3 \(1 מתוכן יצרו הזדמנות חדשה\)/);
+});
+
 test('lists failures by their summary when present', () => {
   const digest = buildDailyDigest({ ledgerSummary, failuresToday: [{ summary: 'חיבור לפאדל נכשל' }] });
   assert.match(digest.text, /בעיות: חיבור לפאדל נכשל/);
