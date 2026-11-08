@@ -45,6 +45,12 @@ export default function OpportunityDetail() {
   async function onSave(e) {
     e.preventDefault();
     setError('');
+    // The reverse of the staleness this page's onPublish just got fixed
+    // for: an earlier failed publish attempt (e.g. "ממתין לאישור מפורש")
+    // left its message showing below the publish button indefinitely,
+    // even after the owner went on to edit and save a completely
+    // unrelated field here.
+    setPublishResult(null);
     setBusy(true);
     try {
       // Previously this sent the whole estimate as null unless BOTH low and
@@ -77,6 +83,12 @@ export default function OpportunityDetail() {
 
   async function onApprove() {
     setError('');
+    // The most likely real sequence this matters for: a publish attempt
+    // fails with "ממתין לאישור מפורש" (approve mode, not yet approved),
+    // the owner clicks "אשר פרסום" right after reading that - without
+    // this, the old failure message would still show below the now-
+    // enabled publish button, as if nothing had just changed.
+    setPublishResult(null);
     setBusy(true);
     try {
       await api.approve(id, 'publish_product');
@@ -112,6 +124,7 @@ export default function OpportunityDetail() {
   async function onReject() {
     if (!window.confirm('לדחות את ההזדמנות הזו? לא יהיה אפשר לפרסם אותה אחר כך.')) return;
     setError('');
+    setPublishResult(null);
     setBusy(true);
     try {
       await api.rejectOpportunity(id);
