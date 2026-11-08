@@ -534,6 +534,47 @@ test("Employee's, Staff's, Student's, Patient's, Volunteer's, and JobApplicant's
 });
 
 /**
+ * Round 1740's finding: the same gap rounds 1707/1736 fixed, missed for
+ * Contact (the Sales CRM template's own entity, "a contact person at a
+ * customer's company"). Worse than those two cases: Contact.customer is
+ * a REQUIRED relation to Customer in that same template, so a freshly
+ * seeded CRM project showed a "contact person at the customer's company"
+ * who IS, by name/email/phone, the literal same person as the customer
+ * they're a contact for -- on every single project built from this
+ * template, not just a plausible co-occurrence.
+ */
+test("Contact's 'name', 'email', and 'phone' seed values are their own pool, not Customer's exact same values", () => {
+  const contact: Entity = {
+    name: "Contact",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+
+  const customerRecords = generateSeedRecords(customerPerson, 4);
+  const customerNames = new Set(customerRecords.map((r) => r.name as string));
+  const customerEmails = new Set(customerRecords.map((r) => r.email as string));
+  const customerPhones = new Set(customerRecords.map((r) => r.phone as string));
+
+  const contactRecords = generateSeedRecords(contact, 4);
+  for (const record of contactRecords) {
+    assert.ok(!customerNames.has(record.name as string), `Contact's name "${record.name}" must not be one of Customer's own sample names`);
+    assert.ok(!customerEmails.has(record.email as string), `Contact's email "${record.email}" must not be one of Customer's own sample emails`);
+    assert.ok(!customerPhones.has(record.phone as string), `Contact's phone "${record.phone}" must not be one of Customer's own sample phones`);
+  }
+});
+
+/**
  * Round 1114's finding: the CRM template's own Contact entity and the
  * Project Tracker template's own TeamMember entity (both templates.ts
  * hand-authored entities, same provenance as round 1107's Milestone/

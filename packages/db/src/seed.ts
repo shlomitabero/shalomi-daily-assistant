@@ -88,6 +88,18 @@ const JOB_APPLICANT_NAMES_EN = ["Galit Shalev", "Orel Bachar", "Noya Edri", "Sha
 const JOB_APPLICANT_EMAIL_LOCAL_PARTS = ["galit.shalev", "orel.bachar", "noya.edri", "shahar.lavi"];
 const JOB_APPLICANT_PHONES_HE = ["053-444-5511", "057-555-6622", "050-666-7733", "052-777-8844"];
 const JOB_APPLICANT_PHONES_EN = ["(555) 444-5511", "(555) 555-6622", "(555) 666-7733", "(555) 777-8844"];
+// Round 1740: same gap as rounds 1707/1736, missed for Contact (Sales CRM
+// template, "a contact person at a customer's company") -- worse here than
+// for Courier/Employee/etc., since Contact.customer is a REQUIRED relation
+// to Customer in the same template, so a freshly seeded CRM project showed
+// a "contact person at the customer's company" who IS, by name/email/phone,
+// the literal same person as the customer they're a contact for, on every
+// single project built from this template.
+const CONTACT_NAMES_HE = ["אלינור וייס", "גיא שושן", "סיוון עמית", "ברק הראל"];
+const CONTACT_NAMES_EN = ["Elinor Weiss", "Guy Sosson", "Sivan Amit", "Barak Harel"];
+const CONTACT_EMAIL_LOCAL_PARTS = ["elinor.weiss", "guy.sosson", "sivan.amit", "barak.harel"];
+const CONTACT_PHONES_HE = ["054-888-1133", "058-999-2244", "050-111-3355", "052-222-4466"];
+const CONTACT_PHONES_EN = ["(555) 888-1133", "(555) 999-2244", "(555) 111-3355", "(555) 222-4466"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -355,6 +367,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Patient") return `${pick(PATIENT_EMAIL_LOCAL_PARTS, index)}@example.com`;
       if (entityName === "Volunteer") return `${pick(VOLUNTEER_EMAIL_LOCAL_PARTS, index)}@example.com`;
       if (entityName === "JobApplicant") return `${pick(JOB_APPLICANT_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "Contact") return `${pick(CONTACT_EMAIL_LOCAL_PARTS, index)}@example.com`;
       return `${pick(EMAIL_LOCAL_PARTS, index)}@example.com`;
     case "phone":
       if (entityName === "Courier") return pick(isHebrew ? COURIER_PHONES_HE : COURIER_PHONES_EN, index);
@@ -364,6 +377,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Patient") return pick(isHebrew ? PATIENT_PHONES_HE : PATIENT_PHONES_EN, index);
       if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_PHONES_HE : VOLUNTEER_PHONES_EN, index);
       if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_PHONES_HE : JOB_APPLICANT_PHONES_EN, index);
+      if (entityName === "Contact") return pick(isHebrew ? CONTACT_PHONES_HE : CONTACT_PHONES_EN, index);
       return pick(isHebrew ? PHONES_HE : PHONES_EN, index);
     case "source":
       return pick(isHebrew ? SOURCES_HE : SOURCES_EN, index);
@@ -544,6 +558,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Patient") return pick(isHebrew ? PATIENT_NAMES_HE : PATIENT_NAMES_EN, index);
       if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_NAMES_HE : VOLUNTEER_NAMES_EN, index);
       if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_NAMES_HE : JOB_APPLICANT_NAMES_EN, index);
+      if (entityName === "Contact") return pick(isHebrew ? CONTACT_NAMES_HE : CONTACT_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an
