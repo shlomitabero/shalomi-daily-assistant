@@ -131,6 +131,28 @@ function pick(pool: string[], index: number): string {
   return pool[index % pool.length];
 }
 
+// Round 1713: a lifecycle "status" enum whose first declared value means
+// "hasn't happened yet" (Scheduled/Planned/Reserved -- the convention every
+// one of this platform's own domain entities and curated templates that use
+// this shape already follow) is seeded by the "enum" case below completely
+// independently from this same record's own date field, which (see the
+// "date" case) can never land on anything but today or earlier. So a freshly
+// built Appointment/Event/WorkOrder, or the Appointments & Clients template,
+// always opened to a row like "Scheduled" paired with a date 3 days in the
+// past -- a plainly self-contradicting value, since an appointment that
+// already happened can't still be "Scheduled". Deliberately narrow: only a
+// field literally named "status" is checked (not any enum field), and only
+// these three specific values, to avoid misreading an unrelated "Pending"/
+// "Reserved"-as-table-state/"pending" (Restaurant order) enum that doesn't
+// carry this same "upcoming" meaning.
+const UPCOMING_STATUS_VALUES = new Set(["scheduled", "planned", "reserved"]);
+function hasUpcomingStatusAt(entity: Entity, index: number): boolean {
+  const statusField = entity.fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  const values = statusField?.enumValues;
+  if (!values || values.length === 0) return false;
+  return UPCOMING_STATUS_VALUES.has(values[index % values.length].toLowerCase());
+}
+
 function seedValueFor(field: Field, entity: Entity, index: number): unknown {
   const entityName = entity.label ?? entity.name;
   const fieldLabel = field.label ?? field.name;
@@ -217,7 +239,16 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
         .findIndex((f) => f.name === field.name);
       const baseOffset = (index + 1) * 3;
       const dayOffset = isEndLike ? baseOffset - 3 + endLikeOrdinal : baseOffset + dateFieldOrdinal;
-      const d = new Date(Date.now() - dayOffset * 86_400_000);
+      // Round 1713: see hasUpcomingStatusAt's own comment above. Scoped to
+      // an entity with exactly ONE date field -- a start/end pair (e.g.
+      // Rental) would need its end date pushed even further into the
+      // future than its start date to keep "end after start" true, a
+      // second cross-field coordination this fix deliberately leaves for
+      // a follow-up round rather than risk introducing a new, opposite
+      // "end before start" bug here.
+      const isOnlyDateField = entity.fields.filter((f) => f.type === "date").length === 1;
+      const intoFuture = isOnlyDateField && !isEndLike && hasUpcomingStatusAt(entity, index);
+      const d = new Date(Date.now() + (intoFuture ? dayOffset : -dayOffset) * 86_400_000);
       return d.toISOString().slice(0, 10);
     }
     case "enum":

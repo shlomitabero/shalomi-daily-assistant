@@ -714,6 +714,60 @@ test("an entity with two RECOGNIZED end-of-range date fields (checkoutDate and r
 });
 
 /**
+ * Round 1713's finding: seedValueFor's "date" case always lands on today or
+ * earlier (dayOffset above is never negative), computed with zero awareness
+ * of the sibling "status" enum field also being seeded. For an entity whose
+ * status convention is "the first value means it hasn't happened yet"
+ * (Appointment's "Scheduled", Event's "Planned", Rental's "Reserved",
+ * WorkOrder's "Scheduled" -- all four of this platform's own domain
+ * entities with this exact shape), every freshly built app opened to a row
+ * like "Scheduled" for an appointment that's already 3 days in the past --
+ * a plainly self-contradicting value.
+ */
+test("a lone date field paired with a 'status' enum whose first value means 'hasn't happened yet' (e.g. Appointment's Scheduled) is seeded in the FUTURE, not the past", () => {
+  const appointment: Entity = {
+    name: "Appointment",
+    fields: [
+      { name: "date", type: "date", required: true },
+      { name: "status", type: "enum", required: true, enumValues: ["Scheduled", "Completed", "Cancelled", "No-show"] },
+    ],
+  };
+  const [record] = generateSeedRecords(appointment, 1);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(record.status, "Scheduled");
+  assert.ok((record.date as string) > today, `a 'Scheduled' appointment's date ("${record.date}") must be in the future, not today or earlier ("${today}")`);
+});
+
+test("the same shape's second record, whose status is 'Completed', is still seeded in the past, unchanged from before", () => {
+  const appointment: Entity = {
+    name: "Appointment",
+    fields: [
+      { name: "date", type: "date", required: true },
+      { name: "status", type: "enum", required: true, enumValues: ["Scheduled", "Completed", "Cancelled", "No-show"] },
+    ],
+  };
+  const [, record] = generateSeedRecords(appointment, 2);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(record.status, "Completed");
+  assert.ok((record.date as string) <= today, `a 'Completed' appointment's date ("${record.date}") must still be today or earlier`);
+});
+
+test("an entity with TWO date fields (e.g. Rental's startDate/endDate) keeps the pre-existing past-only behavior even with a 'Reserved' status -- deliberately deferred, see hasUpcomingStatusAt's own comment", () => {
+  const rental: Entity = {
+    name: "Rental",
+    fields: [
+      { name: "startDate", type: "date", required: false },
+      { name: "endDate", type: "date", required: false },
+      { name: "status", type: "enum", required: true, enumValues: ["Reserved", "Active", "Returned"] },
+    ],
+  };
+  const [record] = generateSeedRecords(rental, 1);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(record.status, "Reserved");
+  assert.ok((record.startDate as string) <= today, "a multi-date-field entity's dates are intentionally untouched by round 1713's fix");
+});
+
+/**
  * Round 1709's finding: the same collapse the "date" case's dateFieldOrdinal
  * fix above already covers was never ported to its sibling "number" case.
  * The Appointments & Clients template's own Service entity (templates.ts),
