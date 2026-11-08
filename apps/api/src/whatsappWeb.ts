@@ -1277,7 +1277,28 @@ export class WhatsAppWebManager {
 
   async disconnect(projectId: string): Promise<void> {
     const session = this.sessions.get(projectId);
-    if (session?.sock) {
+    const sockBeingClosed = session?.sock ?? null;
+    if (sockBeingClosed) {
+      await sockBeingClosed.logout().catch(() => {});
+    }
+    // Round 1701: handleConnectionUpdate's own restartRequired (515)
+    // branch above reuses this EXACT session object in place rather than
+    // replacing it in the map (see its own comment) -- so a 515 close
+    // landing on an already-connected session while the logout() above
+    // was still in flight can give `session.sock` a brand-new, fully live
+    // socket through this same reference, without `session` ever failing
+    // an identity check anywhere (there's nothing to fail: it's literally
+    // the same object runConnectAttempt's own check above compares
+    // against). connect()'s own `existing.status !== "disconnected"`
+    // guard rules out a wholesale session REPLACEMENT landing in this
+    // window, so checking whether `session.sock` itself changed is
+    // enough. Skipping this and deleting the map entry unconditionally
+    // would orphan that live socket forever -- every handler's own
+    // `this.sessions.get(projectId) !== session` check would then see
+    // `undefined !== session` and silently discard every future event
+    // from it, the exact failure mode runConnectAttempt's own "orphaned
+    // socket, log it out immediately" precedent above exists to prevent.
+    if (session?.sock && session.sock !== sockBeingClosed) {
       await session.sock.logout().catch(() => {});
     }
     this.sessions.delete(projectId);

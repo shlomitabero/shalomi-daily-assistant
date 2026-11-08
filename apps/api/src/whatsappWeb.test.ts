@@ -341,6 +341,60 @@ test("Baileys' restart-required close (515) after an already-open connection als
   assert.equal(manager.getStatus("proj1").status, "connected");
 });
 
+/**
+ * Round 1701: disconnect() reads `session` and starts `await session.sock.
+ * logout()` -- a real suspension point -- but, unlike every OTHER handler
+ * in this class (runConnectAttempt, handleConnectionUpdate,
+ * handleIncomingMessages, handleIncomingCalls, handleMessageUpdates, all
+ * of which re-check `this.sessions.get(projectId)` after their own await),
+ * never re-checks anything once that logout() resolves. The restartRequired
+ * (515) branch above reuses the EXACT SAME session object in place rather
+ * than replacing it in the map -- so if a 515 close lands on an
+ * already-connected session while disconnect()'s own logout() is still in
+ * flight (per the test just above, this can happen for a reason unrelated
+ * to the user's disconnect click), that branch's own `await
+ * this.beginConnectAttempt(...)` can finish and give `session.sock` a
+ * brand-new, fully live socket before disconnect()'s continuation ever
+ * resumes. disconnect() then unconditionally deletes the map entry,
+ * orphaning that live socket forever: nothing ever calls .logout() on it,
+ * and every other handler's own `this.sessions.get(projectId) !== session`
+ * check (now `undefined !== session`) silently discards every future
+ * event from it.
+ */
+test("disconnect() also logs out the NEW live socket if Baileys' own 515 restart-required close reconnects the same session while the OLD socket's logout() is still in flight", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:12@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+  assert.equal(manager.getStatus("proj1").status, "connected");
+
+  // Make the OLD socket's logout() controllable, so the test can land the
+  // 515 close while disconnect() is still awaiting it.
+  let resolveLogout!: () => void;
+  createdSockets[0].sock.logout = () => new Promise<void>((resolve) => { resolveLogout = resolve; });
+
+  const disconnectPromise = manager.disconnect("proj1");
+
+  // While that logout() is still pending, Baileys independently delivers a
+  // 515 restart-required close on the SAME, still-live socket -- exactly
+  // the scenario the test above proves is real, just landing mid-disconnect
+  // this time.
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 515 } } } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(createdSockets.length, 2, "the 515 close must have already created a fresh, live second socket while the old one's logout() was still pending");
+
+  // Only now does the original logout() resolve, letting disconnect()'s
+  // own continuation run.
+  resolveLogout();
+  await disconnectPromise;
+
+  assert.ok(
+    createdSockets[1].isLoggedOut(),
+    "the brand-new socket the 515 restart created in place must also be logged out, not abandoned live and unreachable",
+  );
+  assert.equal(manager.getStatus("proj1").status, "disconnected");
+});
+
 test("sendMessage succeeds once connected, addressing the real WhatsApp JID format", async () => {
   const { manager, createdSockets } = setupManager();
   await manager.connect("proj1");
