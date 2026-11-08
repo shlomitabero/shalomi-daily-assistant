@@ -625,6 +625,45 @@ test("Vendor's and Supplier's 'contactPerson', 'email', and 'phone' seed values 
 });
 
 /**
+ * Round 1743's finding: the same gap rounds 1707/1736/1740/1742 fixed,
+ * missed for TeamMember (the Project & Team Tracker template's own
+ * entity, "name" + "email" + "phone" + "jobTitle" -- the identical
+ * person shape as Customer). A project tracker that also tracks clients
+ * (an ordinary reachable shape) seeded a team member as the literal
+ * same name/email/phone as an unrelated customer.
+ */
+test("TeamMember's 'name', 'email', and 'phone' seed values are their own pool, not Customer's exact same values", () => {
+  const teamMember: Entity = {
+    name: "TeamMember",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "email", type: "text", required: false },
+      { name: "phone", type: "text", required: false },
+    ],
+  };
+
+  const customerRecords = generateSeedRecords(customerPerson, 4);
+  const customerNames = new Set(customerRecords.map((r) => r.name as string));
+  const customerEmails = new Set(customerRecords.map((r) => r.email as string));
+  const customerPhones = new Set(customerRecords.map((r) => r.phone as string));
+
+  const teamMemberRecords = generateSeedRecords(teamMember, 4);
+  for (const record of teamMemberRecords) {
+    assert.ok(!customerNames.has(record.name as string), `TeamMember's name "${record.name}" must not be one of Customer's own sample names`);
+    assert.ok(!customerEmails.has(record.email as string), `TeamMember's email "${record.email}" must not be one of Customer's own sample emails`);
+    assert.ok(!customerPhones.has(record.phone as string), `TeamMember's phone "${record.phone}" must not be one of Customer's own sample phones`);
+  }
+});
+
+/**
  * Round 1114's finding: the CRM template's own Contact entity and the
  * Project Tracker template's own TeamMember entity (both templates.ts
  * hand-authored entities, same provenance as round 1107's Milestone/

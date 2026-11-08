@@ -115,6 +115,17 @@ const VENDOR_CONTACT_NAMES_EN = ["Efrat Goldstein", "Nadav Aviram", "Shira Ben-H
 const VENDOR_EMAIL_LOCAL_PARTS = ["efrat.goldstein", "nadav.aviram", "shira.benhaim", "eitan.friedman"];
 const VENDOR_PHONES_HE = ["053-333-9988", "057-444-8877", "050-555-7766", "052-666-6655"];
 const VENDOR_PHONES_EN = ["(555) 333-9988", "(555) 444-8877", "(555) 555-7766", "(555) 666-6655"];
+// Round 1743: same gap as rounds 1707/1736/1740/1742, missed for
+// TeamMember (templates.ts's Project & Team Tracker template, "name" +
+// "email" + "phone" + "jobTitle" -- the identical person shape as
+// Customer). A project tracker that also tracks clients (an ordinary,
+// reachable shape) seeded a team member as the literal same name/email/
+// phone as an unrelated customer.
+const TEAM_MEMBER_NAMES_HE = ["רונית אבוטבול", "דורון שחר", "לירון מלכה", "עומרי ששון"];
+const TEAM_MEMBER_NAMES_EN = ["Ronit Abutbul", "Doron Shahar", "Liron Malka", "Omri Sasson"];
+const TEAM_MEMBER_EMAIL_LOCAL_PARTS = ["ronit.abutbul", "doron.shahar", "liron.malka", "omri.sasson"];
+const TEAM_MEMBER_PHONES_HE = ["054-222-7733", "058-333-8844", "050-444-9955", "052-555-1166"];
+const TEAM_MEMBER_PHONES_EN = ["(555) 222-7733", "(555) 333-8844", "(555) 444-9955", "(555) 555-1166"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -384,6 +395,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "JobApplicant") return `${pick(JOB_APPLICANT_EMAIL_LOCAL_PARTS, index)}@example.com`;
       if (entityName === "Contact") return `${pick(CONTACT_EMAIL_LOCAL_PARTS, index)}@example.com`;
       if (entityName === "Vendor" || entityName === "Supplier") return `${pick(VENDOR_EMAIL_LOCAL_PARTS, index)}@example.com`;
+      if (entityName === "TeamMember") return `${pick(TEAM_MEMBER_EMAIL_LOCAL_PARTS, index)}@example.com`;
       return `${pick(EMAIL_LOCAL_PARTS, index)}@example.com`;
     case "phone":
       if (entityName === "Courier") return pick(isHebrew ? COURIER_PHONES_HE : COURIER_PHONES_EN, index);
@@ -395,6 +407,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_PHONES_HE : JOB_APPLICANT_PHONES_EN, index);
       if (entityName === "Contact") return pick(isHebrew ? CONTACT_PHONES_HE : CONTACT_PHONES_EN, index);
       if (entityName === "Vendor" || entityName === "Supplier") return pick(isHebrew ? VENDOR_PHONES_HE : VENDOR_PHONES_EN, index);
+      if (entityName === "TeamMember") return pick(isHebrew ? TEAM_MEMBER_PHONES_HE : TEAM_MEMBER_PHONES_EN, index);
       return pick(isHebrew ? PHONES_HE : PHONES_EN, index);
     case "source":
       return pick(isHebrew ? SOURCES_HE : SOURCES_EN, index);
@@ -584,6 +597,7 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (entityName === "Volunteer") return pick(isHebrew ? VOLUNTEER_NAMES_HE : VOLUNTEER_NAMES_EN, index);
       if (entityName === "JobApplicant") return pick(isHebrew ? JOB_APPLICANT_NAMES_HE : JOB_APPLICANT_NAMES_EN, index);
       if (entityName === "Contact") return pick(isHebrew ? CONTACT_NAMES_HE : CONTACT_NAMES_EN, index);
+      if (entityName === "TeamMember") return pick(isHebrew ? TEAM_MEMBER_NAMES_HE : TEAM_MEMBER_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an
