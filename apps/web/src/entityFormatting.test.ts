@@ -4431,3 +4431,25 @@ test("isRecordClosedStatus recognizes a record whose sibling status field alread
     "a non-string status value (shouldn't happen, but defensively) is never treated as closed",
   );
 });
+
+test("isRecordClosedStatus also recognizes a sibling 'stage' field (round 1725), matching the built-in Sales CRM template's Deal entity", () => {
+  const dealFields: Field[] = [
+    { name: "closeDeadline", type: "date", required: false },
+    { name: "stage", type: "enum", required: true, enumValues: ["lead", "qualified", "proposal", "won", "lost"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, closeDeadline: "2020-01-01", stage: "won" }, dealFields),
+    true,
+    "a Deal already Won is resolved even though its lifecycle field is named stage, not status",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, closeDeadline: "2020-01-01", stage: "lost" }, dealFields),
+    true,
+    "a Deal already Lost is also resolved",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, closeDeadline: "2020-01-01", stage: "proposal" }, dealFields),
+    false,
+    "a still-open Deal stage leaves the date-only overdue classification untouched",
+  );
+});

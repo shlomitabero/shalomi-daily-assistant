@@ -2034,6 +2034,45 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the Paid record must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1725: isRecordClosedStatus only matched a sibling field literally
+ * named `status`, so a Deal-shaped entity whose terminal-lifecycle field is
+ * named `stage` instead (exactly the built-in Sales CRM template's own Deal
+ * entity, with enum values lead/qualified/proposal/won/lost and a
+ * closeDeadline date field) got no such exclusion -- a Won/Lost deal with a
+ * past closeDeadline stayed in both the numerator and denominator forever.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own stage is already terminal (e.g. Won/Lost)", () => {
+  const dealProject: Project = {
+    ...project,
+    description: "Sales pipeline deals",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Deal",
+          label: "Deals",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "closeDeadline", label: "Close deadline", type: "date", required: false },
+            { name: "stage", type: "enum", required: true, enumValues: ["lead", "qualified", "proposal", "won", "lost"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, dealProject.id, dealProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, dealProject.id, dealProject.spec.entities[0], { customer: "Dana", closeDeadline: "2026-01-01", stage: "proposal" }); // genuinely overdue
+  insertRecord(db, dealProject.id, dealProject.spec.entities[0], { customer: "Omer", closeDeadline: "2026-01-01", stage: "won" }); // already resolved
+
+  const twin = computeBusinessTwin(db, dealProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Close deadline"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the Won record must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

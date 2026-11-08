@@ -786,20 +786,22 @@ function isDeadlineFieldName(fieldName: string): boolean {
 }
 
 /**
- * Mirrors entityFormatting.ts's own isRecordClosedStatus (round 1721) --
- * duplicated here for the same cross-package reason isDeadlineFieldName
- * just above already is. A record whose sibling `status` enum field
- * already holds a terminal value (e.g. an Invoice "Paid", a Ticket
- * "Closed") shouldn't count toward computeOverdueObservations/
- * computeDueSoonObservations below -- it's already resolved, so a past/
- * near deadline on it isn't a fact worth surfacing as still-outstanding.
+ * Mirrors entityFormatting.ts's own isRecordClosedStatus (round 1721,
+ * widened to also match a "stage" field in round 1725) -- duplicated here
+ * for the same cross-package reason isDeadlineFieldName just above already
+ * is. A record whose sibling `status` (or `stage`) enum field already
+ * holds a terminal value (e.g. an Invoice "Paid", a Ticket "Closed", a
+ * Sales CRM Deal "Won"/"Lost") shouldn't count toward
+ * computeOverdueObservations/computeDueSoonObservations below -- it's
+ * already resolved, so a past/near deadline on it isn't a fact worth
+ * surfacing as still-outstanding.
  */
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
 ]);
 function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): boolean {
-  const statusField = fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
   if (!statusField) return false;
   const value = record[statusField.name];
   return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());

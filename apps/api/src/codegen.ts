@@ -3181,7 +3181,7 @@ const CLOSED_STATUS_VALUES = new Set([
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
 ]);
 function isRecordClosedStatus(record, fields) {
-  const statusField = fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
   if (!statusField) return false;
   const value = record[statusField.name];
   return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());

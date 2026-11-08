@@ -446,17 +446,23 @@ const CLOSED_STATUS_VALUES = new Set([
 ]);
 
 /**
- * True when `record` has a sibling `status` enum field (matched by name,
- * case-insensitively, same convention findField-style lookups elsewhere in
- * this app already use) whose current value is one of CLOSED_STATUS_VALUES
- * -- i.e. this record is already resolved, so a past/near deadline on it is
- * no longer something to flag as overdue/dueSoon. Returns false (no
- * suppression) when the entity has no status field at all, or the status
+ * True when `record` has a sibling `status` or `stage` enum field (matched
+ * by name, case-insensitively, same convention findField-style lookups
+ * elsewhere in this app already use) whose current value is one of
+ * CLOSED_STATUS_VALUES -- i.e. this record is already resolved, so a
+ * past/near deadline on it is no longer something to flag as
+ * overdue/dueSoon. "stage" is included alongside "status" because this
+ * app's own built-in Sales CRM template's Deal entity names its lifecycle
+ * field "stage" (values lead/qualified/proposal/won/lost, with a
+ * closeDeadline date field) -- the exact same terminal-value shape this
+ * function already recognizes, just under the other common name a
+ * pipeline-style entity uses instead of "status". Returns false (no
+ * suppression) when the entity has no status/stage field at all, or the
  * value isn't a recognized terminal one -- the pre-existing date-only
  * behavior is the correct default for every entity without this ambiguity.
  */
 export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boolean {
-  const statusField = fields.find((f) => f.type === "enum" && f.name.toLowerCase() === "status");
+  const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
   if (!statusField) return false;
   const value = record[statusField.name];
   return typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase());

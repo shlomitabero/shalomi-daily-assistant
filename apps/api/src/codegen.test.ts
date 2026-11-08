@@ -28171,6 +28171,81 @@ test("the exported EntityView does not flag a record with a terminal status as o
 });
 
 /**
+ * Round 1725: isRecordClosedStatus's exported-app copy only matched a
+ * sibling field literally named `status`, so a Deal-shaped entity using
+ * `stage` instead (the built-in Sales CRM template's own Deal entity --
+ * lead/qualified/proposal/won/lost, with a closeDeadline date field) got no
+ * such exclusion. Same shape as the status test above, but with a stage
+ * field: a "Won" record with a 5-day-past closeDeadline must NOT be flagged
+ * overdue, while a "Proposal" record with the identical past closeDeadline
+ * still must be.
+ */
+test("the exported EntityView does not flag a record with a terminal stage as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const dealEntity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "customer", label: "Customer", type: "text", required: true },
+      { name: "stage", label: "Stage", type: "enum", required: true, enumValues: ["Proposal", "Won"] },
+      { name: "closeDeadline", label: "Close deadline", type: "date", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, customer: "Still open deal", stage: "Proposal", closeDeadline: isoDateOffset(-5) },
+    { id: 2, customer: "Closed deal", stage: "Won", closeDeadline: isoDateOffset(-5) },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Deal") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: dealEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Still open deal/.test(r.textContent ?? ""))!;
+      const closedRow = rows.find((r) => /Closed deal/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "a Proposal record with a 5-day-past closeDeadline must still be flagged overdue");
+      assert.equal(closedRow.querySelector(".date-overdue"), null, "a Won record with the identical past closeDeadline must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1323: ports the live preview's own new findFilterableFields fix
  * (a deadline-named date field's overdue/due-soon classification, already
  * used for the table cell's own red/amber styling right above, is now
