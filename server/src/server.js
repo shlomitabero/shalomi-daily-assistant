@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import cron from 'node-cron';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -58,7 +57,16 @@ const app = express();
 // X-Forwarded-For as set by Railway's own edge, not an arbitrary header an
 // attacker could forge directly.
 app.set('trust proxy', 1);
-app.use(cors());
+// No app.use(cors()) here on purpose: the client only ever calls this API
+// as a relative /api/... path - fetch('/api/...') in client/src/api.js, and
+// client/vite.config.js's dev-server proxy forwards /api requests to this
+// server too - so every real request this app's own client ever makes is
+// same-origin, in both development and production. CORS only governs
+// cross-origin requests; leaving it enabled here (the previous default,
+// `cors()` with no options, allows ANY origin) served no purpose for this
+// app's own usage and only widened who could read a response from this
+// API's two unauthenticated routes (the public product page, the Paddle
+// webhook) from a browser running on some other site.
 app.use(securityHeaders);
 
 // Paddle needs the raw body to verify the webhook signature, so this is
