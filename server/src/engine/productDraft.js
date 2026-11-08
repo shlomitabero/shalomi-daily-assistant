@@ -64,7 +64,13 @@ export async function draftProduct({ topic, audience, timeoutMs = API_TIMEOUT_MS
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   const parsed = JSON.parse(extractJson(text));
   if (!isValidDraftShape(parsed)) {
-    throw new Error('the AI returned a product draft missing required fields (title/guide/salesHeadline/salesBullets/salesParagraph)');
+    // Reaches the owner verbatim: routes/opportunities.js's manual
+    // "new digital product" form shows this exact err.message, and
+    // autonomousScan.js's own 'failed' entries point the owner at the
+    // server logs instead of showing this directly - but the manual
+    // route had no such wrapper, so this was raw English dropped
+    // straight into that otherwise all-Hebrew form's error line.
+    throw new Error('ה-AI החזיר טיוטת מוצר עם שדות חסרים (כותרת/מדריך/כותרת מכירה/יתרונות/פסקת מכירה)');
   }
   return { demo: false, ...parsed };
 }

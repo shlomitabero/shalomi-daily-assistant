@@ -198,7 +198,7 @@ test('runAutonomousScan reports a clean failure, with no opportunity created, wh
   try {
     const result = await runAutonomousScan();
     assert.equal(result.ran, false);
-    assert.match(result.reason, /title\/guide\/salesHeadline/);
+    assert.match(result.reason, /שדות חסרים/);
     assert.equal(db.opportunities.all().length, 0);
     assert.equal(consoleErrorCalls, 1);
   } finally {
