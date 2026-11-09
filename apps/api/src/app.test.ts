@@ -8128,6 +8128,61 @@ test("refining a Templates-Gallery project never drops an entity the template's 
   });
 });
 
+/**
+ * Round 1759: the exact same bug round 1714 fixed for /refine, reached
+ * through its sibling pre-build route instead. POST /projects/:id/answers
+ * called generateSpec on the combined description + answers/additional-
+ * request and stored its candidate spec outright (updateProjectSpec with
+ * no merge), even though this route is reachable ONLY pre-build -- exactly
+ * when AddEntityForm/AddFieldForm/AddRoleForm/etc. (the only way to
+ * manually add an entity at all; POST /projects/:id/entities 409s once
+ * built) are also in play on the same Spec Review screen, right next to
+ * the open-questions/additional-request inputs that feed this route.
+ * Manually adding an entity here, then answering with text the heuristic's
+ * re-derivation has no reason to reintroduce it from, silently erased it
+ * before this fix. Confirms the fix: routing through mergeRefinedSpec (the
+ * same function /refine already uses) keeps the manually-added entity.
+ */
+test("POST /projects/:id/answers must not drop an entity manually added on the Spec Review screen, even when the regenerated candidate omits it", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "answers-preserve-entity@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm", lang: "en" }),
+    });
+    assert.equal(createRes.status, 201);
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const originalNames = project.spec.entities.map((e) => e.name).sort();
+    assert.deepEqual(originalNames, ["Contact", "Customer", "Deal", "Task"], "the CRM template's own curated entity list");
+
+    const addEntityRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Payment" }),
+    });
+    assert.equal(addEntityRes.status, 200, "manually adding an entity pre-build must succeed");
+    const { project: withPayment } = (await addEntityRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    assert.ok(
+      withPayment.spec.entities.some((e) => e.name === "Payment"),
+      "the manually-added Payment entity must be on the spec right after adding it",
+    );
+
+    const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers: [], additionalRequest: "Track which sales rep closed each deal." }),
+    });
+    assert.equal(answersRes.status, 200);
+    const { project: afterAnswers } = (await answersRes.json()) as { project: { spec: { entities: { name: string }[] } } };
+    const afterNames = afterAnswers.spec.entities.map((e) => e.name);
+    assert.ok(afterNames.includes("Payment"), "answering must not drop the manually-added Payment entity");
+    for (const original of originalNames) {
+      assert.ok(afterNames.includes(original), `answering must not drop the original "${original}" entity`);
+    }
+  });
+});
+
 test("POST /projects/from-template 404s on an unknown templateId", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-use3@example.com");

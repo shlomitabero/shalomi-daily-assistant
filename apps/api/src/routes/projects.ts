@@ -3205,8 +3205,28 @@ export function createProjectsRouter(
           // or additional request containing one Hebrew/English word must
           // not flip the WHOLE draft spec's language away from what the
           // original description already established.
-          const { spec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
-          const updated = updateProjectSpec(db, project.id, spec);
+          const { spec: candidateSpec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
+          // Round 1759: this route used to store `candidateSpec` outright,
+          // the exact same bug round 1714 fixed for /refine -- generateSpec
+          // has no awareness of the CURRENT spec, so its candidate can
+          // silently omit an entity/field/role/persona/assumption the user
+          // manually added on this very screen (AddEntityForm/AddFieldForm/
+          // AddRoleForm/etc. are only ever reachable pre-build, i.e. exactly
+          // while this route is the one in play) moments before answering
+          // an open question or typing an additional request and clicking
+          // Build. Merging keeps everything already on project.spec and
+          // only adds what the fresh candidate introduces that doesn't
+          // already exist, instead of replacing outright.
+          const nextSpec = mergeRefinedSpec(project.spec, candidateSpec);
+          const oversizedField = findOversizedGeneratedSpecField(nextSpec);
+          if (oversizedField) {
+            throw new HttpError(
+              422,
+              `This would grow the app's ${oversizedField}, past what a single app can safely hold. Try a more focused request, or remove an existing entity/field first.`,
+              "REFINED_SPEC_TOO_LARGE",
+            );
+          }
+          const updated = updateProjectSpec(db, project.id, nextSpec);
           return { status: 200, body: { project: updated, providerName } };
         } finally {
           activePipelines.delete(project.id);
