@@ -1405,7 +1405,20 @@ export interface CollaboratorAccessChange {
   id: number;
   targetUserId: string;
   changedByUserId: string | null;
-  action: "role_changed" | "removed" | "previous_owner_demoted";
+  // Round 1797: widened to match the server's own CollaboratorAccessChangeAction
+  // (packages/db/src/collaboratorAccessChanges.ts) and collaboratorsReport.ts's
+  // own CollaboratorAccessChangeForReport exactly -- this union was missing
+  // "invited" and "ownership_transferred", both real values the invite route
+  // and POST .../transfer-ownership (routes/projects.ts) actually insert and
+  // GET .../collaborator-access-log actually returns. No observable bug today
+  // (accessChangesForReport below only ever copies `action: c.action` with no
+  // narrowing, so TS's structural typing let the mismatch through silently),
+  // but any future code that DOES narrow this field directly would have the
+  // type-checker wrongly tell it those two values are unreachable -- exactly
+  // the class of bug round 1665's own doc comment on the report-side type
+  // warns about ("without its own explicit branch here, an 'invited' entry
+  // would silently fall into the final else").
+  action: "invited" | "role_changed" | "removed" | "ownership_transferred" | "previous_owner_demoted";
   previousRole: CollaboratorRole | null;
   newRole: CollaboratorRole | null;
   changedAt: string;
