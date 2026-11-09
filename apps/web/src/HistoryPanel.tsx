@@ -128,8 +128,16 @@ export function HistoryPanel({
     setDeleteError(null);
   }
 
+  // Round 1749: both this and handleCopy below used to pass the raw,
+  // unfiltered `checkpoints` state -- so a search/typeFilter narrowing the
+  // on-screen list (visibleCheckpoints, above) was silently ignored by
+  // Download/Copy, which always exported every checkpoint the project has
+  // ever had instead of what the panel was actually showing. Same
+  // "export what's visible" convention entityFormatting.ts's own
+  // selectedOrAllRecords doc comment establishes for EntityPanel's own
+  // CSV/JSON export.
   function handleDownload() {
-    downloadCheckpointHistory(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails, lastRestore), projectName);
+    downloadCheckpointHistory(formatCheckpointHistory(visibleCheckpoints, currentSpec, projectName, lang, t, collaboratorEmails, lastRestore), projectName);
   }
 
   /**
@@ -142,7 +150,7 @@ export function HistoryPanel({
    */
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(formatCheckpointHistory(checkpoints, currentSpec, projectName, lang, t, collaboratorEmails, lastRestore));
+      await navigator.clipboard.writeText(formatCheckpointHistory(visibleCheckpoints, currentSpec, projectName, lang, t, collaboratorEmails, lastRestore));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

@@ -2136,6 +2136,91 @@ test("HistoryPanel's copy button writes the real formatted timeline to the clipb
   });
 });
 
+/**
+ * Round 1749: both handleDownload and handleCopy used to pass the raw,
+ * unfiltered `checkpoints` state to formatCheckpointHistory, ignoring the
+ * search box entirely -- so narrowing the on-screen list to "invoice"
+ * still copied every checkpoint the project has ever had, not just the
+ * 2 the search box is actually showing. Same "export what's visible"
+ * convention entityFormatting.ts's own selectedOrAllRecords establishes
+ * for EntityPanel's CSV/JSON export.
+ */
+test("HistoryPanel's copy button respects the active search filter, copying only the currently-visible checkpoints, not the full history", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      assert.ok(searchBox, "expected a search box once there are more than 5 checkpoints");
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy timeline");
+      assert.ok(copyButton, "expected a Copy timeline button");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /Refine: add invoice tracking/, "the copied text must include a checkpoint matching the active search");
+      assert.match(writtenText!, /Refine: fix invoice totals/, "the copied text must include the other checkpoint matching the active search");
+      assert.doesNotMatch(
+        writtenText!,
+        /Initial build/,
+        "the copied text must NOT include a checkpoint the search filter is currently hiding from the on-screen list",
+      );
+      assert.doesNotMatch(writtenText!, /Refine: add customer notes/, "must not include another filtered-out checkpoint either");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
 /** The other half: a real rejection (denied permission, insecure context) must show a real failure label, not fail silently or crash. */
 test("HistoryPanel's copy button shows a failure label when navigator.clipboard.writeText rejects", async (t) => {
   await withJsdom(async () => {
