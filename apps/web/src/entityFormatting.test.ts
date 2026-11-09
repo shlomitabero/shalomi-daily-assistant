@@ -2694,6 +2694,35 @@ test("buildImportRecords accepts a currency/thousands-separator-formatted number
 });
 
 /**
+ * Round 1808: CSV_NUMBER_FORMATTING's character class only ever covered
+ * USD/EUR/GBP/ILS ($€£₪), so a spreadsheet column formatted with Yen,
+ * Rupee, or Won currency symbols (e.g. "¥1,234") got the whole row
+ * rejected on import, even though the identical leniency already silently
+ * accepted the same shape for "$1,234.56" above. Widened to also strip
+ * ¥/₹/₩ -- shared by buildImportRecordsFromJson too, since both import
+ * paths use this same module-level constant.
+ */
+test("buildImportRecords accepts Yen/Rupee/Won currency formatting for a number cell, not just USD/EUR/GBP/ILS", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "¥1,234"],
+    ["Beta LLC", "₹1,234.50"],
+    ["Gamma Inc", "₩15000"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { client: "Acme Corp", amount: 1234 },
+    { client: "Beta LLC", amount: 1234.5 },
+    { client: "Gamma Inc", amount: 15000 },
+  ]);
+  assert.equal(result.errors.length, 0);
+});
+
+/**
  * Regression test (round 1633): mirrors webhookIn.ts's own
  * WEBHOOK_PARENTHESIZED_NEGATIVE leniency. An accounting-style export
  * (QuickBooks/Xero) wraps a negative amount in parentheses instead of a

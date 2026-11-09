@@ -2061,7 +2061,7 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
  * round-trip through this exact function still works -- see that
  * function's own comment), so this cannot mask a genuine round-trip bug.
  */
-const CSV_NUMBER_FORMATTING = /[,$€£₪\s]/g;
+const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩\s]/g;
 
 /**
  * Round 1633: mirrors webhookIn.ts's own WEBHOOK_PARENTHESIZED_NEGATIVE --

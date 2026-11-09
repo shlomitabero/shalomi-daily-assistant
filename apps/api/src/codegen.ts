@@ -3954,7 +3954,7 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   // convention), which silently drops an unrecognized single-backslash
   // escape -- round 1633 found this was already broken here (whitespace
   // was never actually being stripped) while adding the sibling regex below.
-  const CSV_NUMBER_FORMATTING = /[,$€£₪\\s]/g;
+  const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩\\s]/g;
 
   // Round 1633: mirrors the identical leniency round 1627 added to the
   // inbound-webhook route for the same "accounting export" shape -- a
@@ -4337,7 +4337,7 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         // elsewhere in this function, so a boolean/array/object value
         // (where a bare Number(raw) would otherwise silently coerce,
         // e.g. Number(true) === 1) is still rejected outright.
-        const CSV_NUMBER_FORMATTING = /[,$€£₪\\s]/g;
+        const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩\\s]/g;
         const CSV_PARENTHESIZED_NEGATIVE = /^\\((.*)\\)$/;
         const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
         let n = numberIsCoercible ? Number(raw) : NaN;

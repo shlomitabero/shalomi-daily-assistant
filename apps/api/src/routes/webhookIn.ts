@@ -209,7 +209,7 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
 const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 const WEBHOOK_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
-const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪\s]/g;
+const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪¥₹₩\s]/g;
 // Round 1627: accounting-style negatives wrap the whole number in
 // parentheses instead of a leading "-" (e.g. "($1,234.56)" for -1234.56) --
 // the shape QuickBooks/Xero/many payment-provider exports use for a refund
