@@ -5560,7 +5560,25 @@ export function createProjectsRouter(
           const entity = findEntity(project, req.params.entityName);
           const sourceLabel = entity.label ?? entity.name;
           const suffix = isHebrewText(sourceLabel) ? " (עותק)" : " (copy)";
-          const newLabel = `${sourceLabel}${suffix}`;
+          // Round 1791 (the same hazard round 1410 already closed for POST
+          // /projects/:id/clone's own synthesized `name`): this label is
+          // built by plain string concatenation with no
+          // SPEC_LABEL_MAX_LENGTH cap, unlike every other route that
+          // accepts an entity label (RenameEntityLabelSchema/
+          // AddEntitySchema etc., all .max(SPEC_LABEL_MAX_LENGTH) via Zod)
+          // -- EntitySchema's own label field (packages/shared) has no
+          // length limit of its own, so an overlong value here doesn't
+          // throw or get rejected, it just silently bypasses the one cap
+          // every other label-accepting path enforces, and an entity
+          // repeatedly duplicated off itself chains the suffix with no
+          // bound, the same amplification round 1410 describes for clone.
+          // Truncated, not rejected with a 400, for the same reason round
+          // 1410 gives: this value is server-synthesized, not something
+          // the user typed into an editable field.
+          const rawLabel = `${sourceLabel}${suffix}`;
+          const newLabel = rawLabel.length > SPEC_LABEL_MAX_LENGTH
+            ? `${sourceLabel.slice(0, SPEC_LABEL_MAX_LENGTH - suffix.length)}${suffix}`
+            : rawLabel;
           const name = deriveEntityName(newLabel, project.spec.entities.map((e) => e.name));
           const newEntity: Entity = {
             ...entity,

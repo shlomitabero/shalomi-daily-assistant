@@ -11143,6 +11143,96 @@ test("duplicating an entity clones its whole field list into a new entity with a
   });
 });
 
+/**
+ * Regression test for round 1791: this route builds its new entity's label
+ * by plain string concatenation with no SPEC_LABEL_MAX_LENGTH cap, unlike
+ * every other route that accepts an entity label (RenameEntityLabelSchema/
+ * AddEntitySchema etc., all .max(SPEC_LABEL_MAX_LENGTH) via Zod) -- the
+ * exact hazard round 1410 already closed for POST /projects/:id/clone's own
+ * synthesized `name`. EntitySchema's own label field has no length limit
+ * of its own (packages/shared), so an overlong value here doesn't throw or
+ * get rejected -- it just silently bypasses the one cap every other
+ * label-accepting path enforces, drifting this one route out of step with
+ * the rest of the app's own established convention. Renames the source
+ * entity's label to 196 characters first (well within
+ * RenameEntityLabelSchema's own 200-char cap), so appending " (copy)"
+ * (7 chars) would overflow to 203 without the fix.
+ */
+test("duplicating an entity whose label is already near the 200-char cap gets its new label truncated to fit, matching every other label-accepting route's own cap", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate-overflow@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const source = project.spec.entities[0];
+
+    const longLabel = "A".repeat(196);
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: longLabel }),
+    });
+    assert.equal(renameRes.status, 200);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; label?: string }[] } };
+    };
+    const clone = updated.spec.entities.at(-1)!;
+    assert.ok(clone.label!.length <= 200, `the clone's label must stay within the 200-char cap, got ${clone.label!.length} characters`);
+    assert.ok(clone.label!.endsWith(" (copy)"), "the \" (copy)\" suffix must survive the truncation, not be cut off itself");
+
+    // Sanity check: the project must still be readable and present in its
+    // own owner's project list afterward.
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(token) });
+    assert.equal(listRes.status, 200);
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    assert.ok(projects.some((p) => p.id === project.id), "the project must still be listed");
+  });
+});
+
+/**
+ * Regression test for round 1791 (chained-duplicate-of-duplicate variant):
+ * round 1410's own doc comment on /projects/:id/clone calls out that
+ * repeatedly cloning a clone chains the suffix with no bound
+ * ("X" -> "X (copy)" -> "X (copy) (copy)" -> ...) -- the same chain is
+ * possible here by always duplicating the newest entity, and must stay
+ * capped at 200 chars no matter how many times it repeats.
+ */
+test("repeatedly duplicating the newest entity chains the \" (copy)\" suffix without ever exceeding the 200-char label cap", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate-chain@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    let latestName = project.spec.entities[0].name;
+
+    for (let i = 0; i < 30; i += 1) {
+      const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${latestName}/duplicate`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(res.status, 200);
+      const { project: updated } = (await res.json()) as {
+        project: { spec: { entities: { name: string; label?: string }[] } };
+      };
+      const clone = updated.spec.entities.at(-1)!;
+      assert.ok(clone.label!.length <= 200, `duplicate #${i + 1}'s label must stay within the 200-char cap, got ${clone.label!.length} characters`);
+      latestName = clone.name;
+    }
+  });
+});
+
 test("duplicating an entity twice in a row gets two distinct names (no collision), the second time deriving from the same original source label", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "entity-duplicate2@example.com");
