@@ -18,7 +18,7 @@ import {
   type ForgeDatabase,
   type MigrationChange,
 } from "@forge/db";
-import { requestSpecFix } from "@forge/spec-engine";
+import { detectLikelyEntityRenames, requestSpecFix } from "@forge/spec-engine";
 import { deleteUploadedFile } from "./uploadPaths.js";
 
 const RESERVED_SQL_WORDS = new Set([
@@ -407,8 +407,18 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
  * relaxed, or simply missing an entity/field the user has been actively
  * using, with real data already in it.
  */
-export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: ProductSpec): string {
+export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: ProductSpec, rawCandidateSpec?: ProductSpec): string {
   const impact = computeImpact(previousSpec, nextSpec);
+  // Round 1803: must run against the RAW pre-merge candidate, not nextSpec
+  // -- by the time nextSpec exists, mergeRefinedSpec has already restored
+  // the "dropped" entity (it never removes anything), so computeImpact
+  // itself would only ever see an entity ADDED, never one removed, and
+  // this exact hazard shape would be invisible if computed off nextSpec.
+  // Omitted entirely for the checkpoint-restore caller below (no candidate
+  // exists there -- a restore replaces the spec outright, it doesn't merge
+  // one into it), same optional-and-silent-when-absent shape as every
+  // other caller-specific hazard clause here.
+  const likelyRenames = rawCandidateSpec ? detectLikelyEntityRenames(previousSpec, rawCandidateSpec) : [];
   // An entity that still exists can nonetheless lose one of its OWN fields
   // (same root cause as an entity disappearing outright, one level down).
   // computeImpact already computes this per entity
@@ -449,11 +459,14 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
       : "") +
     (entitiesWithRetargetedFields.length > 0
       ? ` Warning: ${entitiesWithRetargetedFields.map((e) => `${e.label} repointed relation field(s) to a different entity: ${e.retargetedFieldNames.join(", ")}`).join("; ")} -- automation rules using these fields may need to be reviewed.`
+      : "") +
+    (likelyRenames.length > 0
+      ? ` Warning: ${likelyRenames.map((r) => `"${r.from}" looks like it was meant to become "${r.to}"`).join("; ")} -- both entities now exist side by side; if this was meant to be a rename, delete the old one yourself.`
       : "")
   );
 }
 
-function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec): AgentStepEvent {
+function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec, rawCandidateSpec?: ProductSpec): AgentStepEvent {
   const impact = computeImpact(previousSpec, nextSpec);
   // changedEntities includes an entity for ANY of new/removed/tightened
   // fields (see computeImpact above), but the headline below only ever
@@ -465,7 +478,7 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
   const message = previousSpec
     ? `Impact: +${impact.newEntityNames.length} new ${impact.newEntityNames.length === 1 ? "entity" : "entities"} (${impact.newEntityNames.join(", ") || "none"}), ` +
       `${entitiesWithNewFields.length} existing ${entitiesWithNewFields.length === 1 ? "entity" : "entities"} gaining fields.` +
-      describeImpactHazards(previousSpec, nextSpec)
+      describeImpactHazards(previousSpec, nextSpec, rawCandidateSpec)
     : `Designed ${nextSpec.entities.length} ${nextSpec.entities.length === 1 ? "table" : "tables"} for ${nextSpec.roles.length} ${nextSpec.roles.length === 1 ? "role" : "roles"}.`;
   return { agent: "Architect", status: "success", message, detail: impact };
 }
@@ -630,6 +643,17 @@ export interface PipelineOptions {
   // (requireProjectWriteAccess already ran), so this is only ever undefined
   // in a test that constructs PipelineOptions directly.
   createdByUserId?: string;
+  // Round 1803: /refine's own generateSpec() result, BEFORE mergeRefinedSpec
+  // folds it into nextSpec -- mergeRefinedSpec never removes a current
+  // entity (see its own doc comment), so a refine that renames one leaves
+  // the old-named entity in nextSpec untouched AND adds the new-named one,
+  // and nextSpec alone can no longer tell the two situations apart from an
+  // ordinary "added a genuinely new entity" refine. Carrying the raw,
+  // pre-merge candidate through lets architectEvent below warn on exactly
+  // this shape via detectLikelyEntityRenames. /build has no candidate at
+  // all (it builds whatever spec the project already has), so this stays
+  // undefined there, same as providerName above.
+  rawCandidateSpec?: ProductSpec;
 }
 
 /**
@@ -683,7 +707,7 @@ export async function* runBuildPipeline(
   project: Project,
   options: PipelineOptions,
 ): AsyncGenerator<AgentStepEvent> {
-  const { previousSpec, changeLabel, providerName } = options;
+  const { previousSpec, changeLabel, providerName, rawCandidateSpec } = options;
   let nextSpec = options.nextSpec;
   // Preserves any entity/field label (and enum label) a user customized
   // post-build, which the freshly generated nextSpec otherwise silently
@@ -703,7 +727,7 @@ export async function* runBuildPipeline(
     // shape.
     ...(providerName ? { detail: { providerName } } : {}),
   };
-  yield architectEvent(previousSpec, nextSpec);
+  yield architectEvent(previousSpec, nextSpec, rawCandidateSpec);
 
   yield { agent: "Database", status: "running", message: "Applying migration…" };
   let changes: MigrationChange[];
@@ -748,7 +772,7 @@ export async function* runBuildPipeline(
     // for the corrected spec lets the UI (which keeps only the latest
     // event per agent) replace the stale one instead of leaving it
     // uncorrected.
-    yield architectEvent(previousSpec, nextSpec);
+    yield architectEvent(previousSpec, nextSpec, rawCandidateSpec);
     yield {
       agent: "Debug",
       status: "success",

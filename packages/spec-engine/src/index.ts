@@ -179,3 +179,45 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
     screens: mergedScreens,
   };
 }
+
+/**
+ * Round 1803: mergeRefinedSpec above matches entities by exact name only --
+ * by design, it never REMOVES a current entity (see its own doc comment,
+ * "every entity ... survives"), so when a refine instruction renames an
+ * entity (a realistic, common request, e.g. "rename Customer to Client"),
+ * the candidate's new-named entity doesn't match the old one by name and
+ * gets added as if unrelated, while the old-named entity is never touched.
+ * The merged spec ends up with BOTH entities live at once -- not the
+ * rename the user asked for -- and for a post-build /refine this creates
+ * two real, independent SQLite tables (confirmed via mergeRefinedSpec's own
+ * callers in routes/projects.ts, which feed its result straight into the
+ * real migration pipeline).
+ *
+ * This detects that specific shape so a caller can warn the user, without
+ * touching the merge itself: an exact field-name-set match between a
+ * current entity the candidate completely omits and a brand-new candidate
+ * entity is a strong signal, but not a certain one (two genuinely
+ * different entities could coincidentally share every field name) --
+ * acting on it by auto-merging would risk the exact silent-data-loss
+ * failure mode mergeRefinedSpec itself exists to prevent, so this only
+ * ever informs, never merges.
+ */
+export function detectLikelyEntityRenames(current: ProductSpec, candidate: ProductSpec): { from: string; to: string }[] {
+  const candidateNames = new Set(candidate.entities.map((entity) => entity.name.toLowerCase()));
+  const currentNames = new Set(current.entities.map((entity) => entity.name.toLowerCase()));
+  const droppedEntities = current.entities.filter((entity) => !candidateNames.has(entity.name.toLowerCase()));
+  const addedEntities = candidate.entities.filter((entity) => !currentNames.has(entity.name.toLowerCase()));
+  const fieldSignature = (entity: Entity) =>
+    [...new Set(entity.fields.map((field) => field.name.toLowerCase()))].sort().join(",");
+  const renames: { from: string; to: string }[] = [];
+  for (const dropped of droppedEntities) {
+    // An empty signature (an entity with no fields at all) would otherwise
+    // match ANY other empty-field entity -- never a meaningful signal of a
+    // genuine rename, just two unrelated bare entities.
+    if (dropped.fields.length === 0) continue;
+    const droppedSignature = fieldSignature(dropped);
+    const match = addedEntities.find((added) => added.fields.length > 0 && fieldSignature(added) === droppedSignature);
+    if (match) renames.push({ from: dropped.label || dropped.name, to: match.label || match.name });
+  }
+  return renames;
+}

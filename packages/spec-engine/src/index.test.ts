@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { AnthropicSpecProvider, SYSTEM_PROMPT } from "./anthropic.js";
-import { selectProvider, generateSpec, mergeRefinedSpec } from "./index.js";
+import { selectProvider, generateSpec, mergeRefinedSpec, detectLikelyEntityRenames } from "./index.js";
 
 function baseSpec(overrides: Partial<ProductSpec> = {}): ProductSpec {
   return {
@@ -391,4 +391,71 @@ test("mergeRefinedSpec takes the candidate's own summary, not the current spec's
   const candidate = baseSpec({ summary: "new summary reflecting the refine instruction" });
   const merged = mergeRefinedSpec(current, candidate);
   assert.equal(merged.summary, "new summary reflecting the refine instruction");
+});
+
+/**
+ * Round 1803: mergeRefinedSpec above never removes a current entity, so a
+ * refine that renames one (e.g. "rename Customer to Client") doesn't
+ * replace it -- it leaves the old-named entity untouched AND adds the new
+ * one as if unrelated, producing two live entities instead of a rename.
+ * detectLikelyEntityRenames doesn't change that merge behavior (see its own
+ * doc comment on why not); it only flags the shape for a caller to warn on.
+ */
+test("mergeRefinedSpec keeps BOTH entities when a refine renames one -- it is not a replacement, confirming detectLikelyEntityRenames's own premise", () => {
+  const current = baseSpec({
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [{ name: "Client", fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }] }],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name).sort(),
+    ["Client", "Customer"],
+  );
+});
+
+test("detectLikelyEntityRenames flags an entity the candidate dropped paired with a brand-new one sharing the exact same field names", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Customer", label: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Client", label: "Client", fields: [{ name: "email", type: "text", required: false }, { name: "name", type: "text", required: true }] },
+    ],
+  });
+  assert.deepEqual(detectLikelyEntityRenames(current, candidate), [{ from: "Customer", to: "Client" }]);
+});
+
+test("detectLikelyEntityRenames finds nothing when the candidate genuinely just adds a new, unrelated entity (current survives untouched)", () => {
+  const current = baseSpec({ entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Invoice", fields: [{ name: "amount", type: "number", required: true }] },
+    ],
+  });
+  assert.deepEqual(detectLikelyEntityRenames(current, candidate), []);
+});
+
+test("detectLikelyEntityRenames finds nothing for a dropped entity whose field names don't match any added entity's", () => {
+  const current = baseSpec({ entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const candidate = baseSpec({ entities: [{ name: "Vendor", fields: [{ name: "contactPerson", type: "text", required: true }] }] });
+  assert.deepEqual(detectLikelyEntityRenames(current, candidate), []);
+});
+
+test("detectLikelyEntityRenames never matches two unrelated entities that both happen to have zero fields", () => {
+  const current = baseSpec({ entities: [{ name: "Dashboard", fields: [] }] });
+  const candidate = baseSpec({ entities: [{ name: "Overview", fields: [] }] });
+  assert.deepEqual(detectLikelyEntityRenames(current, candidate), []);
+});
+
+test("detectLikelyEntityRenames is a no-op when nothing was dropped or added (a pure field-level refine)", () => {
+  const current = baseSpec({ entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const candidate = baseSpec({
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text", required: false }] }],
+  });
+  assert.deepEqual(detectLikelyEntityRenames(current, candidate), []);
 });

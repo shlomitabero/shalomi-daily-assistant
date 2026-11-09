@@ -3344,6 +3344,13 @@ export function createProjectsRouter(
           providerName,
           uploadsDir,
           createdByUserId: req.userId!,
+          // Round 1803: mergeRefinedSpec can't tell a rename from an
+          // unrelated addition (see its own doc comment), so by the time
+          // nextSpec exists here, a renamed entity already looks identical
+          // to any other current entity -- the rename-detection warning
+          // needs the RAW pre-merge candidate to still see what was
+          // actually dropped. See describeImpactHazards's own doc comment.
+          rawCandidateSpec: candidateSpec,
         });
       } finally {
         activePipelines.delete(project.id);

@@ -2266,6 +2266,80 @@ test("describeImpactHazards still reports a genuinely tightened field even when 
 });
 
 /**
+ * Round 1803: mergeRefinedSpec (spec-engine) never removes a current entity,
+ * so when a refine instruction renames one, nextSpec ends up with BOTH the
+ * old and new entity -- computeImpact alone (fed nextSpec) would never see
+ * the old one as "removed", since it's still right there, untouched. The
+ * optional third `rawCandidateSpec` argument is the one escape hatch: it
+ * lets describeImpactHazards compare against the candidate BEFORE the merge
+ * restored the dropped entity, which is the only place this shape is still
+ * visible.
+ */
+test("describeImpactHazards warns about a likely entity rename when given the raw pre-merge candidate, even though the merged nextSpec itself keeps both entities", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Customer",
+        fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }],
+      },
+    ],
+  };
+  // What generateSpec() actually returned for "rename Customer to Client" --
+  // Client instead of Customer, never alongside it.
+  const rawCandidateSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Client",
+        fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }],
+      },
+    ],
+  };
+  // What mergeRefinedSpec's own "current always survives" rule actually
+  // produces: Customer restored, Client added alongside it.
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [...previousSpec.entities, ...rawCandidateSpec.entities],
+  };
+
+  assert.equal(
+    describeImpactHazards(previousSpec, nextSpec),
+    "",
+    "without rawCandidateSpec, this looks like a harmless pure addition -- Customer is still right there in nextSpec",
+  );
+  const hazards = describeImpactHazards(previousSpec, nextSpec, rawCandidateSpec);
+  assert.match(hazards, /"Customer" looks like it was meant to become "Client"/);
+  assert.match(hazards, /both entities now exist side by side/);
+});
+
+test("describeImpactHazards omits the rename warning when no rawCandidateSpec is given, e.g. the checkpoint-restore caller which never merges anything", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      ...previousSpec.entities,
+      { name: "Client", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  };
+
+  assert.doesNotMatch(describeImpactHazards(previousSpec, nextSpec), /looks like it was meant to become/);
+});
+
+/**
  * Round 947: carryForwardLabels' own counterpart to the describeImpactHazards
  * tests above -- a case-only entity/field rename must still carry the
  * user's own prior label forward, the exact same label-loss regression
