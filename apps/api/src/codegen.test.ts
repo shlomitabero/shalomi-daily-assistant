@@ -28364,6 +28364,76 @@ test("the exported EntityView flags a deadline-named date field as overdue/due-s
 });
 
 /**
+ * Round 1747: ports the live preview's own aria-label fix to the exported
+ * app's EntityView.jsx -- before this fix, this generated urgency span only
+ * ever carried a `title`, which most screen readers never announce on a
+ * bare non-interactive `<span>`, same gap the live preview just closed.
+ * Same Task/dueDate fixture as the test above.
+ */
+test("the exported EntityView's overdue/due-soon date span exposes its urgency via aria-label too, not just a hover-only title", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [{ id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const span = container.querySelector(".date-overdue") as HTMLElement;
+      assert.ok(span, "expected the overdue date span to exist");
+      assert.match(span.getAttribute("aria-label") ?? "", /Overdue/, "the aria-label must announce the urgency");
+      assert.equal(
+        span.getAttribute("aria-label"),
+        `${span.textContent} — Overdue`,
+        "the aria-label must still include the date text itself, since aria-label replaces rather than adds to the accessible name",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1723: ports the live preview's own isRecordClosedStatus fix (round
  * 1721) to the exported app's EntityView.jsx -- a record whose own sibling
  * `status` enum field already holds a terminal value (e.g. "Done") is

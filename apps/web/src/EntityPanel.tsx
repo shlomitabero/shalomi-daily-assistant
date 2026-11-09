@@ -360,8 +360,21 @@ function Cell({
     const formatted = formatDateValue(String(value), lang);
     const urgency = isDeadlineFieldName(field.name) && !recordClosed ? getDateUrgency(String(value)) : null;
     if (!urgency) return <>{formatted}</>;
+    // Round 1747: mirrors the boolean branch's own aria-label reasoning
+    // above exactly -- a title on a bare span has no implicit accessible
+    // role and most screen readers never announce it, and it's hover-only
+    // besides, so a non-visual/touch-only user got no indication at all
+    // that this date is overdue/due-soon versus any other date in the
+    // column. aria-label REPLACES an element's accessible name rather than
+    // adding to it, so unlike the boolean branch (whose glyph carries no
+    // meaningful text of its own), this one must fold the visible date
+    // text into the label too -- aria-label="Overdue" alone would make a
+    // screen reader announce only "Overdue" and never read the date
+    // itself. Reuses the exact same translated string already computed
+    // for `title`, so sighted hover users keep that tooltip unchanged.
+    const urgencyLabel = t(urgency === "overdue" ? "entity.dateOverdue" : "entity.dateDueSoon");
     return (
-      <span className={`date-${urgency === "overdue" ? "overdue" : "due-soon"}`} title={t(urgency === "overdue" ? "entity.dateOverdue" : "entity.dateDueSoon")}>
+      <span className={`date-${urgency === "overdue" ? "overdue" : "due-soon"}`} title={urgencyLabel} aria-label={`${formatted} — ${urgencyLabel}`}>
         {formatted}
       </span>
     );

@@ -3408,8 +3408,9 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
     const formatted = Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
     const urgency = isDeadlineFieldName(field.name) && !recordClosed ? getDateUrgency(value) : null;
     if (!urgency) return <>{formatted}</>;
+    const urgencyLabel = urgency === "overdue" ? "Overdue" : "Due soon";
     return (
-      <span className={\`date-\${urgency === "overdue" ? "overdue" : "due-soon"}\`} title={urgency === "overdue" ? "Overdue" : "Due soon"}>
+      <span className={\`date-\${urgency === "overdue" ? "overdue" : "due-soon"}\`} title={urgencyLabel} aria-label={\`\${formatted} — \${urgencyLabel}\`}>
         {formatted}
       </span>
     );

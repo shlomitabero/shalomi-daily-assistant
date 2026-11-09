@@ -17812,6 +17812,76 @@ test("a date field named like a deadline is visually flagged overdue/due-soon in
 });
 
 /**
+ * Round 1747: the overdue/due-soon urgency span above only ever carried a
+ * CSS color class plus an HTML `title` -- a `title` on a bare, non-
+ * interactive `<span>` has no implicit accessible-description role, and
+ * most screen readers never announce it (it's hover-only besides, so it's
+ * also useless on touch devices). The boolean-cell branch in this same
+ * Cell() function already gives its own glyph an aria-label for the
+ * identical "non-visual user gets nothing" reason -- the date-urgency
+ * branch never got the same treatment despite having the identical gap.
+ * aria-label REPLACES an element's accessible name rather than adding to
+ * it, so the label must fold the visible date text in too, or a screen
+ * reader would announce only "Overdue"/"Due soon" and never read the
+ * date itself.
+ */
+test("the overdue/due-soon date span exposes BOTH its urgency and the date itself to assistive tech via aria-label, not just a hover-only title", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue task", dueDate: isoDateOffset(-5) },
+      { id: 2, title: "Due soon task", dueDate: isoDateOffset(1) },
+      { id: 3, title: "Far future task", dueDate: isoDateOffset(30) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 3);
+
+      const rows = Array.from(document.querySelectorAll("table tbody tr"));
+      const overdueSpan = rows.find((r) => /Overdue task/.test(r.textContent ?? ""))!.querySelector(".date-overdue") as HTMLElement;
+      const dueSoonSpan = rows.find((r) => /Due soon task/.test(r.textContent ?? ""))!.querySelector(".date-due-soon") as HTMLElement;
+      const farSpan = rows.find((r) => /Far future task/.test(r.textContent ?? ""))!.querySelector("td:nth-child(2) span");
+
+      assert.match(
+        overdueSpan.getAttribute("aria-label") ?? "",
+        /Overdue/,
+        "an overdue date's aria-label must announce the urgency, not rely on a hover-only title a screen reader won't read",
+      );
+      assert.equal(
+        overdueSpan.getAttribute("aria-label"),
+        `${overdueSpan.textContent} — Overdue`,
+        "the aria-label must still include the actual date text -- aria-label REPLACES the accessible name, so urgency-only would silently drop the date from what a screen reader announces",
+      );
+      assert.match(dueSoonSpan.getAttribute("aria-label") ?? "", /Due soon/, "a due-soon date's aria-label must announce its own distinct urgency");
+      assert.equal(farSpan, null, "an ordinary (non-urgent) date has no urgency span at all, so nothing to label");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1721: a record whose own sibling `status` enum field already holds
  * a terminal value (e.g. "Paid", "Done") is already resolved -- flagging
  * its past dueDate red is actively misleading, since the record's own data
