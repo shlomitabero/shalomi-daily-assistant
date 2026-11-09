@@ -2468,6 +2468,63 @@ test("5 consecutive isManualTest=true failures never trip hasTooManyConsecutiveF
   );
 });
 
+/**
+ * Round 1795: hasTooManyConsecutiveFailuresToday used to compare each run's
+ * triggeredAt against a plain UTC "today" (now.toISOString().slice(0, 10)),
+ * ignoring the rule's own scheduleTimezone entirely -- unlike
+ * isScheduledRuleDue just above, which keeps a rule "due" for the rest of
+ * ITS OWN local day after any failure. For a non-UTC scheduleTimezone, UTC
+ * midnight falls in the MIDDLE of the rule's own local day, not near its
+ * edge: "America/Los_Angeles" at local 09:00 is already UTC 16:00 the same
+ * day, and UTC rolls over to the next date at local 17:00 that SAME local
+ * day. Once the cap trips (typically within minutes of the rule's own
+ * scheduled time), that UTC rollover a few hours later made every one of
+ * the 5 failed runs that tripped it stop matching the new `todayUtc`,
+ * silently un-tripping the cap while isScheduledRuleDue was still (and
+ * correctly) calling the rule due for the rest of its own local day -- the
+ * scheduler then fired up to 5 MORE real attempts against the same
+ * still-broken destination, a real doubling of retry volume within one
+ * local day, not the harmless few-hour shift round 967's own old comment
+ * (superseded above) assumed. This test reproduces exactly that: 5 real
+ * failures at local 09:00-09:04 PDT trip the cap (UTC 2026-03-15
+ * 16:00-16:04); checking again at local 17:05 PDT the SAME day (UTC
+ * 2026-03-16 00:05, a date that has already rolled over) must still find
+ * the cap tripped, and a real scheduler tick at that same later moment
+ * must NOT fire a 6th attempt.
+ */
+test("hasTooManyConsecutiveFailuresToday stays tripped across a UTC date rollover that happens mid-way through the rule's own local day", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, scheduleRuleBase({ scheduleTimezone: "America/Los_Angeles", toNumber: "972508888888" }));
+  const { manager: brokenManager, sendCalls } = createFakeWhatsApp({ connected: true, sendResult: { ok: false, error: "recipient not found" } });
+
+  // 5 real failures at local 09:00-09:04 PDT on March 15 (UTC 16:00-16:04).
+  for (const minute of ["16:00", "16:01", "16:02", "16:03", "16:04"]) {
+    await runScheduledAutomationsCheck(db, brokenManager, UNUSED_EMAIL_SENDER, new Date(`2026-03-15T${minute}:00.000Z`));
+  }
+  assert.equal(sendCalls.length, 5, "sanity check: all 5 attempts up to the cap must have actually been real send attempts");
+  assert.equal(
+    hasTooManyConsecutiveFailuresToday(db, getAutomationRule(db, project.id, rule.id)!, new Date("2026-03-15T16:05:00.000Z")),
+    true,
+    "the cap must be tripped right after the 5th failure, same as before this round",
+  );
+
+  // Local 17:05 PDT, SAME local day for this rule (March 15) -- but the
+  // UTC date has already rolled over to March 16.
+  const afterUtcRollover = new Date("2026-03-16T00:05:00.000Z");
+  assert.equal(
+    hasTooManyConsecutiveFailuresToday(db, getAutomationRule(db, project.id, rule.id)!, afterUtcRollover),
+    true,
+    "the cap must stay tripped across a UTC date rollover that happens mid-way through the rule's own local day -- it must only clear at the rule's own local midnight, not UTC midnight",
+  );
+
+  await runScheduledAutomationsCheck(db, brokenManager, UNUSED_EMAIL_SENDER, afterUtcRollover);
+  assert.equal(
+    sendCalls.length,
+    5,
+    "the scheduler must NOT fire a 6th real attempt just because the UTC date rolled over mid-way through this rule's own local day",
+  );
+});
+
 test("runScheduledAutomationsCheck fires exactly the rules that are due right now, across different projects, and skips disabled/not-yet-due ones", async () => {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);

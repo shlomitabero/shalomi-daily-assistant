@@ -1806,13 +1806,42 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * only a new successful run or a new UTC day does, and neither happens
  * while the scheduler keeps skipping the rule.
  *
- * Round 967: deliberately left on a plain UTC "today" boundary, unlike
- * isScheduledRuleDue's own switch to the rule's scheduleTimezone -- this
- * is an internal safety cap on retry volume, not a user-visible "did my
- * message go out today" guarantee, so its day boundary landing a few
- * hours off from the rule's own local midnight has no real-world
- * consequence (the cap still resets once per real day, just not exactly
- * at this rule's own local midnight). Not an oversight to "fix" later.
+ * Round 1795 (supersedes round 967's own reasoning just below, kept for
+ * context): round 967 deliberately left this on a plain UTC "today"
+ * boundary, reasoning that landing a few hours off from the rule's own
+ * local midnight "has no real-world consequence" since the cap "still
+ * resets once per real day." That reasoning assumed the mismatch could
+ * only ever DELAY or ADVANCE when the cap resets by a few hours relative
+ * to the rule's own day -- but for a non-UTC scheduleTimezone, UTC
+ * midnight falls somewhere in the MIDDLE of the rule's own local day, not
+ * near its edge. isScheduledRuleDue (above) keeps a rule "due" for the
+ * entire remainder of ITS OWN local day after any failure -- so once this
+ * cap trips early in that local day (typically within minutes, at the
+ * rule's own scheduled time), the UTC date still rolls over LATER THAT
+ * SAME local day. The instant it does, every one of the 5 failed runs
+ * that tripped the cap -- all genuinely truthfully timestamped under the
+ * OLD UTC date -- stops matching the NEW `todayUtc` below, so this
+ * function flips back to false while isScheduledRuleDue is still
+ * (correctly) calling the rule due for the rest of its own local day. The
+ * scheduler then resumes firing, producing a second wave of up to 5 more
+ * real send/webhook/email attempts against the same still-broken
+ * destination before this cap re-trips -- not a harmless few-hour shift,
+ * but a real doubling of retry volume within one local day, exactly the
+ * number-flagging/hammering risk this cap exists to bound (round 924's
+ * own header comment above). Confirmed empirically with a repro rule on
+ * "America/Los_Angeles": 5 real failed sends at local ~09:00-09:04, a
+ * false reset at the UTC rollover (local ~17:00 that same day), then 5
+ * more real failed sends at ~17:00-17:04. (Round 1208's own survey
+ * considered and rejected a DIFFERENT, narrower UTC-vs-local claim about
+ * this same function -- a bounded few-minute delay in the cap's FIRST
+ * trip near a schedule's own start time -- which is a real non-issue;
+ * this is a distinct mechanism, an already-tripped cap re-arming mid-day,
+ * not a re-litigation of that rejected claim.)
+ *
+ * Fix: reuses wallClockIn (this file's own helper, see isScheduledRuleDue
+ * above) so both functions agree on exactly the same "today" -- the
+ * rule's own local calendar date -- and this cap can no longer un-trip
+ * before that date actually rolls over.
  *
  * Round 1032: EMAIL_NOT_CONFIGURED_ERROR (a send_email rule's own
  * deployment-level "no RESEND_API_KEY" gap) is the exact same shape of
@@ -1881,7 +1910,8 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * now each contribute up to that many rows ahead of a real failure.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
-  const todayUtc = now.toISOString().slice(0, 10);
+  const timeZone = rule.scheduleTimezone ?? "UTC";
+  const today = wallClockIn(now, timeZone).date;
   const runs = listAutomationRuns(db, rule.projectId, rule.id, 6 * AUTOMATION_RUNS_RETENTION_LIMIT)
     .filter(
       (run) =>
@@ -1894,7 +1924,7 @@ export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: Auto
     )
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);
   if (runs.length < MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY) return false;
-  return runs.every((run) => run.status === "failed" && run.triggeredAt.slice(0, 10) === todayUtc);
+  return runs.every((run) => run.status === "failed" && wallClockIn(new Date(run.triggeredAt), timeZone).date === today);
 }
 
 /**
