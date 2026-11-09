@@ -2293,6 +2293,55 @@ test("requesting a fresh reset token invalidates the previous one for the same a
 });
 
 /**
+ * Round 1757: before this fix, PATCH /auth/password never touched any
+ * outstanding password-reset token -- an owner proactively securing their
+ * account with their own current password left an earlier (possibly
+ * attacker-triggered) forgot-password link fully valid for the rest of its
+ * own TTL. Confirms that link is now dead immediately once the password
+ * is changed through the authenticated route, the same "an old pending
+ * reset secret must not survive" instinct already applied when a FRESH
+ * forgot-password request supersedes a prior one (the test just above).
+ */
+test("proactively changing your password via PATCH /auth/password invalidates any outstanding forgot-password reset token", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const email = "dana@example.com";
+      const token = await signup(baseUrl, email);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself also sends its own verification email -- only the reset email below matters here.
+
+      await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, lang: "en" }),
+      });
+      const resetUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const resetToken = new URL(resetUrl).searchParams.get("resetToken")!;
+
+      const changeRes = await fetch(`${baseUrl}/api/auth/password`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", newPassword: "a-brand-new-password" }),
+      });
+      assert.equal(changeRes.status, 204);
+
+      const staleResetRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword: "attacker-chosen-password" }),
+      });
+      assert.equal(
+        staleResetRes.status,
+        401,
+        "a reset link minted before the password was proactively changed must no longer work -- otherwise it could silently undo this very change",
+      );
+      assert.equal(((await staleResetRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Round 1296: regression test for a real bug -- deletePasswordResetTokensForUser
  * + createPasswordResetToken ran unconditionally after the send()
  * try/catch, regardless of whether the send actually succeeded. A second

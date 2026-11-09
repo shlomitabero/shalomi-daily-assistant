@@ -1069,6 +1069,21 @@ export function createAuthRouter(
         }
         updatePasswordHash(db, req.userId!, newHash);
         deleteOtherSessionsForUser(db, req.userId!, extractBearerToken(req)!);
+        // Round 1757: an outstanding password-reset token (e.g. from an
+        // earlier /auth/forgot-password request, possibly triggered by an
+        // attacker, or simply never used) stayed valid through this route
+        // before this fix -- the owner proactively securing the account
+        // with their own current password did nothing to it. Within the
+        // token's own TTL, anyone still holding that original link could
+        // call /auth/reset-password afterwards, silently undo this very
+        // change, and (per that route's own deleteAllSessionsForUser) kick
+        // the real owner out in the process. /auth/forgot-password already
+        // calls this same deletePasswordResetTokensForUser right before
+        // minting its own replacement token (see its own round-1296
+        // comment above) -- the identical "an old pending reset secret
+        // must not survive" instinct, just never extended to the
+        // credential itself actually changing here.
+        deletePasswordResetTokensForUser(db, req.userId!);
         if (emailSender.configured) {
           const isHebrew = lang !== "en";
           const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
