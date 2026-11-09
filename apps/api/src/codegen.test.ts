@@ -17062,7 +17062,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -17083,7 +17083,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     () => {},
     { current: 0 },
     { current: {} },
-    { current: false },
+    { current: null },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -17356,7 +17356,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
@@ -17373,7 +17373,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     () => {},
     { current: 0 },
     { current: {} },
-    { current: false },
+    { current: null },
   ) as (q: string) => Promise<void>;
 
   await fn("match");
@@ -17510,7 +17510,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "highlightQuery",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     "setTruncatedEntityNames",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
@@ -17523,7 +17523,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "Dana",
     { current: 0 },
     lastRecordsByEntityRef,
-    { current: false },
+    { current: null },
     () => {},
   ) as (entityName: string) => Promise<void>;
 
@@ -17568,7 +17568,7 @@ test("the exported GlobalSearch's handleShowAll adds its own entity to the trunc
     "highlightQuery",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     "setTruncatedEntityNames",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
@@ -17581,7 +17581,7 @@ test("the exported GlobalSearch's handleShowAll adds its own entity to the trunc
     "Dana",
     { current: 0 },
     { current: {} },
-    { current: false },
+    { current: null },
     (next: string[] | ((prev: string[]) => string[])) => {
       truncatedNames = typeof next === "function" ? (next as (prev: string[]) => string[])(truncatedNames) : next;
     },
@@ -17627,7 +17627,7 @@ test("the exported GlobalSearch's handleShowAll never surfaces a stale, still-in
     "highlightQuery",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     `${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [courierEntity],
@@ -17643,7 +17643,7 @@ test("the exported GlobalSearch's handleShowAll never surfaces a stale, still-in
     "Dana",
     searchRequestId,
     { current: {} },
-    { current: false },
+    { current: null },
   ) as (entityName: string) => Promise<void>;
 
   const showAllPromise = fn("Courier");
@@ -17707,7 +17707,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "setTruncatedEntityNames",
     "searchRequestId",
     "lastRecordsByEntityRef",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA],
@@ -17730,7 +17730,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     () => {},
     searchRequestId,
     { current: {} },
-    { current: false },
+    { current: null },
   ) as (q: string) => Promise<void>;
 
   const stalePromise = fn("target");
@@ -17851,7 +17851,7 @@ test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setE
     "lastRecordsByEntityRef",
     "setExpandedSamples",
     "setError",
-    "errorFromShowAllRef",
+    "errorFromShowAllEntityRef",
     `${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [entityA],
@@ -17868,7 +17868,7 @@ test("the exported GlobalSearch's handleShowAll surfaces a failed fetch via setE
     (msg: string) => {
       capturedError = msg;
     },
-    { current: false },
+    { current: null },
   ) as (entityName: string) => Promise<void>;
 
   await fn("Alpha");

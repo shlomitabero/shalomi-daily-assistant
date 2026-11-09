@@ -196,7 +196,21 @@ export function GlobalSearchPanel({
   // failed, now-retried "Show all" for this same entity), never when the
   // currently-shown error is actually runSearch's own still-unresolved
   // failure for a completely different, unrelated entity.
-  const errorFromShowAllRef = useRef(false);
+  //
+  // Round 1798: round 904's own fix used a single shared boolean here,
+  // which only distinguishes "some Show all call failed" from "no Show all
+  // call failed" -- not WHICH entity's call failed. showAllLoading only
+  // disables the entity actually being clicked (see its own round-1083
+  // comment below), so two different entity groups' "Show all" buttons can
+  // be clicked independently of each other: e.g. Customer's "Show all"
+  // fails (setting this ref), then Order's own "Show all" -- a completely
+  // separate, successful call with nothing to do with Customer's -- hits
+  // the success branch below, sees this ref is truthy, and silently wipes
+  // Customer's still-valid error banner. Scoping this to the entity name
+  // that actually failed (instead of a bare boolean) means a different
+  // entity's success can no longer dismiss it; only a retry of the SAME
+  // entity's own "Show all" can.
+  const errorFromShowAllEntityRef = useRef<string | null>(null);
 
   // Promise.allSettled rather than Promise.all: a single entity whose
   // records fail to load (a transient network blip, a cold-starting
@@ -216,7 +230,7 @@ export function GlobalSearchPanel({
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
-    errorFromShowAllRef.current = false;
+    errorFromShowAllEntityRef.current = null;
     const settled = await Promise.allSettled(
       entities.map(async (entity) => {
         const { records, truncated } = await listRecords(projectId, entity.name);
@@ -487,12 +501,14 @@ export function GlobalSearchPanel({
       // on-start already follows. But `error` is ALSO used for runSearch's
       // own still-unresolved partial/full-search failure, which this
       // entity's unrelated, successful "Show all" must never silently
-      // dismiss -- errorFromShowAllRef (set only in the catch below, reset
-      // by runSearch's own clear-on-start) is what tells these two sources
-      // apart.
-      if (errorFromShowAllRef.current) {
+      // dismiss -- errorFromShowAllEntityRef (set only in the catch below,
+      // reset by runSearch's own clear-on-start) is what tells these two
+      // sources apart. Round 1798: this must also never dismiss a
+      // DIFFERENT entity's own still-showing "Show all" error, so the
+      // check is against this entity's own name, not a bare boolean.
+      if (errorFromShowAllEntityRef.current === entityName) {
         setError(null);
-        errorFromShowAllRef.current = false;
+        errorFromShowAllEntityRef.current = null;
       }
     } catch (err) {
       // Round 923: the success path above already discards a stale
@@ -504,7 +520,7 @@ export function GlobalSearchPanel({
       // search's current results.
       if (searchRequestId.current !== requestId) return;
       setError((err as Error).message);
-      errorFromShowAllRef.current = true;
+      errorFromShowAllEntityRef.current = entityName;
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);

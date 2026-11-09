@@ -9449,7 +9449,15 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // handleShowAll must only clear it when IT was the one that set it, not
   // when the currently-shown error is runSearch's own still-unresolved
   // failure for a completely different, unrelated entity.
-  const errorFromShowAllRef = useRef(false);
+  //
+  // Round 1798: a single shared boolean here only distinguishes "some
+  // Show all call failed" from "none did" -- not WHICH entity's call
+  // failed. Two different entity groups' "Show all" buttons can be
+  // clicked independently of each other, so a different entity's own
+  // successful retry could silently wipe this entity's still-valid error.
+  // Scoping this to the entity name that actually failed fixes it: only a
+  // retry of that SAME entity's own "Show all" can clear it.
+  const errorFromShowAllEntityRef = useRef(null);
   const dialogRef = useRef(null);
   // Captured during render, not inside the effect below: an effect runs
   // after React has already committed this render's DOM, which includes
@@ -9557,7 +9565,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     const requestId = ++searchRequestId.current;
     setLoading(true);
     setError(null);
-    errorFromShowAllRef.current = false;
+    errorFromShowAllEntityRef.current = null;
     const { results: succeeded, failures, recordsByEntity, truncatedNames } = await searchAllEntities(entities, q);
     if (searchRequestId.current !== requestId) return;
     lastRecordsByEntityRef.current = recordsByEntity;
@@ -9694,10 +9702,12 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // same shared error banner -- succeeding on a later retry must clear
       // it, but error is ALSO used for runSearch's own still-unresolved
       // partial/full-search failure, which this entity's unrelated,
-      // successful "Show all" must never silently dismiss.
-      if (errorFromShowAllRef.current) {
+      // successful "Show all" must never silently dismiss. Round 1798:
+      // nor must a DIFFERENT entity's own still-showing "Show all" error,
+      // so this checks against this entity's own name, not a bare boolean.
+      if (errorFromShowAllEntityRef.current === entityName) {
         setError(null);
-        errorFromShowAllRef.current = false;
+        errorFromShowAllEntityRef.current = null;
       }
     } catch (err) {
       // Round 923: the success path above already discards a stale
@@ -9708,7 +9718,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // over the new search's current results.
       if (searchRequestId.current !== requestId) return;
       setError(err.message);
-      errorFromShowAllRef.current = true;
+      errorFromShowAllEntityRef.current = entityName;
     } finally {
       setShowAllLoading((prev) => {
         const next = new Set(prev);
