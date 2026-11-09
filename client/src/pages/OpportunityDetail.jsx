@@ -253,11 +253,15 @@ export default function OpportunityDetail() {
               // actually publish.
               <p className="hint positive" style={{ margin: '0 0 10px' }}>✅ הפרסום אושר — אפשר ללחוץ "פרסם מוצר" למטה כדי לבצע בפועל.</p>
             ) : (
-              <button className="btn btn-ghost" onClick={onApprove} disabled={busy}>אשר פרסום</button>
+              // Primary styling here, not ghost: while approval is pending,
+              // this is the one button the owner can actually act on right
+              // now, so it should draw the eye more than the publish button
+              // below, which is still disabled at this point.
+              <button className="btn btn-primary" onClick={onApprove} disabled={busy}>אשר פרסום</button>
             )
           )}
           <button
-            className="btn btn-primary"
+            className={`btn ${settings?.mode === 'approve' && !hasPublishApproval ? 'btn-ghost' : 'btn-primary'}`}
             onClick={onPublish}
             disabled={busy || settings?.mode === 'research' || (settings?.mode === 'approve' && !hasPublishApproval)}
             title={
