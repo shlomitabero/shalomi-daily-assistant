@@ -74,7 +74,14 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
 interface ImpactSummary {
   newEntityNames: string[];
   newEntities: { name: string; label: string }[];
-  changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[] }[];
+  changedEntities: {
+    name: string;
+    label: string;
+    newFieldNames: string[];
+    removedFieldNames: string[];
+    tightenedFieldNames: string[];
+    retypedFieldNames: string[];
+  }[];
   removedEntityNames: string[];
   removedEntities: { name: string; label: string }[];
 }
@@ -268,6 +275,7 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
     newFieldNames: string[];
     removedFieldNames: string[];
     tightenedFieldNames: string[];
+    retypedFieldNames: string[];
   }[] = [];
 
   for (const entity of nextSpec.entities) {
@@ -301,7 +309,21 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
       }
       return false;
     });
-    if (newFields.length > 0 || removedFields.length > 0 || tightenedFields.length > 0) {
+    // A same-named field surviving a refine can also change TYPE entirely
+    // (e.g. text -> enum, number -> text) -- invisible to both newFields/
+    // removedFields above (same name on both sides) and tightenedFields
+    // (which never compares type at all). This is a materially bigger
+    // event than either of tightenedFields' own two cases: migrate.ts's
+    // own diffAndMigrate treats a type change as a dedicated hazard (its
+    // "type_changed" MigrationChange, which disableAutomationRulesForField
+    // uses to silently disable any rule the new type no longer fits), so
+    // the user should hear about it here too, not just discover their
+    // automation rule vanished after the fact.
+    const retypedFields = entity.fields.filter((f) => {
+      const prevField = prevFieldsByName.get(f.name) ?? prevFieldsByLowerName.get(f.name.toLowerCase());
+      return !!prevField && prevField.type !== f.type;
+    });
+    if (newFields.length > 0 || removedFields.length > 0 || tightenedFields.length > 0 || retypedFields.length > 0) {
       // Occurrences are counted over every field that exists on EITHER side
       // of this refine (deduped by name, next's definition winning for a
       // field present on both), not just whichever of new/removed/tightened
@@ -326,6 +348,7 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
         newFieldNames: newFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
         removedFieldNames: removedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
         tightenedFieldNames: tightenedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
+        retypedFieldNames: retypedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
       });
     }
   }
@@ -372,6 +395,13 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
   // (now required, or an enum losing a value) -- a real change computeImpact
   // tracks but that otherwise had no warning at all.
   const entitiesWithTightenedFields = impact.changedEntities.filter((e) => e.tightenedFieldNames.length > 0);
+  // A same-named field surviving a refine can also change TYPE outright
+  // (e.g. text -> enum) -- a bigger change than either sibling above, and
+  // one migrate.ts's own disableAutomationRulesForField already treats as
+  // a hazard (it silently disables any rule the new type no longer fits),
+  // so the user needs to hear about it here, not discover it after the
+  // fact when their automation rule has vanished.
+  const entitiesWithRetypedFields = impact.changedEntities.filter((e) => e.retypedFieldNames.length > 0);
   return (
     (impact.removedEntityNames.length > 0
       ? ` Warning: ${impact.removedEntityNames.length} ${impact.removedEntityNames.length === 1 ? "entity is" : "entities are"} no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
@@ -381,6 +411,9 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
       : "") +
     (entitiesWithTightenedFields.length > 0
       ? ` Warning: ${entitiesWithTightenedFields.map((e) => `${e.label} now enforces stricter rules on: ${e.tightenedFieldNames.join(", ")}`).join("; ")} -- existing records are unaffected unless edited again.`
+      : "") +
+    (entitiesWithRetypedFields.length > 0
+      ? ` Warning: ${entitiesWithRetypedFields.map((e) => `${e.label} changed field type on: ${e.retypedFieldNames.join(", ")}`).join("; ")} -- existing records and automation rules using these fields may need to be reviewed.`
       : "")
   );
 }
