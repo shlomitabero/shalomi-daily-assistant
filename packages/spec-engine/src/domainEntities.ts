@@ -789,11 +789,36 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "student",
       /\b(?<!dilated\s)pupils?\b(?!\s+(?:dilation|size|reaction|response))/,
       "learner",
+      // Round 1769: a daycare/preschool/childcare business (an extremely
+      // common small-business category in both languages) had no keyword
+      // anywhere matching it -- fell through to the degenerate generic
+      // "Item" fallback, the same failure class rounds 1700/1708/1720/
+      // 1722/1727/1752 already closed for other verticals. This entity's
+      // existing field shape (name/email/phone/status: Active|Graduated|
+      // OnHold) and description already fit a child enrolled in daycare
+      // reasonably well, so widening its own keywords -- the established
+      // convention -- rather than inventing a new entity. Bare "nursery"
+      // deliberately excluded: it collides with a plant/garden nursery
+      // business, so only the full "nursery school" phrase is listed.
+      // Bare "daycare" DOES collide with Pet's own "dog daycare" keyword
+      // (round 1752) -- a dog-daycare business is about pets, not
+      // enrolled children -- so the negative lookbehind excludes only
+      // that specific phrase, the same style as this file's other
+      // phrase-collision fixes (e.g. "menu"/"dish" above).
+      /(?<!\bdog\s)\bdaycare\b/,
+      "preschool",
+      "childcare",
+      "child care",
+      "nursery school",
+      "kindergarten",
       "תלמיד",
       "תלמידה",
       "תלמידים",
       "סטודנט",
       "סטודנטית",
+      "גן ילדים",
+      "פעוטון",
+      "מעון יום",
     ],
     labelHe: "תלמידים",
     descriptionHe: "מי שלומד במסגרת החינוכית.",

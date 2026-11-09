@@ -917,6 +917,41 @@ test("recognizes dog walking, pet sitting, and dog daycare descriptions as the P
   assert.ok(dogDaycare.entities.some((e) => e.name === "Pet"), "dog daycare must match the Pet entity rule");
 });
 
+/**
+ * Round 1769: the Student entity rule's keywords only ever covered the
+ * "student"/"learner"/"pupil" phrasing of an educational program -- a
+ * daycare, preschool, or childcare business (an equally common
+ * small-business category in both languages) had no keyword anywhere
+ * matching it, so it fell through to matchEntities' degenerate generic
+ * "Item" fallback instead of a real Student entity. Also confirms the
+ * new bare "daycare" keyword's negative lookbehind correctly leaves
+ * round 1752's own "dog daycare" phrase matching Pet alone, not Student
+ * too -- a dog-daycare business is about pets, not enrolled children.
+ */
+test("recognizes daycare, preschool, and childcare descriptions as the Student entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const daycare = await provider.generate("a daycare center tracking children, parents, and enrollment status");
+  assert.ok(daycare.entities.some((e) => e.name === "Student"), "daycare must match the Student entity rule");
+  assert.ok(!daycare.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const preschool = await provider.generate("a preschool for toddlers with teachers and classrooms");
+  assert.ok(preschool.entities.some((e) => e.name === "Student"), "preschool must match the Student entity rule");
+
+  const childcare = await provider.generate("a childcare business for toddlers and young children");
+  assert.ok(childcare.entities.some((e) => e.name === "Student"), "childcare must match the Student entity rule");
+
+  const kindergarten = await provider.generate("a nursery school and kindergarten with kids, parents, and teachers");
+  assert.ok(kindergarten.entities.some((e) => e.name === "Student"), "nursery school/kindergarten must match the Student entity rule");
+
+  const hebrewKindergarten = await provider.generate("גן ילדים עם ילדים, הורים וגננות", true);
+  assert.ok(hebrewKindergarten.entities.some((e) => e.name === "Student"), "Hebrew 'גן ילדים' must match the Student entity rule");
+
+  const dogDaycare = await provider.generate("a dog daycare tracking dogs, owners, staff, and daily attendance");
+  assert.ok(dogDaycare.entities.some((e) => e.name === "Pet"), "dog daycare must still match only the Pet entity rule");
+  assert.ok(!dogDaycare.entities.some((e) => e.name === "Student"), "dog daycare must NOT match the Student entity rule -- it's about pets, not enrolled children");
+});
+
 test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common unrelated phrases", async () => {
   const provider = new HeuristicSpecProvider();
 
