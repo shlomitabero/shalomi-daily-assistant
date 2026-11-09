@@ -20,6 +20,7 @@ import {
   getColumnWidths,
   MAX_COLUMN_WIDTH,
   MIN_COLUMN_WIDTH,
+  replaceColumnWidths,
   setColumnWidth,
 } from "./columnWidths.js";
 import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
@@ -2682,7 +2683,7 @@ export function EntityPanel({
       const current = validFieldNames.has(field) ? field : byLowerName.get(field.toLowerCase());
       if (current) remapped[current] = width;
     }
-    setColumnWidths(remapped);
+    setColumnWidths(replaceColumnWidths(projectId, entity.name, userId, remapped));
   }, [projectId, entity.name, userId, fieldNamesKey]);
 
   // Same reasoning as sortKeys' own effect just above -- the chosen per-field

@@ -10207,15 +10207,14 @@ test("EntityPanel drops a persisted column width when a live refine REMOVES that
       view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
       await waitForCondition(() => document.querySelector(".entity-table-resized") === null);
 
-      // Asserts on the table's own rendered class and the reset button's
-      // presence -- the actual observable symptoms the bug describes --
-      // rather than persisted storage, which this fix (mirroring sortKeys'
-      // own established pattern just above: filter the loaded state
-      // against the surviving field set, without rewriting storage) never
-      // touches; the dead key can keep sitting in storage harmlessly,
-      // exactly as sortKeys' own analogous fix already does.
       assert.equal(document.querySelector(".entity-table-resized"), null, "the table must return to normal automatic sizing, not stay locked into fixed-layout mode for a field that no longer exists");
       assert.equal(document.querySelector(".entity-reset-column-widths"), null, "the 'Reset column widths' button must disappear too, since there is nothing real left to reset");
+      // Round 1766: unlike sortKeys'/fieldFilters' own still-open analogous
+      // gap (see those tests' own comments), columnWidths' revalidation
+      // effect now also persists the cleanup via replaceColumnWidths, not
+      // just the in-memory React state -- so the dead "status" key must be
+      // gone from storage too, not merely absent from the rendered DOM.
+      assert.deepEqual(getColumnWidths("proj1", "Deal", "user1"), {}, "the dead key must also be purged from persisted storage, not just the live DOM");
     } finally {
       globalThis.fetch = originalFetch;
     }

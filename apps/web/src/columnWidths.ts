@@ -124,6 +124,27 @@ export function setColumnWidth(
 }
 
 /**
+ * Round 1766: replaces the entity's full width map and persists it --
+ * mirrors columnVisibility.ts's own replaceHiddenFields exactly, for the
+ * identical reason. EntityPanel.tsx's own fieldNamesKey-keyed revalidation
+ * effect (which drops/remaps any width referencing a field a live refine
+ * removed or case-renamed) used to call only the React state setter
+ * (setColumnWidths), never anything that writes back to storage -- so the
+ * stale width for a removed field stayed in localStorage forever, even
+ * though the in-memory value was corrected on every mount. Deletes the key
+ * entirely once nothing is left, rather than leaving a dangling empty
+ * object behind.
+ */
+export function replaceColumnWidths(projectId: string, entityName: string, userId: string, widths: Record<string, number>): Record<string, number> {
+  const store = readStore();
+  const key = keyFor(projectId, entityName, userId);
+  if (Object.keys(widths).length === 0) delete store[key];
+  else store[key] = { ...widths };
+  writeStore(store);
+  return { ...widths };
+}
+
+/**
  * Drops every manually-resized width for this entity for the current user,
  * returning the table to its normal automatic sizing -- previously the
  * only way back to default widths after a drag was resizing each column
