@@ -6476,6 +6476,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setSortKeys(setPersistedSortKeys(entity.name, cleaned));
   }, [entity.name, fieldNamesKey]);
 
+  // Round 1780: the identical "never revalidated past mount" gap rounds
+  // 1778/1779 closed for columnWidths/sortKeys, now for hiddenFields -- the
+  // hiddenFields useState initializer above only ever remaps/drops a dead
+  // entry at MOUNT time, never again while this same EntityView instance
+  // stays mounted through a live refine. Without this, a field a user hid
+  // that a refine then renames by letter casing only (e.g. "status" ->
+  // "Status") silently reappears in the table (visibleFields no longer
+  // matches the stale-cased key) and the "manage columns" checkbox for it
+  // shows checked/visible, contradicting what the user actually set.
+  useEffect(() => {
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped = new Set();
+    for (const name of getHiddenColumns(entity.name)) {
+      const current = validFieldNames.has(name) ? name : byLowerName.get(name.toLowerCase());
+      if (current) remapped.add(current);
+    }
+    setHiddenFields(replaceHiddenColumns(entity.name, remapped));
+  }, [entity.name, fieldNamesKey]);
+
   // Multi-row selection is only ever settable from Table view -- Board's
   // own card and the calendar day cells have no selection checkbox at all
   // -- but selectedIds itself is view-mode-agnostic state, and the
