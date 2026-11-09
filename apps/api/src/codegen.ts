@@ -6223,6 +6223,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return [...new Set(names)].filter((name) => ALL_ENTITIES.some((e) => e.name.toLowerCase() === name.toLowerCase()));
   }, [entity.fields]);
   const fieldNamesKey = useMemo(() => entity.fields.map((f) => f.name).join(","), [entity.fields]);
+  // Round 1784: mirrors the live preview's own EntityPanel.tsx fieldTypesKey
+  // (used by its round-780 groupFieldName revalidation effect below) -- a
+  // name-only key can't detect a field that keeps its name but changes
+  // TYPE via a live refine, which fieldNamesKey alone would miss.
+  const fieldTypesKey = useMemo(() => entity.fields.map((f) => \`\${f.name}:\${f.type}\`).join(","), [entity.fields]);
 
   useEffect(() => {
     let cancelled = false;
@@ -6547,6 +6552,48 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   useEffect(() => {
     setFieldFilters(setPersistedFieldFilters(entity.name, sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields)));
   }, [entity.name, fieldNamesKey]);
+
+  // Round 1784: the live preview's own EntityPanel.tsx got this exact fix
+  // for groupFieldName in round 780, but -- like columnOrder before round
+  // 1782 -- it was never ported here, making groupFieldName the 6th
+  // instance of the "never revalidated past mount" family rounds 1778-1783
+  // already closed for hiddenFields/columnWidths/sortKeys/columnOrder/
+  // fieldFilters. The entity-switch reset effect above (setGroupFieldName
+  // called with getPersistedGroupField(entity.name)) reads storage raw,
+  // with none of the mount-time useState initializer's own case-rename/retype/removal
+  // sanitization a few hundred lines above -- so that sanitization only
+  // ever ran once, on this component's very first mount. Reproduces the
+  // identical "silently wrong results presented as correct" hazard round
+  // 751 fixed for fieldFilters here (round 1783) and round 780 fixed for
+  // this exact store in EntityPanel.tsx: groupRecordsByField's boolean
+  // branch has no "legacy value" guard the way its enum branch's "(other)"
+  // bucket does, so if a live refine retypes the grouped field (e.g. an
+  // enum "status" into a boolean) while its name survives, every
+  // pre-existing record's stale enum string coerces through Boolean(...)
+  // to true, silently mislabeling almost every record into a confident
+  // "Yes" group with real per-group subtotals computed over that
+  // fabricated split. A field removed outright left groupFieldName
+  // pointed at a name entity.fields no longer has at all (the group-by
+  // <select>'s own stale-value-has-no-<option> hazard). Mirrors the mount
+  // initializer's own logic exactly, just re-run on fieldTypesKey instead
+  // of only at mount -- fieldTypesKey (name:type pairs) also catches a
+  // case-only rename, since the field's name is embedded in the key too.
+  useEffect(() => {
+    const loaded = getPersistedGroupField(entity.name);
+    if (!loaded) return;
+    const exactField = entity.fields.find((f) => f.name === loaded);
+    const renamedField = exactField ? undefined : entity.fields.find((f) => f.name.toLowerCase() === loaded.toLowerCase());
+    const currentType = exactField?.type ?? renamedField?.type;
+    const recordedType = getPersistedGroupFieldType(entity.name);
+    if (!currentType || (recordedType && recordedType !== currentType)) {
+      setPersistedGroupFieldType(entity.name, "");
+      setGroupFieldName(setPersistedGroupField(entity.name, ""));
+      return;
+    }
+    if (renamedField) {
+      setGroupFieldName(setPersistedGroupField(entity.name, renamedField.name));
+    }
+  }, [entity.name, fieldTypesKey]);
 
   // Multi-row selection is only ever settable from Table view -- Board's
   // own card and the calendar day cells have no selection checkbox at all

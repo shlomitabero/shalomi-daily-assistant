@@ -25110,6 +25110,101 @@ test("the exported EntityView drops a dead fieldFilters entry when its field is 
 });
 
 /**
+ * Round 1784: the live preview's own EntityPanel.tsx got this exact fix for
+ * groupFieldName in round 780, but it was never ported here -- the 6th
+ * instance of the "never revalidated past mount" family rounds 1778-1783
+ * closed for hiddenFields/columnWidths/sortKeys/columnOrder/fieldFilters.
+ * Unlike those (name-only) stores, this one needs a field-TYPE change to
+ * reproduce, not just a removal: groupRecordsByField's boolean branch does
+ * Boolean(r[field.name]) with no "legacy value" guard, so a live refine
+ * that retypes the grouped field from enum to boolean (name unchanged)
+ * silently mislabels every leftover enum string as "Yes".
+ */
+test("the exported EntityView drops a stale 'Group by' choice when its field's TYPE changes without the panel remounting, instead of mislabeling every record as a boolean 'Yes'", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const customerWithStatusRetypedToBoolean: Entity = {
+    ...customerEntity,
+    fields: customerEntity.fields.map((f) => (f.name === "status" ? { name: "status", label: "סטטוס", type: "boolean", required: true } : f)),
+  };
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Other Corp", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length > 0,
+        "the initial record fetch never completed",
+      );
+      await act(async () => {
+        fireEvent.change(view.container.querySelector(".entity-group-by") as HTMLSelectElement, { target: { value: "status" } });
+      });
+      await waitForCondition(
+        () => view.container.querySelectorAll(".entity-group-header-row").length === 2,
+        "sanity check: grouping by the enum 'status' field must actually split the table into its 2 real groups",
+      );
+
+      // Same entity.name, "status" retyped to boolean while keeping its
+      // name -- the exact shape of a live refine re-rendering this
+      // already-mounted instance, never a remount (mirrors round
+      // 1778-1783's own tests).
+      view.rerender(React.createElement(EntityView, { ...props, entity: customerWithStatusRetypedToBoolean }));
+
+      await waitForCondition(
+        () => view.container.querySelectorAll(".entity-group-header-row").length !== 1,
+        "the stale 'Group by' choice never cleared after its field's type changed, leaving every record silently mislabeled into a single boolean 'Yes' group",
+      );
+      assert.equal(
+        view.container.querySelectorAll(".entity-group-header-row").length,
+        0,
+        "clearing the stale group-by choice must ungroup the table back to its plain row list",
+      );
+      await waitForCondition(
+        () => !JSON.parse(localStorage.getItem("forge_group_field") ?? "{}").Customer,
+        "the stale 'Group by' choice never left persisted storage after its field's type changed",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --
