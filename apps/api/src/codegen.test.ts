@@ -31020,6 +31020,37 @@ test("the exported app's print sheet resets its own text color so dark mode's ne
 });
 
 /**
+ * New in this round (1801): round 1375's own fix above reset the exported
+ * app's print sheet TEXT color, but never gave it a background, and never
+ * reset body's own background either -- in dark mode, body's dark
+ * background still shows through behind round 1375's dark (#1a1a1a) text,
+ * rendering it invisible on a printed page, the exact inverse of the bug
+ * round 1375 fixed. Separately, status badges (.badge-positive/-negative/
+ * -neutral) read their own color/background from the --success/--danger/
+ * --steel theme variables, which still resolve to dark mode's light-on-dark
+ * pairs at print time unless explicitly reset. jsdom can't detect this, so
+ * this reads the generated CSS's own source text, the same discipline as
+ * the test just above.
+ */
+test("the exported app's print sheet and badge color variables reset to light/white for @media print, regardless of the active theme", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const printSheetBase = stylesCss.match(/\.print-record-sheet, \.print-list-sheet \{[^}]*\}/)?.[0];
+  assert.ok(printSheetBase, "expected a .print-record-sheet, .print-list-sheet base rule in the generated styles.css");
+  assert.match(printSheetBase!, /background:\s*#fff/, "the print sheet must have its own white background, or dark mode's dark body background shows through behind its text");
+
+  const mediaPrint = stylesCss.match(/@media print \{[^]*?\n\}/)?.[0];
+  assert.ok(mediaPrint, "expected an @media print block in the generated styles.css");
+  assert.match(mediaPrint!, /body\s*\{\s*background:\s*#fff/, "@media print must reset body's own background to white, or dark mode's dark gradient background shows through around the print sheet");
+  assert.match(
+    mediaPrint!,
+    /:root, :root\[data-theme="dark"\], :root:not\(\[data-theme="light"\]\) \{[^}]*--success:\s*#2e8b57[^}]*--danger:\s*#c0392b[^}]*--steel:\s*#4c5b6a/,
+    "@media print must reset --success/--danger/--steel (and their -soft pairs) to their light-mode values across every selector dark mode can set them under, or a status badge still prints in dark mode's light-on-dark colors",
+  );
+});
+
+/**
  * New in this round (1376): the exported app's `.entity-undo-toast` is
  * `display: flex` with the delete-undo message text and the "Undo" button
  * as direct flex children, and had no `flex-wrap`/`overflow-wrap` of its

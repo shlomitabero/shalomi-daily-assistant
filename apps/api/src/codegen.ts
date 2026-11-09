@@ -11007,7 +11007,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .record-row-highlighted, .record-row-highlighted:hover { background: var(--accent-soft); transition: background 1.5s ease; }
 .record-row-focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 .record-row-move-error, .record-row-move-error:hover { background: var(--danger-soft); transition: background 2s ease; }
-.print-record-sheet, .print-list-sheet { display: none; color: #1a1a1a; }
+.print-record-sheet, .print-list-sheet { display: none; background: #fff; color: #1a1a1a; }
 .print-record-sheet h1, .print-list-sheet h1 { font-size: 20px; margin: 0 0 16px; }
 .print-record-sheet dl { margin: 0; }
 .print-field { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid #ccc; }
@@ -11021,6 +11021,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .print-list-group-header-row td { background: #f1f1f1; font-weight: 600; }
 .print-list-group-totals-row td { background: #f1f1f1; font-weight: 600; border-bottom: 1px solid #999; }
 @media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --success: #2e8b57; --success-soft: #e2f2e8; --danger: #c0392b; --danger-soft: #fbe6e2; --steel: #4c5b6a; --steel-soft: #e9edf0; }
+  body { background: #fff; }
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }
   .print-record-sheet, .print-list-sheet { display: block !important; position: absolute; inset: 0; padding: 24px; }

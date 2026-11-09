@@ -8196,6 +8196,43 @@ test("the print sheet resets its own text color so dark mode's near-white body t
 });
 
 /**
+ * Round 1801: round 1375's own fix above reset the print sheets' TEXT color,
+ * but never gave the sheets themselves a background, and never reset
+ * body's own background either. In dark mode, body's dark background (set
+ * via the radial-gradient rule that resolves var(--bg) to dark mode's
+ * near-black) still showed through behind/around the sheet, rendering
+ * round 1375's own dark (#1a1a1a) text invisible on a dark page -- the
+ * exact inverse of the bug round 1375 fixed. Separately, status badges
+ * (.badge-positive/-negative/-neutral, rendered for enum fields in both
+ * print sheets) read their own color/background from the --success/
+ * --danger/--steel theme variables, which still resolve to dark mode's
+ * light-on-dark pairs at print time unless explicitly reset. jsdom has no
+ * paint engine and can't detect a dark-background-showing-through bug, so
+ * this reads styles.css's own source directly, the same discipline as the
+ * test just above.
+ */
+test("the print sheets and the badge color variables reset to light/white for @media print, regardless of the active theme", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const printRecordSheet = stylesCss.match(/\.print-record-sheet \{[\s\S]*?\}/)?.[0];
+  assert.ok(printRecordSheet, "expected a .print-record-sheet base rule in styles.css");
+  assert.match(printRecordSheet!, /background:\s*#fff/, ".print-record-sheet must have its own white background, or dark mode's dark body background shows through behind its text");
+
+  const printListSheet = stylesCss.match(/\.print-list-sheet \{[\s\S]*?\}/)?.[0];
+  assert.ok(printListSheet, "expected a .print-list-sheet base rule in styles.css");
+  assert.match(printListSheet!, /background:\s*#fff/, ".print-list-sheet must have its own white background, or dark mode's dark body background shows through behind its text");
+
+  const mediaPrint = stylesCss.match(/@media print \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(mediaPrint, "expected an @media print block in styles.css");
+  assert.match(mediaPrint!, /body\s*\{\s*background:\s*#fff/, "@media print must reset body's own background to white, or dark mode's dark gradient background shows through around the print sheet");
+  assert.match(
+    mediaPrint!,
+    /:root,\s*:root\[data-theme="dark"\],\s*:root:not\(\[data-theme="light"\]\)\s*\{[^}]*--success:\s*#2e8b57[^}]*--danger:\s*#c0392b[^}]*--steel:\s*#4c5b6a/,
+    "@media print must reset --success/--danger/--steel (and their -soft pairs) to their light-mode values across every selector dark mode can set them under -- otherwise a status badge still prints in dark mode's light-on-dark colors",
+  );
+});
+
+/**
  * New in this round (1376): `.entity-undo-toast` is `display: flex` with
  * the message text and the "Undo" button as direct flex children, and had
  * no `flex-wrap`/`overflow-wrap` of its own at all. The message embeds a

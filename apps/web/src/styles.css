@@ -3853,7 +3853,14 @@ button.sort-header:hover:not(:disabled) {
      so this sheet reads correctly on white paper regardless of theme, but
      nothing ever reset color itself -- h1/dd still inherited body's
      color: var(--text), which resolves to a near-white color in dark mode
-     and renders invisible once actually printed. */
+     and renders invisible once actually printed.
+     Round 1801: round 1375's own fix above reset text color but never gave
+     this sheet its own background -- in dark mode, body's own dark
+     background (set via the radial-gradient rule below, which resolves
+     var(--bg) to dark mode's near-black) still showed through behind this
+     sheet's dark (#1a1a1a) text, rendering it effectively invisible on
+     paper: the exact inverse of the bug round 1375 fixed. */
+  background: #fff;
   color: #1a1a1a;
 }
 
@@ -3894,6 +3901,9 @@ button.sort-header:hover:not(:disabled) {
 
 .print-list-sheet {
   display: none;
+  /* Round 1801: same dark-background-showing-through fix as
+     .print-record-sheet above -- see that rule's own comment. */
+  background: #fff;
   color: #1a1a1a;
 }
 
@@ -3938,6 +3948,31 @@ button.sort-header:hover:not(:disabled) {
 }
 
 @media print {
+  /* Round 1801: badges (.badge-positive/-negative/-neutral, used for enum
+     status fields in both print sheets) read their color/background from
+     these theme variables, same as everywhere else in the app -- in dark
+     mode they resolve to light-text-on-dark-chip pairs, which print as
+     barely-legible light text on a dark background. Matching every
+     selector dark mode can set these variables under (the explicit
+     data-theme="dark" toggle AND the OS prefers-color-scheme fallback)
+     so this wins the cascade regardless of which one is active.
+     The sheets' own background fix lives on .print-record-sheet/
+     .print-list-sheet themselves (see their own round-1801 comments
+     above); body's dark background is reset here too, since it would
+     otherwise still show through around the sheet's edges. */
+  :root,
+  :root[data-theme="dark"],
+  :root:not([data-theme="light"]) {
+    --success: #2e8b57;
+    --success-soft: #e2f2e8;
+    --danger: #c0392b;
+    --danger-soft: #fbe6e2;
+    --steel: #4c5b6a;
+    --steel-soft: #e9edf0;
+  }
+  body {
+    background: #fff;
+  }
   body * {
     visibility: hidden;
   }
