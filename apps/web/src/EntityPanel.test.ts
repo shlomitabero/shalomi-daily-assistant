@@ -9430,6 +9430,73 @@ test("EntityPanel forgets a pinned record's own id once another collaborator del
 });
 
 /**
+ * Round 1771: selectedIds (the bulk-selection checkbox set) has the
+ * identical gap round 1754 just closed for pinnedIds above -- never
+ * reconciled against the server's real record set inside refresh(), so a
+ * record a DIFFERENT collaborator deletes stays "selected" forever in this
+ * tab. Left stale, this desyncs the bulk-actions bar's own "N selected"
+ * count (and every Export/Copy/Print button's label, which all read
+ * selectedIds.size directly) from what selectedOrAllRecords actually
+ * returns once it re-filters the now-correct records by the stale id set.
+ * Selects both rows via their real checkboxes (not seeded state) since the
+ * point here is selectedIds itself, which -- unlike pinnedIds -- has no
+ * persisted-storage counterpart to seed directly. Triggers a real
+ * refresh() via an inline-cell-edit commit (double-click + Enter, the same
+ * vehicle the undo-window test just above this one uses) rather than
+ * round 1754's own board-move trick: switching to board view at all
+ * unconditionally clears selectedIds (see EntityPanel.tsx's own
+ * `if (viewMode !== "table") setSelectedIds(new Set())`), which would wipe
+ * the very state this test means to exercise before refresh() ever runs.
+ */
+test("EntityPanel forgets a selected record's own id once another collaborator deletes it server-side, instead of leaking it in the bulk-selection count forever", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+      assert.ok(
+        document.querySelector(".bulk-actions-bar")!.textContent?.includes("2"),
+        "sanity check: both records must start out selected",
+      );
+
+      // Simulates another collaborator's own real DELETE against the
+      // server, outside this tab entirely -- this tab's own selection
+      // state never hears about it until refresh()'s next round trip.
+      store.splice(0, 1);
+
+      // Globex's own name cell -- an inline-edit commit on the SURVIVING
+      // record is purely a vehicle to get a real refresh() to run, which
+      // is the only place record 1's now-stale selection could be
+      // reconciled, without leaving table view (which would clear
+      // selectedIds outright, per the comment above).
+      const nameCell = document.querySelectorAll('tr[data-record-id="2"] td')[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Globex Corp" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar")?.textContent?.includes("1") ?? false);
+      assert.ok(
+        !document.querySelector(".bulk-actions-bar")!.textContent?.includes("2"),
+        "a record deleted by ANOTHER collaborator must also be dropped from the selected-count label, not left inflating it forever",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1528: a live Playwright exploration found that clicking "Undo"
  * never re-checks the server at all -- it splices pending.entries[].record
  * (the snapshot from the moment Delete was clicked) straight back into

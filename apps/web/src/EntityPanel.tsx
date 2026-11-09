@@ -2263,6 +2263,33 @@ export function EntityPanel({
           });
         }
       }
+      // Round 1771: selectedIds (the bulk-selection checkbox set) has the
+      // identical gap round 1754 just closed for pinnedIds above -- it's
+      // never reconciled against the server's real record set here, so a
+      // record a DIFFERENT collaborator deletes stays "selected" forever in
+      // this tab until a full remount. Unlike pinnedIds, selectedIds is
+      // plain React state with no localStorage counterpart, so there's no
+      // persistence-layer helper to call -- just the state setter. Left
+      // stale, this silently desyncs the bulk-actions bar's own "N
+      // selected" count and every Export/Copy/Print button's label (all of
+      // which read selectedIds.size directly) from what
+      // selectedOrAllRecords (entityFormatting.ts) actually returns once
+      // it re-filters the now-correct `records` by the stale id set -- the
+      // user sees "Export CSV (2 selected)" but downloads a 1-row file with
+      // no indication anything was dropped. Same `!truncated` gate as
+      // pinnedIds, for the same reason: a capped list's own missing page
+      // doesn't mean a selected record is actually gone.
+      if (!truncated && selectedIds.size > 0) {
+        const presentIds = new Set(records.map((r) => r.id as number));
+        const staleSelectedIds = [...selectedIds].filter((id) => !presentIds.has(id));
+        if (staleSelectedIds.length > 0) {
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            for (const staleId of staleSelectedIds) next.delete(staleId);
+            return next;
+          });
+        }
+      }
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category, Employee.managerId -> Employee -- schema-legal, see
       // FieldSchema's own relation refine) makes this entity its own
