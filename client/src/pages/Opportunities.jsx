@@ -142,6 +142,16 @@ export default function Opportunities() {
 
       <section className="section">
         {opportunities.length === 0 && <p className="hint">אין הזדמנויות עדיין.</p>}
+        {/* opportunities.length === 0 above only covers "none at all" - once
+            every draft has been published/rejected (or is demo-only),
+            opportunities.length stays positive while activeOpportunities is
+            empty, and this section rendered nothing at all between the
+            create form and "הושלמו" below it: a gap easy to mistake for a
+            loading glitch instead of the normal state it actually is
+            (nothing new to review right now). */}
+        {opportunities.length > 0 && activeOpportunities.length === 0 && (
+          <p className="hint">אין כרגע הזדמנויות פעילות לסקירה — כל מה שנוצר עד כה כבר טופל, למטה תחת "הושלמו".</p>
+        )}
         {activeOpportunities.map((o) => (
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-card">
             <div className="opp-card-top">
