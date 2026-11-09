@@ -807,8 +807,50 @@ test("a Hebrew-described project's WhatsApp Messages.csv gets real Hebrew header
   const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
   const lines = csv.split("\r\n");
   assert.equal(lines[0], "כיוון,מאת,אל,הודעה,רשומה מותאמת,סטטוס,תאריך");
-  assert.equal(lines[1], `יוצאת,'+972502222222,'+972501111111,מחר בבוקר,,sent,${second.createdAt}`);
-  assert.equal(lines[2], `נכנסת,'+972501111111,'+972502222222,מתי אפשר לקבל את ההזמנה?,Dana Levi,received,${first.createdAt}`);
+  assert.equal(lines[1], `יוצאת,'+972502222222,'+972501111111,מחר בבוקר,,נשלחה,${second.createdAt}`);
+  assert.equal(lines[2], `נכנסת,'+972501111111,'+972502222222,מתי אפשר לקבל את ההזמנה?,Dana Levi,התקבלה,${first.createdAt}`);
+});
+
+/**
+ * Round 1748: the test above only ever exercised "sent"/"received" --
+ * extends the same Hebrew-translation coverage to the other 3
+ * WhatsAppMessageStatus values (delivered/read/failed), confirming none
+ * of them leak through as the raw English enum value either.
+ */
+test("a Hebrew-described project's WhatsApp Messages.csv translates delivered/read/failed statuses too, not just sent/received", () => {
+  const heProject: Project = { ...project, description: "אפליקציה לניהול לקוחות והזמנות" };
+  const db = createTestDb(heProject);
+  const delivered = insertWhatsAppMessage(db, {
+    projectId: heProject.id,
+    direction: "out",
+    fromNumber: "+972502222222",
+    toNumber: "+972501111111",
+    body: "הודעה שנמסרה",
+    status: "delivered",
+  });
+  const read = insertWhatsAppMessage(db, {
+    projectId: heProject.id,
+    direction: "out",
+    fromNumber: "+972502222222",
+    toNumber: "+972501111111",
+    body: "הודעה שנקראה",
+    status: "read",
+  });
+  const failed = insertWhatsAppMessage(db, {
+    projectId: heProject.id,
+    direction: "out",
+    fromNumber: "+972502222222",
+    toNumber: "+972501111111",
+    body: "הודעה שנכשלה",
+    status: "failed",
+  });
+
+  const entries = generateBackupZipEntries(db, heProject);
+  const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
+  const lines = csv.split("\r\n");
+  assert.equal(lines[1], `יוצאת,'+972502222222,'+972501111111,הודעה שנכשלה,,נכשלה,${failed.createdAt}`);
+  assert.equal(lines[2], `יוצאת,'+972502222222,'+972501111111,הודעה שנקראה,,נקראה,${read.createdAt}`);
+  assert.equal(lines[3], `יוצאת,'+972502222222,'+972501111111,הודעה שנמסרה,,נמסרה,${delivered.createdAt}`);
 });
 
 test("a WhatsApp message containing a comma is CSV-escaped like any other field, and the createdAt timestamp is real, not blank", () => {

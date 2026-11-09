@@ -346,13 +346,28 @@ function whatsappMessagesToCsv(messages: WhatsAppMessage[], allEntities: Entity[
     .join(",");
   const incomingLabel = isHebrew ? "נכנסת" : "Incoming";
   const outgoingLabel = isHebrew ? "יוצאת" : "Outgoing";
+  // Round 1748: same reasoning as incomingLabel/outgoingLabel right above --
+  // the raw WhatsAppMessageStatus value ("received"/"sent"/"delivered"/
+  // "read"/"failed", packages/db/src/whatsapp.ts) was pushed straight into
+  // the "סטטוס" column unchanged, the one remaining English technical term
+  // sitting inside an otherwise fully-Hebrew row. Only the Hebrew branch
+  // needs a translation here -- the raw values are already valid English
+  // words, so the English branch is left exactly as it was.
+  const HEBREW_STATUS_LABELS: Record<WhatsAppMessage["status"], string> = {
+    received: "התקבלה",
+    sent: "נשלחה",
+    delivered: "נמסרה",
+    read: "נקראה",
+    failed: "נכשלה",
+  };
   const rows = messages.map((m) => {
     // Round 1161: see entityLabelOccurrences/matchedEntityLabel's own doc
     // comment above -- disambiguates a matched name that's shared across
     // two entities, the same way the on-screen log and its own Download/
     // Copy export already do.
     const matched = m.matchedLabel ? (m.matchedEntityName ? `${m.matchedLabel} — ${matchedEntityLabel(m.matchedEntityName, allEntities)}` : m.matchedLabel) : "";
-    return [m.direction === "in" ? incomingLabel : outgoingLabel, m.fromNumber, m.toNumber, m.body, matched, m.status, m.createdAt].map((v) => csvEscape(v)).join(",");
+    const statusLabel = isHebrew ? HEBREW_STATUS_LABELS[m.status] : m.status;
+    return [m.direction === "in" ? incomingLabel : outgoingLabel, m.fromNumber, m.toNumber, m.body, matched, statusLabel, m.createdAt].map((v) => csvEscape(v)).join(",");
   });
   return [header, ...rows].join("\r\n");
 }
