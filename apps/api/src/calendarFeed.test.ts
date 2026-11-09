@@ -68,6 +68,21 @@ test("buildCalendarFeedIcs's VEVENT includes a VALARM reminder, not just the bar
 });
 
 /**
+ * Round 1807: every other DESCRIPTION/SUMMARY in this same VEVENT already
+ * follows `lang` (number/date formatting, bidi stripping), but the
+ * VALARM's own "Reminder" text was a plain string literal, never gated on
+ * `lang` -- the one hardcoded English string left in an otherwise fully
+ * Hebrew-localized feed. Mirrors the live preview's own calendarIcs.ts fix.
+ */
+test("buildCalendarFeedIcs's VALARM reminder text is in Hebrew for a Hebrew project, not the hardcoded English word", () => {
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true }];
+  const ics = buildCalendarFeedIcs(entity, records, "proj1", new Date(), [], {}, "he");
+  const events = parseEvents(ics!);
+  assert.match(events[0]!, /DESCRIPTION:תזכורת/);
+  assert.doesNotMatch(events[0]!, /DESCRIPTION:Reminder/);
+});
+
+/**
  * Round 1022: the live preview's own identical computation (calendarIcs.ts,
  * the one-shot "Export ICS" button) used `??`, which only falls through on
  * null/undefined, never a genuinely blank string -- so a blank display

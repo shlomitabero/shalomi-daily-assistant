@@ -65,6 +65,23 @@ test("buildCalendarIcs's VEVENT includes a VALARM reminder, not just the bare ev
   assert.match(events[0], /BEGIN:VALARM[\s\S]*END:VALARM\r\nEND:VEVENT$/);
 });
 
+/**
+ * Round 1807: every other DESCRIPTION/SUMMARY in this same VEVENT already
+ * follows `lang` (number/date formatting, bidi stripping -- see the tests
+ * above), but the VALARM's own "Reminder" text was a plain string literal,
+ * never gated on `lang` -- the one hardcoded English string left in an
+ * otherwise fully Hebrew-localized export.
+ */
+test("buildCalendarIcs's VALARM reminder text is in Hebrew for a Hebrew project, not the hardcoded English word", () => {
+  const records: EntityRecord[] = [
+    { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null, courierId: null },
+  ];
+  const ics = buildCalendarIcs(entity, dateField, nameField, records, [], {}, new Date(), null, entity.fields, "he");
+  const events = parseEvents(ics);
+  assert.match(events[0]!, /DESCRIPTION:תזכורת/);
+  assert.doesNotMatch(events[0]!, /DESCRIPTION:Reminder/);
+});
+
 test("buildCalendarIcs's SUMMARY uses the label field's value, and UID is unique per entity+record id", () => {
   const records: EntityRecord[] = [
     { id: 7, appointmentDate: "2026-01-01", customerName: "Yossi Cohen", notes: null, courierId: null },

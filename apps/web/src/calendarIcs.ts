@@ -360,7 +360,12 @@ export function buildCalendarIcs(
     // VEVENT's own all-day (DTSTART;VALUE=DATE) shape.
     lines.push("BEGIN:VALARM");
     lines.push("ACTION:DISPLAY");
-    lines.push("DESCRIPTION:Reminder");
+    // Round 1807: every other DESCRIPTION/SUMMARY in this same VEVENT
+    // already follows `lang` (dates, numbers, relation labels, enum
+    // labels), so a Hebrew-described project's export was otherwise fully
+    // localized except this one literal -- the single hardcoded English
+    // string left in an otherwise bilingual generated file.
+    lines.push(`DESCRIPTION:${lang === "he" ? "תזכורת" : "Reminder"}`);
     lines.push("TRIGGER:-P1D");
     lines.push("END:VALARM");
     lines.push("END:VEVENT");

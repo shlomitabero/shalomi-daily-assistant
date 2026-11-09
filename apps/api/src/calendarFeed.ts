@@ -393,7 +393,11 @@ function buildVeventLinesForEntity(
     // retroactively apply to an imported/subscribed VEVENT.
     lines.push("BEGIN:VALARM");
     lines.push("ACTION:DISPLAY");
-    lines.push("DESCRIPTION:Reminder");
+    // Round 1807: see the live preview's own calendarIcs.ts for why -- every
+    // other DESCRIPTION/SUMMARY in this same VEVENT already follows `lang`,
+    // so this was the one hardcoded English string left in an otherwise
+    // fully-localized Hebrew-project calendar feed.
+    lines.push(`DESCRIPTION:${lang === "he" ? "תזכורת" : "Reminder"}`);
     lines.push("TRIGGER:-P1D");
     lines.push("END:VALARM");
     lines.push("END:VEVENT");
