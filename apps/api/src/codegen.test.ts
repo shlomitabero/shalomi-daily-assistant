@@ -24949,6 +24949,77 @@ test("the exported EntityView drops a dead hidden-field entry when its field is 
   }
 });
 
+test("the exported EntityView drops a dead column-order entry when its field is removed without the panel remounting, instead of leaving it in storage forever", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const customerWithoutStatus: Entity = {
+    ...customerEntity,
+    fields: customerEntity.fields.filter((f) => f.name !== "status"),
+  };
+
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }) } as Response;
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      // "status"/"name"'s own labels ("סטטוס"/"שם") come from this file's
+      // module-level `project` fixture -- see round 1778's own identical note.
+      localStorage.setItem("forge_column_order", JSON.stringify({ Customer: ["status", "name"] }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length > 0,
+        "the initial record fetch never completed",
+      );
+      assert.deepEqual(
+        [...view.container.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")?.textContent),
+        ["סטטוס", "שם"],
+        "sanity check: the persisted reorder must already be in effect on the on-screen table",
+      );
+
+      // Same entity.name, a field list that no longer includes "status" --
+      // the exact shape of a live refine re-rendering this already-mounted
+      // instance, never a remount (mirrors round 1778/1779/1780's own tests).
+      view.rerender(React.createElement(EntityView, { ...props, entity: customerWithoutStatus }));
+
+      await waitForCondition(
+        () => !JSON.parse(localStorage.getItem("forge_column_order") ?? "{}").Customer?.includes("status"),
+        "the dropped 'status' column-order entry never left persisted storage after its field was removed",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 /**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated

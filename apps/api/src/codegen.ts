@@ -2338,6 +2338,13 @@ function setColumnOrder(entityName, order) {
   writeColumnOrderStore(store);
   return order;
 }
+// Round 1782: same shape as setColumnOrder above, but named to match this
+// file's own replaceColumnWidths/replaceHiddenColumns convention for "persist
+// a cleaned/remapped full replacement, not a user-driven reorder" call sites
+// -- see the fieldNamesKey-keyed revalidation effect below.
+function replaceColumnOrder(entityName, order) {
+  return setColumnOrder(entityName, order);
+}
 
 // The table's own "Group by" field, "Table/Board/Calendar" view choice, and
 // multi-column sort, each persisted per entity (same single-tenant scoping
@@ -6494,6 +6501,31 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       if (current) remapped.add(current);
     }
     setHiddenFields(replaceHiddenColumns(entity.name, remapped));
+  }, [entity.name, fieldNamesKey]);
+
+  // Round 1782: the live preview's own EntityPanel.tsx got this exact fix
+  // for columnOrder in round 1777, but it was never ported here -- unlike
+  // hiddenFields/columnWidths/sortKeys just above (rounds 1778/1779/1780),
+  // this entity's columnOrder was never revalidated past mount either.
+  // applyColumnOrder (used below) already tolerates a dead entry at every
+  // render (it's simply ignored), so there is no live visible symptom by
+  // itself, but the dead entry is never purged from storage -- if a LATER
+  // refine adds a brand-new field that happens to reuse the exact same
+  // name a removed field once had, applyColumnOrder matches it by name and
+  // silently repositions that unrelated new column into the old field's
+  // saved slot. Mirrors hiddenFields' own case-insensitive remap-or-drop +
+  // de-dupe just above, then persists the cleaned result via
+  // replaceColumnOrder instead of only updating this mount's in-memory
+  // state.
+  useEffect(() => {
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const cleaned = [];
+    for (const name of getColumnOrder(entity.name)) {
+      const current = validFieldNames.has(name) ? name : byLowerName.get(name.toLowerCase());
+      if (current && !cleaned.includes(current)) cleaned.push(current);
+    }
+    setColumnOrderState(replaceColumnOrder(entity.name, cleaned));
   }, [entity.name, fieldNamesKey]);
 
   // Multi-row selection is only ever settable from Table view -- Board's
