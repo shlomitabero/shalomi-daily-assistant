@@ -983,6 +983,34 @@ test("recognizes hair salon, barbershop, and nail salon descriptions as the Appo
   assert.ok(hebrewBeautySalon.entities.some((e) => e.name === "Appointment"), "Hebrew 'סלון יופי' must match the Appointment entity rule");
 });
 
+/**
+ * Round 1800: a different vertical than round 1799's salon/barber fix, but
+ * the same degenerate-fallback failure class -- a spa or massage business
+ * had no keyword anywhere matching the Appointment entity rule either.
+ * Also confirms bare "spa"'s new `\b`-bounded regex correctly leaves an
+ * unrelated shared-workspace/office-space business unmatched, since "spa"
+ * is a substring of the ordinary words "workspace"/"space"/"spacious".
+ */
+test("recognizes spa and massage descriptions as the Appointment entity, without spuriously matching unrelated 'workspace'/'space' businesses", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const spa = await provider.generate("a spa offering massages");
+  assert.ok(spa.entities.some((e) => e.name === "Appointment"), "'a spa' must match the Appointment entity rule");
+  assert.ok(!spa.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const massageClinic = await provider.generate("a massage therapy clinic");
+  assert.ok(massageClinic.entities.some((e) => e.name === "Appointment"), "'massage therapy clinic' must match the Appointment entity rule");
+
+  const hebrewSpa = await provider.generate("ספא לעיסויים", true);
+  assert.ok(hebrewSpa.entities.some((e) => e.name === "Appointment"), "Hebrew 'ספא' must match the Appointment entity rule");
+
+  const hebrewMassageInstitute = await provider.generate("מכון עיסוי לגברים ונשים", true);
+  assert.ok(hebrewMassageInstitute.entities.some((e) => e.name === "Appointment"), "Hebrew 'עיסוי' must match the Appointment entity rule");
+
+  const workspace = await provider.generate("a shared workspace for freelancers");
+  assert.ok(!workspace.entities.some((e) => e.name === "Appointment"), "'workspace' must NOT match the Appointment entity rule -- it's not a substring collision with bare 'spa'");
+});
+
 test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common unrelated phrases", async () => {
   const provider = new HeuristicSpecProvider();
 

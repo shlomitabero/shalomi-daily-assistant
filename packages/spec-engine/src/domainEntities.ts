@@ -174,10 +174,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // with a furniture/auto showroom "salon" and a person's surname -- so
     // only the scoped phrases below are listed, the same style as this
     // file's other phrase-collision fixes (e.g. "nursery school" above).
+    //
+    // Round 1800: a spa or massage business (a different vertical than
+    // round 1799's salon/barber fix, but the same degenerate-fallback
+    // failure class) had no keyword anywhere matching it either --
+    // "a spa offering massages"/"a massage therapy clinic" still fell
+    // through to the generic "Item" fallback. Bare "spa" is bounded with
+    // `\b` rather than listed as a plain string -- unlike "salon", it has
+    // no ambiguous OTHER meaning, but IS a substring of ordinary, unrelated
+    // words ("workspace", "space", "spacious"), so a plain `.includes()`
+    // match would have spuriously matched any shared-workspace or
+    // office-space business too. Confirmed via direct `matchEntities`
+    // invocation: "a shared workspace for freelancers" must NOT match.
     keywords: [
       "appointment", /\bbookings?\b/, /\breservations?\b/,
       "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
-      "תורים", "פגישה", "פגישות", "מספרה", "סלון יופי",
+      /\bspa\b/, "massage", "massage therapy",
+      "תורים", "פגישה", "פגישות", "מספרה", "סלון יופי", "ספא", "עיסוי",
     ],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
