@@ -4956,6 +4956,16 @@ export function createProjectsRouter(
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/assumptions`, async () => {
         const nextSpec = { ...project.spec, assumptions: [...project.spec.assumptions, parsed.data.assumption] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
+        // Round 1776: see the roles routes' own doc comment (round 1775) above.
+        insertSchemaLabelEdit(db, {
+          projectId: project.id,
+          changedByUserId: req.userId!,
+          action: "assumption_added",
+          entityName: "Assumptions",
+          fieldName: null,
+          previousLabel: "",
+          newLabel: parsed.data.assumption,
+        });
         return { status: 200, body: { project: updated } };
       });
       res.status(status).json(body);
@@ -4990,6 +5000,16 @@ export function createProjectsRouter(
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/personas`, async () => {
         const nextSpec = { ...project.spec, personas: [...project.spec.personas, parsed.data.persona] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
+        // Round 1776: see the roles routes' own doc comment (round 1775) above.
+        insertSchemaLabelEdit(db, {
+          projectId: project.id,
+          changedByUserId: req.userId!,
+          action: "persona_added",
+          entityName: "Personas",
+          fieldName: null,
+          previousLabel: "",
+          newLabel: parsed.data.persona,
+        });
         return { status: 200, body: { project: updated } };
       });
       res.status(status).json(body);
@@ -5068,8 +5088,19 @@ export function createProjectsRouter(
             (req.body as { expect?: unknown })?.expect,
             "ASSUMPTION_STALE_INDEX",
           );
+          const removedAssumption = project.spec.assumptions[index];
           const nextSpec = { ...project.spec, assumptions: project.spec.assumptions.filter((_, i) => i !== index) };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1776: see the roles routes' own doc comment (round 1775) above.
+          insertSchemaLabelEdit(db, {
+            projectId: project.id,
+            changedByUserId: req.userId!,
+            action: "assumption_removed",
+            entityName: "Assumptions",
+            fieldName: null,
+            previousLabel: removedAssumption,
+            newLabel: "",
+          });
           return { status: 200, body: { project: updated } };
         },
       );
@@ -5101,8 +5132,19 @@ export function createProjectsRouter(
         async () => {
           const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
           assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
+          const removedPersona = project.spec.personas[index];
           const nextSpec = { ...project.spec, personas: project.spec.personas.filter((_, i) => i !== index) };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1776: see the roles routes' own doc comment (round 1775) above.
+          insertSchemaLabelEdit(db, {
+            projectId: project.id,
+            changedByUserId: req.userId!,
+            action: "persona_removed",
+            entityName: "Personas",
+            fieldName: null,
+            previousLabel: removedPersona,
+            newLabel: "",
+          });
           return { status: 200, body: { project: updated } };
         },
       );
@@ -5200,11 +5242,25 @@ export function createProjectsRouter(
             (req.body as { expect?: unknown })?.expect,
             "ASSUMPTION_STALE_INDEX",
           );
+          const previousAssumption = project.spec.assumptions[index];
           const nextSpec = {
             ...project.spec,
             assumptions: project.spec.assumptions.map((a, i) => (i === index ? parsed.data.assumption : a)),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1776: see the roles PATCH route's own doc comment (round
+          // 1775) above -- same "no-op resubmit isn't a rename" rule.
+          if (previousAssumption !== parsed.data.assumption) {
+            insertSchemaLabelEdit(db, {
+              projectId: project.id,
+              changedByUserId: req.userId!,
+              action: "assumption_renamed",
+              entityName: "Assumptions",
+              fieldName: null,
+              previousLabel: previousAssumption,
+              newLabel: parsed.data.assumption,
+            });
+          }
           return { status: 200, body: { project: updated } };
         },
       );
@@ -5241,11 +5297,25 @@ export function createProjectsRouter(
         async () => {
           const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
           assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
+          const previousPersona = project.spec.personas[index];
           const nextSpec = {
             ...project.spec,
             personas: project.spec.personas.map((p, i) => (i === index ? parsed.data.persona : p)),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
+          // Round 1776: see the roles PATCH route's own doc comment (round
+          // 1775) above -- same "no-op resubmit isn't a rename" rule.
+          if (previousPersona !== parsed.data.persona) {
+            insertSchemaLabelEdit(db, {
+              projectId: project.id,
+              changedByUserId: req.userId!,
+              action: "persona_renamed",
+              entityName: "Personas",
+              fieldName: null,
+              previousLabel: previousPersona,
+              newLabel: parsed.data.persona,
+            });
+          }
           return { status: 200, body: { project: updated } };
         },
       );

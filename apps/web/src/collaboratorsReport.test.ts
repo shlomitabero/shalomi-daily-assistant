@@ -279,6 +279,33 @@ test("formatCollaboratorsReport renders role_added/role_removed/role_renamed ent
 });
 
 /**
+ * Round 1776: the identical extension round 1775 did for roles, now for
+ * assumptions and personas -- without their own explicit branches, an
+ * assumption/persona entry would fall through to a wrong sibling branch
+ * (persona_renamed's own text is the catch-all `else`, so an
+ * assumption_added/assumption_removed/assumption_renamed/persona_added/
+ * persona_removed entry would wrongly render as if a persona had been
+ * renamed) rather than its own distinct text.
+ */
+test("formatCollaboratorsReport renders assumption_added/assumption_removed/assumption_renamed/persona_added/persona_removed/persona_renamed entries with their own distinct text", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [
+    { action: "assumption_added", entityName: "Assumptions", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "", newLabel: "Users have internet access", changedAt: "2024-02-01T10:00:00.000Z" },
+    { action: "assumption_removed", entityName: "Assumptions", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "Users pay monthly", newLabel: "", changedAt: "2024-02-02T10:00:00.000Z" },
+    { action: "assumption_renamed", entityName: "Assumptions", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "Fast internet", newLabel: "Stable internet", changedAt: "2024-02-03T10:00:00.000Z" },
+    { action: "persona_added", entityName: "Personas", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "", newLabel: "Busy manager", changedAt: "2024-02-04T10:00:00.000Z" },
+    { action: "persona_removed", entityName: "Personas", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "Intern", newLabel: "", changedAt: "2024-02-05T10:00:00.000Z" },
+    { action: "persona_renamed", entityName: "Personas", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "Manager", newLabel: "Director", changedAt: "2024-02-06T10:00:00.000Z" },
+  ]);
+  assert.ok(result.includes('The assumption "Users have internet access" was added by owner@example.com'));
+  assert.ok(result.includes('The assumption "Users pay monthly" was removed by owner@example.com'));
+  assert.ok(result.includes('An assumption was changed from "Fast internet" to "Stable internet" by owner@example.com'));
+  assert.ok(result.includes('The persona "Busy manager" was added by owner@example.com'));
+  assert.ok(result.includes('The persona "Intern" was removed by owner@example.com'));
+  assert.ok(result.includes('A persona was changed from "Manager" to "Director" by owner@example.com'));
+});
+
+/**
  * Round 1666: the sibling report section to schemaLabelEdits above, for
  * automation-rule deletions -- the one action in the automation-rule
  * audit-trail family (createdByUserId/updatedByUserId, round 1664) that

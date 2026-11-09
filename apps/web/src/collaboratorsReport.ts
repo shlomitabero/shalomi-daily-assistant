@@ -66,7 +66,18 @@ export interface CollaboratorAccessChangeForReport {
  * same reason as the sibling report types' own *Email fields.
  */
 export interface SchemaLabelEditForReport {
-  action: "entity_renamed" | "field_renamed" | "role_added" | "role_removed" | "role_renamed";
+  action:
+    | "entity_renamed"
+    | "field_renamed"
+    | "role_added"
+    | "role_removed"
+    | "role_renamed"
+    | "assumption_added"
+    | "assumption_removed"
+    | "assumption_renamed"
+    | "persona_added"
+    | "persona_removed"
+    | "persona_renamed";
   entityName: string;
   fieldName: string | null;
   changedByEmail: string | null;
@@ -251,9 +262,62 @@ export function formatCollaboratorsReport(
             date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
           }),
         );
-      } else {
+      } else if (e.action === "role_renamed") {
         lines.push(
           t("collab.report.roleRenamedEntry", {
+            from: e.previousLabel,
+            to: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "assumption_added") {
+        // Round 1776: the identical extension round 1775 did for roles,
+        // now for assumptions/personas -- see that round's own comment on
+        // why every action needs its own explicit branch here.
+        lines.push(
+          t("collab.report.assumptionAddedEntry", {
+            assumption: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "assumption_removed") {
+        lines.push(
+          t("collab.report.assumptionRemovedEntry", {
+            assumption: e.previousLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "assumption_renamed") {
+        lines.push(
+          t("collab.report.assumptionRenamedEntry", {
+            from: e.previousLabel,
+            to: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "persona_added") {
+        lines.push(
+          t("collab.report.personaAddedEntry", {
+            persona: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "persona_removed") {
+        lines.push(
+          t("collab.report.personaRemovedEntry", {
+            persona: e.previousLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else {
+        lines.push(
+          t("collab.report.personaRenamedEntry", {
             from: e.previousLabel,
             to: e.newLabel,
             by: e.changedByEmail ?? t("collab.report.unknownActor"),

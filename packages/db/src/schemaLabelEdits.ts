@@ -8,8 +8,27 @@ import type { ForgeDatabase } from "./connection.js";
  * store a fixed `"Roles"` sentinel in `entityName` (never a real entity)
  * and leave `fieldName` null; `newLabel`/`previousLabel` hold the role
  * text added/removed (whichever side doesn't apply stays empty).
+ *
+ * Round 1776: the identical extension for `assumptions`/`personas` --
+ * round 1775's own closing note flagged these as the natural next
+ * candidate, since they go through the exact same
+ * requireProjectWriteAccess -> activePipelines -> updateProjectSpec
+ * shape in routes/projects.ts, just operating on a different spec array.
+ * Same sentinel convention: `"Assumptions"`/`"Personas"` in `entityName`,
+ * `fieldName` left null.
  */
-export type SchemaLabelEditAction = "entity_renamed" | "field_renamed" | "role_added" | "role_removed" | "role_renamed";
+export type SchemaLabelEditAction =
+  | "entity_renamed"
+  | "field_renamed"
+  | "role_added"
+  | "role_removed"
+  | "role_renamed"
+  | "assumption_added"
+  | "assumption_removed"
+  | "assumption_renamed"
+  | "persona_added"
+  | "persona_removed"
+  | "persona_renamed";
 
 export interface SchemaLabelEdit {
   id: number;

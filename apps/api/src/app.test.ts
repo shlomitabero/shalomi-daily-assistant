@@ -8759,6 +8759,125 @@ test("POST/DELETE/PATCH .../roles all record who made the change, readable via G
 });
 
 /**
+ * Round 1776: the identical audit-trail extension round 1775 did for
+ * roles, now for assumptions and personas -- see that test's own comment
+ * for why the new-item index is computed before the POST rather than
+ * hardcoded.
+ */
+test("POST/DELETE/PATCH .../assumptions and .../personas all record who made the change, readable via GET .../schema-label-edits", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-assumptions-personas-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-assumptions-personas-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { assumptions: string[]; personas: string[] } };
+    };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    const assumptionIndex = project.spec.assumptions.length;
+    const addAssumptionRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions`, {
+      method: "POST",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ assumption: "Users have reliable internet access" }),
+    });
+    assert.equal(addAssumptionRes.status, 200);
+
+    const personaIndex = project.spec.personas.length;
+    const addPersonaRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas`, {
+      method: "POST",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ persona: "Busy sales manager" }),
+    });
+    assert.equal(addPersonaRes.status, 200);
+
+    const patchAssumptionRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/${assumptionIndex}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(collabToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ assumption: "Users have a stable internet connection", expect: "Users have reliable internet access" }),
+    });
+    assert.equal(patchAssumptionRes.status, 200);
+
+    const patchPersonaRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${personaIndex}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(collabToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ persona: "Overworked sales manager", expect: "Busy sales manager" }),
+    });
+    assert.equal(patchPersonaRes.status, 200);
+
+    const deleteAssumptionRes = await fetch(`${baseUrl}/api/projects/${project.id}/assumptions/${assumptionIndex}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ expect: "Users have a stable internet connection" }),
+    });
+    assert.equal(deleteAssumptionRes.status, 200);
+
+    const deletePersonaRes = await fetch(`${baseUrl}/api/projects/${project.id}/personas/${personaIndex}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ expect: "Overworked sales manager" }),
+    });
+    assert.equal(deletePersonaRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/schema-label-edits`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { edits } = (await listRes.json()) as {
+      edits: { action: string; entityName: string; fieldName: string | null; changedByUserId: string | null; previousLabel: string; newLabel: string }[];
+    };
+
+    const assumptionAdded = edits.find((e) => e.action === "assumption_added")!;
+    assert.ok(assumptionAdded, "adding an assumption must have been logged");
+    assert.equal(assumptionAdded.entityName, "Assumptions");
+    assert.equal(assumptionAdded.fieldName, null);
+    assert.equal(assumptionAdded.changedByUserId, ownerUser.id);
+    assert.equal(assumptionAdded.newLabel, "Users have reliable internet access");
+
+    const assumptionRenamed = edits.find((e) => e.action === "assumption_renamed")!;
+    assert.ok(assumptionRenamed, "renaming an assumption must have been logged");
+    assert.equal(assumptionRenamed.changedByUserId, collabUser.id);
+    assert.equal(assumptionRenamed.previousLabel, "Users have reliable internet access");
+    assert.equal(assumptionRenamed.newLabel, "Users have a stable internet connection");
+
+    const assumptionRemoved = edits.find((e) => e.action === "assumption_removed")!;
+    assert.ok(assumptionRemoved, "removing an assumption must have been logged");
+    assert.equal(assumptionRemoved.changedByUserId, ownerUser.id);
+    assert.equal(assumptionRemoved.previousLabel, "Users have a stable internet connection");
+
+    const personaAdded = edits.find((e) => e.action === "persona_added")!;
+    assert.ok(personaAdded, "adding a persona must have been logged");
+    assert.equal(personaAdded.entityName, "Personas");
+    assert.equal(personaAdded.fieldName, null);
+    assert.equal(personaAdded.changedByUserId, ownerUser.id);
+    assert.equal(personaAdded.newLabel, "Busy sales manager");
+
+    const personaRenamed = edits.find((e) => e.action === "persona_renamed")!;
+    assert.ok(personaRenamed, "renaming a persona must have been logged");
+    assert.equal(personaRenamed.changedByUserId, collabUser.id);
+    assert.equal(personaRenamed.previousLabel, "Busy sales manager");
+    assert.equal(personaRenamed.newLabel, "Overworked sales manager");
+
+    const personaRemoved = edits.find((e) => e.action === "persona_removed")!;
+    assert.ok(personaRemoved, "removing a persona must have been logged");
+    assert.equal(personaRemoved.changedByUserId, ownerUser.id);
+    assert.equal(personaRemoved.previousLabel, "Overworked sales manager");
+  });
+});
+
+/**
  * Round 1639: unlike round 1636's collaborator-role-change log (which
  * deliberately logs a no-op resubmit too, since even an unchanged role
  * still represents a real access decision), resubmitting the exact same
