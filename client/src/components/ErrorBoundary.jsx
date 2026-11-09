@@ -37,12 +37,25 @@ export class ErrorBoundary extends Component {
 
   render() {
     if (this.state.error) {
+      // This boundary also wraps ProductPage.jsx (the public /p/:slug sales
+      // page) - a real paying customer can land here too, not just the
+      // owner. "חזרה לדשבורד" sending them to '/' used to redirect a
+      // customer (who has no owner token) straight to the owner's own
+      // login screen ("כלי אישי, לא ציבורי") - a dead end that makes no
+      // sense to someone who was just trying to buy something. A public
+      // page gets a plain reload of itself instead.
+      const isPublicPage = window.location.pathname.startsWith('/p/');
       return (
         <div style={{ padding: '2rem', textAlign: 'center', direction: 'rtl' }}>
           <h2>משהו נתקע</h2>
           <p>קרתה תקלה בלתי צפויה בעמוד הזה. הנתונים שלך לא נפגעו.</p>
-          <button onClick={() => { this.setState({ error: null }); window.location.href = '/'; }}>
-            חזרה לדשבורד
+          <button
+            onClick={() => {
+              this.setState({ error: null });
+              window.location.href = isPublicPage ? window.location.pathname : '/';
+            }}
+          >
+            {isPublicPage ? 'רענן את העמוד' : 'חזרה לדשבורד'}
           </button>
         </div>
       );
