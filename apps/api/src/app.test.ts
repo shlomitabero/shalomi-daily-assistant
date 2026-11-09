@@ -15,6 +15,7 @@ import {
   insertProject,
   insertRecord,
   insertWhatsAppMessage,
+  listRecords,
   markProjectBuilt,
   quoteIdentifier,
   recordAutomationRun,
@@ -24068,6 +24069,59 @@ test("POST /public/webhook-in/:projectId/:entityName still rejects a relation va
       body: JSON.stringify({ item: "Widget", customer: "Nonexistent Customer" }),
     });
     assert.equal(webhookRes.status, 400, "a relation value matching no real record's label must still be rejected, not silently accepted just because the leniency fix exists");
+  });
+});
+
+// Round 1804: the relation branch used a plain .find(), so when TWO records
+// in the target entity share the exact same display label (completely
+// realistic -- two customers both named "John Smith"), it silently bound the
+// new record to whichever one happened to come first in listRecords' own
+// result order, with no error and no indication anything was ambiguous --
+// writing a real, wrong foreign key. Mirrors CSV import's own precedent for
+// this exact shape (entityFormatting.ts's buildImportRecords): an ambiguous
+// label must be rejected, never guessed.
+test("POST /public/webhook-in/:projectId/:entityName rejects a relation value that matches more than one record's display label, instead of silently guessing which one", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-ambiguous-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const first = insertRecord(db, projectId, spec.entities[0], { name: "John Smith" });
+    insertRecord(db, projectId, spec.entities[0], { name: "John Smith" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: "John Smith" }),
+    });
+    assert.equal(webhookRes.status, 400, "an ambiguous relation label (matching two different records) must be rejected, not silently resolved to whichever record came first");
+    const records = listRecords(db, projectId, spec.entities[1]);
+    assert.equal(records.length, 0, "the ambiguous webhook call must not have created an Order silently linked to the wrong (or an arbitrary) customer");
+    assert.ok(first.id, "sanity: the first same-labeled customer record was actually created");
   });
 });
 

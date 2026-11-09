@@ -278,10 +278,25 @@ function normalizeBodyValues(
         if (!recordsByTargetEntity.has(targetEntity.name)) {
           recordsByTargetEntity.set(targetEntity.name, listRecords(db, projectId, targetEntity));
         }
-        const match = recordsByTargetEntity
+        // Round 1804: unlike the enum branch below (which deliberately keeps
+        // first-match-wins for two enum values sharing a label -- see round
+        // 1541's own comment), a relation label collision is a real,
+        // realistic data-integrity risk: two records sharing the same
+        // display label (e.g. two customers both named "John Smith") is
+        // common, and silently binding to whichever happens to come first
+        // in listRecords' own result order writes a WRONG foreign key with
+        // no indication anything was ambiguous. Mirrors CSV import's own
+        // precedent for this exact shape (entityFormatting.ts's
+        // buildImportRecords, round 1162's doc comment there): resolve only
+        // on an unambiguous single match; on zero OR multiple matches,
+        // leave the raw label in place so coerceValue's existing relation
+        // branch (packages/db/src/repository.ts) rejects it with its own
+        // ValidationError, exactly as a genuinely unmatched label already
+        // does today -- never guess.
+        const matches = recordsByTargetEntity
           .get(targetEntity.name)!
-          .find((r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase());
-        if (match) normalized[field.name] = String(match.id);
+          .filter((r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase());
+        if (matches.length === 1) normalized[field.name] = String(matches[0].id);
       }
     } else if (field.type === "date") {
       normalized[field.name] = value;
