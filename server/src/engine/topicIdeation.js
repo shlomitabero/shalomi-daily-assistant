@@ -62,7 +62,17 @@ export async function generateTopicIdea({ avoidTitles = [], timeoutMs = API_TIME
   const prompt = buildTopicPrompt({ avoidTitles });
   const msg = await client.messages.create({
     model: MODEL,
-    max_tokens: 500,
+    // Same real risk as productDraft.js's equivalent call: claude-sonnet-5-5
+    // runs adaptive thinking by default whenever `thinking` is omitted, and
+    // that reasoning draws from this same max_tokens budget. 500 was sized
+    // only for the tiny visible output ({"topic": "...", "audience": "..."})
+    // with zero margin for any reasoning pass at all - on a model that
+    // thinks by default, that's a real risk of this call (the autonomous
+    // scan's own topic-ideation step, run every 4 hours) silently
+    // truncating before it ever reaches the visible JSON, for no reason
+    // other than an undersized ceiling. 16000 costs nothing extra unless
+    // actually used (billing is by tokens generated, not this ceiling).
+    max_tokens: 16000,
     messages: [{ role: 'user', content: prompt }],
   });
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');

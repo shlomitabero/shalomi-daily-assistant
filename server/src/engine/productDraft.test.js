@@ -102,6 +102,36 @@ test('draftProduct parses a real successful Anthropic API response', async () =>
   }
 });
 
+test('draftProduct requests a large enough max_tokens to leave room for claude-sonnet-5-5\'s default adaptive thinking', async () => {
+  // claude-sonnet-5-5 runs adaptive thinking by default whenever `thinking`
+  // is omitted (unlike older models), and that reasoning draws from the
+  // same max_tokens budget as the visible output - a low ceiling sized only
+  // for the JSON output itself risks silently truncating a real, billed AI
+  // call before it ever finishes. Pins the budget at a safe, documented
+  // default instead of trusting a future edit not to shrink it back down.
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  let capturedBody;
+  globalThis.fetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    const apiResponse = {
+      id: 'msg_test999', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+      content: [{ type: 'text', text: JSON.stringify(VALID_DRAFT) }],
+      stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 50, output_tokens: 120 },
+    };
+    return new Response(JSON.stringify(apiResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await draftProduct({ topic: 'x', audience: 'y' });
+    assert.ok(capturedBody.max_tokens >= 16000, `expected max_tokens >= 16000, got ${capturedBody.max_tokens}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
+
 test('draftProduct throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when the model answers in plain prose with no JSON at all', async () => {
   // extractJson falls back to the raw text verbatim when it finds no {...}
   // block (tested in isolation above) - draftProduct's own JSON.parse on

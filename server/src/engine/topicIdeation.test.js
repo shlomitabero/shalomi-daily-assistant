@@ -111,6 +111,36 @@ test('generateTopicIdea parses a real successful Anthropic API response', async 
   });
 });
 
+test('generateTopicIdea requests a large enough max_tokens to leave room for claude-sonnet-5-5\'s default adaptive thinking', async () => {
+  // Same real risk as productDraft.js's equivalent call: claude-sonnet-5-5
+  // runs adaptive thinking by default whenever `thinking` is omitted, and
+  // that reasoning draws from the same max_tokens budget as the tiny
+  // visible output ({"topic": "...", "audience": "..."}) - a low ceiling
+  // risks silently truncating this call (the autonomous scan's own
+  // topic-ideation step) before it ever finishes. Pins the budget at a
+  // safe, documented default instead of trusting a future edit not to
+  // shrink it back down.
+  const apiResponse = {
+    id: 'msg_test999', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'x', audience: 'y' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 30, output_tokens: 20 },
+  };
+  await withEnv({ ANTHROPIC_API_KEY: 'test-key' }, async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedBody;
+    globalThis.fetch = async (url, options) => {
+      capturedBody = JSON.parse(options.body);
+      return new Response(JSON.stringify(apiResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    try {
+      await generateTopicIdea({});
+      assert.ok(capturedBody.max_tokens >= 16000, `expected max_tokens >= 16000, got ${capturedBody.max_tokens}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test('generateTopicIdea throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when the model answers in plain prose with no JSON at all', async () => {
   // extractJson's fallback-to-raw-text behavior is tested in isolation
   // above - generateTopicIdea's own JSON.parse on that result was never
