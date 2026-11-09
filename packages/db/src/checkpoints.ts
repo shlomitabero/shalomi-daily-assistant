@@ -568,10 +568,21 @@ export function renameCheckpoint(db: ForgeDatabase, projectId: string, checkpoin
  * every other source) into its own entityNames set by the time this runs,
  * so nothing is lost by clearing it here, and leaving it behind would let
  * the ledger grow forever with rows for projects that no longer exist.
+ *
+ * Round 1770: checkpoint_field_type_history (round 1760's field-type twin
+ * of checkpoint_entity_history above) had the identical gap -- it's
+ * populated on every insertCheckpoint call but was never cleared here, so
+ * a deleted project's rows sat in this ledger forever. Its own doc
+ * comment (findLastKnownFieldType, above) describes it as "deliberately
+ * never pruned" -- that only means it isn't thinned alongside the
+ * CHECKPOINTS_RETENTION_LIMIT prune of individual checkpoints (round
+ * 1291); it was never meant to survive the whole project being deleted,
+ * the same way checkpoint_entity_history doesn't.
  */
 export function deleteCheckpointsForProject(db: ForgeDatabase, projectId: string): void {
   db.prepare("DELETE FROM checkpoints WHERE projectId = ?").run(projectId);
   db.prepare("DELETE FROM checkpoint_entity_history WHERE projectId = ?").run(projectId);
+  db.prepare("DELETE FROM checkpoint_field_type_history WHERE projectId = ?").run(projectId);
 }
 
 /**

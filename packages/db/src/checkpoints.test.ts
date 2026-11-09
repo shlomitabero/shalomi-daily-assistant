@@ -437,13 +437,28 @@ test("deleteCheckpointsForProject clears this project's own history ledger too, 
   const db = openDatabase(":memory:");
   ensureCheckpointsTable(db);
   insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "build", kind: "build", spec: validSpec });
-  const otherSpec: ProductSpec = { ...validSpec, entities: [{ name: "Vendor", fields: [] }] };
+  const otherSpec: ProductSpec = { ...validSpec, entities: [{ name: "Vendor", fields: [{ name: "company", type: "text", required: true }] }] };
   insertCheckpoint(db, { id: "cp2", projectId: "proj2", label: "build", kind: "build", spec: otherSpec });
 
   deleteCheckpointsForProject(db, "proj1");
 
   assert.deepEqual(listHistoricalEntityNames(db, "proj1"), [], "proj1's own ledger rows must be gone");
   assert.deepEqual(listHistoricalEntityNames(db, "proj2"), ["Vendor"], "proj2's ledger must be completely untouched");
+  // Round 1770: checkpoint_field_type_history (round 1760's field-type
+  // twin of checkpoint_entity_history, read via findLastKnownFieldType)
+  // had the identical gap -- deleteCheckpointsForProject used to clear
+  // only checkpoint_entity_history, leaving this sibling ledger's rows
+  // for the deleted project behind forever.
+  assert.equal(
+    findLastKnownFieldType(db, "proj1", "Customer", "name"),
+    undefined,
+    "proj1's own field-type history rows must be gone too",
+  );
+  assert.equal(
+    findLastKnownFieldType(db, "proj2", "Vendor", "company"),
+    "text",
+    "proj2's field-type history must be completely untouched",
+  );
 });
 
 /**
