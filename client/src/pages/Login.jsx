@@ -32,7 +32,15 @@ export default function Login() {
         <form onSubmit={onSubmit}>
           <label>
             סיסמה
-            <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+            <input
+              type="password"
+              name="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+            />
           </label>
           {error && <p className="form-error">{error}</p>}
           <button className="btn btn-primary btn-lg" type="submit" disabled={busy}>
