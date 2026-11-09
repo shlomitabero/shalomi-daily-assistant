@@ -15,7 +15,7 @@ import { getCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
 import { getViewMode } from "./viewModePreference.js";
 import { getSortKeys } from "./sortKeysPreference.js";
 import { getFieldFilters, setFieldFilters } from "./fieldFiltersPreference.js";
-import { getPinnedRecordIds } from "./pinnedRecordsPreference.js";
+import { getPinnedRecordIds, toggleRecordPinned } from "./pinnedRecordsPreference.js";
 import { EntityPanel } from "./EntityPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
@@ -9362,6 +9362,69 @@ test("EntityPanel forgets a deleted record's own pinned id once its real delete 
       t.mock.timers.reset();
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 1754: removePinnedRecord (pinnedRecordsPreference.ts) is only ever
+ * called from commitPendingDelete above -- the SAME browser tab's own
+ * delete flow. A DIFFERENT collaborator deleting the same record through
+ * the shared server route never runs commitPendingDelete here at all, so
+ * this tab's own pinnedIds state and localStorage never heard about it
+ * before this round, leaking the id forever -- the exact "unbounded
+ * localStorage growth" bug class round 1595 fixed for the same-tab path,
+ * just never extended to the cross-collaborator path refresh() is the only
+ * place that could catch. Pre-seeds the pin directly (as if pinned in an
+ * earlier session) rather than clicking the pin button, since the point
+ * being tested is refresh()'s own reconciliation, not the pin toggle
+ * itself. Triggers a real refresh() via the board view's own move-between-
+ * columns round trip (same as the test just above this file's board-move
+ * coverage), purely as a vehicle to get a second, genuine listRecords
+ * response back with the deleted record already gone.
+ */
+test("EntityPanel forgets a pinned record's own id once another collaborator deletes it server-side, instead of leaking it in localStorage forever", async () => {
+  await withJsdom(async () => {
+    toggleRecordPinned("proj1", "Deal", "user1", 1);
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "new" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+      assert.deepEqual(getPinnedRecordIds("proj1", "Deal", "user1"), new Set([1]), "sanity check: record 1 must start out pinned");
+
+      // Simulates another collaborator's own real DELETE against the
+      // server, outside this tab entirely -- this tab's commitPendingDelete
+      // never runs, so this is the only way record 1 can genuinely vanish
+      // from the next listRecords response. The already-rendered table/board
+      // still shows both records (this tab's own `records` state hasn't
+      // re-fetched yet) -- that's expected: it's refresh()'s own next
+      // round trip, triggered below, that must pick up this change.
+      store.splice(0, 1);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 2);
+      // Moves record 2 ("Globex", still the second card in original order)
+      // -- purely a vehicle to get handleMove -> updateRecord -> a real
+      // refresh() to run, which is the only place record 1's now-stale pin
+      // could be reconciled.
+      const moveSelect = document.querySelectorAll(".board-card-move")[1] as HTMLSelectElement;
+      fireEvent.change(moveSelect, { target: { value: "won" } });
+      await waitForCondition(() => store[0].status === "won");
+
+      await waitForCondition(() => getPinnedRecordIds("proj1", "Deal", "user1").size === 0);
+      assert.deepEqual(
+        getPinnedRecordIds("proj1", "Deal", "user1"),
+        new Set(),
+        "a record deleted by ANOTHER collaborator must also be forgotten once refresh() re-fetches and it's no longer in the server's response",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

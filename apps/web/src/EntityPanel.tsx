@@ -2236,6 +2236,32 @@ export function EntityPanel({
       setCollaboratorEmails(emails);
       setRecordListTruncated(truncated);
       setRecordListTotalCount(totalCount);
+      // Round 1754: removePinnedRecord (pinnedRecordsPreference.ts) is only
+      // ever called from commitPendingDelete below, so a pin survives in
+      // localStorage forever once a DIFFERENT collaborator deletes the same
+      // record through the shared server route -- this tab's own pinnedIds
+      // state and storage never hear about it, the exact "unbounded
+      // localStorage growth across a resource's lifecycle" bug class rounds
+      // 390-1128/1595 already fixed for every other leak of this shape (see
+      // removePinnedRecord's own doc comment). Reconciling against `records`
+      // (the server's real, unfiltered set), not `visible`, so a record this
+      // very tab just soft-deleted and might still Undo isn't mistaken for
+      // gone. Gated on `!truncated`: when the list is capped
+      // (RECORD_LIST_RESPONSE_CAP, round 1638) a pinned record can be
+      // genuinely alive but simply excluded from this one page, and treating
+      // that as deletion would silently forget a real pin.
+      if (!truncated && pinnedIds.size > 0) {
+        const presentIds = new Set(records.map((r) => r.id as number));
+        const stalePinnedIds = [...pinnedIds].filter((id) => !presentIds.has(id));
+        if (stalePinnedIds.length > 0) {
+          for (const staleId of stalePinnedIds) removePinnedRecord(projectId, entity.name, userId, staleId);
+          setPinnedIds((prev) => {
+            const next = new Set(prev);
+            for (const staleId of stalePinnedIds) next.delete(staleId);
+            return next;
+          });
+        }
+      }
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category, Employee.managerId -> Employee -- schema-legal, see
       // FieldSchema's own relation refine) makes this entity its own
