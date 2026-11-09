@@ -192,3 +192,36 @@ test("countUnreadWhatsAppMessages still counts real new messages correctly when 
   const messages = [msg("m5", "in"), msg("m4", "in"), msg("m2", "in"), msg("m1", "in")]; // "m3" (the deleted, previously-newest message at seen-time) is gone
   assert.equal(countUnreadWhatsAppMessages(messages, seen("m3")), 2, "m5 and m4 are genuinely newer than the deleted m3 and must still count as unread");
 });
+
+/**
+ * Round 1792: createdAt only has millisecond precision, and
+ * handleIncomingMessages (apps/api/src/whatsappWeb.ts) inserts a whole
+ * Baileys message batch in a synchronous loop with no await between
+ * calls, so two genuinely distinct inbound messages routinely land in the
+ * identical millisecond. Here "m2" (a newer, still-unread message) shares
+ * its exact createdAt with lastSeen's own tracked "m1" -- the old
+ * timestamp-cutoff check (`<=`) stopped the walk the instant it reached
+ * "m2", before ever counting it, undercounting what should be 1 down to 0.
+ * Array order (DESC, true insertion order once ids actually match) must
+ * win over a tied timestamp whenever lastSeen's own id is found at all.
+ */
+test("countUnreadWhatsAppMessages still counts a newer message that shares lastSeen's own exact millisecond timestamp, instead of stopping the walk early", () => {
+  const tiedTime = timeFor("m1");
+  const messages = [msg("m2", "in", tiedTime), msg("m1", "in", tiedTime)];
+  assert.equal(
+    countUnreadWhatsAppMessages(messages, seen("m1", tiedTime)),
+    1,
+    "m2 sits before lastSeen (m1) in the array, so it's genuinely newer and must count, even though their createdAt values are identical",
+  );
+});
+
+/**
+ * Sibling of the test above, with two tied-timestamp messages arriving
+ * after lastSeen instead of one, confirming the fix isn't off-by-one in
+ * either direction.
+ */
+test("countUnreadWhatsAppMessages counts every unread message sharing a tied timestamp with each other, not just the one adjacent to lastSeen", () => {
+  const tiedTime = timeFor("m2");
+  const messages = [msg("m3", "in", tiedTime), msg("m2", "in", tiedTime), msg("m1", "in")];
+  assert.equal(countUnreadWhatsAppMessages(messages, seen("m1")), 2, "both m3 and m2 are genuinely newer than lastSeen (m1) and must count");
+});

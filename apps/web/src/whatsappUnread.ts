@@ -90,11 +90,12 @@ export function purgeWhatsAppLastSeenForProject(projectId: string): void {
 
 /**
  * Messages arrive DESC-ordered (newest first -- see WhatsAppPanel's own
- * handleLoadMore doc comment), so this walks from the newest message and
- * stops the moment it reaches a point at or before lastSeen: everything
- * strictly after that point is new since the owner last had the log
- * open. Only inbound ("in") messages count -- a message this project
- * itself sent was never "unread" in the first place.
+ * handleLoadMore doc comment). When lastSeen's own id is actually found in
+ * this page, everything strictly before its array position is new since
+ * the owner last had the log open -- trusting array order alone, not
+ * `createdAt`, since round 1792 below explains why a timestamp comparison
+ * can't safely stand in for it here. Only inbound ("in") messages count --
+ * a message this project itself sent was never "unread" in the first place.
  *
  * Round 940: lastSeen's own `id` can legitimately vanish from this page
  * for two completely different reasons this function used to lump
@@ -124,10 +125,34 @@ export function purgeWhatsAppLastSeenForProject(projectId: string): void {
  */
 export function countUnreadWhatsAppMessages(messages: WhatsAppMessageLogEntry[], lastSeen: WhatsAppLastSeen | null): number {
   if (lastSeen === null) return 0;
+  // Round 1792: createdAt only has millisecond precision (see
+  // packages/db/src/whatsapp.ts's own insertWhatsAppMessage/listWhatsAppMessages
+  // comments), and handleIncomingMessages (whatsappWeb.ts) inserts an
+  // entire Baileys message batch in a synchronous loop with no await
+  // between inserts -- so two genuinely distinct messages routinely land
+  // in the exact same millisecond. The array's own order is already
+  // authoritative in that case (DESC by createdAt, tied by rowid --
+  // true insertion order), so once lastSeen's own id is actually found,
+  // trust the array position alone: a message sharing lastSeen's
+  // millisecond but sitting earlier in the array (newer) must still
+  // count, which the old timestamp-cutoff check (`<=`) stopped the walk
+  // on before it ever got there, silently undercounting (down to 0 in
+  // the simplest case). Only fall back to the timestamp heuristic when
+  // lastSeen's id can't be found at all -- round 940's own two cases
+  // (genuine pagination overflow vs. the tracked message having been
+  // deleted) still need it, and neither of those involves a same-id
+  // match in the first place.
+  const lastSeenIndex = messages.findIndex((m) => m.id === lastSeen.id);
+  if (lastSeenIndex !== -1) {
+    let count = 0;
+    for (let i = 0; i < lastSeenIndex; i++) {
+      if (messages[i].direction === "in") count++;
+    }
+    return count;
+  }
   const lastSeenTime = new Date(lastSeen.createdAt).getTime();
   let count = 0;
   for (const m of messages) {
-    if (m.id === lastSeen.id) break;
     if (!Number.isNaN(lastSeenTime) && new Date(m.createdAt).getTime() <= lastSeenTime) break;
     if (m.direction === "in") count++;
   }
