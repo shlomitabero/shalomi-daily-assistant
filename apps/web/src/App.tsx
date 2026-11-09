@@ -203,6 +203,7 @@ interface ArchitectImpactDetail {
     removedFieldNames?: string[];
     tightenedFieldNames?: string[];
     retypedFieldNames?: string[];
+    retargetedFieldNames?: string[];
   }[];
   removedEntities?: { name: string; label: string }[];
 }
@@ -368,6 +369,9 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
     }
     if ((e.retypedFieldNames ?? []).length > 0) {
       parts.push(`${e.label} ${t("build.detail.architect.retypedFields")}${(e.retypedFieldNames ?? []).join(", ")}`);
+    }
+    if ((e.retargetedFieldNames ?? []).length > 0) {
+      parts.push(`${e.label} ${t("build.detail.architect.retargetedFields")}${(e.retargetedFieldNames ?? []).join(", ")}`);
     }
   }
   for (const e of detail.removedEntities ?? []) {

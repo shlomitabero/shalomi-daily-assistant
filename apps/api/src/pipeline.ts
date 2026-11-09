@@ -81,6 +81,7 @@ interface ImpactSummary {
     removedFieldNames: string[];
     tightenedFieldNames: string[];
     retypedFieldNames: string[];
+    retargetedFieldNames: string[];
   }[];
   removedEntityNames: string[];
   removedEntities: { name: string; label: string }[];
@@ -323,7 +324,30 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
       const prevField = prevFieldsByName.get(f.name) ?? prevFieldsByLowerName.get(f.name.toLowerCase());
       return !!prevField && prevField.type !== f.type;
     });
-    if (newFields.length > 0 || removedFields.length > 0 || tightenedFields.length > 0 || retypedFields.length > 0) {
+    // A relation field can keep its own name AND type ("relation") across a
+    // refine while repointing to a different target entity (e.g. "treat
+    // couriers as drivers now") -- invisible to retypedFields just above
+    // (type never changed) and to every other check in this function. This
+    // is just as serious as a type change: migrate.ts's own diffAndMigrate
+    // has a dedicated "relation_target_changed" hazard for exactly this,
+    // which silently disables any field_equals automation rule relying on
+    // the field (a rule left enabled would fire on a coincidental id match
+    // against the wrong entity, not merely stale but silently wrong).
+    // Compared case-insensitively, matching this codebase's established
+    // relationTo-comparison convention (migrate.ts/repository.ts/etc.).
+    const retargetedFields = entity.fields.filter((f) => {
+      if (f.type !== "relation") return false;
+      const prevField = prevFieldsByName.get(f.name) ?? prevFieldsByLowerName.get(f.name.toLowerCase());
+      if (!prevField || prevField.type !== "relation") return false;
+      return (prevField.relationTo ?? "").toLowerCase() !== (f.relationTo ?? "").toLowerCase();
+    });
+    if (
+      newFields.length > 0 ||
+      removedFields.length > 0 ||
+      tightenedFields.length > 0 ||
+      retypedFields.length > 0 ||
+      retargetedFields.length > 0
+    ) {
       // Occurrences are counted over every field that exists on EITHER side
       // of this refine (deduped by name, next's definition winning for a
       // field present on both), not just whichever of new/removed/tightened
@@ -349,6 +373,7 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
         removedFieldNames: removedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
         tightenedFieldNames: tightenedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
         retypedFieldNames: retypedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
+        retargetedFieldNames: retargetedFields.map((f) => fieldDisplayLabel(f, labelOccurrences)),
       });
     }
   }
@@ -402,6 +427,13 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
   // so the user needs to hear about it here, not discover it after the
   // fact when their automation rule has vanished.
   const entitiesWithRetypedFields = impact.changedEntities.filter((e) => e.retypedFieldNames.length > 0);
+  // A relation field repointed to a different target entity (same name,
+  // same "relation" type, different relationTo) is just as serious as a
+  // type change above, and for the same reason: migrate.ts's own
+  // "relation_target_changed" hazard already disables any automation rule
+  // depending on the field, since its stored id is only meaningful against
+  // whatever table the FK actually watches.
+  const entitiesWithRetargetedFields = impact.changedEntities.filter((e) => e.retargetedFieldNames.length > 0);
   return (
     (impact.removedEntityNames.length > 0
       ? ` Warning: ${impact.removedEntityNames.length} ${impact.removedEntityNames.length === 1 ? "entity is" : "entities are"} no longer in the spec (${impact.removedEntityNames.join(", ")}) -- their data is kept but is no longer reachable through the app.`
@@ -414,6 +446,9 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
       : "") +
     (entitiesWithRetypedFields.length > 0
       ? ` Warning: ${entitiesWithRetypedFields.map((e) => `${e.label} changed field type on: ${e.retypedFieldNames.join(", ")}`).join("; ")} -- existing records and automation rules using these fields may need to be reviewed.`
+      : "") +
+    (entitiesWithRetargetedFields.length > 0
+      ? ` Warning: ${entitiesWithRetargetedFields.map((e) => `${e.label} repointed relation field(s) to a different entity: ${e.retargetedFieldNames.join(", ")}`).join("; ")} -- automation rules using these fields may need to be reviewed.`
       : "")
   );
 }

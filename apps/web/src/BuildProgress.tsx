@@ -153,6 +153,7 @@ interface ImpactDetail {
     removedFieldNames?: string[];
     tightenedFieldNames?: string[];
     retypedFieldNames?: string[];
+    retargetedFieldNames?: string[];
   }[];
   removedEntities?: { name: string; label: string }[];
 }
@@ -219,6 +220,13 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
                 {" "}
                 {t("build.detail.architect.retypedFields")}
                 {(e.retypedFieldNames ?? []).join(", ")}
+              </>
+            )}
+            {(e.retargetedFieldNames ?? []).length > 0 && (
+              <>
+                {" "}
+                {t("build.detail.architect.retargetedFields")}
+                {(e.retargetedFieldNames ?? []).join(", ")}
               </>
             )}
           </li>

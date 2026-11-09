@@ -902,11 +902,11 @@ test("the Architect step's impact summary is re-emitted with the corrected spec 
     const architectSuccesses = events.filter((e) => e.agent === "Architect" && e.status === "success");
     assert.equal(architectSuccesses.length, 2, "the Architect step must report again once the spec is corrected");
 
-    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[] }[] };
+    type ImpactDetail = { changedEntities: { name: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
     const finalImpact = architectSuccesses[architectSuccesses.length - 1].detail as ImpactDetail;
     assert.deepEqual(
       finalImpact.changedEntities,
-      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"], removedFieldNames: [], tightenedFieldNames: [], retypedFieldNames: [] }],
+      [{ name: "Customer", label: "Customer", newFieldNames: ["notes"], removedFieldNames: [], tightenedFieldNames: [], retypedFieldNames: [], retargetedFieldNames: [] }],
       "the re-emitted Architect detail must reflect the corrected field, not the broken one that was never actually built",
     );
   } finally {
@@ -1103,10 +1103,10 @@ test("a refine that drops a field from an entity that still exists is reported a
   assert.match(architectSuccess!.message, /\+0 new entities \(none\), 0 existing entities gaining fields\./);
   assert.match(architectSuccess!.message, /Warning: Order lost field\(s\): notes/);
 
-  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[] }[] };
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.changedEntities, [
-    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"], tightenedFieldNames: [], retypedFieldNames: [] },
+    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["notes"], tightenedFieldNames: [], retypedFieldNames: [], retargetedFieldNames: [] },
   ]);
 });
 
@@ -1168,10 +1168,10 @@ test("removing one of two same-labeled fields names the real removed field, not 
     "the warning must disambiguate which 'Amount' field was lost, not name the bare shared label still live on 'subtotal'",
   );
 
-  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[] }[] };
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.changedEntities, [
-    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["Amount (shipping)"], tightenedFieldNames: [], retypedFieldNames: [] },
+    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: ["Amount (shipping)"], tightenedFieldNames: [], retypedFieldNames: [], retargetedFieldNames: [] },
   ]);
 });
 
@@ -1235,10 +1235,10 @@ test("dropping a field from one of two same-labeled entities names the real chan
     "the warning must disambiguate which 'Items' entity lost the field, not name the bare shared label that also belongs to the untouched 'Service' entity",
   );
 
-  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[] }[] };
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.changedEntities, [
-    { name: "Product", label: "Items (Product)", newFieldNames: [], removedFieldNames: ["price"], tightenedFieldNames: [], retypedFieldNames: [] },
+    { name: "Product", label: "Items (Product)", newFieldNames: [], removedFieldNames: ["price"], tightenedFieldNames: [], retypedFieldNames: [], retargetedFieldNames: [] },
   ]);
 });
 
@@ -1314,10 +1314,10 @@ test("a refine that makes a field required or narrows an enum on an entity that 
 
   assert.match(architectSuccess!.message, /Warning: Deal now enforces stricter rules on: title, stage/);
 
-  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[] }[] };
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.changedEntities, [
-    { name: "Deal", label: "Deal", newFieldNames: [], removedFieldNames: [], tightenedFieldNames: ["title", "stage"], retypedFieldNames: [] },
+    { name: "Deal", label: "Deal", newFieldNames: [], removedFieldNames: [], tightenedFieldNames: ["title", "stage"], retypedFieldNames: [], retargetedFieldNames: [] },
   ]);
 });
 
@@ -1377,10 +1377,76 @@ test("a refine that changes a surviving field's TYPE on an entity that still exi
 
   assert.match(architectSuccess!.message, /Warning: Deal changed field type on: stage/);
 
-  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[] }[] };
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
   const detail = architectSuccess!.detail as ImpactDetail;
   assert.deepEqual(detail.changedEntities, [
-    { name: "Deal", label: "Deal", newFieldNames: [], removedFieldNames: [], tightenedFieldNames: [], retypedFieldNames: ["stage"] },
+    { name: "Deal", label: "Deal", newFieldNames: [], removedFieldNames: [], tightenedFieldNames: [], retypedFieldNames: ["stage"], retargetedFieldNames: [] },
+  ]);
+});
+
+/**
+ * Round 1762: a same-named relation field surviving a refine can repoint
+ * to a DIFFERENT target entity while keeping its own name AND its own type
+ * ("relation") -- invisible to retypedFields just above (type never
+ * changed) and to every other check in computeImpact. This is just as
+ * serious as a type change, and for the same reason: migrate.ts's own
+ * "relation_target_changed" hazard already disables any automation rule
+ * depending on the field, since its stored id is only meaningful against
+ * whatever table the FK actually watches.
+ */
+test("a refine that repoints a surviving relation field to a different target entity is reported as a retargeted field, not silently", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        name: "Order",
+        label: "Order",
+        fields: [{ name: "partner", label: "Partner", type: "relation", relationTo: "Vendor", required: false }],
+      },
+    ],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      previousSpec.entities[0],
+      previousSpec.entities[1],
+      {
+        ...previousSpec.entities[2],
+        fields: [{ name: "partner", label: "Partner", type: "relation", relationTo: "Customer", required: false }],
+      },
+    ],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: repoint Order.partner" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+
+  assert.match(architectSuccess!.message, /Warning: Order repointed relation field\(s\) to a different entity: Partner/);
+
+  type ImpactDetail = { changedEntities: { name: string; label: string; newFieldNames: string[]; removedFieldNames: string[]; tightenedFieldNames: string[]; retypedFieldNames: string[]; retargetedFieldNames: string[] }[] };
+  const detail = architectSuccess!.detail as ImpactDetail;
+  assert.deepEqual(detail.changedEntities, [
+    { name: "Order", label: "Order", newFieldNames: [], removedFieldNames: [], tightenedFieldNames: [], retypedFieldNames: [], retargetedFieldNames: ["Partner"] },
   ]);
 });
 
