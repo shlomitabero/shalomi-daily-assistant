@@ -101,9 +101,11 @@ export function createPaperTrade(req, res) {
   // symbol in the list below.
   if (!symbol || typeof symbol !== 'string' || !symbol.trim()) return res.status(400).json({ error: 'סימבול הוא שדה חובה' });
   const normalizedSymbol = symbol.trim().toUpperCase();
-  // simulateTradeResult silently treats anything other than 'long' as a
-  // short, so a typo like "Long" or "buy" would otherwise produce a
-  // confidently wrong simulated result instead of an error.
+  // simulateTradeResult (engine/paperTrading.js) already throws on an
+  // unrecognized side - this check exists so a typo like "Long" or "buy"
+  // gets a clean Hebrew 400 at this layer instead of that engine-level
+  // throw's own raw English message ('side must be "long" or "short", got: ...')
+  // leaking straight to the owner.
   if (!VALID_SIDES.includes(side)) return res.status(400).json({ error: `הצד חייב להיות אחד מ: ${VALID_SIDES.join(', ')}` });
 
   const entry = Number(entryPrice);
