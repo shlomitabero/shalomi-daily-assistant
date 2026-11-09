@@ -12486,6 +12486,16 @@ test("EntityPanel drops a dead sort key when a live refine removes its field, in
         "ascending",
         "the surviving 'name' key must become the sole, primary sort key -- reported via aria-sort -- not stuck at a stale secondary index",
       );
+      // Round 1768: mirrors round 1766/1767's identical strengthening of
+      // columnWidths'/fieldFiltersPreference's own analogous tests -- this
+      // effect used to call only the React state setter, never
+      // setSortKeysPreference, so the dead "status" sort key stayed in
+      // storage forever even once the DOM stopped showing its effects.
+      assert.deepEqual(
+        getSortKeys("proj1", "Deal", "user1").map((k) => k.field),
+        ["name"],
+        "the dropped 'status' sort key must also be purged from persisted storage, not just absent from the live DOM",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

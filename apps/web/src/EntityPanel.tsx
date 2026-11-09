@@ -2624,11 +2624,17 @@ export function EntityPanel({
     const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
     validFieldNames.add("createdAt");
     const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
-    setSortKeys(
-      getSortKeysPreference(projectId, entity.name, userId)
-        .map((k) => (validFieldNames.has(k.field) ? k : { ...k, field: byLowerName.get(k.field.toLowerCase()) ?? k.field }))
-        .filter((k) => validFieldNames.has(k.field)),
-    );
+    const cleaned = getSortKeysPreference(projectId, entity.name, userId)
+      .map((k) => (validFieldNames.has(k.field) ? k : { ...k, field: byLowerName.get(k.field.toLowerCase()) ?? k.field }))
+      .filter((k) => validFieldNames.has(k.field));
+    // Round 1768: setSortKeysPreference (the actual persisting setter -- see
+    // its own doc comment in sortKeysPreference.ts) must be called here too,
+    // not just the React state setter -- mirroring round 1766/1767's
+    // identical fix for columnWidths/fieldFiltersPreference's own sibling
+    // effects. Without it, a sort key dropped/remapped here only changed
+    // this mount's in-memory state; the dead entry for the removed/retyped
+    // field stayed in localStorage forever.
+    setSortKeys(setSortKeysPreference(projectId, entity.name, userId, cleaned));
   }, [projectId, entity.name, userId, fieldNamesKey]);
 
   // Round 985: hiddenFields had no revalidation effect of its own at all
