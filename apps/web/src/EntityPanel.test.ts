@@ -5872,6 +5872,74 @@ test("EntityPanel's update/delete webhook-URL buttons copy the correct URL templ
 });
 
 /**
+ * Round 1809: the update/delete webhook-URL buttons above carry their
+ * critical "{recordId} is a placeholder you must replace" instruction only
+ * in a `title` attribute -- a bare hover tooltip a screen-reader or
+ * keyboard-only user never gets, unlike every other spot in this same file
+ * (rounds 1747/1788) where a `title` is now paired with an `aria-label`
+ * that folds the hint into the button's own accessible name. Confirms the
+ * same fold here, and that it still reflects "Copied!"/"Copy failed" once
+ * clicked rather than silently reverting to the static hint text.
+ */
+test("EntityPanel's update/delete webhook-URL buttons fold their {recordId} hint into aria-label, not just a hover-only title", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async () => {} },
+      configurable: true,
+    });
+
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const updateBtn = document.querySelector(".webhook-in-update-copy-btn") as HTMLButtonElement;
+      const deleteBtn = document.querySelector(".webhook-in-delete-copy-btn") as HTMLButtonElement;
+      assert.match(
+        updateBtn.getAttribute("aria-label") ?? "",
+        /Copy update webhook URL.*replace \{recordId\}/,
+        "the update button's accessible name must fold the {recordId} placeholder hint, not just a hover-only title",
+      );
+      assert.match(
+        deleteBtn.getAttribute("aria-label") ?? "",
+        /Copy delete webhook URL.*replace \{recordId\}/,
+        "the delete button's accessible name must fold the {recordId} placeholder hint, not just a hover-only title",
+      );
+
+      await act(async () => {
+        fireEvent.click(updateBtn);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.match(
+        updateBtn.getAttribute("aria-label") ?? "",
+        /copied.*replace \{recordId\}/i,
+        "clicking must still fold the hint alongside the live 'copied' status, not silently revert to the static button label",
+      );
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * Round 937: this button's own text used to be a flat "Export to
  * Calendar (ICS)" with zero indication that it only ever exports the
  * calendar grid's CURRENTLY-SHOWN month -- unlike its sibling Export CSV

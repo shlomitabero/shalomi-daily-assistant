@@ -5911,38 +5911,50 @@ export function EntityPanel({
                     : t("entity.webhookIn.button")}
               </button>
             )}
-            {!readOnly && (
-              <button
-                type="button"
-                className="secondary webhook-in-update-copy-btn"
-                onClick={handleCopyWebhookUpdateUrl}
-                aria-live="polite"
-                aria-atomic="true"
-                title={t("entity.webhookInUpdate.hint")}
-              >
-                {webhookUpdateUrlStatus === "copied"
-                  ? t("entity.webhookIn.copied")
-                  : webhookUpdateUrlStatus === "failed"
-                    ? t("entity.webhookIn.failed")
-                    : t("entity.webhookInUpdate.button")}
-              </button>
-            )}
-            {!readOnly && (
-              <button
-                type="button"
-                className="secondary webhook-in-delete-copy-btn"
-                onClick={handleCopyWebhookDeleteUrl}
-                aria-live="polite"
-                aria-atomic="true"
-                title={t("entity.webhookInDelete.hint")}
-              >
-                {webhookDeleteUrlStatus === "copied"
-                  ? t("entity.webhookIn.copied")
-                  : webhookDeleteUrlStatus === "failed"
-                    ? t("entity.webhookIn.failed")
-                    : t("entity.webhookInDelete.button")}
-              </button>
-            )}
+            {!readOnly &&
+              (() => {
+                const webhookUpdateVisibleText =
+                  webhookUpdateUrlStatus === "copied"
+                    ? t("entity.webhookIn.copied")
+                    : webhookUpdateUrlStatus === "failed"
+                      ? t("entity.webhookIn.failed")
+                      : t("entity.webhookInUpdate.button");
+                return (
+                  <button
+                    type="button"
+                    className="secondary webhook-in-update-copy-btn"
+                    onClick={handleCopyWebhookUpdateUrl}
+                    aria-live="polite"
+                    aria-atomic="true"
+                    title={t("entity.webhookInUpdate.hint")}
+                    aria-label={`${webhookUpdateVisibleText} — ${t("entity.webhookInUpdate.hint")}`}
+                  >
+                    {webhookUpdateVisibleText}
+                  </button>
+                );
+              })()}
+            {!readOnly &&
+              (() => {
+                const webhookDeleteVisibleText =
+                  webhookDeleteUrlStatus === "copied"
+                    ? t("entity.webhookIn.copied")
+                    : webhookDeleteUrlStatus === "failed"
+                      ? t("entity.webhookIn.failed")
+                      : t("entity.webhookInDelete.button");
+                return (
+                  <button
+                    type="button"
+                    className="secondary webhook-in-delete-copy-btn"
+                    onClick={handleCopyWebhookDeleteUrl}
+                    aria-live="polite"
+                    aria-atomic="true"
+                    title={t("entity.webhookInDelete.hint")}
+                    aria-label={`${webhookDeleteVisibleText} — ${t("entity.webhookInDelete.hint")}`}
+                  >
+                    {webhookDeleteVisibleText}
+                  </button>
+                );
+              })()}
             <button
               type="button"
               className="secondary"
