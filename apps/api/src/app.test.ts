@@ -23835,6 +23835,77 @@ test("POST /public/webhook-in/:projectId/:entityName resolves a numeric-looking 
   });
 });
 
+/**
+ * Round 1763: the relation branch's label lookup used to call
+ * recordDisplayLabel(targetEntity, r) with no third argument, silently
+ * defaulting to "en" regardless of the project's own language -- every
+ * other recordDisplayLabel call in this file (and automations.ts/
+ * backup.ts/twin.ts/whatsapp.ts) already passes the project's real
+ * language. This is invisible for a text/title display field (the same
+ * string either way), but a target entity whose display field falls back
+ * to a `date` field (pickDisplayField, no name/title/text/longtext field
+ * to prefer) formats that date with toLocaleDateString, which differs
+ * between "en-US" and "he-IL" for the same date -- so a Hebrew project's
+ * own he-IL-formatted label (the one shown everywhere else: CSV export,
+ * a WhatsApp automation placeholder, the Business Twin narrative) would
+ * never match here, hard-rejecting an otherwise entirely valid webhook
+ * payload.
+ */
+test("POST /public/webhook-in/:projectId/:entityName resolves a relation value against a Hebrew project's own he-IL-formatted date display label, not an English-formatted one", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-hebrew-date-label-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "signupDate", type: "date", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "פרויקט לקוחות", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const customer = insertRecord(db, projectId, spec.entities[0], { signupDate: "2026-04-02" });
+    const heLabel = new Date(2026, 3, 2).toLocaleDateString("he-IL");
+    const enLabel = new Date(2026, 3, 2).toLocaleDateString("en-US");
+    assert.notEqual(heLabel, enLabel, "sanity check: the two locales must actually format this date differently for this test to mean anything");
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: heLabel }),
+    });
+    assert.equal(
+      webhookRes.status,
+      201,
+      "a relation value sent as the related record's own he-IL-formatted display label -- exactly what this Hebrew project shows everywhere else -- must resolve, not be rejected as an invalid number",
+    );
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; item: string; customer: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.customer, Number(customer.id), "the stored value must be the resolved customer's real numeric id, not the raw he-IL label string");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName 404s for a missing, wrong, or never-requested token, a nonexistent entity, or a nonexistent project -- the token itself is the only authentication", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-bad-${randomUUID()}@example.com`;

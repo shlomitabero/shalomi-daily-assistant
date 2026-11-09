@@ -221,7 +221,14 @@ const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪\s]/g;
 // leniency above (round 1584-era) already closed for the positive case.
 const WEBHOOK_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
 
-function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: Entity[], entity: Entity, body: Record<string, unknown>): Record<string, unknown> {
+function normalizeBodyValues(
+  db: ForgeDatabase,
+  projectId: string,
+  allEntities: Entity[],
+  entity: Entity,
+  body: Record<string, unknown>,
+  lang: "he" | "en",
+): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
   for (const field of entity.fields) {
     const raw = normalized[field.name];
@@ -245,8 +252,19 @@ function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: 
       normalized[field.name] = value;
       const targetEntity =
         allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
+      // `lang` matters here specifically when the target entity's own
+      // display field (pickDisplayField, displayField.ts) falls back to a
+      // `date` field (no name/title/text field to prefer) -- recordDisplayLabel
+      // formats dates with toLocaleDateString, and en/he produce different
+      // strings for the same date. Every other recordDisplayLabel call in
+      // this file (and automations.ts/backup.ts/twin.ts/whatsapp.ts) already
+      // passes the project's real language; this call used to silently
+      // default to "en", so a Hebrew project's own he-IL-formatted label
+      // (the one shown everywhere else) would never match here.
       if (targetEntity) {
-        const match = listRecords(db, projectId, targetEntity).find((r) => recordDisplayLabel(targetEntity, r).toLowerCase() === value.toLowerCase());
+        const match = listRecords(db, projectId, targetEntity).find(
+          (r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase(),
+        );
         if (match) normalized[field.name] = String(match.id);
       }
     } else if (field.type === "date") {
@@ -437,7 +455,14 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
               db,
               projectId,
               entity,
-              normalizeBodyValues(db, projectId, project.spec.entities, entity, normalizeBodyKeys(entity, req.body ?? {})),
+              normalizeBodyValues(
+                db,
+                projectId,
+                project.spec.entities,
+                entity,
+                normalizeBodyKeys(entity, req.body ?? {}),
+                isHebrewText(project.description) ? "he" : "en",
+              ),
             );
           } catch (err) {
             // Round 1471: see recordInboundWebhookFailure's own doc comment
@@ -563,7 +588,14 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
               projectId,
               entity,
               recordId,
-              normalizeBodyValues(db, projectId, project.spec.entities, entity, normalizeBodyKeys(entity, req.body ?? {})),
+              normalizeBodyValues(
+                db,
+                projectId,
+                project.spec.entities,
+                entity,
+                normalizeBodyKeys(entity, req.body ?? {}),
+                isHebrewText(project.description) ? "he" : "en",
+              ),
             );
           } catch (err) {
             // Same FOREIGN KEY constraint translation as the create route
