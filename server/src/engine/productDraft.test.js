@@ -187,6 +187,36 @@ test('draftProduct throws a clean Hebrew error, not the raw Anthropic API error,
   }
 });
 
+test('draftProduct throws a clean Hebrew "ran out of token budget" error, not the generic invalid-JSON error, when the response is cut off by max_tokens', async () => {
+  // Without this check, a genuine max_tokens cutoff falls through to the
+  // generic "AI returned invalid JSON" error - technically true (a
+  // truncated response usually isn't valid JSON either) but misleading:
+  // it reads as the AI having malfunctioned, when the real story is "it
+  // was still working and ran out of room," a materially different thing
+  // for the owner to know when deciding whether to just retry.
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  const apiResponse = {
+    id: 'msg_test_cutoff', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: '{"title": "מדריך חת' }],
+    stop_reason: 'max_tokens', stop_sequence: null, usage: { input_tokens: 30, output_tokens: 16000 },
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(apiResponse), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  });
+  try {
+    await assert.rejects(
+      () => draftProduct({ topic: 'x', audience: 'y' }),
+      /ה-AI לא הספיק לסיים את התשובה בתקציב הטוקנים שהוקצה/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
+
 test('extractJson strips prose the model adds despite being told not to', () => {
   const text = 'Sure, here is the JSON:\n{"title": "x"}\nLet me know if you need anything else!';
   assert.equal(extractJson(text), '{"title": "x"}');

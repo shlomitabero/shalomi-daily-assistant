@@ -92,6 +92,17 @@ export async function draftProduct({ topic, audience, timeoutMs = API_TIMEOUT_MS
     console.error('draftProduct: Anthropic API call failed', err);
     throw new Error('הבקשה ל-AI נכשלה — בדוק את לוגי השרת לפרטים');
   }
+  if (msg.stop_reason === 'max_tokens') {
+    // Without this, a genuine max_tokens cutoff (the model's adaptive
+    // thinking plus output together exceeded even the 16000-token budget
+    // above) falls through to the generic "AI returned invalid JSON" error
+    // below - technically true (a truncated response usually isn't valid
+    // JSON either), but misleading: it reads as the AI having gone wrong,
+    // when the real, more honest story is "it was still working and ran
+    // out of room," a materially different thing for the owner to know
+    // when deciding whether to just retry.
+    throw new Error('ה-AI לא הספיק לסיים את התשובה בתקציב הטוקנים שהוקצה — נסה שוב');
+  }
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   let parsed;
   try {

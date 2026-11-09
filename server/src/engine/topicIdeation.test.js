@@ -192,6 +192,33 @@ test('generateTopicIdea throws a clean Hebrew error, not the raw Anthropic API e
   });
 });
 
+test('generateTopicIdea throws a clean Hebrew "ran out of token budget" error, not the generic invalid-JSON error, when the response is cut off by max_tokens', async () => {
+  // Same reasoning as productDraft.test.js's equivalent test: without this
+  // check, a genuine max_tokens cutoff falls through to the generic "AI
+  // returned invalid JSON" error below - technically true but misleading,
+  // since the real story (still working, ran out of room) is materially
+  // different from the model having gone wrong.
+  const apiResponse = {
+    id: 'msg_test_cutoff', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: '{"topic": "ניהול ת' }],
+    stop_reason: 'max_tokens', stop_sequence: null, usage: { input_tokens: 30, output_tokens: 16000 },
+  };
+  await withEnv({ ANTHROPIC_API_KEY: 'test-key' }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify(apiResponse), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+    try {
+      await assert.rejects(
+        () => generateTopicIdea({}),
+        /ה-AI לא הספיק לסיים את התשובה בתקציב הטוקנים שהוקצה/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test('generateTopicIdea times out instead of hanging for the SDK default of ~10 minutes (retried) when the API never responds', async () => {
   // Without an explicit timeout, a hung connection would block the
   // autonomous scan's background cron job (or a manual "סרוק עכשיו" click)

@@ -90,6 +90,14 @@ export async function generateTopicIdea({ avoidTitles = [], timeoutMs = API_TIME
     // console.error of this same err right after catching it.
     throw new Error('הבקשה ל-AI נכשלה — בדוק את לוגי השרת לפרטים');
   }
+  if (msg.stop_reason === 'max_tokens') {
+    // Same reasoning as productDraft.js's equivalent check: without this,
+    // a genuine max_tokens cutoff falls through to the generic "AI
+    // returned invalid JSON" error below - technically true but
+    // misleading, since the real story (still working, ran out of room)
+    // is materially different from the model having gone wrong.
+    throw new Error('ה-AI לא הספיק לסיים את התשובה בתקציב הטוקנים שהוקצה — נסה שוב');
+  }
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   let parsed;
   try {
