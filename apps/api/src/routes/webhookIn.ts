@@ -230,6 +230,19 @@ function normalizeBodyValues(
   lang: "he" | "en",
 ): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
+  // Round 1796: two or more relation fields on the same entity can share
+  // the identical target entity (e.g. Order.accountManager and
+  // Order.backupManager both -> Employee) -- without this, each one
+  // independently re-ran listRecords + a full recordDisplayLabel pass over
+  // every target record, turning one webhook POST's cost into O(fields x
+  // records) instead of O(distinct target entities x records). Keyed by
+  // target entity name, built lazily the first time a given target is
+  // actually needed; mirrors backup.ts's own recordIndexByEntity, built
+  // once per export for the identical reason (there eagerly, since backup
+  // always visits every entity anyway; here lazily, since a single
+  // webhook body only ever touches the handful of entities its own
+  // relation fields target).
+  const recordsByTargetEntity = new Map<string, ReturnType<typeof listRecords>>();
   for (const field of entity.fields) {
     const raw = normalized[field.name];
     if (typeof raw !== "string") continue;
@@ -262,9 +275,12 @@ function normalizeBodyValues(
       // default to "en", so a Hebrew project's own he-IL-formatted label
       // (the one shown everywhere else) would never match here.
       if (targetEntity) {
-        const match = listRecords(db, projectId, targetEntity).find(
-          (r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase(),
-        );
+        if (!recordsByTargetEntity.has(targetEntity.name)) {
+          recordsByTargetEntity.set(targetEntity.name, listRecords(db, projectId, targetEntity));
+        }
+        const match = recordsByTargetEntity
+          .get(targetEntity.name)!
+          .find((r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase());
         if (match) normalized[field.name] = String(match.id);
       }
     } else if (field.type === "date") {

@@ -24138,6 +24138,69 @@ test("POST /public/webhook-in/:projectId/:entityName resolves a numeric-looking 
 });
 
 /**
+ * Round 1796: normalizeBodyValues (webhookIn.ts) used to independently call
+ * listRecords + recompute recordDisplayLabel over an entire target entity
+ * for EACH relation field on the incoming entity -- so when two or more
+ * relation fields point at the SAME target entity (accountManager and
+ * backupManager both -> Employee here), one webhook POST re-scanned
+ * Employee once per field instead of once total, mirroring the exact
+ * per-entity caching backup.ts's own recordIndexByEntity (round 964)
+ * already does for the identical reason. No observable behavior changed --
+ * this guards that the new shared, lazily-built cache still resolves EACH
+ * field to its own correct target record, not a stale or cross-field value.
+ */
+test("POST /public/webhook-in/:projectId/:entityName resolves two different relation fields that share the same target entity, each to its own correct record", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-shared-target-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Employee", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "accountManager", type: "relation", relationTo: "Employee", required: true },
+            { name: "backupManager", type: "relation", relationTo: "Employee", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const alice = insertRecord(db, projectId, spec.entities[0], { name: "Alice" });
+    const bob = insertRecord(db, projectId, spec.entities[0], { name: "Bob" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", accountManager: "Alice", backupManager: "Bob" }),
+    });
+    assert.equal(webhookRes.status, 201);
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; item: string; accountManager: number; backupManager: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.accountManager, Number(alice.id), "accountManager must resolve to Alice, not be confused with backupManager's own lookup");
+    assert.equal(created!.backupManager, Number(bob.id), "backupManager must resolve to Bob, not be confused with accountManager's own lookup");
+  });
+});
+
+/**
  * Round 1763: the relation branch's label lookup used to call
  * recordDisplayLabel(targetEntity, r) with no third argument, silently
  * defaulting to "en" regardless of the project's own language -- every
