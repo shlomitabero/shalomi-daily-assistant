@@ -6528,6 +6528,26 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setColumnOrderState(replaceColumnOrder(entity.name, cleaned));
   }, [entity.name, fieldNamesKey]);
 
+  // Round 1783: the identical "never revalidated past mount" gap rounds
+  // 1778-1782 closed for columnWidths/sortKeys/hiddenFields/columnOrder,
+  // now for fieldFilters -- the combined reset effect above only ever
+  // calls sanitizeFieldFilters at MOUNT time, never again while this same
+  // EntityView instance stays mounted through a live refine. Unlike those
+  // 4 siblings, this one has an immediately visible symptom, not just a
+  // storage-hygiene one: visibleRecords' filter predicate (below) does
+  // String(r[fieldName] ?? "") === value for a dead field -- since
+  // r[fieldName] is now always undefined (""), and a persisted filter
+  // value is never the empty string, EVERY record fails the filter, and
+  // the table silently drops to zero rows the moment a refine removes the
+  // field that was filtered, even though nothing about the filter UI
+  // itself suggests the table should now be empty. sanitizeFieldFilters
+  // already handles the full cleanup (case-insensitive rename tolerance,
+  // drop if genuinely gone, drop if no longer a filterable type) --
+  // exactly the same function the mount-time call above already uses.
+  useEffect(() => {
+    setFieldFilters(setPersistedFieldFilters(entity.name, sanitizeFieldFilters(getPersistedFieldFilters(entity.name), entity.fields)));
+  }, [entity.name, fieldNamesKey]);
+
   // Multi-row selection is only ever settable from Table view -- Board's
   // own card and the calendar day cells have no selection checkbox at all
   // -- but selectedIds itself is view-mode-agnostic state, and the

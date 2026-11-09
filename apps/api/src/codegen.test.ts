@@ -25021,6 +25021,95 @@ test("the exported EntityView drops a dead column-order entry when its field is 
 });
 
 /**
+ * Round 1783: the identical "never revalidated past mount" gap rounds
+ * 1778-1782 closed for columnWidths/sortKeys/hiddenFields/columnOrder,
+ * now for fieldFilters -- but with a worse, immediately visible symptom.
+ * Round 570/834's own tests above only ever seed the stale localStorage
+ * entry BEFORE the first mount (simulating an older export's leftover
+ * browser state), so sanitizeFieldFilters' existing mount-time call always
+ * caught it. This test instead changes entity.fields on an ALREADY-MOUNTED
+ * instance via .rerender() -- the exact shape of a live refine -- which
+ * that mount-time-only call can never see again.
+ */
+test("the exported EntityView drops a dead fieldFilters entry when its field is removed without the panel remounting, instead of leaving the table stuck at zero rows", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const customerWithoutStatus: Entity = {
+    ...customerEntity,
+    fields: customerEntity.fields.filter((f) => f.name !== "status"),
+  };
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Other Corp", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("forge_field_filters", JSON.stringify({ Customer: { status: "New" } }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length > 0,
+        "the initial record fetch never completed",
+      );
+      assert.equal(
+        view.container.querySelectorAll("tbody tr").length,
+        1,
+        "sanity check: the persisted filter must already be narrowing the on-screen table to the matching record",
+      );
+
+      // Same entity.name, a field list that no longer includes "status" --
+      // the exact shape of a live refine re-rendering this already-mounted
+      // instance, never a remount (mirrors round 1778/1779/1780/1782's own
+      // tests).
+      view.rerender(React.createElement(EntityView, { ...props, entity: customerWithoutStatus }));
+
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length === 2,
+        "the table stayed stuck at zero/filtered rows after the filtered field was removed, instead of showing every record again",
+      );
+      await waitForCondition(
+        () => !("status" in (JSON.parse(localStorage.getItem("forge_field_filters") ?? "{}").Customer ?? {})),
+        "the dropped 'status' fieldFilters entry never left persisted storage after its field was removed",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --
