@@ -66,7 +66,20 @@ export async function generateTopicIdea({ avoidTitles = [], timeoutMs = API_TIME
     messages: [{ role: 'user', content: prompt }],
   });
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-  const parsed = JSON.parse(extractJson(text));
+  let parsed;
+  try {
+    parsed = JSON.parse(extractJson(text));
+  } catch {
+    // extractJson falls back to the raw text verbatim when it finds no
+    // {...} block at all (a refusal, a truncated response cut off before
+    // the opening brace) - JSON.parse on that throws its own raw English
+    // SyntaxError. This reaches the owner verbatim as scanResult.reason on
+    // Opportunities.jsx's manual "סרוק עכשיו" button (runAutonomousScan's
+    // own catch block returns { ran: false, reason: err.message } with no
+    // translation layer of its own) - same leak already fixed for
+    // productDraft.js's own equivalent JSON.parse call.
+    throw new Error('ה-AI החזיר תשובה שאינה JSON תקין — לא הוצע רעיון לנושא');
+  }
   if (!isValidTopicIdea(parsed)) {
     // Reaches the owner verbatim as scanResult.reason on Opportunities.jsx's
     // manual "סרוק עכשיו" button (runAutonomousScan's own catch block

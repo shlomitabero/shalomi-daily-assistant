@@ -111,6 +111,33 @@ test('generateTopicIdea parses a real successful Anthropic API response', async 
   });
 });
 
+test('generateTopicIdea throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when the model answers in plain prose with no JSON at all', async () => {
+  // extractJson's fallback-to-raw-text behavior is tested in isolation
+  // above - generateTopicIdea's own JSON.parse on that result was never
+  // exercised end to end, and its raw SyntaxError would otherwise reach
+  // the owner verbatim as scanResult.reason on the manual "סרוק עכשיו"
+  // button, same leak already fixed for productDraft.js's equivalent call.
+  const apiResponse = {
+    id: 'msg_test789', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: 'Sorry, I cannot help with that request.' }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 30, output_tokens: 10 },
+  };
+  await withEnv({ ANTHROPIC_API_KEY: 'test-key' }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify(apiResponse), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+    try {
+      await assert.rejects(
+        () => generateTopicIdea({}),
+        /ה-AI החזיר תשובה שאינה JSON תקין/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test('generateTopicIdea times out instead of hanging for the SDK default of ~10 minutes (retried) when the API never responds', async () => {
   // Without an explicit timeout, a hung connection would block the
   // autonomous scan's background cron job (or a manual "סרוק עכשיו" click)
