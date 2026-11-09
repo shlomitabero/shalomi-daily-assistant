@@ -233,6 +233,12 @@ export default function Dashboard() {
             their sign-off, even though this is exactly the kind of
             actionable item this page's "what should I do now" framing
             exists to surface directly. */}
+        {/* Same reassuring zero-state as "הזדמנויות פעילות" right above -
+            this section was the one exception, showing its header and count
+            then nothing at all underneath when empty, easy to mistake for
+            "still loading" instead of the normal, common state it actually
+            is (nothing to approve right now). */}
+        {pendingApprovals.length === 0 && <p className="hint">אין כרגע שום פעולה שממתינה לאישור שלך.</p>}
         {pendingApprovals.slice(0, 3).map((a) => {
           const opp = opportunities.find((o) => o.id === a.opportunityId);
           return (
