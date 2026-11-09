@@ -25501,6 +25501,120 @@ test("the exported EntityView forgets a selected record's own id once another ta
 });
 
 /**
+ * Round 1787: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+ * for the exact same gap, never ported here -- the viewMode useState
+ * initializer only ever validates the persisted Table/Board/Calendar
+ * choice against boardField/dateField at MOUNT time, never again while
+ * this same EntityView instance stays mounted through a live refine.
+ * Without this, a refine that removes the Calendar mode's own required
+ * date field leaves viewMode stuck on "calendar" even though the table
+ * itself still renders correctly (the final render branch's own
+ * viewMode === "calendar" && dateField check falls through to Table) --
+ * the real, visible symptom is the "Group by" <select> (gated on
+ * viewMode === "table" specifically, not on which branch actually
+ * rendered) staying hidden even though the entity's enum field is still
+ * fully groupable. Uses a custom entity (status enum + eventDate date)
+ * since the shared Customer fixture has no date field.
+ */
+test("the exported EntityView drops a stale Calendar viewMode when its date field is removed without the panel remounting, instead of leaving 'Group by' hidden forever", async () => {
+  const customerWithDate: Entity = {
+    name: "Customer",
+    label: "לקוחות",
+    fields: [
+      { name: "name", label: "שם", type: "text", required: true },
+      {
+        name: "status",
+        label: "סטטוס",
+        type: "enum",
+        required: true,
+        enumValues: ["New", "Won"],
+        enumLabels: { New: "חדש", Won: "הצליח" },
+      },
+      { name: "eventDate", label: "תאריך", type: "date", required: true },
+    ],
+  };
+  const customerWithoutDate: Entity = { ...customerWithDate, fields: customerWithDate.fields.filter((f) => f.name !== "eventDate") };
+  const projectWithDate: Project = { ...project, spec: { ...project.spec, entities: [customerWithDate] } };
+
+  const files = generateExportFiles(projectWithDate);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [{ id: 1, name: "Acme Corp", status: "New", eventDate: "2024-06-01" }],
+    }),
+  })) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerWithDate,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr, .calendar-day").length > 0,
+        "the initial record fetch never completed",
+      );
+
+      // Table(0), Board(1, since "status" also qualifies as a board
+      // field), Calendar(2).
+      const calendarToggle = view.container.querySelectorAll(".view-toggle-btn")[2] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      await waitForCondition(
+        () => JSON.parse(localStorage.getItem("forge_view_mode") ?? "{}").Customer === "calendar",
+        "sanity check: switching to Calendar view must actually persist",
+      );
+      assert.equal(
+        view.container.querySelector(".entity-group-by"),
+        null,
+        "sanity check: 'Group by' must be hidden while in Calendar view",
+      );
+
+      // Same entity.name, "eventDate" removed -- the exact shape of a live
+      // refine re-rendering this already-mounted instance, never a remount
+      // (mirrors rounds 1778-1786's own tests).
+      view.rerender(React.createElement(EntityView, { ...props, entity: customerWithoutDate }));
+
+      await waitForCondition(
+        () => view.container.querySelector(".entity-group-by") !== null,
+        "the stale Calendar viewMode never fell back to Table after its date field was removed, leaving 'Group by' hidden even though 'status' is still groupable",
+      );
+      await waitForCondition(
+        () => JSON.parse(localStorage.getItem("forge_view_mode") ?? "{}").Customer !== "calendar",
+        "the stale Calendar viewMode never left persisted storage after its date field was removed",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --

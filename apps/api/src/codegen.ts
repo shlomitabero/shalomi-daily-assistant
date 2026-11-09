@@ -6699,6 +6699,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setCollapsedBoardColumns(new Set(filtered));
   }, [entity.name, boardField]);
 
+  // Round 1787: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // for the exact same gap -- the Table/Board/Calendar viewMode useState
+  // initializer above only ever validates the persisted choice against
+  // boardField/dateField at MOUNT time, never again while this same
+  // EntityView instance stays mounted through a live refine. Without this,
+  // a refine that removes the board/calendar mode's own required field
+  // left viewMode stuck on "board"/"calendar" in React state: the entire
+  // Table/Board/Calendar toggle bar (gated on boardField || dateField)
+  // vanished outright, so there was no in-app control left to switch back
+  // to Table, and the "Group by" <select> (gated on viewMode === "table")
+  // stayed hidden even though grouping was still fully available. Mirrors
+  // the mount initializer's own validation exactly, and -- matching this
+  // file's own established convention for every sibling revalidation
+  // effect above (fieldFilters/groupFieldName/collapsedGroups/
+  // collapsedBoardColumns) -- persists the corrected fallback too, via
+  // setPersistedViewMode.
+  useEffect(() => {
+    const loaded = getPersistedViewMode(entity.name);
+    const stillValid = loaded === "table" || (loaded === "board" && boardField) || (loaded === "calendar" && dateField);
+    if (!stillValid) setViewMode(setPersistedViewMode(entity.name, "table"));
+  }, [entity.name, boardField, dateField]);
+
   // Applies an incoming highlightRecordId (from GlobalSearch's own per-row
   // "jump to record" click) once this entity's records have actually
   // loaded -- switching to table view and clearing any leftover search
