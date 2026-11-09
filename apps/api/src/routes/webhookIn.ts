@@ -292,6 +292,43 @@ function normalizeBodyValues(db: ForgeDatabase, projectId: string, allEntities: 
         if (WEBHOOK_BOOLEAN_TRUE_VALUES.includes(lower)) normalized[field.name] = "true";
         else if (WEBHOOK_BOOLEAN_FALSE_VALUES.includes(lower)) normalized[field.name] = "false";
       }
+    } else if (field.type === "file") {
+      // Round 1746: unlike every other coercible type above, there is no
+      // "real value sent, just not in the exact shape expected" leniency
+      // possible here -- coerceValue's own file branch (repository.ts)
+      // only ever accepts this server's own internal upload-descriptor
+      // JSON, whose shape (an exact /api/uploads/<projectId>/<entityName>/
+      // <uuid> path this server generated at upload time) no external
+      // sender could ever construct. An external integrator sending a
+      // perfectly reasonable plain URL for a field that happens to be
+      // typed `file` in this project (a receipt link, an uploaded form
+      // attachment) 100%-reproducibly hit coerceValue's "must be a valid
+      // file descriptor" ValidationError, which -- same as every other
+      // field's own coercion failure -- aborted the WHOLE insertRecord/
+      // updateRecord call, hard-rejecting the entire record (every other,
+      // perfectly valid field included) over one field this route could
+      // never have accepted regardless of shape. Dropping the KEY (not
+      // just blanking the value) degrades this the same way an unmapped
+      // field already does elsewhere in this codebase: coerceValue's own
+      // isEmpty path either throws a clear "is required" error (if the
+      // field is required -- itself more useful signal than today's
+      // confusing descriptor message) or stores null, letting the rest of
+      // the record still get created.
+      //
+      // An already-empty value (`""`/whitespace-only -- coerceValue's own
+      // isEmpty definition) must NOT be dropped this way, though: deleting
+      // the key makes updateRecord's own `hasOwnProperty.call(data, ...)`
+      // check (repository.ts) see this field as never having been
+      // mentioned at all, so an explicit "clear this field" update
+      // (sending `receipt: ""` to wipe a previously-uploaded file) would
+      // silently leave the OLD stored descriptor -- and its on-disk file
+      // -- untouched instead of clearing it, exactly the partial-update
+      // semantics that same hasOwnProperty check exists to preserve for
+      // every field a caller legitimately doesn't mention. An empty value
+      // already degrades correctly on its own via that same isEmpty path
+      // without this branch's help, so only a genuinely non-empty,
+      // un-droppable value needs dropping here.
+      if (value !== "") delete normalized[field.name];
     }
   }
   return normalized;

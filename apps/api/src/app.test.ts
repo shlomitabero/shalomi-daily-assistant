@@ -23428,6 +23428,92 @@ test("POST /public/webhook-in/:projectId/:entityName still rejects a bare pair o
 });
 
 /**
+ * Round 1746: unlike every other coercible type above, a `file` field has
+ * no shape a real external sender could ever satisfy -- coerceValue's own
+ * file branch (repository.ts) only accepts this server's own internal
+ * upload-descriptor JSON (an exact /api/uploads/<projectId>/<entityName>/
+ * <uuid> path this server generated at upload time). Before this fix, a
+ * perfectly reasonable plain URL sent for a `file`-typed field (a receipt
+ * link, a form attachment) hard-rejected the ENTIRE record over that one
+ * field -- every other, perfectly valid field in the same payload included.
+ */
+test("POST /public/webhook-in/:projectId/:entityName drops a file field's unsatisfiable value instead of hard-rejecting the whole record, when the field is optional", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-file-optional-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "receipt", type: "file", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", receipt: "https://external-sender.example.com/receipts/123.pdf" }),
+    });
+    assert.equal(webhookRes.status, 201, "a plain external URL for an optional file field must not hard-reject the whole record");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; receipt: string | null }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.name, "Dana", "every other, perfectly valid field in the same payload must still be stored");
+    assert.equal(created!.receipt, null, "the unsatisfiable file value must be dropped to null, not stored as a broken descriptor");
+  });
+});
+
+test("POST /public/webhook-in/:projectId/:entityName still rejects the record with a clear \"is required\" error when a REQUIRED file field's value can't be satisfied", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-file-required-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "receipt", type: "file", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", receipt: "https://external-sender.example.com/receipts/123.pdf" }),
+    });
+    assert.equal(webhookRes.status, 400, "a required file field with no satisfiable value must still reject the record, not silently create it with a missing required value");
+    const { error } = (await webhookRes.json()) as { error: string };
+    assert.match(error, /is required/, "the error must be the clear \"is required\" message, not the confusing \"must be a valid file descriptor\" message");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: unknown[] };
+    assert.equal(records.length, 0, "the rejected record must not have been created");
+  });
+});
+
+/**
  * Round 1584: extends the same leniency to relation fields -- a real
  * external sender has no API to discover this app's internal numeric
  * record ids, so the only identifier it could plausibly send for a
