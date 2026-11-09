@@ -55,18 +55,44 @@ export interface LastNotifiedWhatsAppMessage {
  * round-940 fix, falling back to createdAt the moment a message's own
  * timestamp is at or before lastNotified's, not just on an exact id
  * match.
+ *
+ * Round 1793 (ported from round 1792's identical fix to this file's own
+ * sibling, countUnreadWhatsAppMessages in whatsappUnread.ts): createdAt
+ * only has millisecond precision, and handleIncomingMessages
+ * (whatsappWeb.ts) inserts a whole Baileys batch synchronously with no
+ * await between inserts, so two genuinely distinct inbound messages
+ * routinely land in the identical millisecond. The old per-iteration
+ * timestamp check could trip on a message that merely ties lastNotified's
+ * own millisecond -- not lastNotified itself -- stopping the walk before
+ * it ever reached (or confirmed) the real id, silently dropping a
+ * genuinely new message's desktop notification. Worse than
+ * countUnreadWhatsAppMessages' own version of this bug:
+ * maybeNotifyNewWhatsAppMessages (App.tsx) unconditionally advances its
+ * own lastNotifiedIdRef to the newest message on every single poll, so a
+ * notification dropped this way is lost permanently, not just delayed to
+ * the next poll. Once lastNotified's own id is actually found, array
+ * order alone is authoritative (DESC, true insertion order), so trust it
+ * instead of a timestamp comparison; only fall back to the timestamp
+ * heuristic when the id can't be found at all (this function's own
+ * pagination-overflow/deleted-message cases above still need it).
  */
 export function findNewInboundMessages(
   messages: WhatsAppMessageLogEntry[],
   lastNotified: LastNotifiedWhatsAppMessage | null,
 ): NewWhatsAppMessages | null {
   if (lastNotified === null) return null;
-  const lastNotifiedTime = new Date(lastNotified.createdAt).getTime();
+  const lastNotifiedIndex = messages.findIndex((m) => m.id === lastNotified.id);
   const newInbound: WhatsAppMessageLogEntry[] = [];
-  for (const m of messages) {
-    if (m.id === lastNotified.id) break;
-    if (!Number.isNaN(lastNotifiedTime) && new Date(m.createdAt).getTime() <= lastNotifiedTime) break;
-    if (m.direction === "in") newInbound.push(m);
+  if (lastNotifiedIndex !== -1) {
+    for (let i = 0; i < lastNotifiedIndex; i++) {
+      if (messages[i].direction === "in") newInbound.push(messages[i]);
+    }
+  } else {
+    const lastNotifiedTime = new Date(lastNotified.createdAt).getTime();
+    for (const m of messages) {
+      if (!Number.isNaN(lastNotifiedTime) && new Date(m.createdAt).getTime() <= lastNotifiedTime) break;
+      if (m.direction === "in") newInbound.push(m);
+    }
   }
   if (newInbound.length === 0) return null;
   const newest = newInbound[0];

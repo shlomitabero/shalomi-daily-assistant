@@ -125,3 +125,31 @@ test("findNewInboundMessages still reports real new messages correctly when last
     "m5 and m4 are genuinely newer than the deleted m3 and must still be reported, not swallowed by the deleted-tracked-message fix",
   );
 });
+
+/**
+ * Round 1793 (ported from round 1792's identical fix to this file's own
+ * sibling, countUnreadWhatsAppMessages in whatsappUnread.ts): createdAt
+ * only has millisecond precision, and handleIncomingMessages
+ * (whatsappWeb.ts) inserts a whole Baileys batch synchronously with no
+ * await between inserts, so two genuinely distinct inbound messages
+ * routinely land in the identical millisecond. Here "m2" (a newer,
+ * genuinely-new message) shares its exact createdAt with lastNotified's
+ * own tracked "m1" -- the old per-iteration timestamp check (`<=`)
+ * stopped the walk the instant it reached "m2", before the id-match for
+ * "m1" was ever confirmed, silently dropping m2's desktop notification
+ * entirely. Worse than countUnreadWhatsAppMessages' own version of this
+ * bug: maybeNotifyNewWhatsAppMessages (App.tsx) unconditionally advances
+ * lastNotifiedIdRef to the newest message on every poll, so a message
+ * dropped this way never gets a second chance -- its notification is
+ * lost permanently, not merely delayed to the next poll.
+ */
+test("findNewInboundMessages still reports a newer message that shares lastNotified's own exact millisecond timestamp, instead of stopping the walk early", () => {
+  const tiedTime = timeFor("m1");
+  const messages = [msg({ id: "m2", createdAt: tiedTime, body: "genuinely new, tied timestamp" }), msg({ id: "m1", createdAt: tiedTime })];
+  const result = findNewInboundMessages(messages, lastNotified("m1", tiedTime));
+  assert.deepEqual(
+    result,
+    { newestMessageId: "m2", count: 1, fromNumber: "972521112233", matchedLabel: null, snippet: "genuinely new, tied timestamp" },
+    "m2 sits before lastNotified (m1) in the array, so it's genuinely newer and must be reported, even though their createdAt values are identical",
+  );
+});
