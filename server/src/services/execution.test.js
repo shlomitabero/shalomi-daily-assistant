@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from './settings.js';
 import { executeGatedAction } from './execution.js';
+import { makeIdempotencyKey } from '../engine/idempotency.js';
+import { todayKey } from './ledger.js';
 
 test('blocks everything in research mode without ever calling perform()', async () => {
   __resetForTests();
@@ -120,6 +122,33 @@ test('a free action (amount 0) skips the budget gate entirely', async () => {
   const result = await executeGatedAction({
     opportunityId: 'opp_1', actionType: 'approve', amount: 0,
     perform: async () => { performCalls += 1; },
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(performCalls, 1);
+});
+
+test('ignores a stale actions_log entry from a different day when scanning for today\'s duplicate, even if its key collides with today\'s', async () => {
+  // The idempotency key already bakes in the day, so this exact collision
+  // could never arise from two real calls - manufacturing it here proves
+  // the scan is actually filtered to today's entries, not just relying on
+  // the hash's own natural uniqueness to keep different days apart. Before
+  // this filter existed, every gated action re-scanned this app's entire
+  // actions_log history just to compare against keys that could never
+  // match - this pins the fix down against a regression that silently
+  // removes the date filter and goes back to scanning (and now, matching)
+  // every entry ever logged.
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const todaysKey = makeIdempotencyKey({ opportunityId: 'opp_1', actionType: 'publish_product', dateKey: todayKey() });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'publish_product',
+    detail: { opportunityId: 'opp_1', amount: 0, idempotencyKey: todaysKey },
+    result: 'success', createdAt: '2020-01-01T00:00:00.000Z',
+  });
+  let performCalls = 0;
+  const result = await executeGatedAction({
+    opportunityId: 'opp_1', actionType: 'publish_product',
+    perform: async () => { performCalls += 1; return 'done'; },
   });
   assert.equal(result.allowed, true);
   assert.equal(performCalls, 1);

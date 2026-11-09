@@ -23,7 +23,22 @@ export async function executeGatedAction({ opportunityId, actionType, amount = 0
   // wasAlreadyPerformed is idempotency.js's own dedicated, tested "has this
   // exact action already run" check - until now nothing actually called it,
   // and this duplicated its exact logic inline instead.
-  const performedKeys = db.actions_log.where((a) => a.result === 'success').map((a) => a.detail?.idempotencyKey);
+  //
+  // The key itself bakes in today's dateKey, so a match can structurally
+  // only ever come from an entry logged today - an entry from any earlier
+  // day was hashed with that day's own dateKey and can never equal today's
+  // key. Without this filter, every single gated action (every scan tick,
+  // every publish, every paper trade) re-scanned this app's *entire*
+  // lifetime of actions_log just to compare against keys that could never
+  // match - a scan that only ever gets slower as this history grows,
+  // forever, for an app meant to run indefinitely. todayKey() on each
+  // entry's own createdAt (not a plain .slice(0, 10) on the UTC
+  // timestamp) keeps this comparison in the same Israel-local calendar as
+  // the key itself, same reasoning as digest.js's own todayKey() reuse.
+  const today = todayKey();
+  const performedKeys = db.actions_log
+    .where((a) => a.result === 'success' && todayKey(new Date(a.createdAt)) === today)
+    .map((a) => a.detail?.idempotencyKey);
   const alreadyDone = wasAlreadyPerformed(key, performedKeys);
   if (alreadyDone) return { allowed: false, duplicate: true, reason: 'הפעולה הזו כבר בוצעה היום' };
 
