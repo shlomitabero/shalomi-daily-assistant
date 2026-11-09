@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
-import { ensureAutomationRulesTable, getAutomationRule, insertAutomationRule } from "./automations.js";
+import { ensureAutomationRulesTable, getAutomationRule, insertAutomationRule, updateAutomationRule } from "./automations.js";
 import { ensureCheckpointsTable, insertCheckpoint, listHistoricalEntityNames } from "./checkpoints.js";
 import { openDatabase } from "./connection.js";
 import { applyMigrations, describeMigrationHazards, diffAndMigrate, generateCreateTableStatements } from "./migrate.js";
@@ -2460,5 +2460,137 @@ test("diffAndMigrate stays silent on a reused column whose TEXT-bucket type acro
   assert.ok(
     !changes.some((c) => c.type === "type_changed" && c.column === "notes"),
     "a reused column whose historical type matches its current declared type must not be reported as type_changed",
+  );
+});
+
+/**
+ * Round 1794: the "reused column" branches (no prevField -- the field's
+ * name was removed and later re-added, so comparison falls back to the
+ * physical column shape) re-implemented the type_changed automation-disable
+ * check with the OLD, pre-876 form (`field.type !== "text" && field.type !==
+ * "longtext"`) instead of calling isTextLikeFieldType, quietly
+ * reintroducing the exact asymmetry round 876 closed for the prevField
+ * branch just above: a field LOOSENING from a typed value into text/
+ * longtext left a stale field_equals fieldValue fully enabled. Here
+ * "customerId" (relation) is removed then reused as "text" -- the cross-
+ * bucket (INTEGER -> TEXT) case the sqlType-mismatch branch handles. The
+ * old check saw only toType="text" and never disabled; the stored
+ * fieldValue is a raw Customer row id, meaningless as a freeform text
+ * match, same hazard as round 876's boolean "true" example.
+ */
+test("diffAndMigrate disables a field_equals automation rule when a removed relation field is reused as text, not just when the field survives the refine directly", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  insertRecord(db, "proj1", spec.entities[0], { name: "Alice", status: "New" }); // Customer id 1
+  const rule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Order",
+    trigger: "field_equals",
+    fieldName: "customerId",
+    fieldValue: "1",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Alice's order!",
+  });
+
+  // Refine 1: drop "customerId" entirely -- additive-only, column survives.
+  // This removal already disables the rule through the separate, pre-
+  // existing "field removed from spec" sweep (round 1100) -- re-enable it
+  // here so refine 2 below exercises ONLY the reused-column type-check
+  // this test is actually about, not that unrelated removal sweep.
+  const midSpec: ProductSpec = {
+    ...spec,
+    entities: [spec.entities[0], { ...spec.entities[1], fields: [spec.entities[1].fields[0]] }],
+  };
+  diffAndMigrate(db, "proj1", spec, midSpec);
+  updateAutomationRule(db, "proj1", rule.id, { enabled: true });
+
+  // Refine 2: re-add "customerId" as plain text -- the reused-column branch.
+  const nextSpec: ProductSpec = {
+    ...midSpec,
+    entities: [
+      midSpec.entities[0],
+      { ...midSpec.entities[1], fields: [midSpec.entities[1].fields[0], { name: "customerId", type: "text", required: false }] },
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", midSpec, nextSpec);
+
+  assert.ok(
+    changes.some((c) => c.type === "type_changed" && c.column === "customerId" && c.fromType === "relation" && c.toType === "text"),
+    "expected a type_changed entry for the reused, loosened column",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", rule.id)!.enabled,
+    false,
+    "a rule's stale relation-id fieldValue must not survive the reused column loosening to text, where it becomes an arbitrary free-text match",
+  );
+});
+
+/**
+ * Round 1794 sibling: the same asymmetry in the TEXT-bucket "reused column"
+ * branch (findLastKnownFieldType) -- "lastContacted" is removed as a "date"
+ * field and reused two refines later as "text". Both sides stay in the same
+ * physical TEXT-bucket column, so only the checkpoint-history-recovered
+ * lastKnownType (not the physical column shape) can tell this refine ever
+ * happened at all. The old check saw only toType="text" and never disabled;
+ * the stored fieldValue is a date string, meaningless as a freeform text
+ * match once the field is reused as plain text.
+ */
+test("diffAndMigrate disables a field_equals automation rule when a removed date field is reused as text, recovering the loosening via checkpoint history", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  ensureAutomationRulesTable(db);
+
+  const baseSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: [...spec.entities[0].fields, { name: "lastContacted", type: "date", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  applyMigrations(db, "proj1", baseSpec);
+  insertCheckpoint(db, { id: "cp1", projectId: "proj1", label: "Initial build", kind: "build", spec: baseSpec });
+  const rule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "lastContacted",
+    fieldValue: "2024-01-01",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15551234567",
+    messageTemplate: "Follow up reminder!",
+  });
+
+  // Refine 1: drop "lastContacted" entirely. This removal already disables
+  // the rule through the separate, pre-existing "field removed from spec"
+  // sweep (round 1100) -- re-enable it here so refine 2 below exercises
+  // ONLY the reused-column type-check this test is actually about.
+  const spec1: ProductSpec = { ...spec };
+  diffAndMigrate(db, "proj1", baseSpec, spec1);
+  insertCheckpoint(db, { id: "cp2", projectId: "proj1", label: "Refine: drop lastContacted", kind: "refine", spec: spec1 });
+  updateAutomationRule(db, "proj1", rule.id, { enabled: true });
+
+  // Refine 2: re-add "lastContacted" as plain text -- same physical TEXT
+  // column, only the checkpoint ledger shows the real history.
+  const spec2: ProductSpec = {
+    ...spec,
+    entities: [
+      { ...spec.entities[0], fields: [...spec.entities[0].fields, { name: "lastContacted", type: "text", required: false }] },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec1, spec2);
+
+  const reused = changes.find((c) => c.type === "type_changed" && c.column === "lastContacted");
+  assert.ok(reused, "expected a type_changed entry recovering the field's true history");
+  assert.equal(reused!.fromType, "date");
+  assert.equal(reused!.toType, "text");
+  assert.equal(
+    getAutomationRule(db, "proj1", rule.id)!.enabled,
+    false,
+    "a rule's stale date-shaped fieldValue must not survive the reused column loosening to text, where it becomes an arbitrary free-text match",
   );
 });

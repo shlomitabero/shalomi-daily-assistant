@@ -78,8 +78,20 @@ function sqlTypeFor(field: Field): string {
  * original boolean intent. Used below by both directions of the
  * type-changed check, so neither a tightening NOR a loosening transition
  * leaves a stale, type-incompatible fieldValue silently enabled.
+ *
+ * Round 1794: the "reused column" branches further below (no prevField --
+ * the field's name was removed and later re-added) used to re-implement
+ * this same check with the OLD, pre-876, new-type-only form instead of
+ * calling this function, quietly reintroducing the exact asymmetry this
+ * function exists to close -- a relation/boolean field reused as text/
+ * longtext stayed silently enabled even though its stale fieldValue (a raw
+ * row id, or "true"/"false") is exactly as unsafe against freeform text as
+ * the boolean example above. Widened to `string` (rather than
+ * `Field["type"]`) so those branches, whose own "from" type is reconstructed
+ * from a physical column shape or the field-type-history ledger as a plain
+ * string rather than a real Field, can call it too.
  */
-function isTextLikeFieldType(type: Field["type"]): boolean {
+function isTextLikeFieldType(type: string): boolean {
   return type === "text" || type === "longtext";
 }
 
@@ -707,14 +719,15 @@ export function diffAndMigrate(
         const shape = physicalShapeByColumn.get(physicalColumnName);
         const expectedSqlType = sqlTypeFor(field);
         if (shape && shape.sqlType !== expectedSqlType) {
+          const fromType = fieldTypeLabelForSqlType(shape.sqlType, shape.fkTable !== undefined);
           changes.push({
             type: "type_changed",
             table,
             column: columnName,
-            fromType: fieldTypeLabelForSqlType(shape.sqlType, shape.fkTable !== undefined),
+            fromType,
             toType: field.type,
           });
-          if (field.type !== "text" && field.type !== "longtext") {
+          if (!isTextLikeFieldType(fromType) || !isTextLikeFieldType(field.type)) {
             if (!fieldsNeedingAutomationDisable.has(entity.name)) {
               fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
@@ -746,7 +759,7 @@ export function diffAndMigrate(
               fromType: lastKnownType,
               toType: field.type,
             });
-            if (field.type !== "text" && field.type !== "longtext") {
+            if (!isTextLikeFieldType(lastKnownType) || !isTextLikeFieldType(field.type)) {
               if (!fieldsNeedingAutomationDisable.has(entity.name)) {
                 fieldsNeedingAutomationDisable.set(entity.name, new Set());
               }
@@ -781,7 +794,11 @@ export function diffAndMigrate(
             fromType: "relation",
             toType: field.type,
           });
-          if (field.type !== "text" && field.type !== "longtext") {
+          // "relation" is never text-like, so this symmetric check always
+          // flags here regardless of field.type -- correct, since the
+          // column's stored value is a raw row id, not meaningful as
+          // freeform text/longtext (or any other type) either.
+          if (!isTextLikeFieldType("relation") || !isTextLikeFieldType(field.type)) {
             if (!fieldsNeedingAutomationDisable.has(entity.name)) {
               fieldsNeedingAutomationDisable.set(entity.name, new Set());
             }
