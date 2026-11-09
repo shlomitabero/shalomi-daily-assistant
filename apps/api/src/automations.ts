@@ -27,7 +27,7 @@ import {
 } from "@forge/db";
 import { isHebrewText } from "@forge/spec-engine";
 import { recordDisplayLabel } from "./displayField.js";
-import type { EmailAttachment, EmailSender } from "./email.js";
+import { ResendTimeoutError, type EmailAttachment, type EmailSender } from "./email.js";
 import { resolveUploadedFilePath } from "./uploadPaths.js";
 import { findMatchingRecord } from "./whatsapp.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "./whatsappWeb.js";
@@ -1283,19 +1283,29 @@ async function fireEmailAction(
   } catch (err) {
     if (!getProject(db, project.id)) return;
     // Round 1459: mirrors fireWebhookAction's own identical normalization
-    // just above -- email.ts's ResendEmailSender.performSend already
-    // throws the fixed EMAIL_TIMEOUT_ERROR literal verbatim on its own
-    // AbortController timeout (no signal to re-check here, unlike
-    // fireWebhookAction's own inline controller), and re-throws any other
-    // fetch rejection as-is, which Node's fetch/undici always renders as
-    // the identical TypeError "fetch failed" for a destination that's
-    // simply unreachable. Normalizing the latter into EMAIL_UNREACHABLE_ERROR
-    // (and keying the former off the already-shared constant) lets this
-    // module and recordAutomationRun's own retention pruning agree on one
-    // literal per failure shape instead of a flood of either evicting a
-    // genuinely different, older failure for this rule.
+    // just above -- email.ts's ResendEmailSender.performSend throws a
+    // ResendTimeoutError on its own AbortController timeout (no signal to
+    // re-check here, unlike fireWebhookAction's own inline controller), and
+    // re-throws any other fetch rejection as-is, which Node's fetch/undici
+    // always renders as the identical TypeError "fetch failed" for a
+    // destination that's simply unreachable. Normalizing the latter into
+    // EMAIL_UNREACHABLE_ERROR (and the former into the shared
+    // EMAIL_TIMEOUT_ERROR constant) lets this module and
+    // recordAutomationRun's own retention pruning agree on one literal per
+    // failure shape instead of a flood of either evicting a genuinely
+    // different, older failure for this rule.
+    //
+    // Round 1764: recognizing the timeout via `instanceof ResendTimeoutError`
+    // rather than `err.message === EMAIL_TIMEOUT_ERROR` -- the sender's
+    // thrown message embeds its own configured requestTimeoutMs, which only
+    // ever matches the fixed "...10000ms" literal because every production
+    // caller leaves that option at its default. A sender ever constructed
+    // with a different timeout (already true of email.test.ts's own fake
+    // senders) would silently fall through to the raw-message branch below
+    // under the old string-match, losing retention bucketing, the
+    // auto-disable exclusion, and the translated user-facing message.
     const message =
-      err instanceof Error && err.message === EMAIL_TIMEOUT_ERROR
+      err instanceof ResendTimeoutError
         ? EMAIL_TIMEOUT_ERROR
         : err instanceof TypeError && err.message === "fetch failed"
           ? EMAIL_UNREACHABLE_ERROR

@@ -51,6 +51,7 @@ import {
   runScheduledAutomationsCheck,
   startScheduledAutomationsLoop,
 } from "./automations.js";
+import { ResendEmailSender } from "./email.js";
 import type { EmailAttachment, EmailSender } from "./email.js";
 import type { WhatsAppAttachment, WhatsAppConnectionState, WhatsAppSendResult, WhatsAppWebManager } from "./whatsappWeb.js";
 
@@ -3820,6 +3821,64 @@ test("runAutomationsForRecordChange records EMAIL_TIMEOUT_ERROR when the Resend 
   const emailSender = createFakeEmailSender({ failWith: new Error(EMAIL_TIMEOUT_ERROR) });
 
   await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, emailSender, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.equal(after.lastError, EMAIL_TIMEOUT_ERROR);
+});
+
+/**
+ * Round 1764: the test just above uses a fake EmailSender that throws
+ * `new Error(EMAIL_TIMEOUT_ERROR)` directly -- it never exercises the real
+ * ResendEmailSender, so it couldn't have caught the actual gap: performSend
+ * builds its thrown message from its own configured `requestTimeoutMs`
+ * (`Resend API request timed out after ${this.requestTimeoutMs}ms`), which
+ * only matches the fixed EMAIL_TIMEOUT_ERROR literal ("...10000ms") because
+ * every production caller leaves that option at its default. This test
+ * constructs a REAL ResendEmailSender with a non-default requestTimeoutMs
+ * (20ms, for test speed) behind a fake fetch that hangs until aborted --
+ * under the old `err.message === EMAIL_TIMEOUT_ERROR` string match, this
+ * sender's own message ("...20ms") would never equal the literal, so the
+ * timeout would have fallen through to the raw-message branch instead of
+ * being recognized at all. Recognizing it via `instanceof
+ * ResendTimeoutError` (email.ts) fixes that regardless of the configured
+ * timeout value.
+ */
+test("runAutomationsForRecordChange records EMAIL_TIMEOUT_ERROR for a real ResendEmailSender whose own configured timeout differs from the shared constant's hardcoded value", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_email",
+    toMode: "static",
+    toEmail: "owner@example.com",
+    emailSubject: "New order from {{customerName}}",
+    messageTemplate: "Order status: {{status}}",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const realTimingOutSender = new ResendEmailSender({
+    apiKey: "re_test_key",
+    sendSpacingMs: 0,
+    requestTimeoutMs: 20,
+    fetchImpl: (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("simulated network stall, aborted")));
+      }),
+  });
+
+  await runAutomationsForRecordChange(
+    db,
+    {} as WhatsAppWebManager,
+    realTimingOutSender,
+    project,
+    orderEntity,
+    "created",
+    record,
+    new Set(),
+    UNUSED_UPLOADS_DIR,
+    UNUSED_BASE_URL,
+  );
 
   const after = getAutomationRule(db, project.id, rule.id)!;
   assert.equal(after.lastStatus, "failed");

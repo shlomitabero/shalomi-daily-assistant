@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ResendEmailSender } from "./email.js";
+import { ResendEmailSender, ResendTimeoutError } from "./email.js";
 
 test("ResendEmailSender.configured is false when no API key is supplied and RESEND_API_KEY isn't set in the environment", () => {
   const sender = new ResendEmailSender({ apiKey: undefined, fetchImpl: async () => new Response("", { status: 200 }) });
@@ -240,7 +240,16 @@ test("ResendEmailSender.send rejects with a clear timeout error instead of hangi
       }),
   });
 
-  await assert.rejects(() => sender.send("dana@example.com", "one", "text"), /Resend API request timed out after 20ms/);
+  // Round 1764: the rejection must specifically be a ResendTimeoutError, not
+  // just any Error whose message happens to match -- automations.ts's
+  // fireEmailAction recognizes a timeout via `instanceof ResendTimeoutError`
+  // rather than string-matching the message (which embeds this sender's own
+  // configured requestTimeoutMs and so can't be relied on to equal the fixed
+  // EMAIL_TIMEOUT_ERROR literal whenever that's overridden, as it is here).
+  await assert.rejects(
+    () => sender.send("dana@example.com", "one", "text"),
+    (err: unknown) => err instanceof ResendTimeoutError && /Resend API request timed out after 20ms/.test(err.message),
+  );
   await sender.send("dana@example.com", "two", "text");
   assert.equal(callCount, 2, "a hung first send must not block the second queued send from ever going out");
 });

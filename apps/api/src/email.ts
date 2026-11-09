@@ -46,6 +46,32 @@ export interface EmailAttachment {
  */
 const RESEND_REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * Round 1764: a dedicated subclass so callers (automations.ts's
+ * fireEmailAction) can recognize a Resend timeout structurally --
+ * `instanceof ResendTimeoutError` -- instead of string-matching this error's
+ * `message` against @forge/db's fixed EMAIL_TIMEOUT_ERROR literal. The two
+ * only ever agreed by coincidence: every production caller leaves
+ * `requestTimeoutMs` at its default (`new ResendEmailSender()` with no
+ * options, see server.ts/app.ts), so this message always happened to render
+ * with the same "10000ms" the literal hardcodes. A caller that ever
+ * constructs this sender with a different `requestTimeoutMs` (a test, or a
+ * future deployment tuning it) would make the message diverge from the
+ * literal with no visible symptom here -- the mismatch would only surface
+ * downstream, as the timeout silently missing recordAutomationRun's own
+ * retention bucket, losing its exclusion from the consecutive-failure
+ * auto-disable (round 1459), and leaking this raw English message to the
+ * user instead of apps/web's translated one (api.ts). The message itself
+ * stays dynamic (still useful for logs/diagnostics); only the *recognition*
+ * of "this was a timeout" moves off the message text.
+ */
+export class ResendTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResendTimeoutError";
+  }
+}
+
 export interface EmailSender {
   readonly configured: boolean;
   send(to: string, subject: string, text: string, attachments?: EmailAttachment[]): Promise<void>;
@@ -146,7 +172,7 @@ export class ResendEmailSender implements EmailSender {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`Resend API request timed out after ${this.requestTimeoutMs}ms`);
+        throw new ResendTimeoutError(`Resend API request timed out after ${this.requestTimeoutMs}ms`);
       }
       throw err;
     } finally {
