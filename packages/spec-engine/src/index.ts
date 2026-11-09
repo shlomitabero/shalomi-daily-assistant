@@ -128,6 +128,34 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
       roleSet.add(candidateRole.toLowerCase());
     }
   }
+  // Round 1755: personas/assumptions are plain string lists with the exact
+  // same user-facing CRUD treatment as roles (RoleChip/PersonaItem/
+  // AssumptionItem + their Add*Form siblings, App.tsx's preview-roles/
+  // personas/assumptions-section -- round 906's own comment explains these
+  // all work post-build too), not inert narrative text like summary -- yet
+  // this function only ever merged roles the "current survives, candidate
+  // only adds" way, leaving personas/assumptions on "candidate only", the
+  // same silent-deletion failure mode round 1714 exists specifically to
+  // stop and round 1753 already extended to screens. A user who manually
+  // adds a persona/assumption on the post-build preview screen loses it
+  // the next time anyone runs an ordinary refine instruction whose own
+  // regenerated candidate happens to omit it.
+  const personaSet = new Set(current.personas.map((persona) => persona.toLowerCase()));
+  const mergedPersonas = [...current.personas];
+  for (const candidatePersona of candidate.personas) {
+    if (!personaSet.has(candidatePersona.toLowerCase())) {
+      mergedPersonas.push(candidatePersona);
+      personaSet.add(candidatePersona.toLowerCase());
+    }
+  }
+  const assumptionSet = new Set(current.assumptions.map((assumption) => assumption.toLowerCase()));
+  const mergedAssumptions = [...current.assumptions];
+  for (const candidateAssumption of candidate.assumptions) {
+    if (!assumptionSet.has(candidateAssumption.toLowerCase())) {
+      mergedAssumptions.push(candidateAssumption);
+      assumptionSet.add(candidateAssumption.toLowerCase());
+    }
+  }
   // candidate.screens was derived (screensFor/buildScreens) from
   // candidate.entities BEFORE this merge restored any dropped entity, so
   // it never has List/Form screens for an entity mergedEntities just
@@ -142,5 +170,12 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
   const candidateEntityNames = new Set(candidate.entities.map((entity) => entity.name.toLowerCase()));
   const restoredScreens = current.screens.filter((screen) => screen.entity && !candidateEntityNames.has(screen.entity.toLowerCase()));
   const mergedScreens = [...candidate.screens, ...restoredScreens];
-  return { ...candidate, entities: mergedEntities, roles: mergedRoles, screens: mergedScreens };
+  return {
+    ...candidate,
+    entities: mergedEntities,
+    roles: mergedRoles,
+    personas: mergedPersonas,
+    assumptions: mergedAssumptions,
+    screens: mergedScreens,
+  };
 }

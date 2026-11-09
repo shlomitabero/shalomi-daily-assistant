@@ -359,6 +359,33 @@ test("mergeRefinedSpec unions roles the same way as entities", () => {
   assert.deepEqual(merged.roles, ["Admin", "Manager"]);
 });
 
+/**
+ * Round 1755: personas/assumptions get the exact same post-build CRUD
+ * treatment roles does (RoleChip/PersonaItem/AssumptionItem, App.tsx's
+ * preview-roles/personas/assumptions-section), yet mergeRefinedSpec only
+ * ever unioned roles -- personas/assumptions came straight from the
+ * candidate, silently wiping out anything the user manually added if an
+ * ordinary refine's own regenerated candidate happened to omit it.
+ */
+test("mergeRefinedSpec unions personas and assumptions the same way as roles, instead of silently dropping the current spec's own entries", () => {
+  const current = baseSpec({
+    personas: ["Regional Manager", "Returning Customer"],
+    assumptions: ["No multi-currency support needed", "Single warehouse only"],
+  });
+  const candidate = baseSpec({ personas: [], assumptions: [] });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(merged.personas, ["Regional Manager", "Returning Customer"]);
+  assert.deepEqual(merged.assumptions, ["No multi-currency support needed", "Single warehouse only"]);
+});
+
+test("mergeRefinedSpec still adds a genuinely new persona/assumption the candidate introduces, case-insensitively deduped", () => {
+  const current = baseSpec({ personas: ["Admin User"], assumptions: ["Single currency"] });
+  const candidate = baseSpec({ personas: ["admin user", "Support Agent"], assumptions: ["Single currency", "No offline mode"] });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(merged.personas, ["Admin User", "Support Agent"]);
+  assert.deepEqual(merged.assumptions, ["Single currency", "No offline mode"]);
+});
+
 test("mergeRefinedSpec takes the candidate's own summary, not the current spec's", () => {
   const current = baseSpec({ summary: "old summary" });
   const candidate = baseSpec({ summary: "new summary reflecting the refine instruction" });
