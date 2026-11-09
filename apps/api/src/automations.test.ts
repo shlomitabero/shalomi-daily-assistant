@@ -313,6 +313,28 @@ test("interpolateTemplate falls back to the raw stored value for a date field th
 });
 
 /**
+ * Round 1805: migrate.ts's own type_changed handling is additive-only
+ * (round 1198's doc comment) -- retyping a field to "number" never
+ * converts a pre-existing record's stored value, so `record[fieldName]`
+ * for a declared "number" field can genuinely still hold a stale
+ * non-numeric string. Before this fix, the `number` branch had no NaN
+ * guard (unlike the sibling `date` branch's own existing one, tested
+ * right above), so Number("N/A") -> NaN -> NaN.toLocaleString() ->
+ * the literal text "NaN" was sent as the real, final text of an
+ * outbound WhatsApp/email/webhook automation message.
+ */
+test("interpolateTemplate falls back to the raw stored value for a number field that isn't actually a valid number, instead of rendering the literal text \"NaN\"", () => {
+  const invoiceEntity: Entity = {
+    name: "Invoice",
+    label: "Invoice",
+    fields: [{ name: "total", type: "number", required: true }],
+  };
+  const result = interpolateTemplate("Total: {{total}}", invoiceEntity, { total: "N/A" }, "en");
+  assert.equal(result, "Total: N/A");
+  assert.doesNotMatch(result, /NaN/, "a stale non-numeric stored value must never render as the literal text \"NaN\" in a real outbound automation message");
+});
+
+/**
  * Round 744: "createdAt" is a reserved key repository.ts's own insert
  * always sets on every EntityRecord, never a declared entity field -- so
  * entity.fields.find(...) above always returns undefined for it, and it

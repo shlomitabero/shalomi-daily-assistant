@@ -368,7 +368,18 @@ export function interpolateTemplate(template: string, entity: Entity, record: En
     }
     if (field?.type === "number") {
       if (PHONE_FIELD_NAME_HINTS.includes(fieldName.toLowerCase())) return String(value);
-      return stripBidiMarks(Number(value).toLocaleString(LOCALE[lang]));
+      // Round 1805: migrate.ts's own type_changed handling is additive-only
+      // (round 1198's doc comment) -- retyping a field to "number" never
+      // converts a pre-existing record's stored value, so `value` here can
+      // genuinely be a non-numeric leftover string. Without this guard,
+      // Number(value) is NaN and NaN.toLocaleString() returns the literal
+      // text "NaN", embedding that into a real outbound WhatsApp/email/
+      // webhook automation message in place of the actual stored value --
+      // the same failure mode round 1802 fixed for the on-screen table
+      // Cell, mirrored here via the sibling `date` branch's own existing
+      // NaN-guard convention just above.
+      const num = Number(value);
+      return Number.isNaN(num) ? String(value) : stripBidiMarks(num.toLocaleString(LOCALE[lang]));
     }
     // "createdAt" is a reserved key repository.ts's own insert always sets
     // on every EntityRecord, never a declared entity field -- so `field`
