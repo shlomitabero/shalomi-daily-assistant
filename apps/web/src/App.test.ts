@@ -24,7 +24,7 @@ import {
   specProviderLabel,
   summarizeRefineImpact,
 } from "./App.js";
-import { reorderColumns } from "./columnOrder.js";
+import { moveColumnToEnd, reorderColumns } from "./columnOrder.js";
 import { translate } from "./i18n/language.js";
 import { visibleSelectedIds } from "./projectSelection.js";
 
@@ -5244,6 +5244,94 @@ test("App's handleReorderEntityTab reorders entity tabs on drop and persists via
 
   const nothingDragged = run({ id: "proj1" }, null);
   assert.equal(nothingDragged.persistedOrder, null, "must be a no-op when nothing was actually being dragged");
+
+  const noProject = run(null, "Task");
+  assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");
+  assert.equal(noProject.dragOverCleared, true, "the drag-over highlight must still clear even when there's no project");
+
+  const noUser = run({ id: "proj1" }, "Task", null);
+  assert.equal(noUser.persistedOrder, null, "must be a no-op with no signed-in user, not throw on user.id");
+  assert.equal(noUser.dragOverCleared, true, "the drag-over highlight must still clear even when there's no user");
+});
+
+/**
+ * Regression test for round 1790: reorderColumns only has a "move X before
+ * Y" primitive, so dropping a tab onto the current last tab's own header --
+ * the only drag target that previously existed for "move this tab last" --
+ * could never actually reach the true last position, no matter how many
+ * times the identical drag was repeated. This is the same bug class round
+ * 1789 fixed for the table's own column-header drag (EntityPanel.tsx's
+ * handleReorderColumnToEnd), now ported to this sibling drag-and-drop
+ * surface via a new trailing drop zone wired to handleReorderEntityTabToEnd.
+ * Same extraction convention as handleReorderEntityTab's own test above,
+ * passing in the REAL moveColumnToEnd (columnOrder.ts) rather than a mock.
+ */
+test("App's handleReorderEntityTabToEnd moves an entity tab to the true last position on drop and persists via entityTabOrder.ts, but is a no-op with nothing dragged or no project open", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}function handleReorderEntityTabToEnd\([\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleReorderEntityTabToEnd in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const orderedEntities = [{ name: "Deal" }, { name: "Contact" }, { name: "Task" }];
+
+  function run(project: { id: string } | null, draggedEntityTab: string | null, user: { id: string } | null = { id: "user1" }) {
+    let dragOverCleared = false;
+    let draggedCleared = false;
+    let persistedProjectId: string | null = null;
+    let persistedUserId: string | null = null;
+    let persistedOrder: string[] | null = null;
+    const fn = new Function(
+      "project",
+      "user",
+      "draggedEntityTab",
+      "orderedEntities",
+      "setDragOverEntityTab",
+      "setEntityTabOrderState",
+      "setEntityTabOrder",
+      "moveColumnToEnd",
+      "setDraggedEntityTab",
+      `${code}\nreturn handleReorderEntityTabToEnd;`,
+    ) as (
+      project: { id: string } | null,
+      user: { id: string } | null,
+      draggedEntityTab: string | null,
+      orderedEntities: { name: string }[],
+      setDragOverEntityTab: (v: string | null) => void,
+      setEntityTabOrderState: (v: string[]) => void,
+      setEntityTabOrder: (projectId: string, userId: string, order: string[]) => string[],
+      moveColumnToEnd: (order: string[], sourceName: string) => string[],
+      setDraggedEntityTab: (v: string | null) => void,
+    ) => () => void;
+
+    const handler = fn(
+      project,
+      user,
+      draggedEntityTab,
+      orderedEntities,
+      () => (dragOverCleared = true),
+      (v: string[]) => (persistedOrder = v),
+      (projectId: string, userId: string, order: string[]) => {
+        persistedProjectId = projectId;
+        persistedUserId = userId;
+        return order;
+      },
+      moveColumnToEnd,
+      () => (draggedCleared = true),
+    );
+    handler();
+    return { dragOverCleared, draggedCleared, persistedProjectId, persistedUserId, persistedOrder };
+  }
+
+  const moved = run({ id: "proj1" }, "Deal");
+  assert.equal(moved.dragOverCleared, true, "must always clear the drag-over highlight, even on a real move");
+  assert.equal(moved.persistedProjectId, "proj1", "must persist under the currently-open project's own id");
+  assert.equal(moved.persistedUserId, "user1", "must persist under the currently signed-in user's own id");
+  assert.deepEqual(moved.persistedOrder, ["Contact", "Task", "Deal"], "dragging Deal to the end drop zone must move it to the true last position");
+  assert.equal(moved.draggedCleared, true);
+
+  const nothingDragged = run({ id: "proj1" }, null);
+  assert.equal(nothingDragged.persistedOrder, null, "must be a no-op when nothing was actually being dragged");
+  assert.equal(nothingDragged.dragOverCleared, true, "the drag-over highlight must still clear even with nothing dragged");
 
   const noProject = run(null, "Task");
   assert.equal(noProject.persistedOrder, null, "must be a no-op with no project open at all, not throw on project.id");

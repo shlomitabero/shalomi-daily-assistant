@@ -10257,6 +10257,18 @@ function reorderEntityTabs(order, sourceName, targetName) {
   return result;
 }
 
+// reorderEntityTabs above only has a "move X before Y" primitive, so
+// dropping a tab onto the current last tab's own header could never reach
+// the true last position. Mirrors the live preview's own moveColumnToEnd
+// (columnOrder.ts) verbatim -- this file's own EntityView.jsx template
+// duplicates the identical function for the same reason (round 1789); App.jsx
+// is a separate generated file, so it needs its own copy too.
+function moveColumnToEnd(order, sourceName) {
+  if (!order.includes(sourceName)) return order;
+  const withoutSource = order.filter((name) => name !== sourceName);
+  return [...withoutSource, sourceName];
+}
+
 // Reads the same "forge_column_order" store EntityView.jsx's own
 // getColumnOrder/setColumnOrder (components/EntityView.jsx) read/write --
 // duplicated here rather than imported (this file's own established
@@ -10371,6 +10383,21 @@ export default function App() {
     if (!draggedEntityTab || draggedEntityTab === targetName) return;
     const fullOrder = orderedEntities.map((e) => e.name);
     setEntityTabOrderState(setEntityTabOrder(reorderEntityTabs(fullOrder, draggedEntityTab, targetName)));
+    setDraggedEntityTab(null);
+  }
+
+  // reorderEntityTabs only has a "move X before Y" primitive, so dropping a
+  // tab onto the current last tab's own header -- the only drag target that
+  // previously existed for "move this tab last" -- could never actually
+  // reach the true last position, no matter how many times the identical
+  // drag was repeated. Mirrors the live preview's own
+  // handleReorderEntityTabToEnd (App.tsx, round 1790), itself mirroring this
+  // file's own handleReorderColumnToEnd for the table-column case.
+  function handleReorderEntityTabToEnd() {
+    setDragOverEntityTab(null);
+    if (!draggedEntityTab) return;
+    const fullOrder = orderedEntities.map((e) => e.name);
+    setEntityTabOrderState(setEntityTabOrder(moveColumnToEnd(fullOrder, draggedEntityTab)));
     setDraggedEntityTab(null);
   }
 
@@ -10632,6 +10659,19 @@ export default function App() {
             </span>
           </span>
         ))}
+        <span
+          className={dragOverEntityTab === "__end__" ? "entity-tabs-end-drop-zone entity-tabs-end-drop-zone-active" : "entity-tabs-end-drop-zone"}
+          onDragOver={(ev) => {
+            if (!draggedEntityTab) return;
+            ev.preventDefault();
+            setDragOverEntityTab("__end__");
+          }}
+          onDragLeave={() => setDragOverEntityTab((prev) => (prev === "__end__" ? null : prev))}
+          onDrop={(ev) => {
+            ev.preventDefault();
+            handleReorderEntityTabToEnd();
+          }}
+        />
       </nav>
       {activeEntity && (
         <div id={\`entity-tabpanel-\${activeEntity.name}\`} role="tabpanel" aria-labelledby={\`entity-tab-\${activeEntity.name}\`}>
@@ -10845,6 +10885,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .tab-move-btn { background: none; border: none; padding: 0 2px; margin: 0; color: var(--muted); font: inherit; line-height: 1; cursor: pointer; }
 .tab-move-btn:hover:not(:disabled), .tab-move-btn:focus-visible { color: var(--text); }
 .tab-move-btn:disabled { color: var(--muted); opacity: 0.35; cursor: default; }
+.entity-tabs-end-drop-zone { flex: 1; min-width: 24px; align-self: stretch; }
+.entity-tabs-end-drop-zone-active { background: var(--accent-soft); border-radius: 6px; }
 .view-toggle { display: flex; gap: 4px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
 .view-toggle-btn { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .view-toggle-btn-active { background: var(--accent); color: var(--accent-contrast); }

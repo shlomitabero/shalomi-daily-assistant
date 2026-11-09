@@ -22474,13 +22474,58 @@ test("the exported App's entity tabs are drag-and-drop reorderable, persisting v
 });
 
 /**
- * Regression test for round 662: the test above confirms the exported
- * app's entity-tab reorder is drag-and-drop reorderable, but that was
- * drag-only, the same keyboard-accessibility gap round 478 already closed
- * for the exported app's own table columns (handleMoveColumn,
- * column-move-btn). Ports the identical keyboard fallback -- "move
- * earlier"/"move later" buttons next to each tab, reusing the same
- * reorderEntityTabs primitive the drag handler uses.
+ * Round 1790 (ported from the live Forge AI preview's own round-1790 fix):
+ * reorderEntityTabs only has a "move X before Y" primitive, so dropping a
+ * tab onto the current last tab's own header -- the only drag target that
+ * previously existed for "move this tab last" -- could never actually
+ * reach the true last position, no matter how many times the identical
+ * drag was repeated. The same bug class round 1789 fixed for this file's
+ * own EntityView.jsx table columns, now ported to this sibling generated
+ * file (App.jsx) too. Mirrors the live preview's own moveColumnToEnd and
+ * the new trailing drop-zone verbatim.
+ */
+test("the exported App's entity tabs can be dragged onto a trailing drop zone to reach the true last position", () => {
+  const files = generateExportFiles(project);
+  const appJsx = files.find((f) => f.path === "web/src/App.jsx")!.content;
+
+  assert.match(
+    appJsx,
+    /function moveColumnToEnd\(order, sourceName\) \{\s*if \(!order\.includes\(sourceName\)\) return order;\s*const withoutSource = order\.filter\(\(name\) => name !== sourceName\);\s*return \[\.\.\.withoutSource, sourceName\];\s*\}/,
+  );
+  assert.match(
+    appJsx,
+    /function handleReorderEntityTabToEnd\(\) \{\s*setDragOverEntityTab\(null\);\s*if \(!draggedEntityTab\) return;\s*const fullOrder = orderedEntities\.map\(\(e\) => e\.name\);\s*setEntityTabOrderState\(setEntityTabOrder\(moveColumnToEnd\(fullOrder, draggedEntityTab\)\)\);\s*setDraggedEntityTab\(null\);\s*\}/,
+  );
+  assert.match(
+    appJsx,
+    /onDrop=\{\(ev\) => \{\s*ev\.preventDefault\(\);\s*handleReorderEntityTabToEnd\(\);\s*\}\}/,
+  );
+  assert.match(appJsx, /dragOverEntityTab === "__end__" \? "entity-tabs-end-drop-zone entity-tabs-end-drop-zone-active" : "entity-tabs-end-drop-zone"/);
+
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.entity-tabs-end-drop-zone \{/);
+
+  // Executes the real generated moveColumnToEnd against plain arrays, the
+  // same "run the real generated code" standard the sibling table-column
+  // test (round 1789) and this file's own reorderEntityTabs test above use.
+  const pureFnSrc = appJsx.match(/function moveColumnToEnd\(order, sourceName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(pureFnSrc, "expected to find moveColumnToEnd in generated App.jsx");
+  const { moveColumnToEnd } = new Function(`${pureFnSrc}\nreturn { moveColumnToEnd };`)() as {
+    moveColumnToEnd: (order: string[], source: string) => string[];
+  };
+  assert.deepEqual(moveColumnToEnd(["Deal", "Contact", "Task"], "Deal"), ["Contact", "Task", "Deal"]);
+  const unchanged = ["Deal", "Contact", "Task"];
+  assert.equal(moveColumnToEnd(unchanged, "ghost"), unchanged, "an entity not actually in the order must be a real no-op");
+});
+
+/**
+ * Regression test for round 662: the drag-and-drop reorder test above
+ * confirms the exported app's entity-tab reorder is drag-and-drop
+ * reorderable, but that was drag-only, the same keyboard-accessibility gap
+ * round 478 already closed for the exported app's own table columns
+ * (handleMoveColumn, column-move-btn). Ports the identical keyboard
+ * fallback -- "move earlier"/"move later" buttons next to each tab, reusing
+ * the same reorderEntityTabs primitive the drag handler uses.
  */
 test("the exported App's entity tabs have keyboard-operable 'move earlier'/'move later' buttons as a real fallback to drag-and-drop reorder", () => {
   const files = generateExportFiles(project);

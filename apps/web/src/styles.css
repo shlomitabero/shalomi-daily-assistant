@@ -1262,6 +1262,17 @@ button.danger:hover:not(:disabled) {
   gap: 2px;
 }
 
+.entity-tabs-end-drop-zone {
+  flex: 1;
+  min-width: 24px;
+  align-self: stretch;
+}
+
+.entity-tabs-end-drop-zone-active {
+  background: var(--accent-soft);
+  border-radius: 6px;
+}
+
 .tab-move-buttons {
   display: inline-flex;
   gap: 1px;

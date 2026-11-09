@@ -65,7 +65,7 @@ import {
   PersonaItem,
   RoleChip,
 } from "./SpecListItemRemover.js";
-import { applyColumnOrder, getColumnOrder, reorderColumns } from "./columnOrder.js";
+import { applyColumnOrder, getColumnOrder, moveColumnToEnd, reorderColumns } from "./columnOrder.js";
 import { entityDisplayLabel, entityLabelOccurrences } from "./entityFormatting.js";
 import { getEntityTabOrder, setEntityTabOrder } from "./entityTabOrder.js";
 import { getPinnedIds, sortByPinned, togglePinned } from "./pinnedProjects.js";
@@ -984,6 +984,24 @@ function AppContent() {
     if (!project || !user || !draggedEntityTab || draggedEntityTab === targetName) return;
     const fullOrder = orderedEntities.map((e) => e.name);
     setEntityTabOrderState(setEntityTabOrder(project.id, user.id, reorderColumns(fullOrder, draggedEntityTab, targetName)));
+    setDraggedEntityTab(null);
+  }
+
+  // Round 1790: reorderColumns only has a "move X before Y" primitive, so
+  // dropping a tab onto the current last tab's own header -- the only drag
+  // target that previously existed for "move this tab last" -- could never
+  // actually reach the true last position, no matter how many times the
+  // identical drag was repeated. The exact bug round 1789 fixed for the
+  // table's own column-header drag, just never ported to this sibling
+  // drag-and-drop surface. Mirrors EntityPanel.tsx's own
+  // handleReorderColumnToEnd, reusing moveColumnToEnd verbatim (per
+  // entityTabOrder.ts's own doc comment, this file deliberately reuses
+  // columnOrder.ts's generic helpers rather than reimplementing them).
+  function handleReorderEntityTabToEnd() {
+    setDragOverEntityTab(null);
+    if (!project || !user || !draggedEntityTab) return;
+    const fullOrder = orderedEntities.map((e) => e.name);
+    setEntityTabOrderState(setEntityTabOrder(project.id, user.id, moveColumnToEnd(fullOrder, draggedEntityTab)));
     setDraggedEntityTab(null);
   }
 
@@ -3473,6 +3491,19 @@ function AppContent() {
                     </span>
                   </span>
                 ))}
+                <span
+                  className={dragOverEntityTab === "__end__" ? "entity-tabs-end-drop-zone entity-tabs-end-drop-zone-active" : "entity-tabs-end-drop-zone"}
+                  onDragOver={(e) => {
+                    if (!draggedEntityTab) return;
+                    e.preventDefault();
+                    setDragOverEntityTab("__end__");
+                  }}
+                  onDragLeave={() => setDragOverEntityTab((prev) => (prev === "__end__" ? null : prev))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    handleReorderEntityTabToEnd();
+                  }}
+                />
               </nav>
               {project.spec.entities
                 .filter((e) => e.name === activeEntity)
