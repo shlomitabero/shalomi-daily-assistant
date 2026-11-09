@@ -2778,7 +2778,16 @@ export function EntityPanel({
       if (f.type === "relation" && (!Number.isInteger(Number(value)) || String(Number(value)) !== value || Number(value) < 0)) continue;
       next[f.name] = value;
     }
-    setFieldFilters(next);
+    // Round 1767: setFieldFiltersPreference (the actual persisting setter --
+    // see its own doc comment in fieldFiltersPreference.ts) must be called
+    // here too, not just the React state setter -- mirroring round 1766's
+    // identical fix for columnWidths' own sibling effect. Without it, a
+    // filter dropped here only disappeared from this mount's in-memory
+    // state; the dead entry for the removed/retyped field stayed in
+    // localStorage forever, the same unbounded-growth-of-dead-keys shape
+    // rounds 390-1128/1766 already closed for every OTHER store in this
+    // family.
+    setFieldFilters(setFieldFiltersPreference(projectId, entity.name, userId, next));
   }, [projectId, entity.name, fieldNamesKey, fieldTypesKey, fieldEnumCountsKey, filterableEnumNames, allEntities]);
 
   /**

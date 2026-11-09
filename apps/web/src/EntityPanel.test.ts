@@ -11392,6 +11392,12 @@ test("EntityPanel drops a field filter when a live refine removes the exact fiel
         document.querySelector("table tbody")?.textContent?.includes("Globex"),
         "both records must be visible again once the stale 'status' filter is dropped, not stuck hiding Globex forever",
       );
+      // Round 1767: mirrors round 1766's identical strengthening of
+      // columnWidths' own analogous test -- this effect used to call only
+      // the React state setter, never setFieldFiltersPreference, so the
+      // dead "status" entry stayed in storage forever even once the DOM
+      // stopped showing its effects.
+      assert.deepEqual(getFieldFilters("proj1", "Deal", "user1"), {}, "the dropped filter must also be purged from persisted storage, not just absent from the live DOM");
     } finally {
       globalThis.fetch = originalFetch;
     }
