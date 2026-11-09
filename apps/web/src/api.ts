@@ -1405,7 +1405,7 @@ export interface CollaboratorAccessChange {
   id: number;
   targetUserId: string;
   changedByUserId: string | null;
-  action: "role_changed" | "removed";
+  action: "role_changed" | "removed" | "previous_owner_demoted";
   previousRole: CollaboratorRole | null;
   newRole: CollaboratorRole | null;
   changedAt: string;

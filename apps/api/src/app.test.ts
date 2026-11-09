@@ -20833,6 +20833,17 @@ test("POST .../transfer-ownership records who transferred to whom, readable via 
     assert.equal(transfer.changedByUserId, ownerUser.id, "the previous owner must be the logged actor");
     assert.equal(transfer.previousRole, "editor", "must record the collaborator role the new owner held just before the transfer");
     assert.equal(transfer.newRole, null, "\"owner\" isn't a representable CollaboratorRole, same as the removed action's own newRole: null");
+
+    // Round 1781: the other half of this same handoff -- the previous
+    // owner's own standing dropping from unrestricted "owner" to a capped
+    // "editor" collaborator -- must be logged too, not just the new
+    // owner's gain.
+    const demotion = changes.find((c) => c.action === "previous_owner_demoted")!;
+    assert.ok(demotion, "the previous owner's own demotion must have been logged");
+    assert.equal(demotion.targetUserId, ownerUser.id, "the previous owner must be the logged target of their own demotion");
+    assert.equal(demotion.changedByUserId, ownerUser.id, "the previous owner did this to themselves");
+    assert.equal(demotion.previousRole, null, "\"owner\" isn't a representable CollaboratorRole, same as ownership_transferred's own newRole: null");
+    assert.equal(demotion.newRole, "editor", "must record the collaborator role the previous owner was demoted to");
   });
 });
 

@@ -15,7 +15,20 @@ import type { ForgeDatabase } from "./connection.js";
 // entry: going from no access to some role is the single most
 // fundamental access change there is, yet it left no trace once the
 // grant was later changed or removed.
-export type CollaboratorAccessChangeAction = "invited" | "role_changed" | "removed" | "ownership_transferred";
+//
+// Round 1781: widened again to add "previous_owner_demoted" --
+// transferProjectOwnership (projects.ts) does two access changes
+// atomically (the new owner is granted ownership AND the previous owner
+// is demoted from unrestricted "owner" down to a capped "editor"
+// collaborator), but only the first half ever got an audit-trail entry
+// (ownership_transferred, round 1654). The bigger side of that handoff --
+// the acting user's own loss of delete/invite/transfer-again capability
+// -- left no trace. Not reusing "role_changed" for this: that action's
+// own report string renders "from {previousRole} to {newRole}", and
+// "owner" isn't a representable CollaboratorRole (same reason
+// ownership_transferred itself uses newRole: null), so a "role_changed"
+// entry here would render with a blank "from".
+export type CollaboratorAccessChangeAction = "invited" | "role_changed" | "removed" | "ownership_transferred" | "previous_owner_demoted";
 
 export interface CollaboratorAccessChange {
   id: number;

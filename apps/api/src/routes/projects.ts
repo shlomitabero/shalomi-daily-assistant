@@ -3117,6 +3117,21 @@ export function createProjectsRouter(
           previousRole,
           newRole: null,
         });
+        // Round 1781: the other half of this same handoff -- the acting
+        // user's own unrestricted "owner" standing was just reduced to a
+        // capped "editor" collaborator (transferProjectOwnership, above)
+        // -- is itself a real access change this audit trail exists to
+        // capture, not just the new owner's gain. previousRole: null for
+        // the same reason newRole: null is used just above: "owner" isn't
+        // a representable CollaboratorRole.
+        insertCollaboratorAccessChange(db, {
+          projectId: project.id,
+          targetUserId: req.userId!,
+          changedByUserId: req.userId!,
+          action: "previous_owner_demoted",
+          previousRole: null,
+          newRole: "editor",
+        });
         const newOwner = findUserById(db, parsed.data.userId);
         if (newOwner && emailSender.configured) {
           const isHebrew = parsed.data.lang !== "en";

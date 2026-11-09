@@ -50,7 +50,7 @@ export interface RecordDeletionForReport {
  * `deletedByEmail`.
  */
 export interface CollaboratorAccessChangeForReport {
-  action: "invited" | "role_changed" | "removed" | "ownership_transferred";
+  action: "invited" | "role_changed" | "removed" | "ownership_transferred" | "previous_owner_demoted";
   targetEmail: string | null;
   changedByEmail: string | null;
   previousRole: CollaboratorRole | null;
@@ -196,6 +196,21 @@ export function formatCollaboratorsReport(
           t("collab.report.ownershipTransferredEntry", {
             who: c.targetEmail ?? t("collab.report.unknownActor"),
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (c.action === "previous_owner_demoted") {
+        // Round 1781: the other half of an ownership transfer -- the
+        // acting user's own standing dropped from unrestricted "owner" to
+        // a capped "editor" collaborator. Its own branch, not folded into
+        // roleChangedEntry above, because "owner" isn't a representable
+        // CollaboratorRole (previousRole is always null here), and that
+        // entry's own string renders a "from {previousRole}" that would
+        // come out blank.
+        lines.push(
+          t("collab.report.previousOwnerDemotedEntry", {
+            who: c.targetEmail ?? t("collab.report.unknownActor"),
+            to: c.newRole ? roleLabel(c.newRole, t) : "",
             date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
           }),
         );

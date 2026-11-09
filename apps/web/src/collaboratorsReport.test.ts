@@ -167,6 +167,32 @@ test("formatCollaboratorsReport renders an ownership-transferred entry in the ac
 });
 
 /**
+ * Round 1781: the other half of the same ownership-transfer handoff --
+ * the previous owner's own standing dropping from unrestricted "owner" to
+ * a capped "editor" collaborator -- previously left no trace at all.
+ * Without its own branch, this would fall into roleChangedEntry's "from
+ * {previousRole} to {newRole}" text with a blank "from", since "owner"
+ * isn't a representable CollaboratorRole (previousRole is always null
+ * for this action).
+ */
+test("formatCollaboratorsReport renders a previous-owner-demoted entry distinctly, not with roleChangedEntry's blank-from text", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [
+    {
+      action: "previous_owner_demoted",
+      targetEmail: "owner@example.com",
+      changedByEmail: "owner@example.com",
+      previousRole: null,
+      newRole: "editor",
+      changedAt: "2024-02-03T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Recent access changes:"));
+  assert.ok(result.includes("owner@example.com, the previous owner, was changed to Editor (full access) access on"));
+  assert.ok(!result.includes("'s role was changed from"), "must not fall into role_changed's own text with a blank 'from'");
+});
+
+/**
  * Round 1665: "invited" is the one sibling action in this exact family
  * (role_changed/removed round 1636, ownership_transferred round 1654) that
  * never got its own report entry -- without its own explicit branch in
