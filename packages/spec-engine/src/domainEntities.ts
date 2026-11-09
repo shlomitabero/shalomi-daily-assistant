@@ -159,7 +159,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // with scheduling a customer appointment) -- the same pitfall-1 shape
     // as reservation/preservation above. \b-bounded with the same "(s)?"
     // plural handling, so "bookings" still matches.
-    keywords: ["appointment", /\bbookings?\b/, /\breservations?\b/, "תורים", "פגישה", "פגישות"],
+    //
+    // Round 1799: a hair salon, barbershop, or nail salon business (an
+    // extremely common small-business category in both languages) had no
+    // keyword anywhere matching it, so it fell through to matchEntities'
+    // degenerate generic "Item" fallback -- the same failure class rounds
+    // 1700/1708/1720/1722/1727/1752/1769 already closed for other
+    // verticals -- unless the description happened to also literally say
+    // "appointment"/"booking"/"reservation". This entity's own field shape
+    // (customerName/date/service/status/notes) already fits a salon or
+    // barbershop booking exactly, so widening its own keywords (rather
+    // than inventing a new entity) matches this file's established
+    // convention. Bare "salon" is deliberately excluded -- it's ambiguous
+    // with a furniture/auto showroom "salon" and a person's surname -- so
+    // only the scoped phrases below are listed, the same style as this
+    // file's other phrase-collision fixes (e.g. "nursery school" above).
+    keywords: [
+      "appointment", /\bbookings?\b/, /\breservations?\b/,
+      "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
+      "תורים", "פגישה", "פגישות", "מספרה", "סלון יופי",
+    ],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
     fieldLabelsHe: {

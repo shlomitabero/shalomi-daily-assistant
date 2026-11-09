@@ -952,6 +952,37 @@ test("recognizes daycare, preschool, and childcare descriptions as the Student e
   assert.ok(!dogDaycare.entities.some((e) => e.name === "Student"), "dog daycare must NOT match the Student entity rule -- it's about pets, not enrolled children");
 });
 
+/**
+ * Round 1799: the Appointment entity rule's keywords only ever covered the
+ * "appointment"/"booking"/"reservation" phrasing -- a hair salon,
+ * barbershop, or nail salon business (an extremely common small-business
+ * category in both languages) had no keyword anywhere matching it, so a
+ * plain one-line description fell through to matchEntities' degenerate
+ * generic "Item" fallback instead of a real Appointment/Customer spec.
+ */
+test("recognizes hair salon, barbershop, and nail salon descriptions as the Appointment entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const hairSalon = await provider.generate("a hair salon");
+  assert.ok(hairSalon.entities.some((e) => e.name === "Appointment"), "'a hair salon' must match the Appointment entity rule");
+  assert.ok(!hairSalon.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const barbershop = await provider.generate("a barber shop");
+  assert.ok(barbershop.entities.some((e) => e.name === "Appointment"), "'a barber shop' must match the Appointment entity rule");
+
+  const nailSalon = await provider.generate("a nail salon offering manicures and pedicures");
+  assert.ok(nailSalon.entities.some((e) => e.name === "Appointment"), "'a nail salon' must match the Appointment entity rule");
+
+  const hairdresser = await provider.generate("an app for a hairdresser to manage clients");
+  assert.ok(hairdresser.entities.some((e) => e.name === "Appointment"), "'hairdresser' must match the Appointment entity rule");
+
+  const hebrewSalon = await provider.generate("מספרה לגברים ונשים", true);
+  assert.ok(hebrewSalon.entities.some((e) => e.name === "Appointment"), "Hebrew 'מספרה' must match the Appointment entity rule");
+
+  const hebrewBeautySalon = await provider.generate("סלון יופי וטיפוח", true);
+  assert.ok(hebrewBeautySalon.entities.some((e) => e.name === "Appointment"), "Hebrew 'סלון יופי' must match the Appointment entity rule");
+});
+
 test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common unrelated phrases", async () => {
   const provider = new HeuristicSpecProvider();
 
