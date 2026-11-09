@@ -1426,7 +1426,7 @@ export function listCollaboratorAccessChanges(projectId: string): Promise<{ chan
 export interface SchemaLabelEdit {
   id: number;
   changedByUserId: string | null;
-  action: "entity_renamed" | "field_renamed";
+  action: "entity_renamed" | "field_renamed" | "role_added" | "role_removed" | "role_renamed";
   entityName: string;
   fieldName: string | null;
   previousLabel: string;

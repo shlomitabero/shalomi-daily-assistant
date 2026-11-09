@@ -8677,6 +8677,88 @@ test("PATCH .../entities/:entityName/label and PATCH .../fields/:fieldName/label
 });
 
 /**
+ * Round 1775: the exact same "who did this" audit trail round 1639 gave
+ * entity/field label renames, extended to the product spec's `roles`
+ * array -- POST/DELETE/PATCH .../roles were a documented (App.tsx's own
+ * round-906 comment) but never-closed twin of the entity/field-label
+ * routes: live, post-build edits any editor-role collaborator can make,
+ * with no audit trail at all before this round.
+ */
+test("POST/DELETE/PATCH .../roles all record who made the change, readable via GET .../schema-label-edits", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerEmail = `owner-roles-audit-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const ownerUser = findUserByEmail(db, ownerEmail)!;
+
+    const collabEmail = `collab-roles-audit-${randomUUID()}@example.com`;
+    const collabToken = await signup(baseUrl, collabEmail);
+    const collabUser = findUserByEmail(db, collabEmail)!;
+
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { roles: string[] } } };
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+
+    // POST always appends, so the new role lands at the original array's
+    // own length -- computed before the append, so this works regardless
+    // of how many default roles the generated spec started with.
+    const supervisorIndex = project.spec.roles.length;
+    const addRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+      method: "POST",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ role: "Supervisor" }),
+    });
+    assert.equal(addRes.status, 200);
+
+    const patchRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/0`, {
+      method: "PATCH",
+      headers: { ...authHeaders(collabToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ role: "Lead", expect: project.spec.roles[0] }),
+    });
+    assert.equal(patchRes.status, 200);
+
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles/${supervisorIndex}`, {
+      method: "DELETE",
+      headers: { ...authHeaders(ownerToken), "x-idempotency-key": randomUUID() },
+      body: JSON.stringify({ expect: "Supervisor" }),
+    });
+    assert.equal(deleteRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/schema-label-edits`, { headers: authHeaders(ownerToken) });
+    assert.equal(listRes.status, 200);
+    const { edits } = (await listRes.json()) as {
+      edits: { action: string; entityName: string; fieldName: string | null; changedByUserId: string | null; previousLabel: string; newLabel: string }[];
+    };
+
+    const added = edits.find((e) => e.action === "role_added")!;
+    assert.ok(added, "adding a role must have been logged");
+    assert.equal(added.entityName, "Roles");
+    assert.equal(added.fieldName, null);
+    assert.equal(added.changedByUserId, ownerUser.id);
+    assert.equal(added.newLabel, "Supervisor");
+
+    const renamed = edits.find((e) => e.action === "role_renamed")!;
+    assert.ok(renamed, "renaming a role must have been logged");
+    assert.equal(renamed.changedByUserId, collabUser.id);
+    assert.equal(renamed.previousLabel, project.spec.roles[0]);
+    assert.equal(renamed.newLabel, "Lead");
+
+    const removed = edits.find((e) => e.action === "role_removed")!;
+    assert.ok(removed, "removing a role must have been logged");
+    assert.equal(removed.changedByUserId, ownerUser.id);
+    assert.equal(removed.previousLabel, "Supervisor");
+  });
+});
+
+/**
  * Round 1639: unlike round 1636's collaborator-role-change log (which
  * deliberately logs a no-op resubmit too, since even an unchanged role
  * still represents a real access decision), resubmitting the exact same

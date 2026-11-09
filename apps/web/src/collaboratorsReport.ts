@@ -66,7 +66,7 @@ export interface CollaboratorAccessChangeForReport {
  * same reason as the sibling report types' own *Email fields.
  */
 export interface SchemaLabelEditForReport {
-  action: "entity_renamed" | "field_renamed";
+  action: "entity_renamed" | "field_renamed" | "role_added" | "role_removed" | "role_renamed";
   entityName: string;
   fieldName: string | null;
   changedByEmail: string | null;
@@ -219,11 +219,41 @@ export function formatCollaboratorsReport(
             date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
           }),
         );
-      } else {
+      } else if (e.action === "field_renamed") {
         lines.push(
           t("collab.report.fieldRenamedEntry", {
             field: e.fieldName ?? "",
             entity: e.entityName,
+            from: e.previousLabel,
+            to: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "role_added") {
+        // Round 1775: the first of 3 new branches this widened action
+        // union needs -- without them, a role entry would silently fall
+        // into the `else` below (field_renamed's own text) before this
+        // round, or now into a wrong branch above it, misdescribing what
+        // actually changed.
+        lines.push(
+          t("collab.report.roleAddedEntry", {
+            role: e.newLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else if (e.action === "role_removed") {
+        lines.push(
+          t("collab.report.roleRemovedEntry", {
+            role: e.previousLabel,
+            by: e.changedByEmail ?? t("collab.report.unknownActor"),
+            date: new Date(e.changedAt).toLocaleString(LOCALE[lang]),
+          }),
+        );
+      } else {
+        lines.push(
+          t("collab.report.roleRenamedEntry", {
             from: e.previousLabel,
             to: e.newLabel,
             by: e.changedByEmail ?? t("collab.report.unknownActor"),

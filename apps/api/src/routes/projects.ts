@@ -4918,6 +4918,20 @@ export function createProjectsRouter(
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/roles`, async () => {
         const nextSpec = { ...project.spec, roles: [...project.spec.roles, parsed.data.role] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
+        // Round 1775: the same "who did this" trail round 1639 already gave
+        // entity/field label renames -- see schemaLabelEdits.ts's own
+        // SchemaLabelEditAction doc comment for why `roles` is the one
+        // sibling store this round closes (assumptions/personas are the
+        // identical, deliberately deferred follow-up).
+        insertSchemaLabelEdit(db, {
+          projectId: project.id,
+          changedByUserId: req.userId!,
+          action: "role_added",
+          entityName: "Roles",
+          fieldName: null,
+          previousLabel: "",
+          newLabel: parsed.data.role,
+        });
         return { status: 200, body: { project: updated } };
       });
       res.status(status).json(body);
@@ -5011,8 +5025,19 @@ export function createProjectsRouter(
         if (project.spec.roles.length <= 1) {
           throw new HttpError(400, "Cannot remove the last remaining role -- at least one role is required", "VALIDATION_ERROR");
         }
+        const removedRole = project.spec.roles[index];
         const nextSpec = { ...project.spec, roles: project.spec.roles.filter((_, i) => i !== index) };
         const updated = updateProjectSpec(db, project.id, nextSpec);
+        // Round 1775: see the POST /roles route's own doc comment above.
+        insertSchemaLabelEdit(db, {
+          projectId: project.id,
+          changedByUserId: req.userId!,
+          action: "role_removed",
+          entityName: "Roles",
+          fieldName: null,
+          previousLabel: removedRole,
+          newLabel: "",
+        });
         return { status: 200, body: { project: updated } };
       });
       res.status(status).json(body);
@@ -5125,8 +5150,22 @@ export function createProjectsRouter(
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${project.id}/roles/${req.params.index}`, async () => {
         const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
         assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
+        const previousRole = project.spec.roles[index];
         const nextSpec = { ...project.spec, roles: project.spec.roles.map((r, i) => (i === index ? parsed.data.role : r)) };
         const updated = updateProjectSpec(db, project.id, nextSpec);
+        // Round 1775: see the POST /roles route's own doc comment above --
+        // same "no-op resubmit isn't a rename" rule as entity/field labels.
+        if (previousRole !== parsed.data.role) {
+          insertSchemaLabelEdit(db, {
+            projectId: project.id,
+            changedByUserId: req.userId!,
+            action: "role_renamed",
+            entityName: "Roles",
+            fieldName: null,
+            previousLabel: previousRole,
+            newLabel: parsed.data.role,
+          });
+        }
         return { status: 200, body: { project: updated } };
       });
       res.status(status).json(body);

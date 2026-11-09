@@ -260,6 +260,25 @@ test("formatCollaboratorsReport falls back to the unknown-actor translation when
 });
 
 /**
+ * Round 1775: the schema-label-edits section's 3 new role branches --
+ * without their own explicit branches, a role_added/role_removed entry
+ * would fall into entity_renamed's text (wrong direction: it would claim
+ * a rename that never happened) and role_renamed would fall into
+ * field_renamed's text (wrong: it would claim a field was involved).
+ */
+test("formatCollaboratorsReport renders role_added/role_removed/role_renamed entries with their own distinct text, not the entity/field-rename text", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [], [
+    { action: "role_added", entityName: "Roles", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "", newLabel: "Supervisor", changedAt: "2024-02-01T10:00:00.000Z" },
+    { action: "role_removed", entityName: "Roles", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "Intern", newLabel: "", changedAt: "2024-02-02T10:00:00.000Z" },
+    { action: "role_renamed", entityName: "Roles", fieldName: null, changedByEmail: "owner@example.com", previousLabel: "Staff", newLabel: "Lead", changedAt: "2024-02-03T10:00:00.000Z" },
+  ]);
+  assert.ok(result.includes('The role "Supervisor" was added by owner@example.com'));
+  assert.ok(result.includes('The role "Intern" was removed by owner@example.com'));
+  assert.ok(result.includes('A role\'s name was changed from "Staff" to "Lead" by owner@example.com'));
+});
+
+/**
  * Round 1666: the sibling report section to schemaLabelEdits above, for
  * automation-rule deletions -- the one action in the automation-rule
  * audit-trail family (createdByUserId/updatedByUserId, round 1664) that

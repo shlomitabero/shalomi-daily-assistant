@@ -1,6 +1,15 @@
 import type { ForgeDatabase } from "./connection.js";
 
-export type SchemaLabelEditAction = "entity_renamed" | "field_renamed";
+/**
+ * Round 1775: widened to also cover the product spec's `roles` array --
+ * see this file's own insertSchemaLabelEdit callers in routes/projects.ts
+ * for why a role add/remove/rename needed the identical audit trail
+ * entity/field label renames already had. `role_added`/`role_removed`
+ * store a fixed `"Roles"` sentinel in `entityName` (never a real entity)
+ * and leave `fieldName` null; `newLabel`/`previousLabel` hold the role
+ * text added/removed (whichever side doesn't apply stays empty).
+ */
+export type SchemaLabelEditAction = "entity_renamed" | "field_renamed" | "role_added" | "role_removed" | "role_renamed";
 
 export interface SchemaLabelEdit {
   id: number;
