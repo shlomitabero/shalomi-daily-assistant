@@ -25205,6 +25205,93 @@ test("the exported EntityView drops a stale 'Group by' choice when its field's T
 });
 
 /**
+ * Round 1785: distinct from the "entity.fields-change mid-mount" family just
+ * above (rounds 1778-1784) -- here entity.fields never changes at all. The
+ * mount-time collapsedGroups/collapsedBoardColumns useState initializers
+ * already filter a loaded entry against the grouped/board field's current
+ * enumValues and write the cleaned result back to storage, but the reload
+ * effects that re-run whenever groupFieldName/boardField changes via direct
+ * user action (picking "Group by", with no remount at all) only ever did a
+ * bare read with none of that filtering -- so a stale collapsed-group entry
+ * from an older export's localStorage (the same cross-export reachability
+ * rounds 509/570/834/838-841 already established for every sibling store)
+ * never got pruned once the user picked that exact field from "Group by".
+ */
+test("the exported EntityView drops a stale collapsed-group entry when its field is chosen from 'Group by', instead of leaving it in storage forever", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New" },
+        { id: 2, name: "Other Corp", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      // Simulates an older export's leftover collapsed-group entry for a
+      // "status" value ("Lost") a refine has since removed from
+      // enumValues -- this file's module-level `project` fixture only
+      // has ["New", "Won"].
+      localStorage.setItem(
+        "forge_collapsed_groups",
+        JSON.stringify({ [JSON.stringify(["Customer", "status"])]: ["New", "Lost"] }),
+      );
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length > 0,
+        "the initial record fetch never completed",
+      );
+
+      // No groupFieldName persisted yet (ungrouped on mount) -- the stale
+      // entry above is reachable only once the user picks "status" from
+      // "Group by" themselves, a live groupFieldName change with no
+      // remount at all.
+      await act(async () => {
+        fireEvent.change(view.container.querySelector(".entity-group-by") as HTMLSelectElement, { target: { value: "status" } });
+      });
+
+      await waitForCondition(() => {
+        const stored = JSON.parse(localStorage.getItem("forge_collapsed_groups") ?? "{}")[JSON.stringify(["Customer", "status"])];
+        return Array.isArray(stored) && !stored.includes("Lost");
+      }, "the stale 'Lost' collapsed-group entry never left persisted storage after 'status' was chosen from 'Group by'");
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --

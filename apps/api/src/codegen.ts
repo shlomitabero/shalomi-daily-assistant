@@ -6615,15 +6615,44 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // (also re-running whenever groupFieldName itself changes, e.g. the
   // "Group by" dropdown) -- see COLLAPSED_GROUPS_STORAGE_KEY's own
   // comment above for why groupFieldName has to be part of the key.
+  // Round 1785: this used to just read the raw persisted array with none
+  // of the mount-time useState initializer's own enum-staleness filtering
+  // a few hundred lines above -- the "Group by" <select> below changes
+  // groupFieldName via direct user action with no remount, so a browser
+  // whose storage holds a stale collapsed-group entry for a value a
+  // refine already removed/renamed (the same cross-export reachability
+  // path rounds 509/570/834/838-841 established) kept that dead entry
+  // forever the instant the user picked that field here, instead of
+  // being pruned like the mount-time path already does. Mirrors that
+  // initializer's own filter-and-write-back logic exactly.
   useEffect(() => {
-    setCollapsedGroups(new Set(getPersistedCollapsedGroups(entity.name, groupFieldName)));
+    const loaded = migrateCollapsedGroupsFieldCase(entity.name, groupFieldName);
+    const groupFieldForEffect = entity.fields.find((f) => f.name === groupFieldName);
+    if (groupFieldForEffect?.type !== "enum") {
+      setCollapsedGroups(new Set(loaded));
+      return;
+    }
+    const validValues = new Set(groupFieldForEffect.enumValues ?? []);
+    const filtered = loaded.filter((v) => validValues.has(v));
+    if (filtered.length !== loaded.length) setPersistedCollapsedGroups(entity.name, groupFieldName, filtered);
+    setCollapsedGroups(new Set(filtered));
   }, [entity.name, groupFieldName]);
 
   // Same reasoning as collapsedGroups' own effect just above -- which
   // board columns are collapsed is scoped per entity+boardField too, in
-  // its own separate store.
+  // its own separate store, and findBoardField only ever resolves to an
+  // enum field, so the identical filter-and-write-back is needed here.
   useEffect(() => {
-    setCollapsedBoardColumns(new Set(getPersistedCollapsedBoardColumns(entity.name, boardField ? boardField.name : "")));
+    const boardFieldNameForEffect = boardField ? boardField.name : "";
+    const loaded = migrateCollapsedBoardColumnsFieldCase(entity.name, boardFieldNameForEffect);
+    if (!boardField) {
+      setCollapsedBoardColumns(new Set(loaded));
+      return;
+    }
+    const validValues = new Set(boardField.enumValues ?? []);
+    const filtered = loaded.filter((v) => validValues.has(v));
+    if (filtered.length !== loaded.length) setPersistedCollapsedBoardColumns(entity.name, boardFieldNameForEffect, filtered);
+    setCollapsedBoardColumns(new Set(filtered));
   }, [entity.name, boardField]);
 
   // Applies an incoming highlightRecordId (from GlobalSearch's own per-row
