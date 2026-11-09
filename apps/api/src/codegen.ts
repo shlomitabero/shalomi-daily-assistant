@@ -2862,6 +2862,19 @@ function reorderColumns(order, sourceName, targetName) {
   return result;
 }
 
+// Round 1789 (ported from the live Forge AI preview's own round-1789 fix):
+// reorderColumns only has a "move X before Y" primitive, so the table
+// header's drag-and-drop could never place a field in the true last
+// position -- dropping onto the current last field's own header always
+// moved it to just before that field, one slot short of last, no matter
+// how many times the exact same drag was repeated. Mirrors the live
+// preview's own moveColumnToEnd (columnOrder.ts) verbatim.
+function moveColumnToEnd(order, sourceName) {
+  if (!order.includes(sourceName)) return order;
+  const withoutSource = order.filter((name) => name !== sourceName);
+  return [...withoutSource, sourceName];
+}
+
 // Mirrors the same check the server's own coerce() runs (see renderServerJs)
 // -- rejecting a bad date here, before the row is ever POSTed, gives the
 // user a row-numbered CSV import error instead of a generic server error
@@ -6928,6 +6941,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setDraggedField(null);
   }
 
+  // Round 1789 (ported from the live Forge AI preview's own round-1789 fix):
+  // dropping onto the "Created At" header (which sits right after every
+  // real field column) is the natural gesture for "put this column last",
+  // and reorderColumns alone could never reach that true last position.
+  // Mirrors the live preview's own handleReorderColumnToEnd.
+  function handleReorderColumnToEnd() {
+    setDragOverField(null);
+    if (!draggedField) return;
+    const fullOrder = orderedFields.map((f) => f.name);
+    setColumnOrderState(setColumnOrder(entity.name, moveColumnToEnd(fullOrder, draggedField)));
+    setDraggedField(null);
+  }
+
   // Keyboard-operable fallback for the drag above -- mirrors the live
   // preview's own handleMoveColumn (EntityPanel.tsx, round 478).
   function handleMoveColumn(fieldName, direction) {
@@ -9071,7 +9097,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                       const keyIndex = sortKeys.findIndex((k) => k.field === "createdAt");
                       const key = keyIndex === -1 ? null : sortKeys[keyIndex];
                       return (
-                        <th aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}>
+                        <th
+                          aria-sort={keyIndex === 0 ? (key.direction === "asc" ? "ascending" : "descending") : "none"}
+                          className={dragOverField === "createdAt" ? "resizable-col-drag-over" : undefined}
+                          onDragOver={(e) => {
+                            if (!draggedField) return;
+                            e.preventDefault();
+                            setDragOverField("createdAt");
+                          }}
+                          onDragLeave={() => setDragOverField((prev) => (prev === "createdAt" ? null : prev))}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            handleReorderColumnToEnd();
+                          }}
+                        >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort("createdAt", e.shiftKey)}>
                             Created
                             {key ? (key.direction === "asc" ? " ▲" : " ▼") : ""}

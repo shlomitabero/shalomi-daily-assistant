@@ -6,6 +6,7 @@ import {
   applyColumnOrder,
   getColumnOrder,
   migrateColumnOrderForEntityRename,
+  moveColumnToEnd,
   purgeColumnOrderForEntity,
   removeColumnOrderForUserProject,
   reorderColumns,
@@ -176,6 +177,30 @@ test("reorderColumns is a no-op if either name isn't actually in the order", () 
   const order = ["name", "email", "phone"];
   assert.equal(reorderColumns(order, "ghost", "email"), order);
   assert.equal(reorderColumns(order, "name", "ghost"), order);
+});
+
+/**
+ * Round 1789: reorderColumns only has a "move X before Y" primitive, so
+ * repeatedly dragging a field onto the current last field's own header
+ * (the only drag target reachable without a dedicated "move to end" zone)
+ * can never actually reach the true last slot -- it always lands one
+ * position short, no matter how many times the exact same drag repeats.
+ */
+test("reorderColumns dropping a field onto the current last field never reaches the true last position, even if repeated", () => {
+  let order = ["a", "b", "c", "d"];
+  for (let i = 0; i < 5; i++) order = reorderColumns(order, "a", "d");
+  assert.deepEqual(order, ["b", "c", "a", "d"], "repeatedly dragging 'a' onto the last field 'd' must stabilize one slot short of last, never reaching it");
+});
+
+test("moveColumnToEnd moves the source field to the true last position", () => {
+  assert.deepEqual(moveColumnToEnd(["a", "b", "c", "d"], "a"), ["b", "c", "d", "a"]);
+  assert.deepEqual(moveColumnToEnd(["a", "b", "c", "d"], "c"), ["a", "b", "d", "c"]);
+});
+
+test("moveColumnToEnd is a no-op if the source field is already last, or isn't actually in the order", () => {
+  const order = ["a", "b", "c"];
+  assert.deepEqual(moveColumnToEnd(order, "c"), order);
+  assert.equal(moveColumnToEnd(order, "ghost"), order);
 });
 
 test("removeColumnOrderForUserProject removes only this one user's own order across every entity of one project, leaving every other collaborator's own order for the SAME project (and this user's own order for another project) untouched", async () => {

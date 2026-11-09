@@ -19984,6 +19984,39 @@ test("the exported EntityView's table columns are drag-and-drop reorderable, per
 });
 
 /**
+ * Round 1789 (ported from the live Forge AI preview's own round-1789 fix):
+ * reorderColumns only has a "move X before Y" primitive, so dropping a
+ * column onto the current last field's own header -- the only drag target
+ * that previously existed for "move this column last" -- could never
+ * actually reach the true last position, no matter how many times the
+ * identical drag was repeated. Mirrors the live preview's own
+ * moveColumnToEnd and the "Created At" header's new drop zone verbatim.
+ */
+test("the exported EntityView's table columns can be dragged onto the 'Created At' header to reach the true last position", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /function handleReorderColumnToEnd\(\) \{\s*setDragOverField\(null\);\s*if \(!draggedField\) return;\s*const fullOrder = orderedFields\.map\(\(f\) => f\.name\);\s*setColumnOrderState\(setColumnOrder\(entity\.name, moveColumnToEnd\(fullOrder, draggedField\)\)\);\s*setDraggedField\(null\);\s*\}/,
+  );
+  assert.match(entityViewJsx, /onDrop=\{\(e\) => \{\s*e\.preventDefault\(\);\s*handleReorderColumnToEnd\(\);\s*\}\}/);
+  assert.match(entityViewJsx, /dragOverField === "createdAt" \? "resizable-col-drag-over" : undefined/);
+
+  // Executes the real generated moveColumnToEnd against the same standard
+  // the sibling reorderColumns test above uses: run the real generated
+  // code, not a hand-copied reimplementation.
+  const pureFnSrc = entityViewJsx.match(/function moveColumnToEnd\(order, sourceName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(pureFnSrc, "expected to find moveColumnToEnd in generated output");
+  const { moveColumnToEnd } = new Function(`${pureFnSrc}\nreturn { moveColumnToEnd };`)() as {
+    moveColumnToEnd: (order: string[], source: string) => string[];
+  };
+  assert.deepEqual(moveColumnToEnd(["a", "b", "c", "d"], "a"), ["b", "c", "d", "a"]);
+  const unchanged = ["a", "b", "c"];
+  assert.equal(moveColumnToEnd(unchanged, "ghost"), unchanged, "a field not actually in the order must be a real no-op");
+});
+
+/**
  * New in this round: the exported standalone app's Kanban board could only
  * move a card between columns via its own <select>, unlike the live Forge
  * AI preview (round 186's own native HTML5 drag-and-drop). Ports the

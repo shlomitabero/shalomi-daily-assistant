@@ -226,3 +226,24 @@ export function reorderColumns(order: string[], sourceName: string, targetName: 
   result.splice(targetIndex, 0, sourceName);
   return result;
 }
+
+/**
+ * Round 1789: `reorderColumns` only has a "move X before Y" primitive, so
+ * the table header's drag-and-drop (which always drops a column onto some
+ * other column's own header) could never place a field in the true last
+ * position -- dropping onto the current last field's header only ever
+ * moves it to just before that field, one slot short of last, no matter
+ * how many times the exact same drag is repeated. The keyboard "move
+ * later" fallback (handleMoveColumn) already reaches the true last slot by
+ * calling reorderColumns the other way around (move the neighbor before
+ * me), but the drag path has no neighbor to invoke that trick with once
+ * the dragged field is already adjacent to the last field. This gives drag
+ * a real "move to the very end" primitive, mirroring reorderColumns' own
+ * no-op guards (self no-op is moot here since a field can't be dropped
+ * past itself; the "not actually in order" guard still applies).
+ */
+export function moveColumnToEnd(order: string[], sourceName: string): string[] {
+  if (!order.includes(sourceName)) return order;
+  const withoutSource = order.filter((name) => name !== sourceName);
+  return [...withoutSource, sourceName];
+}

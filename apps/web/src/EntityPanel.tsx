@@ -23,7 +23,7 @@ import {
   replaceColumnWidths,
   setColumnWidth,
 } from "./columnWidths.js";
-import { applyColumnOrder, getColumnOrder, reorderColumns, setColumnOrder } from "./columnOrder.js";
+import { applyColumnOrder, getColumnOrder, moveColumnToEnd, reorderColumns, setColumnOrder } from "./columnOrder.js";
 import {
   addEntityRecentSearch,
   clearEntityRecentSearches,
@@ -3446,6 +3446,21 @@ export function EntityPanel({
     setDraggedField(null);
   }
 
+  // Round 1789: reorderColumns only has a "move X before Y" primitive, so
+  // dropping a column onto the current last field's own header could never
+  // place it in the true last position -- it always landed one slot short
+  // of last, no matter how many times the exact same drag was repeated.
+  // Dropping onto the "Created At" header (which sits right after every
+  // real field column) is the natural gesture for "put this column last",
+  // so it gets its own drop target that actually reaches the end.
+  function handleReorderColumnToEnd() {
+    setDragOverField(null);
+    if (!draggedField) return;
+    const fullOrder = orderedFields.map((f) => f.name);
+    setColumnOrderState(setColumnOrder(projectId, entity.name, userId, moveColumnToEnd(fullOrder, draggedField)));
+    setDraggedField(null);
+  }
+
   /**
    * Keyboard-operable fallback for the drag-and-drop column reorder above --
    * before this, dragging a column header (onDragStart/onDrop, native HTML5
@@ -6255,7 +6270,20 @@ export function EntityPanel({
                       const keyIndex = sortKeys.findIndex((k) => k.field === "createdAt");
                       const key = keyIndex === -1 ? null : sortKeys[keyIndex];
                       return (
-                        <th aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}>
+                        <th
+                          aria-sort={keyIndex === 0 ? (key!.direction === "asc" ? "ascending" : "descending") : "none"}
+                          className={dragOverField === "createdAt" ? "resizable-col-drag-over" : undefined}
+                          onDragOver={(e) => {
+                            if (!draggedField) return;
+                            e.preventDefault();
+                            setDragOverField("createdAt");
+                          }}
+                          onDragLeave={() => setDragOverField((prev) => (prev === "createdAt" ? null : prev))}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            handleReorderColumnToEnd();
+                          }}
+                        >
                           <button type="button" className="sort-header" onClick={(e) => toggleSort("createdAt", e.shiftKey)}>
                             {t("entity.table.createdAt")}
                             {key && (key.direction === "asc" ? " ▲" : " ▼")}

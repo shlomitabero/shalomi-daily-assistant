@@ -13819,6 +13819,69 @@ test("EntityPanel's table columns are drag-and-drop reorderable, persisting per 
 });
 
 /**
+ * Round 1789: reorderColumns only has a "move X before Y" primitive, so
+ * the only drag target that previously existed for "move this column
+ * last" -- dropping onto the current last field's own header -- could
+ * never actually reach the true last position (it always landed one slot
+ * short, no matter how many times the identical drag was repeated).
+ * Dropping onto the fixed "Created At" header (which sits right after
+ * every real field column, the natural target for "put this last") now
+ * gets its own drop zone that actually reaches the end.
+ */
+test("EntityPanel's table columns can be dragged onto the 'Created At' header to reach the true last position, not just one slot short", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector("table") !== null);
+
+      const headerText = () => [...document.querySelectorAll("thead th.resizable-col")].map((th) => th.querySelector(".sort-header")!.textContent);
+      assert.deepEqual(headerText(), ["Name", "Status"], "columns must start in the entity's own natural field order");
+
+      function makeDataTransfer() {
+        let payload = "";
+        return { setData: (_type: string, value: string) => (payload = value), getData: () => payload };
+      }
+
+      const nameHeader = document.querySelectorAll("thead th.resizable-col")[0] as HTMLElement;
+      const createdAtHeader = [...document.querySelectorAll("thead th")].find((th) => /Created/.test(th.textContent ?? "")) as HTMLElement;
+      assert.ok(createdAtHeader, "expected a 'Created At' header to exist");
+
+      // Dragging "Name" onto "Status" (the only other real field) could,
+      // before this fix, never place "Name" after "Status" -- repeating it
+      // would just stabilize one slot short. Dragging it onto "Created At"
+      // instead must place it genuinely last.
+      const dataTransfer = makeDataTransfer();
+      fireEvent.dragStart(nameHeader, { dataTransfer });
+      fireEvent.dragOver(createdAtHeader, { dataTransfer });
+      assert.ok(
+        createdAtHeader.classList.contains("resizable-col-drag-over"),
+        "dragging a column over the 'Created At' header must show real drag-over feedback",
+      );
+      fireEvent.drop(createdAtHeader, { dataTransfer });
+      await waitForCondition(() => headerText()[0] === "Status");
+      assert.deepEqual(headerText(), ["Status", "Name"], "dropping 'Name' onto 'Created At' must move it to the true last position");
+      assert.equal(
+        createdAtHeader.classList.contains("resizable-col-drag-over"),
+        false,
+        "drag-over feedback on 'Created At' must clear once the drop completes",
+      );
+
+      const store2 = JSON.parse(localStorage.getItem("forge.columnOrder") ?? "{}");
+      assert.deepEqual(
+        store2[JSON.stringify(["proj1", "Deal", "user1"])],
+        ["status", "name"],
+        "the real reordered field-name order must be persisted to real localStorage",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1232: the table column-header reorder's own sibling of the board
  * column's identical gap -- native HTML5 drag-and-drop only fires
  * `dragleave` on a header the pointer actually moves off of, so cancelling
