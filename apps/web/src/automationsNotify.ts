@@ -1,8 +1,10 @@
-import type { AutomationRuleView } from "./api.js";
+import type { AutomationActionType, AutomationRuleView } from "./api.js";
 
 export interface NewlyFailingAutomations {
   count: number;
   entityName: string;
+  lastError: string | null;
+  lastActionType: AutomationActionType | null;
 }
 
 /**
@@ -29,5 +31,10 @@ export function findNewlyFailingAutomations(
   if (previouslyFailingIds === null) return null;
   const newlyFailing = rules.filter((r) => r.enabled && r.lastStatus === "failed" && !previouslyFailingIds.has(r.id));
   if (newlyFailing.length === 0) return null;
-  return { count: newlyFailing.length, entityName: newlyFailing[0].entityName };
+  return {
+    count: newlyFailing.length,
+    entityName: newlyFailing[0].entityName,
+    lastError: newlyFailing[0].lastError,
+    lastActionType: newlyFailing[0].lastActionType,
+  };
 }

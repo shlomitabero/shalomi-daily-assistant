@@ -53,7 +53,7 @@ test("findNewlyFailingAutomations returns null when nothing is currently failing
 test("findNewlyFailingAutomations reports a rule that started failing since the last check", () => {
   const rules = [rule({ id: "r1", entityName: "Invoice", lastStatus: "failed" })];
   const result = findNewlyFailingAutomations(rules, new Set());
-  assert.deepEqual(result, { count: 1, entityName: "Invoice" });
+  assert.deepEqual(result, { count: 1, entityName: "Invoice", lastError: null, lastActionType: null });
 });
 
 test("findNewlyFailingAutomations ignores a DISABLED rule even if its lastStatus is 'failed'", () => {
@@ -68,7 +68,7 @@ test("findNewlyFailingAutomations counts only the rules that are newly failing, 
     rule({ id: "r3", lastStatus: "failed" }),
   ];
   const result = findNewlyFailingAutomations(rules, new Set(["r1"]));
-  assert.deepEqual(result, { count: 2, entityName: "Order" });
+  assert.deepEqual(result, { count: 2, entityName: "Order", lastError: null, lastActionType: null });
 });
 
 test("findNewlyFailingAutomations treats a rule missing from the current set entirely (deleted) as simply not failing -- no crash, no false positive", () => {

@@ -30,12 +30,14 @@ import {
   subscribeViewerDemoted,
   subscribeWakeStatus,
   verifyEmail,
+  type AutomationActionType,
   type AutomationRuleView,
   type CollaboratorRole,
   type TemplateSummary,
   type WhatsAppMessageLogEntry,
 } from "./api.js";
 import { findNewlyFailingAutomations } from "./automationsNotify.js";
+import { translateAutomationError } from "./automationsReport.js";
 import { AuthScreen } from "./AuthScreen.js";
 import { BuildProgress } from "./BuildProgress.js";
 import { BusinessTwinPanel } from "./BusinessTwinPanel.js";
@@ -505,6 +507,7 @@ export function maybeNotifyFailingAutomations(
   isTabHidden: boolean,
   t: (key: string, params?: Record<string, string>) => string,
   entities: Entity[] = [],
+  lang: Lang = "en",
 ): void {
   const newlyFailing = findNewlyFailingAutomations(rules, previouslyFailingIdsRef.current);
   // Round 1240: this baseline used to also require r.enabled -- but
@@ -534,7 +537,24 @@ export function maybeNotifyFailingAutomations(
     newlyFailing.count === 1
       ? t("automations.notification.title.one", { entity: resolveFailingEntityLabel(newlyFailing.entityName, entities) })
       : t("automations.notification.title.many", { count: String(newlyFailing.count) });
-  new Notification(title);
+  // Round 1765: mirrors maybeNotifyNewWhatsAppMessages's own unconditional
+  // `{ body: newMessages.snippet }` above -- this notification previously had
+  // no body at all, so the single most useful piece of context (why the rule
+  // failed) never reached the one channel designed to surface it without the
+  // user even looking at the tab. translateAutomationError is the same
+  // helper automationsReport.ts's own Copy/Download report and
+  // AutomationsPanel.tsx's rule-list row already use to turn a rule's raw
+  // lastError into the lang-appropriate sentence the user sees everywhere
+  // else, so this notification shows that exact text instead of staying
+  // title-only. lastError is only ever null for a rule that's never fired,
+  // which can't be true here (a rule can't have lastStatus: "failed" without
+  // a lastError to go with it -- see automations.ts's own recordAutomationRun).
+  new Notification(
+    title,
+    newlyFailing.lastError
+      ? { body: translateAutomationError(newlyFailing.lastActionType, newlyFailing.lastError, lang) }
+      : undefined,
+  );
 }
 
 export default function App() {
@@ -729,6 +749,13 @@ function AppContent() {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+  // Round 1765: same stale-closure idiom as tRef above, for maybeNotifyFailingAutomations'
+  // own new translateAutomationError(..., lang) call -- that poll effect only
+  // (re)starts on project?.id/project?.status, never on lang itself.
+  const langRef = useRef(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
   // Round 1692: same stale-closure idiom as showWhatsAppRef/tRef above --
   // checkFailingAutomations' poll effect below only (re)starts on
   // project?.id/project?.status, never on the entity list itself, but a
@@ -1215,7 +1242,7 @@ function AppContent() {
         const { rules } = await listAutomationRules(projectId);
         if (cancelled) return;
         setAutomationsFailingCount(rules.filter((r) => r.enabled && r.lastStatus === "failed").length);
-        maybeNotifyFailingAutomations(rules, lastFailingAutomationIdsRef, document.hidden, tRef.current, entitiesRef.current);
+        maybeNotifyFailingAutomations(rules, lastFailingAutomationIdsRef, document.hidden, tRef.current, entitiesRef.current, langRef.current);
       } catch {
         // A single failed background check isn't worth surfacing to the
         // user -- just skip this tick and try again on the next one.

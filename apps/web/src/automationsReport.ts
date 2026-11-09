@@ -239,7 +239,7 @@ function describeDestination(
 // of a whole rule, so this same function also serves describeRunStatus
 // below (a past run's own actionType snapshot, not necessarily the
 // rule's lastActionType) without a second near-duplicate copy.
-function translateAutomationError(actionType: AutomationActionType | null, error: string, lang: Lang): string {
+export function translateAutomationError(actionType: AutomationActionType | null, error: string, lang: Lang): string {
   if (actionType === "send_whatsapp" && KNOWN_WHATSAPP_SEND_ERROR_CODES.has(error)) {
     return resolveErrorMessage(lang, { code: `WHATSAPP_SEND_${error.toUpperCase()}`, error });
   }

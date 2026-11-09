@@ -1721,6 +1721,43 @@ test("maybeNotifyFailingAutomations fires a real Notification with the correct t
  * the fix: when the failing rule's entity has a label distinct from its
  * raw name, the notification shows the label.
  */
+/**
+ * Round 1765: the notification above only ever asserted the title --
+ * maybeNotifyFailingAutomations previously called `new Notification(title)`
+ * with no body at all, unlike its own WhatsApp sibling just above (which
+ * has always passed `{ body: newMessages.snippet }`), so the single most
+ * useful piece of context -- *why* the rule failed -- never reached the one
+ * channel designed to surface it without the user even looking at the tab.
+ * This asserts the body is now the lang-translated version of the rule's
+ * lastError, via the exact same translateAutomationError helper
+ * automationsReport.ts's own Copy/Download report and AutomationsPanel.tsx's
+ * rule-list row already use for the identical EMAIL_SEND_<CODE> family.
+ */
+test("maybeNotifyFailingAutomations fires a real Notification with the correct title AND body (the translated failure reason), when the tab is hidden and permission is granted", () => {
+  const originalNotification = (globalThis as { Notification?: unknown }).Notification;
+  const calls: Array<{ title: string; body: string }> = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title: string, options?: { body?: string }) {
+      calls.push({ title, body: options?.body ?? "" });
+    }
+  }
+  (globalThis as { Notification: unknown }).Notification = FakeNotification;
+  try {
+    const rules = [
+      automationRule({ id: "r1", entityName: "Invoice", lastStatus: "failed", actionType: "send_email", lastActionType: "send_email", lastError: "EMAIL_UNREACHABLE_ERROR" }),
+    ];
+    const ref: { current: Set<string> | null } = { current: new Set() };
+    maybeNotifyFailingAutomations(rules, ref, true, notifyT, [], "en");
+    assert.deepEqual(calls, [
+      { title: 'automations.notification.title.one:{"entity":"Invoice"}', body: translate("en", "error.AUTOMATION_EMAIL_NETWORK_ERROR") },
+    ]);
+    assert.notEqual(calls[0].body, "", "the body must not be empty when the rule has a real lastError");
+  } finally {
+    (globalThis as { Notification?: unknown }).Notification = originalNotification;
+  }
+});
+
 test("maybeNotifyFailingAutomations resolves the failing rule's raw entityName to its display label, not the raw internal name", () => {
   const originalNotification = (globalThis as { Notification?: unknown }).Notification;
   const calls: string[] = [];
@@ -6282,6 +6319,7 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
       "document",
       "tRef",
       "entitiesRef",
+      "langRef",
       `${code}\nreturn checkFailingAutomations;`,
     )(
       "project-1",
@@ -6293,6 +6331,7 @@ test("App's checkFailingAutomations counts only enabled rules with lastStatus \"
       { hidden: false },
       { current: (key: string) => key },
       { current: [] },
+      { current: "en" },
     ) as () => Promise<void>;
     return { fn, state, notifyCalls };
   }
