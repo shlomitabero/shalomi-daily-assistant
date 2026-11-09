@@ -102,6 +102,36 @@ test('draftProduct parses a real successful Anthropic API response', async () =>
   }
 });
 
+test('draftProduct throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when the model answers in plain prose with no JSON at all', async () => {
+  // extractJson falls back to the raw text verbatim when it finds no {...}
+  // block (tested in isolation above) - draftProduct's own JSON.parse on
+  // that result was never exercised end to end, and the raw SyntaxError
+  // it throws would otherwise reach routes/opportunities.js's manual
+  // "new digital product" form as untranslated English, unlike the
+  // isValidDraftShape failure right next to it which is already Hebrew.
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  const apiResponse = {
+    id: 'msg_test456', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: 'Sorry, I cannot help with that request.' }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 50, output_tokens: 10 },
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(apiResponse), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  });
+  try {
+    await assert.rejects(
+      () => draftProduct({ topic: 'x', audience: 'y' }),
+      /ה-AI החזיר תשובה שאינה JSON תקין/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
+
 test('extractJson strips prose the model adds despite being told not to', () => {
   const text = 'Sure, here is the JSON:\n{"title": "x"}\nLet me know if you need anything else!';
   assert.equal(extractJson(text), '{"title": "x"}');

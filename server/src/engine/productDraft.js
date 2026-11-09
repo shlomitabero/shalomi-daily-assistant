@@ -62,7 +62,20 @@ export async function draftProduct({ topic, audience, timeoutMs = API_TIMEOUT_MS
     messages: [{ role: 'user', content: prompt }],
   });
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-  const parsed = JSON.parse(extractJson(text));
+  let parsed;
+  try {
+    parsed = JSON.parse(extractJson(text));
+  } catch {
+    // extractJson falls back to the raw text verbatim when it finds no
+    // {...} block at all (e.g. the model ignores the "raw JSON only"
+    // instruction and answers in plain prose) - JSON.parse on that throws
+    // its own raw English SyntaxError. Unlike the isValidDraftShape
+    // failure right below, which routes/opportunities.js's manual "new
+    // digital product" form already shows translated, this one reached
+    // the owner as untranslated English dropped into that same
+    // otherwise all-Hebrew error line.
+    throw new Error('ה-AI החזיר תשובה שאינה JSON תקין — טיוטת מוצר לא נוצרה');
+  }
   if (!isValidDraftShape(parsed)) {
     // Reaches the owner verbatim: routes/opportunities.js's manual
     // "new digital product" form shows this exact err.message, and
