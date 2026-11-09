@@ -845,6 +845,7 @@ test("WhatsAppPanel's mergeFreshMessages reconciles an already-loaded message's 
   const mergeFreshMessages = new Function(`${code}\nreturn mergeFreshMessages;`)() as (
     prev: WhatsAppMessageLogEntry[],
     freshPage: WhatsAppMessageLogEntry[],
+    hasMore: boolean,
   ) => WhatsAppMessageLogEntry[];
 
   function makeMsg(id: string, status: WhatsAppMessageLogEntry["status"]): WhatsAppMessageLogEntry {
@@ -864,18 +865,80 @@ test("WhatsAppPanel's mergeFreshMessages reconciles an already-loaded message's 
 
   const prev = [makeMsg("m2", "sent"), makeMsg("m1", "received")];
   // The server now reports m2 as failed (its own messages.update handler
-  // ran since the last tick), plus a genuinely new message m3.
+  // ran since the last tick), plus a genuinely new message m3. hasMore:true
+  // means this is only a partial page, so m1's absence from it must not be
+  // treated as a deletion.
   const freshPage = [makeMsg("m3", "received"), makeMsg("m2", "failed")];
 
-  const merged = mergeFreshMessages(prev, freshPage);
+  const merged = mergeFreshMessages(prev, freshPage, true);
 
   assert.deepEqual(merged.map((m) => m.id), ["m3", "m2", "m1"], "new message prepended, existing order preserved");
   assert.equal(merged.find((m) => m.id === "m2")?.status, "failed", "m2's status must be reconciled from the fresh page");
   assert.equal(merged.find((m) => m.id === "m1")?.status, "received", "m1's status must be left untouched -- the fresh page says nothing changed for it");
 
   // No-op fast path: identical input must still return the same reference.
-  const unchanged = mergeFreshMessages(prev, [makeMsg("m2", "sent"), makeMsg("m1", "received")]);
+  const unchanged = mergeFreshMessages(prev, [makeMsg("m2", "sent"), makeMsg("m1", "received")], true);
   assert.equal(unchanged, prev, "must return the same array reference when nothing actually changed");
+});
+
+/**
+ * Regression test for round 1758: mergeFreshMessages was purely additive --
+ * it could add an id missing from `prev` and reconcile `status` on a
+ * matching id, but never dropped an id `prev` had that freshPage didn't,
+ * even once `hasMore: false` on that very fetch proved it was the entire
+ * current server-side log. Any OTHER collaborator (or this tab's own Clear
+ * History) deleting a message was kept on screen indefinitely by every one
+ * of mergeFreshMessages' three call sites -- the connected-poll tick,
+ * handleSendTest, and handleRetry -- none of which need any delete-vs-fetch
+ * race at all, unlike the round 432 test above. Confirms the fix: a
+ * `hasMore: false` fetch missing a previously-shown id now drops it. A
+ * `hasMore: true` (partial) fetch still never drops a missing id -- it
+ * could just as easily have been pushed off that fixed-size page by newly
+ * arrived messages as actually deleted, which the "WhatsAppPanel's
+ * handleSendTest preserves older pages..." test below exercises directly.
+ */
+test("WhatsAppPanel's mergeFreshMessages drops a message genuinely deleted server-side once a hasMore:false fetch proves it's gone", () => {
+  const mergeMatch = whatsAppPanelSrc.match(/^function mergeFreshMessages\([\s\S]*?\n\}\n/m);
+  assert.ok(mergeMatch, "expected to find mergeFreshMessages in WhatsAppPanel.tsx");
+  const { code } = transformSync(mergeMatch![0], { loader: "ts" });
+  const mergeFreshMessages = new Function(`${code}\nreturn mergeFreshMessages;`)() as (
+    prev: WhatsAppMessageLogEntry[],
+    freshPage: WhatsAppMessageLogEntry[],
+    hasMore: boolean,
+  ) => WhatsAppMessageLogEntry[];
+
+  function makeMsg(id: string): WhatsAppMessageLogEntry {
+    return {
+      id,
+      direction: "in",
+      fromNumber: "+1000",
+      toNumber: "+2000",
+      body: id,
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: "2024-01-01T00:00:00.000Z",
+    };
+  }
+
+  // Another collaborator deleted m1 server-side. This fetch's hasMore:false
+  // proves freshPage IS the whole log now -- m1 missing from it means it's
+  // genuinely gone, not merely unfetched.
+  const prevFullLog = [makeMsg("m2"), makeMsg("m1")];
+  const mergedFullLog = mergeFreshMessages(prevFullLog, [makeMsg("m2")], false);
+  assert.deepEqual(mergedFullLog.map((m) => m.id), ["m2"], "m1 must be dropped: a hasMore:false fetch proves it no longer exists server-side");
+
+  // Clear History: the entire log is gone, hasMore:false, freshPage empty.
+  const mergedCleared = mergeFreshMessages(prevFullLog, [], false);
+  assert.deepEqual(mergedCleared.map((m) => m.id), [], "every message must be dropped once a hasMore:false fetch returns an empty log");
+
+  // hasMore:true (partial page): m1 missing from freshPage must NOT be
+  // dropped -- a partial page can't prove deletion, only that m1 isn't
+  // among the newest N messages right now (it may simply have been pushed
+  // off by new arrivals).
+  const mergedPartial = mergeFreshMessages(prevFullLog, [makeMsg("m2")], true);
+  assert.deepEqual(mergedPartial.map((m) => m.id), ["m2", "m1"], "m1 must survive a hasMore:true fetch -- a partial page can't prove it was deleted rather than merely pushed off the page");
 });
 
 /**

@@ -149,23 +149,57 @@ const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
  * sent a message and kept the panel open -- the single most likely case,
  * since they're watching to see if it went through.
  */
+// Round 1758: this used to be purely additive -- it could add an id
+// missing from `prev` and reconcile `status` on a matching id, but never
+// dropped an id that `prev` had and freshPage didn't. Every one of this
+// function's three call sites below fetches listWhatsAppMessages with no
+// cursor (the newest page), on a plain timed poll or right after a send/
+// retry -- no concurrent-delete race needed at all. WhatsApp messages are
+// project-scoped, not per-user, and this file has no cross-tab sync
+// mechanism, so any OTHER collaborator with write access deleting a
+// message or clearing the whole log went on being shown in this tab's own
+// open panel indefinitely, surviving every single poll tick, until the
+// panel was fully closed and reopened.
+//
+// `hasMore` (already returned by listWhatsAppMessages, previously
+// discarded at every call site) tells us whether freshPage can be trusted
+// as authoritative for pruning: `false` means freshPage IS the entire
+// current server-side log, so any `prev` id missing from it is genuinely
+// gone and safely prunable. `true` means freshPage is only a partial,
+// fixed-size top-of-log page -- an id missing from it could just as
+// easily have been pushed off that page by newly-arrived messages as
+// actually deleted, and with no server-side rowid available client-side
+// to tell those two cases apart from createdAt alone (real messages can
+// legitimately share a millisecond timestamp), nothing is pruned on a
+// partial page; it behaves exactly as purely-additive as before.
 function mergeFreshMessages(
   prev: WhatsAppMessageLogEntry[],
   freshPage: WhatsAppMessageLogEntry[],
+  hasMore: boolean,
 ): WhatsAppMessageLogEntry[] {
   const existingIds = new Set(prev.map((m) => m.id));
   const newOnes = freshPage.filter((m) => !existingIds.has(m.id));
   const freshById = new Map(freshPage.map((m) => [m.id, m]));
-  let statusChanged = false;
-  const reconciled = prev.map((m) => {
+  let changed = false;
+  const reconciled: WhatsAppMessageLogEntry[] = [];
+  for (const m of prev) {
     const fresh = freshById.get(m.id);
-    if (fresh && fresh.status !== m.status) {
-      statusChanged = true;
-      return { ...m, status: fresh.status };
+    if (fresh) {
+      if (fresh.status !== m.status) {
+        changed = true;
+        reconciled.push({ ...m, status: fresh.status });
+      } else {
+        reconciled.push(m);
+      }
+      continue;
     }
-    return m;
-  });
-  if (newOnes.length === 0 && !statusChanged) return prev;
+    if (!hasMore) {
+      changed = true;
+      continue;
+    }
+    reconciled.push(m);
+  }
+  if (newOnes.length === 0 && !changed) return prev;
   return [...newOnes, ...reconciled];
 }
 
@@ -472,10 +506,10 @@ export function WhatsAppPanel({
         }
         try {
           const versionBeforeFetch = messagesVersionRef.current;
-          const { messages: freshPage } = await listWhatsAppMessages(projectId);
+          const { messages: freshPage, hasMore } = await listWhatsAppMessages(projectId);
           if (cancelled) return;
           if (messagesVersionRef.current === versionBeforeFetch) {
-            setMessages((prev) => mergeFreshMessages(prev, freshPage));
+            setMessages((prev) => mergeFreshMessages(prev, freshPage, hasMore));
           }
         } catch {
           // A single failed message-refresh isn't worth surfacing an error
@@ -828,9 +862,9 @@ export function WhatsAppPanel({
         setTestMessage("");
       }
       const versionBeforeFetch = messagesVersionRef.current;
-      const { messages: freshPage } = await listWhatsAppMessages(projectId);
+      const { messages: freshPage, hasMore } = await listWhatsAppMessages(projectId);
       if (messagesVersionRef.current === versionBeforeFetch) {
-        setMessages((prev) => mergeFreshMessages(prev, freshPage));
+        setMessages((prev) => mergeFreshMessages(prev, freshPage, hasMore));
       }
     } catch (err) {
       setSendResult({ ok: false, text: (err as Error).message });
@@ -1077,9 +1111,9 @@ export function WhatsAppPanel({
       // reason directly instead of leaving the button silently reset.
       if (!result.ok) setRetryError(result.error ?? t("whatsapp.log.retryError"));
       const versionBeforeFetch = messagesVersionRef.current;
-      const { messages: freshPage } = await listWhatsAppMessages(projectId);
+      const { messages: freshPage, hasMore } = await listWhatsAppMessages(projectId);
       if (messagesVersionRef.current === versionBeforeFetch) {
-        setMessages((prev) => mergeFreshMessages(prev, freshPage));
+        setMessages((prev) => mergeFreshMessages(prev, freshPage, hasMore));
       }
     } catch (err) {
       setRetryError((err as Error).message);
