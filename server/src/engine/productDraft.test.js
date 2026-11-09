@@ -162,6 +162,31 @@ test('draftProduct throws a clean Hebrew error, not a raw JSON.parse SyntaxError
   }
 });
 
+test('draftProduct throws a clean Hebrew error, not the raw Anthropic API error, when the API call itself fails', async () => {
+  // The client.messages.create call had no guard at all - a raw SDK/API
+  // error (here, a 401 from an invalid/expired key) propagated straight
+  // up with its own English message, reaching the owner verbatim via
+  // routes/opportunities.js's manual "new digital product" form. Same
+  // leak class as the JSON.parse failure test above, one layer earlier.
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }),
+    { status: 401, headers: { 'content-type': 'application/json' } }
+  );
+  try {
+    await assert.rejects(
+      () => draftProduct({ topic: 'x', audience: 'y' }),
+      /הבקשה ל-AI נכשלה/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+});
+
 test('extractJson strips prose the model adds despite being told not to', () => {
   const text = 'Sure, here is the JSON:\n{"title": "x"}\nLet me know if you need anything else!';
   assert.equal(extractJson(text), '{"title": "x"}');

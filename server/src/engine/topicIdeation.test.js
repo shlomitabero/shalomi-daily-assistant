@@ -168,6 +168,30 @@ test('generateTopicIdea throws a clean Hebrew error, not a raw JSON.parse Syntax
   });
 });
 
+test('generateTopicIdea throws a clean Hebrew error, not the raw Anthropic API error, when the API call itself fails', async () => {
+  // The client.messages.create call had no guard at all - a raw SDK/API
+  // error (here, a 401 from an invalid/expired key) propagated straight
+  // up with its own English message. autonomousScan.js's own catch
+  // around this call returns it verbatim as `reason`, which
+  // Opportunities.jsx shows directly on its manual "סרוק עכשיו" button -
+  // untranslated English, inline, in an otherwise all-Hebrew card.
+  await withEnv({ ANTHROPIC_API_KEY: 'test-key' }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(
+      JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }),
+      { status: 401, headers: { 'content-type': 'application/json' } }
+    );
+    try {
+      await assert.rejects(
+        () => generateTopicIdea({}),
+        /הבקשה ל-AI נכשלה/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test('generateTopicIdea times out instead of hanging for the SDK default of ~10 minutes (retried) when the API never responds', async () => {
   // Without an explicit timeout, a hung connection would block the
   // autonomous scan's background cron job (or a manual "סרוק עכשיו" click)

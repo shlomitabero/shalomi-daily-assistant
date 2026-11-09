@@ -56,23 +56,42 @@ export async function draftProduct({ topic, audience, timeoutMs = API_TIMEOUT_MS
 
   const client = new Anthropic({ apiKey, timeout: timeoutMs });
   const prompt = buildProductPrompt({ topic, audience });
-  const msg = await client.messages.create({
-    model: MODEL,
-    // claude-sonnet-5-5 runs adaptive thinking by default whenever `thinking`
-    // is omitted (unlike older models, where no `thinking` param meant no
-    // thinking at all) - and that reasoning draws from this same max_tokens
-    // budget, not a separate allowance. 4000 was sized only for the visible
-    // output (a 600-900 word guide + short sales copy, as JSON) with no
-    // margin for that - a real risk of silently truncating mid-JSON on a
-    // non-trivial reasoning pass, failing a real, billed AI call for no
-    // reason other than an undersized ceiling. 16000 costs nothing extra
-    // unless actually used (billing is by tokens generated, not this
-    // ceiling) and is a plain, non-streaming client.messages.create call
-    // well under the point where larger values need streaming to avoid an
-    // HTTP timeout.
-    max_tokens: 16000,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  let msg;
+  try {
+    msg = await client.messages.create({
+      model: MODEL,
+      // claude-sonnet-5-5 runs adaptive thinking by default whenever `thinking`
+      // is omitted (unlike older models, where no `thinking` param meant no
+      // thinking at all) - and that reasoning draws from this same max_tokens
+      // budget, not a separate allowance. 4000 was sized only for the visible
+      // output (a 600-900 word guide + short sales copy, as JSON) with no
+      // margin for that - a real risk of silently truncating mid-JSON on a
+      // non-trivial reasoning pass, failing a real, billed AI call for no
+      // reason other than an undersized ceiling. 16000 costs nothing extra
+      // unless actually used (billing is by tokens generated, not this
+      // ceiling) and is a plain, non-streaming client.messages.create call
+      // well under the point where larger values need streaming to avoid an
+      // HTTP timeout.
+      max_tokens: 16000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+  } catch (err) {
+    // The call itself had no guard at all - a raw Anthropic SDK/API error
+    // (a timeout from the AbortController above, a rate limit, an auth
+    // failure, a network error, an overloaded-model error) propagated
+    // straight up, reaching the owner verbatim via routes/opportunities.js's
+    // manual "new digital product" form - untranslated English dropped
+    // into that same otherwise all-Hebrew error line, the same leak class
+    // already fixed for the JSON.parse failure below. Unlike paddle.js's
+    // own documented exception (a real network failure there is left
+    // as-is, since Paddle is infrastructure the owner directly manages),
+    // an Anthropic API error here carries no comparable actionable
+    // diagnostic value for the owner - console.error already gives
+    // Railway's own log viewer the raw detail, same split as every other
+    // service-level failure in this app.
+    console.error('draftProduct: Anthropic API call failed', err);
+    throw new Error('הבקשה ל-AI נכשלה — בדוק את לוגי השרת לפרטים');
+  }
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   let parsed;
   try {

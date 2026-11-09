@@ -60,21 +60,36 @@ export async function generateTopicIdea({ avoidTitles = [], timeoutMs = API_TIME
 
   const client = new Anthropic({ apiKey, timeout: timeoutMs });
   const prompt = buildTopicPrompt({ avoidTitles });
-  const msg = await client.messages.create({
-    model: MODEL,
-    // Same real risk as productDraft.js's equivalent call: claude-sonnet-5-5
-    // runs adaptive thinking by default whenever `thinking` is omitted, and
-    // that reasoning draws from this same max_tokens budget. 500 was sized
-    // only for the tiny visible output ({"topic": "...", "audience": "..."})
-    // with zero margin for any reasoning pass at all - on a model that
-    // thinks by default, that's a real risk of this call (the autonomous
-    // scan's own topic-ideation step, run every 4 hours) silently
-    // truncating before it ever reaches the visible JSON, for no reason
-    // other than an undersized ceiling. 16000 costs nothing extra unless
-    // actually used (billing is by tokens generated, not this ceiling).
-    max_tokens: 16000,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  let msg;
+  try {
+    msg = await client.messages.create({
+      model: MODEL,
+      // Same real risk as productDraft.js's equivalent call: claude-sonnet-5-5
+      // runs adaptive thinking by default whenever `thinking` is omitted, and
+      // that reasoning draws from this same max_tokens budget. 500 was sized
+      // only for the tiny visible output ({"topic": "...", "audience": "..."})
+      // with zero margin for any reasoning pass at all - on a model that
+      // thinks by default, that's a real risk of this call (the autonomous
+      // scan's own topic-ideation step, run every 4 hours) silently
+      // truncating before it ever reaches the visible JSON, for no reason
+      // other than an undersized ceiling. 16000 costs nothing extra unless
+      // actually used (billing is by tokens generated, not this ceiling).
+      max_tokens: 16000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+  } catch (err) {
+    // The call itself had no guard at all - a raw Anthropic SDK/API error
+    // (a timeout, a rate limit, an auth failure, a network error, an
+    // overloaded-model error) propagated straight up. autonomousScan.js's
+    // own catch around this call returns `{ ran: false, reason: err.message }`
+    // verbatim, which Opportunities.jsx shows directly on its manual "סרוק
+    // עכשיו" button - untranslated English, inline, in an otherwise
+    // all-Hebrew card. Same leak class already fixed for the JSON.parse
+    // failure below, and for productDraft.js's equivalent call.
+    // console.error here would just duplicate autonomousScan.js's own
+    // console.error of this same err right after catching it.
+    throw new Error('הבקשה ל-AI נכשלה — בדוק את לוגי השרת לפרטים');
+  }
   const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   let parsed;
   try {
