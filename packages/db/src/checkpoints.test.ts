@@ -7,6 +7,7 @@ import {
   deleteCheckpoint,
   deleteCheckpointsForProject,
   ensureCheckpointsTable,
+  findLastKnownFieldType,
   getCheckpoint,
   insertCheckpoint,
   listCheckpoints,
@@ -105,6 +106,44 @@ test("insertCheckpoint prunes the oldest checkpoints once a project passes the r
     checkpoints[checkpoints.length - 1]!.id,
     "cp5",
     "pruning must drop exactly the oldest checkpoints, keeping the most recent CHECKPOINTS_RETENTION_LIMIT",
+  );
+});
+
+/**
+ * Round 1760: findLastKnownFieldType (below) used to scan `checkpoints.spec_json`
+ * directly for a removed field's last declared type -- safe only while
+ * that table was unbounded. The retention prune just above (round 1291)
+ * deletes purely by recency with no awareness that this function depends
+ * on old rows surviving, and round 1291's own verification only ever
+ * checked the analogous entity-name ledger, never this. Confirms the
+ * fix: a field's last known type must still be recoverable from the
+ * durable checkpoint_field_type_history ledger even once every checkpoint
+ * that ever declared it has aged out of the retention window.
+ */
+test("findLastKnownFieldType still recovers a removed field's last declared type even after every checkpoint that ever declared it has been pruned", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  const specWithDateField: ProductSpec = {
+    ...validSpec,
+    entities: [{ ...validSpec.entities[0]!, fields: [...validSpec.entities[0]!.fields, { name: "status", type: "date", required: false }] }],
+  };
+  // cp0 is the only checkpoint that ever declares "status" as "date" --
+  // every later checkpoint (specs without the field) must still let this
+  // one be pruned once CHECKPOINTS_RETENTION_LIMIT more checkpoints pile
+  // up, exactly like any other checkpoint.
+  insertCheckpoint(db, { id: "cp0", projectId: "proj1", label: "has status:date", kind: "build", spec: specWithDateField });
+  for (let i = 1; i < CHECKPOINTS_RETENTION_LIMIT + 5; i++) {
+    insertCheckpoint(db, { id: `cp${i}`, projectId: "proj1", label: `checkpoint ${i}`, kind: "build", spec: validSpec });
+  }
+  assert.equal(
+    listCheckpoints(db, "proj1").some((c) => c.id === "cp0"),
+    false,
+    "cp0 must actually have been pruned by now, or this test isn't exercising the real gap",
+  );
+  assert.equal(
+    findLastKnownFieldType(db, "proj1", "Customer", "status"),
+    "date",
+    "status's last known type must survive purely from the durable ledger, even though the one checkpoint that ever declared it is gone",
   );
 });
 

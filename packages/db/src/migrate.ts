@@ -727,13 +727,16 @@ export function diffAndMigrate(
           // bucket, so a reused column moving between any two of THOSE
           // (e.g. date -> enum) stays silent here with no prevField to
           // compare against either (see round 511's own deferral of this
-          // exact gap). checkpoints.ts's own stored spec_json history
-          // already answers "what did this entity+field last declare" --
-          // the same source allKnownEntityNames above already mines for
-          // the analogous entity-name question -- so this finds the most
-          // recent checkpoint where this field existed and compares its
-          // own declared type directly, rather than guessing from the
-          // physical column alone.
+          // exact gap). checkpoints.ts's own durable checkpoint_field_type_history
+          // ledger (round 1760 -- the field-type twin of the durable
+          // checkpoint_entity_history ledger allKnownEntityNames above
+          // reads for the analogous entity-name question) already answers
+          // "what did this entity+field most recently declare," so this
+          // compares that recorded type directly, rather than guessing
+          // from the physical column alone. (Before round 1760 this read
+          // checkpoints.spec_json directly, newest-first -- unsafe once
+          // CHECKPOINTS_RETENTION_LIMIT pruning could delete every
+          // checkpoint that ever declared a removed field's type.)
           const lastKnownType = findLastKnownFieldType(db, projectId, entity.name, field.name);
           if (lastKnownType && lastKnownType !== field.type) {
             changes.push({

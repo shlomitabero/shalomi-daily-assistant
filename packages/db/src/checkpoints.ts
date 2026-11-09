@@ -134,6 +134,63 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
       insertHistoryEntry.run(row.projectId, entityName);
     }
   }
+
+  // Round 1760: the durable twin of checkpoint_entity_history above, but
+  // for a field's own declared TYPE rather than an entity's name --
+  // findLastKnownFieldType (below) used to scan `checkpoints.spec_json`
+  // directly for this, which was safe when that table was unbounded, but
+  // insertCheckpoint's own CHECKPOINTS_RETENTION_LIMIT prune (round 1291)
+  // deletes rows by pure recency with no awareness that this other
+  // function depends on old rows surviving -- round 1291's own
+  // verification only ever checked that pruning didn't break the
+  // entity-name ledger above, never this. Once enough builds/refines
+  // accumulate on a long-lived project (exactly the population the
+  // retention cap itself targets) past a field's removal, every
+  // checkpoint that ever declared its type ages out, findLastKnownFieldType
+  // silently returns undefined, and migrate.ts's reused-column TEXT-bucket
+  // branch stops detecting a genuine date<->enum (etc.) reuse it was built
+  // specifically to catch -- reopening the exact stale-data corruption
+  // round 1108 exists to prevent. This table fixes it the same way
+  // checkpoint_entity_history fixes the analogous entity-name gap: upserted
+  // (keyed by projectId+entityName+fieldName, so it always holds only the
+  // MOST RECENT declared type) at the same insertCheckpoint call site,
+  // independent of whether the checkpoint that recorded it is later pruned.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS checkpoint_field_type_history (
+      projectId TEXT NOT NULL,
+      entityName TEXT NOT NULL,
+      fieldName TEXT NOT NULL,
+      type TEXT NOT NULL,
+      PRIMARY KEY (projectId, entityName, fieldName)
+    )
+  `);
+  // Backfill, same rationale and same re-run-every-startup idempotence as
+  // checkpoint_entity_history's own backfill above. Order matters here
+  // (unlike the entity-name backfill's INSERT OR IGNORE, this is an
+  // upsert that must end up holding the MOST RECENT type): checkpoints
+  // are processed oldest-first so a later checkpoint's declared type
+  // always overwrites an earlier one's, and each project's own current
+  // spec -- the single most up-to-date source of truth available -- is
+  // applied last, after every checkpoint.
+  const upsertFieldType = db.prepare(
+    "INSERT INTO checkpoint_field_type_history (projectId, entityName, fieldName, type) VALUES (?, ?, ?, ?) ON CONFLICT (projectId, entityName, fieldName) DO UPDATE SET type = excluded.type",
+  );
+  const checkpointSpecRowsOldestFirst = db
+    .prepare("SELECT projectId, spec_json FROM checkpoints ORDER BY createdAt ASC, rowid ASC")
+    .all() as { projectId: string; spec_json: string }[];
+  for (const row of checkpointSpecRowsOldestFirst) {
+    for (const [entityName, fieldName, type] of extractFieldTypesFromSpecJson(row.spec_json)) {
+      upsertFieldType.run(row.projectId, entityName, fieldName, type);
+    }
+  }
+  if (hasProjectsTable) {
+    const currentSpecRows = db.prepare("SELECT id AS projectId, spec_json FROM projects").all() as { projectId: string; spec_json: string }[];
+    for (const row of currentSpecRows) {
+      for (const [entityName, fieldName, type] of extractFieldTypesFromSpecJson(row.spec_json)) {
+        upsertFieldType.run(row.projectId, entityName, fieldName, type);
+      }
+    }
+  }
 }
 
 function rowToCheckpoint(row: Record<string, unknown>): Checkpoint {
@@ -199,6 +256,26 @@ export function recordEntityHistory(db: ForgeDatabase, projectId: string, spec: 
 }
 
 /**
+ * The field-type twin of recordEntityHistory above, feeding
+ * checkpoint_field_type_history (see ensureCheckpointsTable's own doc
+ * comment for why this ledger exists, round 1760). Upserts rather than
+ * INSERT OR IGNORE: this ledger must hold a field's MOST RECENT declared
+ * type, not just "has this field ever existed," so a later call for the
+ * same (projectId, entityName, fieldName) deliberately overwrites an
+ * earlier one's type.
+ */
+export function recordFieldTypeHistory(db: ForgeDatabase, projectId: string, spec: ProductSpec): void {
+  const upsert = db.prepare(
+    "INSERT INTO checkpoint_field_type_history (projectId, entityName, fieldName, type) VALUES (?, ?, ?, ?) ON CONFLICT (projectId, entityName, fieldName) DO UPDATE SET type = excluded.type",
+  );
+  for (const entity of spec.entities) {
+    for (const field of entity.fields) {
+      upsert.run(projectId, entity.name, field.name, field.type);
+    }
+  }
+}
+
+/**
  * Mirrors automations.ts's own AUTOMATION_RUNS_RETENTION_LIMIT convention
  * (round 951) for the identical unbounded-growth shape: every build/refine
  * adds one checkpoint, forever, with no cap at all before this round --
@@ -222,6 +299,7 @@ export function insertCheckpoint(
     "INSERT INTO checkpoints (id, projectId, label, kind, spec_json, createdAt, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(checkpoint.id, checkpoint.projectId, checkpoint.label, checkpoint.kind, JSON.stringify(checkpoint.spec), createdAt, createdByUserId);
   recordEntityHistory(db, checkpoint.projectId, checkpoint.spec);
+  recordFieldTypeHistory(db, checkpoint.projectId, checkpoint.spec);
   // Prunes the oldest checkpoints beyond the retention limit, mirroring
   // recordAutomationRun's own exact DELETE...NOT IN (SELECT...ORDER BY...
   // LIMIT ?) pattern. Safe even if the pruned set includes the checkpoint
@@ -315,6 +393,33 @@ export function listAllCheckpointedEntityNames(db: ForgeDatabase, projectId: str
 }
 
 /**
+ * The field-type twin of extractEntityNamesFromSpecJson above, used only
+ * by checkpoint_field_type_history's own backfill (round 1760).
+ */
+function extractFieldTypesFromSpecJson(specJson: string): [entityName: string, fieldName: string, type: string][] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(specJson);
+  } catch {
+    return [];
+  }
+  const entities = (parsed as { entities?: unknown })?.entities;
+  if (!Array.isArray(entities)) return [];
+  const result: [string, string, string][] = [];
+  for (const entity of entities) {
+    const entityName = (entity as { name?: unknown })?.name;
+    const fields = (entity as { fields?: unknown })?.fields;
+    if (typeof entityName !== "string" || !Array.isArray(fields)) continue;
+    for (const field of fields) {
+      const fieldName = (field as { name?: unknown })?.name;
+      const type = (field as { type?: unknown })?.type;
+      if (typeof fieldName === "string" && typeof type === "string") result.push([entityName, fieldName, type]);
+    }
+  }
+  return result;
+}
+
+/**
  * Round 1108: migrate.ts's "reused column" branch (a field removed on one
  * refine and re-added two+ refines later under the same name) has no
  * `prevField` to compare against -- by definition, the field is absent
@@ -325,55 +430,41 @@ export function listAllCheckpointedEntityNames(db: ForgeDatabase, projectId: str
  * an enum select with no matching option) from a benign text->text one --
  * a gap identified and deliberately deferred at round 511 as needing "a
  * field's full type lineage beyond one hop, which does not currently
- * exist." It does, in the sense that matters here: every checkpoint's own
- * `spec_json` already records this entity+field's declared type at that
- * point in history, the same data source `extractEntityNamesFromSpecJson`
- * above already mines leniently for the analogous entity-name question.
- * Scans newest-first (mirroring `listCheckpoints`'s own ordering) and
- * returns the most recent checkpoint's own declared type for this exact
- * entity+field pair -- i.e. its type immediately before whatever refine
- * removed it -- or undefined if no checkpoint ever had this combination
- * (a field name that's genuinely brand new, not a reuse at all). Uses the
- * same tolerant, schema-bypassing JSON read as extractEntityNamesFromSpecJson
- * (a stored checkpoint whose other fields no longer satisfy today's
- * stricter ProductSpecSchema must still answer this question) rather than
- * listCheckpoints/ProductSpecSchema.parse.
+ * exist." It does, in the sense that matters here: checkpoint_field_type_history
+ * (round 1760) already records this entity+field's most recently declared
+ * type, upserted every time a checkpoint is written (insertCheckpoint,
+ * above).
+ *
+ * Originally (round 1108-1226) this scanned `checkpoints.spec_json`
+ * directly, newest-first, for the same answer -- safe only as long as
+ * that table was unbounded. Round 1291's CHECKPOINTS_RETENTION_LIMIT
+ * prune made that unsafe: once every checkpoint that ever declared a
+ * removed field's type ages out (realistic on exactly the long-lived,
+ * heavily-refined projects the retention cap itself targets), the old
+ * scan silently returned undefined, defeating this function's whole
+ * purpose. checkpoint_field_type_history is deliberately never pruned,
+ * the same way checkpoint_entity_history (this file's analogous ledger
+ * for entity names) isn't.
  */
 export function findLastKnownFieldType(db: ForgeDatabase, projectId: string, entityName: string, fieldName: string): string | undefined {
+  // Exact-case first, falling back to case-insensitive -- the same
+  // convention findField (routes/projects.ts) already uses, and the same
+  // one this function itself adopted at round 1226 -- since the
+  // entity/field this is called with (migrate.ts's reused-column branch)
+  // is today's live declared name, which a cosmetic recase (round 988's
+  // own "never treat like a real drop" convention) can legitimately leave
+  // differing in case from how this ledger originally recorded it.
+  const exact = db
+    .prepare("SELECT type FROM checkpoint_field_type_history WHERE projectId = ? AND entityName = ? AND fieldName = ?")
+    .get(projectId, entityName, fieldName) as { type: string } | undefined;
+  if (exact) return exact.type;
   const rows = db
-    .prepare("SELECT spec_json FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC")
-    .all(projectId) as { spec_json: string }[];
-  for (const row of rows) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.spec_json);
-    } catch {
-      continue;
-    }
-    const entities = (parsed as { entities?: unknown })?.entities;
-    if (!Array.isArray(entities)) continue;
-    // Round 1226: exact-case first, falling back to case-insensitive --
-    // the same convention findField (routes/projects.ts) already uses --
-    // since the entity/field this is called with (migrate.ts's reused-
-    // column branch) is today's live declared name, which a cosmetic
-    // recase (round 988's own "never treat like a real drop" convention)
-    // can legitimately leave differing in case from how an OLDER
-    // checkpoint recorded it. An exact-case-only match silently returns
-    // undefined for a case-only-renamed reused field, defeating round
-    // 1108's own type-lineage recovery for exactly the field it was
-    // built for.
-    const entity = (entities.find((e) => (e as { name?: unknown })?.name === entityName) ??
-      entities.find((e) => typeof (e as { name?: unknown })?.name === "string" && ((e as { name: string }).name).toLowerCase() === entityName.toLowerCase())) as
-      | { fields?: unknown }
-      | undefined;
-    if (!entity || !Array.isArray(entity.fields)) continue;
-    const field = (entity.fields.find((f) => (f as { name?: unknown })?.name === fieldName) ??
-      entity.fields.find((f) => typeof (f as { name?: unknown })?.name === "string" && ((f as { name: string }).name).toLowerCase() === fieldName.toLowerCase())) as
-      | { type?: unknown }
-      | undefined;
-    if (field && typeof field.type === "string") return field.type;
-  }
-  return undefined;
+    .prepare("SELECT entityName, fieldName, type FROM checkpoint_field_type_history WHERE projectId = ?")
+    .all(projectId) as { entityName: string; fieldName: string; type: string }[];
+  const caseInsensitive = rows.find(
+    (r) => r.entityName.toLowerCase() === entityName.toLowerCase() && r.fieldName.toLowerCase() === fieldName.toLowerCase(),
+  );
+  return caseInsensitive?.type;
 }
 
 /**
