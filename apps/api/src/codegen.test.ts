@@ -28039,6 +28039,76 @@ test("the exported EntityView shows each record's own real 'Created' timestamp, 
 });
 
 /**
+ * Round 1788 (ported from the live Forge AI preview's own round-1788 fix):
+ * the "Created" cell's "Last updated on {date}" fact (above) was title-
+ * only -- a title on a <td> has no implicit accessible role and most
+ * screen readers never announce it, and it's hover-only besides, so a
+ * non-visual/touch-only user had no way at all to learn a record was ever
+ * updated, or when. aria-label REPLACES the accessible name rather than
+ * adding to it, so it must fold the visible createdAt text in too.
+ */
+test("the exported EntityView's 'Created' cell exposes its own 'Last updated' fact to assistive tech via aria-label, not just a hover-only title", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Acme Corp", status: "New", createdAt: "2026-01-01T09:00:00.000Z", updatedAt: "2026-01-05T09:00:00.000Z" },
+        { id: 2, name: "Globex", status: "Won", createdAt: "2026-02-01T09:00:00.000Z", updatedAt: null },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const cells = Array.from(container.querySelectorAll("tbody tr")).map(
+        (row) => row.querySelector(".created-at-cell") as HTMLElement,
+      );
+      assert.match(
+        cells[0].getAttribute("aria-label") ?? "",
+        /Last updated on/,
+        "a record with a real updatedAt must announce the update fact via aria-label, not rely on a hover-only title",
+      );
+      assert.equal(
+        cells[0].getAttribute("aria-label"),
+        `${cells[0].textContent} — ${cells[0].getAttribute("title")}`,
+        "the aria-label must still include the visible createdAt text -- aria-label REPLACES the accessible name, so update-fact-only would silently drop the date from what a screen reader announces",
+      );
+      assert.equal(
+        cells[1].getAttribute("aria-label"),
+        cells[1].textContent,
+        "a record with no updatedAt has no update fact at all, so its aria-label must be exactly the plain visible date with nothing appended",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: mirrors the live preview's own "Clear sort" button
  * -- toggleSort's own non-additive branch only ever collapses a sort
  * down to a single key, never back to [], so once a multi-column sort

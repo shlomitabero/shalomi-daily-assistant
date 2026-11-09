@@ -8264,6 +8264,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // single row itself looks.
   const renderRow = (r) => {
     const recordClosed = isRecordClosedStatus(r, entity.fields);
+    // Round 1788 (ported from the live Forge AI preview's own round-1788
+    // fix): a title on a <td> has no implicit accessible role and most
+    // screen readers never announce it, and it's hover-only besides, so a
+    // non-visual/touch-only user had no way at all to learn a record was
+    // ever updated, or when, even though every mouse user gets it for free
+    // on hover. aria-label REPLACES the accessible name rather than adding
+    // to it, so it must fold the visible createdAt text in too.
+    const createdAtCellText = formatRecordCreatedAt(r.createdAt);
+    const createdAtCellAriaLabel = r.updatedAt ? \`\${createdAtCellText} — Last updated on \${formatRecordCreatedAt(r.updatedAt)}\` : createdAtCellText;
     return (
     <tr key={r.id} data-record-id={r.id} className={[r.id === highlightedRecordId ? "record-row-highlighted" : null, r.id === focusedRowId ? "record-row-focused" : null, r.id === moveErrorId ? "record-row-move-error" : null].filter(Boolean).join(" ") || undefined}>
       <td className="select-col">
@@ -8322,7 +8331,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           </td>
         );
       })}
-      <td className="muted small created-at-cell" title={r.updatedAt ? \`Last updated on \${formatRecordCreatedAt(r.updatedAt)}\` : undefined}>{formatRecordCreatedAt(r.createdAt)}</td>
+      <td className="muted small created-at-cell" title={r.updatedAt ? \`Last updated on \${formatRecordCreatedAt(r.updatedAt)}\` : undefined} aria-label={createdAtCellAriaLabel}>{createdAtCellText}</td>
       <td className="row-actions">
         <button onClick={() => startEdit(r)}>Edit</button>
         <button disabled={writesInFlight} onClick={() => handleDuplicate(r.id)}>Duplicate</button>

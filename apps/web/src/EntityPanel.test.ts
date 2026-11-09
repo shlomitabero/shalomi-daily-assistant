@@ -2899,6 +2899,62 @@ test("EntityPanel's created-at cell tooltip names who/when a record was last upd
 });
 
 /**
+ * Round 1788: the created-at cell's rich who/when audit info (rounds
+ * 1613/1672) was title-only -- a title on a bare <td> has no implicit
+ * accessible role and most screen readers never announce it, and it's
+ * hover-only besides, so a non-visual/touch-only user had no way at all to
+ * learn who created or last updated a record, or when, even though every
+ * mouse user gets it for free on hover. Mirrors round 1747's own
+ * aria-label reasoning for the date-urgency span exactly: aria-label
+ * REPLACES the accessible name rather than adding to it, so it must fold
+ * the visible createdAt text in too, or a screen reader would announce
+ * only the audit info and never read the date itself.
+ */
+test("EntityPanel's created-at cell exposes its who/when audit info to assistive tech via aria-label, not just a hover-only title", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Dana", status: "new", createdByUserId: "user-99", updatedByUserId: "user-50", updatedAt: "2025-03-01T00:00:00.000Z" },
+      { id: 2, name: "Yossi", status: "new", createdByUserId: null },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: store, collaboratorEmails: { "user-99": "dana@example.com", "user-50": "sara@example.com" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const cells = Array.from(document.querySelectorAll("table tbody td.created-at-cell")) as HTMLElement[];
+      assert.equal(cells.length, 2);
+      assert.match(
+        cells[0].getAttribute("aria-label") ?? "",
+        /sara@example\.com/,
+        "a record with known creator/updater audit info must announce it via aria-label, not rely on a hover-only title",
+      );
+      assert.equal(
+        cells[0].getAttribute("aria-label"),
+        `${cells[0].textContent} — ${cells[0].getAttribute("title")!.replace("\n", "; ")}`,
+        "the aria-label must still include the visible createdAt text -- aria-label REPLACES the accessible name, so audit-info-only would silently drop the date from what a screen reader announces",
+      );
+      assert.equal(
+        cells[1].getAttribute("aria-label"),
+        cells[1].textContent,
+        "a record with no known creator/updater has no audit info at all, so its aria-label must be exactly the plain visible date with nothing appended",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1518: startEdit was the one entry point into the record form that
  * never scrolled it into view, unlike its three siblings
  * (startCreateNew/startCreateForDate/startCreateForColumn), even though

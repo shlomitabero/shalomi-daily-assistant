@@ -5171,6 +5171,35 @@ export function EntityPanel({
   // what wraps the rows, never the rows themselves.
   function renderRecordRow(record: EntityRecord) {
     const recordClosed = isRecordClosedStatus(record, entity.fields);
+    // Round 1788: mirrors round 1747's own aria-label reasoning exactly --
+    // a title has no implicit accessible role and most screen readers never
+    // announce it, and it's hover-only besides, so a non-visual/touch-only
+    // user had no way at all to learn who created/last-updated this record
+    // or when, even though every mouse user gets it for free on hover.
+    // Computed once and reused for both title (sighted hover, unchanged)
+    // and aria-label (folds the visible createdAt text in too, since
+    // aria-label REPLACES the accessible name rather than adding to it).
+    const auditInfoParts: string[] = [];
+    if (record.createdByUserId && collaboratorEmails[record.createdByUserId as string]) {
+      auditInfoParts.push(t("entity.table.createdBy", { email: collaboratorEmails[record.createdByUserId as string] }));
+    }
+    // Round 1672: gated on updatedAt itself (null until a record's first
+    // real update, same as updatedByUserId) rather than on
+    // updatedByUserId !== createdByUserId as round 1617 originally did --
+    // that older gate silently showed nothing for a record the SAME user
+    // edited after creating it, even though a genuine edit (with a real
+    // timestamp now available) had occurred. An untouched record still
+    // shows nothing, since its updatedAt is still null.
+    if (record.updatedAt) {
+      const updatedDate = formatRecordCreatedAt(record.updatedAt as string | undefined, lang);
+      if (record.updatedByUserId && collaboratorEmails[record.updatedByUserId as string]) {
+        auditInfoParts.push(t("entity.table.updatedBy", { email: collaboratorEmails[record.updatedByUserId as string], date: updatedDate }));
+      } else {
+        auditInfoParts.push(t("entity.table.updatedAtOnly", { date: updatedDate }));
+      }
+    }
+    const createdAtCellText = formatRecordCreatedAt(record.createdAt as string | undefined, lang);
+    const createdAtCellAriaLabel = auditInfoParts.length > 0 ? `${createdAtCellText} — ${auditInfoParts.join("; ")}` : createdAtCellText;
     return (
       <tr
         key={record.id as number}
@@ -5275,32 +5304,8 @@ export function EntityPanel({
             </td>
           );
         })}
-        <td
-          className="muted small created-at-cell"
-          title={(() => {
-            const parts: string[] = [];
-            if (record.createdByUserId && collaboratorEmails[record.createdByUserId as string]) {
-              parts.push(t("entity.table.createdBy", { email: collaboratorEmails[record.createdByUserId as string] }));
-            }
-            // Round 1672: gated on updatedAt itself (null until a record's first
-            // real update, same as updatedByUserId) rather than on
-            // updatedByUserId !== createdByUserId as round 1617 originally did --
-            // that older gate silently showed nothing for a record the SAME user
-            // edited after creating it, even though a genuine edit (with a real
-            // timestamp now available) had occurred. An untouched record still
-            // shows nothing, since its updatedAt is still null.
-            if (record.updatedAt) {
-              const date = formatRecordCreatedAt(record.updatedAt as string | undefined, lang);
-              if (record.updatedByUserId && collaboratorEmails[record.updatedByUserId as string]) {
-                parts.push(t("entity.table.updatedBy", { email: collaboratorEmails[record.updatedByUserId as string], date }));
-              } else {
-                parts.push(t("entity.table.updatedAtOnly", { date }));
-              }
-            }
-            return parts.length > 0 ? parts.join("\n") : undefined;
-          })()}
-        >
-          {formatRecordCreatedAt(record.createdAt as string | undefined, lang)}
+        <td className="muted small created-at-cell" title={auditInfoParts.length > 0 ? auditInfoParts.join("\n") : undefined} aria-label={createdAtCellAriaLabel}>
+          {createdAtCellText}
         </td>
         <td className="row-actions">
           {!readOnly && (
