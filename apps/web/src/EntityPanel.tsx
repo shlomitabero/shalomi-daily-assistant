@@ -2411,11 +2411,29 @@ export function EntityPanel({
     setPinnedIds(getPinnedRecordIds(projectId, entity.name, userId));
   }, [projectId, entity.name, userId]);
 
-  // Same reasoning as hiddenFields' own effect just above -- a reordered
-  // column layout is scoped per project+entity too.
+  // Round 1777: unlike every sibling preference module (hiddenFields,
+  // columnWidths, fieldFiltersPreference, sortKeysPreference), this effect
+  // was never keyed on fieldNamesKey at all, only project/entity/user --
+  // round 897's own doc comment on columnWidths' effect (just below)
+  // incorrectly listed columnOrder among the siblings already covered, but
+  // direct reading of this effect shows it never was. A reordered field a
+  // live refine later removes stays in storage forever once this entity
+  // tab stays mounted through that refine, and if an unrelated new field
+  // later reuses that exact same name, the stale entry wrongly repositions
+  // it into the old field's saved slot. Mirrors hiddenFields' own
+  // case-insensitive remap-or-drop + de-dupe, then persists the cleaned
+  // result back via setColumnOrder (already used by the drag-reorder
+  // handlers below) instead of only updating this mount's in-memory state.
   useEffect(() => {
-    setColumnOrderState(getColumnOrder(projectId, entity.name, userId));
-  }, [projectId, entity.name, userId]);
+    const currentNames = new Set(entity.fields.map((f) => f.name));
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const cleaned: string[] = [];
+    for (const name of getColumnOrder(projectId, entity.name, userId)) {
+      const current = currentNames.has(name) ? name : byLowerName.get(name.toLowerCase());
+      if (current && !cleaned.includes(current)) cleaned.push(current);
+    }
+    setColumnOrderState(setColumnOrder(projectId, entity.name, userId, cleaned));
+  }, [projectId, entity.name, userId, fieldNamesKey]);
 
   // Same reasoning as hiddenFields' own effect just above -- a chosen "Group
   // by" field is scoped per project+entity too. Previously groupFieldName
@@ -2697,10 +2715,12 @@ export function EntityPanel({
   // Round 897: the identical "drop a persisted key referencing a field this
   // entity no longer has" gap sortKeys' own effect just above already
   // closes, missed for columnWidths -- unlike every sibling preference
-  // module (columnOrder, columnVisibility, fieldFiltersPreference,
-  // groupByPreference, sortKeysPreference, viewModePreference,
-  // collapsedGroupsPreference, collapsedBoardColumnsPreference), this one
-  // was never keyed on fieldNamesKey at all, only projectId/entity.name --
+  // module (columnVisibility, fieldFiltersPreference, groupByPreference,
+  // sortKeysPreference, viewModePreference, collapsedGroupsPreference,
+  // collapsedBoardColumnsPreference), this one was never keyed on
+  // fieldNamesKey at all, only projectId/entity.name -- (round 1777
+  // correction: this list wrongly included columnOrder too; columnOrder's
+  // own effect just above was equally unkeyed until round 1777 fixed it) --
   // so a resized column's width survived a live refine that removed that
   // exact field, with nothing left in the UI that it could possibly still
   // be sizing. Object.keys(columnWidths).length > 0 (below) still read

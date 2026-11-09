@@ -8,6 +8,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { Entity, EntityRecord } from "@forge/shared";
 import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
+import { getColumnOrder, setColumnOrder } from "./columnOrder.js";
 import { getHiddenFields } from "./columnVisibility.js";
 import { getGroupByField } from "./groupByPreference.js";
 import { getCollapsedGroups } from "./collapsedGroupsPreference.js";
@@ -12562,6 +12563,53 @@ test("EntityPanel drops a dead sort key when a live refine removes its field, in
         getSortKeys("proj1", "Deal", "user1").map((k) => k.field),
         ["name"],
         "the dropped 'status' sort key must also be purged from persisted storage, not just absent from the live DOM",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1777: the identical "this effect only ever updated React state,
+ * never persisted the cleaned-up result back to storage" gap round
+ * 1766/1767/1768 already closed for columnWidths/fieldFiltersPreference/
+ * sortKeysPreference, this time for columnOrder -- its own mount-reload
+ * effect in EntityPanel.tsx was never even keyed on fieldNamesKey at all
+ * (unlike those three siblings), so a dragged column order survived a
+ * live refine that removed that exact field, with nothing left in the UI
+ * that it could possibly still be ordering.
+ */
+test("EntityPanel drops a dead field from a persisted column order when a live refine removes it, instead of leaving it in storage forever", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const entityWithoutStatus: Entity = {
+      name: "Deal",
+      label: "Deal",
+      fields: [{ name: "name", label: "Name", type: "text", required: true }],
+    };
+    setColumnOrder("proj1", "Deal", "user1", ["status", "name"]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const headersBefore = Array.from(document.querySelectorAll("thead th")).map((th) => th.textContent ?? "");
+      assert.ok(
+        headersBefore.findIndex((h) => /Status/.test(h)) < headersBefore.findIndex((h) => /Name/.test(h)),
+        "sanity check: the seeded order must already put Status before Name",
+      );
+
+      // Simulate a refine that removes "status" while staying on the exact
+      // same entity.name ("Deal"), the same no-remount precondition every
+      // sibling test above relies on.
+      view.rerender(buildEntityPanelElement({ entity: entityWithoutStatus, allEntities: [entityWithoutStatus] }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      assert.deepEqual(
+        getColumnOrder("proj1", "Deal", "user1"),
+        ["name"],
+        "the dropped 'status' entry must also be purged from persisted storage, not just absent from the live DOM",
       );
     } finally {
       globalThis.fetch = originalFetch;
