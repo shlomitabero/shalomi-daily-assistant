@@ -1183,6 +1183,22 @@ export function createAuthRouter(
         // so an account staying "verified" under its OLD, no-longer-owned
         // address is a minor consistency gap, not a security exposure.
         const user = updateUserEmail(db, req.userId!, email);
+        // Round 1756: unlike emailVerifiedAt above, an OUTSTANDING
+        // verification token is a real exposure, not just cosmetic --
+        // email_verification_tokens (packages/db) never records which
+        // email a token was minted for, and /auth/verify-email resolves a
+        // token purely by userId, then marks WHATEVER email the account
+        // currently has as verified. Without this, a token minted for the
+        // old address (e.g. from signup, before the user noticed a typo
+        // and corrected it here) stays valid and later binds "verified" to
+        // this NEW address, even though nobody ever proved control of it.
+        // Mirrors the exact "supersede the old pending secret on state
+        // change" convention this same file already uses for password-
+        // reset/login-code tokens, and resend-verification's own identical
+        // call a few hundred lines below.
+        if (previousEmail !== email) {
+          deleteEmailVerificationTokensForUser(db, req.userId!);
+        }
         // Resubmitting your own current email (updateUserEmail's own
         // self-exclusion from the uniqueness check already allows this, per
         // round 1199) is a genuine no-op -- nothing to alert anyone about.

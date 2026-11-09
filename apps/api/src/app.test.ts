@@ -1677,6 +1677,58 @@ test("a failed notification send never fails the email-change request itself -- 
   );
 });
 
+/**
+ * Round 1756: email_verification_tokens never records which email a token
+ * was minted for, and POST /auth/verify-email resolves a token purely by
+ * userId -- so before this round, a verification link sent to the OLD
+ * email (e.g. a typo caught right after signup) stayed valid after
+ * PATCH /auth/email switched the account to a NEW address, and following
+ * it later would mark that NEW, never-emailed address as "verified"
+ * without anyone ever proving control of it. Confirms the old link is now
+ * rejected (VERIFY_TOKEN_INVALID) once the email has actually changed.
+ */
+test("a verification link sent to the OLD email is invalidated once PATCH /auth/email switches to a new address, instead of later verifying the new address nobody proved control of", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const oldEmail = `verify-stale-old-${Date.now()}@example.com`;
+      const newEmail = `verify-stale-new-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, oldEmail);
+
+      const verifyEmail = emailSender.sentTo.find((m) => m.to === oldEmail);
+      assert.ok(verifyEmail, "signup must have sent a verification email to the old address");
+      const verifyUrl = verifyEmail!.text.match(/https?:\/\/\S+/)?.[0];
+      const verifyToken = new URL(verifyUrl!).searchParams.get("verifyToken");
+      assert.ok(verifyToken, "the verification link must carry a real verifyToken");
+
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newEmail }),
+      });
+      assert.equal(changeRes.status, 200);
+
+      const staleVerifyRes = await fetch(`${baseUrl}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: verifyToken }),
+      });
+      assert.equal(
+        staleVerifyRes.status,
+        401,
+        "a verification link minted for the old email must no longer work once the account has moved to a new address",
+      );
+      assert.equal(((await staleVerifyRes.json()) as { code?: string }).code, "VERIFY_TOKEN_INVALID");
+
+      const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: authHeaders(token) });
+      const { user } = (await meRes.json()) as { user: { email: string; emailVerifiedAt: string | null } };
+      assert.equal(user.email, newEmail);
+      assert.equal(user.emailVerifiedAt, null, "the new address must never end up 'verified' through a link nobody sent to it");
+    },
+    { emailSender },
+  );
+});
+
 test("changing your email requires a valid session, the same as any other authenticated route", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/auth/email`, {
