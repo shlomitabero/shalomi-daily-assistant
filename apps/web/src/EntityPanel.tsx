@@ -3488,7 +3488,7 @@ export function EntityPanel({
     // at all when it actually matches the current search/filters, and its
     // relative order among OTHER pinned (or unpinned) records still
     // reflects sortKeys exactly as before this round.
-    return sortRecordsByPinned(sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords), pinnedIds);
+    return sortRecordsByPinned(sortRecordsMulti(filtered, sortKeys, entity.fields, allEntities, relatedRecords, lang), pinnedIds);
   }, [records, entity.fields, search, fieldFilters, sortKeys, allEntities, relatedRecords, lang, pinnedIds]);
 
   // Whether the totals row under the table is relevant at all -- only
@@ -4589,7 +4589,7 @@ export function EntityPanel({
     }
     try {
       const { records: allRecords } = await exportAllRecords(projectId, entity.name);
-      return sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, allEntities, relatedRecords), pinnedIds);
+      return sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, allEntities, relatedRecords, lang), pinnedIds);
     } catch {
       return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
     }

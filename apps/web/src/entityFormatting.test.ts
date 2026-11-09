@@ -940,6 +940,43 @@ test("sortRecords falls back to sorting a relation field by its raw id when no a
   assert.deepEqual(sorted.map((r) => r.customerId), [1, 3]);
 });
 
+/**
+ * Regression test: resolveSortValue (sortRecords/sortRecordsMulti's shared
+ * relation-resolving helper) used to call relationDisplayLabel with no
+ * `lang` at all, always defaulting to "en" regardless of the table's real
+ * language. The gap only shows up when the related record's own
+ * recordDisplayLabel falls through to its date/number last-resort fallback
+ * (round 1072/1227) -- those are the only branches that actually depend on
+ * `lang`. Reuses the exact "DailyLog" fixture (a date-only display field, no
+ * name/title field) already established by round 1072's own
+ * recordDisplayLabel test, with two dob values whose en-US ("3/5/1990" vs
+ * "5/3/1990") and he-IL ("5.3.1990" vs "3.5.1990") string orderings actually
+ * disagree -- so a version that silently always resolves with lang="en"
+ * gives the opposite order from a version that correctly honors "he".
+ */
+test("sortRecords resolves a relation field's date-fallback display label using the given lang, not always English", () => {
+  const dailyLog: Entity = {
+    name: "DailyLog",
+    fields: [{ name: "loggedAt", type: "date", required: true }],
+  };
+  const orderFields: Field[] = [{ name: "logId", type: "relation", required: true, relationTo: "DailyLog" }];
+  const records = [
+    { id: 1, logId: 1 },
+    { id: 2, logId: 2 },
+  ];
+  const allEntities = [dailyLog];
+  const relatedRecords = {
+    DailyLog: [
+      { id: 1, loggedAt: "1990-03-05" },
+      { id: 2, loggedAt: "1990-05-03" },
+    ],
+  };
+  const sortedEn = sortRecords(records, "logId", "asc", orderFields, allEntities, relatedRecords, "en");
+  const sortedHe = sortRecords(records, "logId", "asc", orderFields, allEntities, relatedRecords, "he");
+  assert.deepEqual(sortedEn.map((r) => r.id), [1, 2], "en-US '3/5/1990' sorts before '5/3/1990'");
+  assert.deepEqual(sortedHe.map((r) => r.id), [2, 1], "he-IL '3.5.1990' sorts before '5.3.1990' -- the opposite order");
+});
+
 test("sortRecordsMulti resolves a relation key to its display label too, composing correctly with a non-relation tiebreaker key", () => {
   const courier: Entity = { name: "Courier", fields: [{ name: "name", type: "text", required: true }] };
   const orderFields: Field[] = [

@@ -876,12 +876,13 @@ function resolveSortValue(
   fields?: Field[],
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): unknown {
   const field = fields?.find((f) => f.name === fieldName);
   if (field?.type === "enum") return field.enumLabels?.[String(value)] ?? value;
   if (field?.type === "file") return parseFileFieldValue(value)?.name ?? "";
   if (field?.type !== "relation" || !allEntities || !relatedRecords) return value;
-  return relationDisplayLabel(field, value, allEntities, relatedRecords);
+  return relationDisplayLabel(field, value, allEntities, relatedRecords, lang);
 }
 
 /** Sorts a copy of `records` by `field.name`; returns `records` unchanged (same reference) when `sortField` is null. */
@@ -892,6 +893,7 @@ export function sortRecords(
   fields?: Field[],
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): EntityRecord[] {
   if (!sortField) return records;
   // Negates the comparator's own result for "desc" rather than sorting
@@ -902,8 +904,8 @@ export function sortRecords(
   // longer keep their original relative order in "desc").
   return [...records].sort((a, b) => {
     const cmp = compareValues(
-      resolveSortValue(sortField, a[sortField], fields, allEntities, relatedRecords),
-      resolveSortValue(sortField, b[sortField], fields, allEntities, relatedRecords),
+      resolveSortValue(sortField, a[sortField], fields, allEntities, relatedRecords, lang),
+      resolveSortValue(sortField, b[sortField], fields, allEntities, relatedRecords, lang),
     );
     return direction === "desc" ? -cmp : cmp;
   });
@@ -930,13 +932,14 @@ export function sortRecordsMulti(
   fields?: Field[],
   allEntities?: Entity[],
   relatedRecords?: RelatedRecordsByEntity,
+  lang: Lang = "en",
 ): EntityRecord[] {
   if (sortKeys.length === 0) return records;
   return [...records].sort((a, b) => {
     for (const { field, direction } of sortKeys) {
       const cmp = compareValues(
-        resolveSortValue(field, a[field], fields, allEntities, relatedRecords),
-        resolveSortValue(field, b[field], fields, allEntities, relatedRecords),
+        resolveSortValue(field, a[field], fields, allEntities, relatedRecords, lang),
+        resolveSortValue(field, b[field], fields, allEntities, relatedRecords, lang),
       );
       if (cmp !== 0) return direction === "desc" ? -cmp : cmp;
     }
