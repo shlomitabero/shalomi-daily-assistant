@@ -24768,6 +24768,103 @@ test("the exported EntityView drops a dead column width when its field is remove
 });
 
 /**
+ * Round 1779: mirrors round 1778's own `.rerender()` test shape just above
+ * (same vehicle: the SAME mounted EntityView instance gets a new `entity`
+ * prop, never a remount) but for sortKeys, the next sibling round 1778's
+ * own closing note deferred. The sortKeys useState initializer only
+ * remaps/drops a dead entry at MOUNT time; before this round, nothing
+ * re-ran that check while the panel stayed mounted through a live refine,
+ * so sortKeys.length > 0 (read by the "Clear sort" button) stayed true
+ * purely from a dead key, with nothing left to actually clear.
+ */
+test("the exported EntityView drops a dead sort key when its field is removed without the panel remounting, instead of leaving the 'Clear sort' button stuck with nothing to clear", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const customerWithoutStatus: Entity = {
+    ...customerEntity,
+    fields: customerEntity.fields.filter((f) => f.name !== "status"),
+  };
+
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }) } as Response;
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length > 0,
+        "the initial record fetch never completed",
+      );
+
+      // "status"'s own label ("סטטוס") comes from this file's module-level
+      // `project` fixture -- see round 1778's own identical note above.
+      const statusHeader = Array.from(view.container.querySelectorAll("th.resizable-col")).find((th) =>
+        /סטטוס/.test(th.textContent ?? ""),
+      ) as HTMLTableCellElement;
+      const sortButton = statusHeader.querySelector("button.sort-header") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(sortButton);
+      });
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_sort_keys") ?? "{}").Customer?.map((k: { field: string }) => k.field),
+        ["status"],
+        "sanity check: sorting must have actually persisted",
+      );
+      assert.ok(
+        view.container.querySelector(".entity-clear-sort"),
+        "sanity check: the seeded sort key must already show the 'Clear sort' button",
+      );
+
+      // Same entity.name, a field list that no longer includes "status" --
+      // the exact shape of a live refine re-rendering this already-mounted
+      // instance, never a remount (mirrors round 1778's own test above).
+      view.rerender(React.createElement(EntityView, { ...props, entity: customerWithoutStatus }));
+
+      await waitForCondition(
+        () => !view.container.querySelector(".entity-clear-sort"),
+        "the 'Clear sort' button never disappeared after its only sort key's field was removed",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_sort_keys") ?? "{}").Customer,
+        undefined,
+        "the dropped 'status' sort key must also be purged from persisted storage, not just absent from the live DOM",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --

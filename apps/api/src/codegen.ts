@@ -6452,6 +6452,30 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setColumnWidths(replaceColumnWidths(entity.name, remapped));
   }, [entity.name, fieldNamesKey]);
 
+  // Round 1779: the identical "never revalidated past mount" gap round 1778
+  // just closed for columnWidths, now for sortKeys -- the sortKeys useState
+  // initializer above only ever remaps/drops a dead entry at MOUNT time,
+  // never again while this same EntityView instance stays mounted through a
+  // live refine. sortKeys.length > 0 (read by the "Clear sort" button just
+  // below) stayed true purely from a dead key, and sortRecordsMulti already
+  // silently no-ops for a key naming a field this entity no longer has
+  // (both a[field] and b[field] are undefined, so cmp is always 0) -- so
+  // the table visibly stopped being sorted by that column while the "Clear
+  // sort" button kept showing with nothing left to actually clear, and if
+  // a second, still-valid key was also present, it kept the dead entry's
+  // own stale array index, misnumbering its own sort-priority badge.
+  // "createdAt" is a valid sort key despite not being one of entity.fields
+  // -- mirrors the mount-time initializer's own identical exception above.
+  useEffect(() => {
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
+    validFieldNames.add("createdAt");
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const cleaned = getPersistedSortKeys(entity.name)
+      .map((k) => (validFieldNames.has(k.field) ? k : { ...k, field: byLowerName.get(k.field.toLowerCase()) ?? k.field }))
+      .filter((k) => validFieldNames.has(k.field));
+    setSortKeys(setPersistedSortKeys(entity.name, cleaned));
+  }, [entity.name, fieldNamesKey]);
+
   // Multi-row selection is only ever settable from Table view -- Board's
   // own card and the calendar day cells have no selection checkbox at all
   // -- but selectedIds itself is view-mode-agnostic state, and the
