@@ -118,6 +118,32 @@ test('patchSettings rejects a non-numeric maxLoss instead of storing it', () => 
   assert.equal(res.statusCode, 400);
 });
 
+test('patchSettings rejects a non-boolean emergencyStop instead of storing it', () => {
+  // mode/budget/maxLoss above all reject a malformed value - emergencyStop
+  // (the one field meant for "use the moment something looks wrong") was
+  // the sole field in ALLOWED_FIELDS with no type check at all. A string
+  // like "false" is truthy in JS, so storing it as-is would make the gate
+  // (`if (emergencyStop) ...`) read a stop the owner never actually set.
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { emergencyStop: 'false' } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /עצירת חירום חייבת להיות/);
+});
+
+test('patchSettings accepts a real boolean emergencyStop in both directions', () => {
+  __resetForTests();
+  const resOn = makeRes();
+  patchSettings({ body: { emergencyStop: true } }, resOn);
+  assert.equal(resOn.statusCode, 200);
+  assert.equal(resOn.body.settings.emergencyStop, true);
+
+  const resOff = makeRes();
+  patchSettings({ body: { emergencyStop: false } }, resOff);
+  assert.equal(resOff.statusCode, 200);
+  assert.equal(resOff.body.settings.emergencyStop, false);
+});
+
 test('patchSettings ignores fields outside the allowed list, e.g. OWNER_PASSWORD, instead of storing them', () => {
   // The hard rule that an owner-only field can never be set through this
   // endpoint depends entirely on ALLOWED_FIELDS staying an allow-list.

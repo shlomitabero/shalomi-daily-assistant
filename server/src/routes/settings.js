@@ -39,6 +39,15 @@ export function patchSettings(req, res) {
       return res.status(400).json({ error: 'הפסד מרבי חייב להיות ריק (ללא הגבלה) או מספר לא שלילי' });
     }
   }
+  // mode/budget/maxLoss above all reject a malformed value instead of
+  // storing it as-is - emergencyStop, the one field meant for "use the
+  // moment something looks wrong", was the sole exception. A non-boolean
+  // (e.g. the string "false", truthy in JS) would otherwise get stored
+  // verbatim and read back as an emergency stop the owner never actually
+  // set - or, cleared the same way, silently fail to turn it back off.
+  if ('emergencyStop' in patch && typeof patch.emergencyStop !== 'boolean') {
+    return res.status(400).json({ error: 'עצירת חירום חייבת להיות ערך בוליאני (true/false)' });
+  }
   res.json({ settings: updateSettings(patch) });
 }
 
