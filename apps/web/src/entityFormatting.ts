@@ -1716,12 +1716,12 @@ function csvEscape(value: string): string {
 function fieldDisplayValue(
   field: Field,
   value: unknown,
-  _lang: Lang,
+  lang: Lang,
   allEntities: Entity[],
   relatedRecords: RelatedRecordsByEntity,
 ): string {
   if (value === null || value === undefined || value === "") return "";
-  if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords) || `#${value}`;
+  if (field.type === "relation") return relationDisplayLabel(field, value, allEntities, relatedRecords, lang) || `#${value}`;
   if (field.type === "boolean") return value ? "TRUE" : "FALSE";
   if (field.type === "enum") return field.enumLabels?.[String(value)] ?? String(value);
   if (field.type === "date") return String(value);

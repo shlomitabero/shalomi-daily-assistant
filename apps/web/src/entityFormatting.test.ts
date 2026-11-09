@@ -1585,6 +1585,35 @@ test("recordsToCsv resolves a relation field to the related record's display nam
 });
 
 /**
+ * Regression test: fieldDisplayValue (recordsToCsv's own per-cell renderer)
+ * used to silently drop the given `lang` when calling relationDisplayLabel
+ * for a relation field, always rendering it in English regardless of the
+ * export's own locale. The gap only shows up when the related record's
+ * recordDisplayLabel falls through to its own date/number last-resort
+ * fallback (round 1072/1227) -- those are the only recordDisplayLabel
+ * branches that actually depend on `lang`. Reuses the exact "DailyLog"
+ * fixture (a date-only display field, no name/title field) already
+ * established by round 1072's own recordDisplayLabel test above.
+ */
+test("recordsToCsv's relation column honors the given lang, not just the record's own fields (a real bug: fieldDisplayValue dropped lang before calling relationDisplayLabel)", () => {
+  const dailyLog: Entity = {
+    name: "DailyLog",
+    fields: [
+      { name: "loggedAt", type: "date", required: true },
+      { name: "temperature", type: "number", required: true },
+    ],
+  };
+  const fields: Field[] = [{ name: "logId", label: "Log", type: "relation", required: false, relationTo: "DailyLog" }];
+  const relatedRecords = { DailyLog: [{ id: 5, loggedAt: "2026-04-02", temperature: 21 }] };
+
+  const csvEn = recordsToCsv(fields, [{ logId: 5 }], "en", [dailyLog], relatedRecords);
+  assert.equal(csvEn, "Log\r\n4/2/2026");
+
+  const csvHe = recordsToCsv(fields, [{ logId: 5 }], "he", [dailyLog], relatedRecords);
+  assert.equal(csvHe, "Log\r\n2.4.2026", "must render the related record's date in he-IL format, not en-US");
+});
+
+/**
  * Regression test for a real bug found by round 637's Explore survey: the
  * same label-collision gap round 635/636 already fixed in twin.ts and
  * calendarIcs.ts. A field's label is never enforced unique (only its name
