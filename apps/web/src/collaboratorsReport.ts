@@ -51,7 +51,7 @@ export interface RecordDeletionForReport {
  */
 export interface CollaboratorAccessChangeForReport {
   action: "invited" | "role_changed" | "removed" | "ownership_transferred";
-  targetEmail: string;
+  targetEmail: string | null;
   changedByEmail: string | null;
   previousRole: CollaboratorRole | null;
   newRole: CollaboratorRole | null;
@@ -164,7 +164,7 @@ export function formatCollaboratorsReport(
         // opposite of what happened.
         lines.push(
           t("collab.report.invitedEntry", {
-            who: c.targetEmail,
+            who: c.targetEmail ?? t("collab.report.unknownActor"),
             role: c.newRole ? roleLabel(c.newRole, t) : "",
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
             date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
@@ -173,7 +173,7 @@ export function formatCollaboratorsReport(
       } else if (c.action === "role_changed") {
         lines.push(
           t("collab.report.roleChangedEntry", {
-            who: c.targetEmail,
+            who: c.targetEmail ?? t("collab.report.unknownActor"),
             from: c.previousRole ? roleLabel(c.previousRole, t) : "",
             to: c.newRole ? roleLabel(c.newRole, t) : "",
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
@@ -183,15 +183,20 @@ export function formatCollaboratorsReport(
       } else if (c.action === "ownership_transferred") {
         lines.push(
           t("collab.report.ownershipTransferredEntry", {
-            who: c.targetEmail,
+            who: c.targetEmail ?? t("collab.report.unknownActor"),
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
             date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
           }),
         );
       } else {
+        // Round 1751: targetEmail is now null, not the raw internal userId,
+        // when the target isn't in either current list -- which is the
+        // normal case for a removal, since removeCollaborator hard-deletes
+        // the row the caller's email lookup is built from. Falls back to
+        // the same unknownActor translation changedByEmail already uses.
         lines.push(
           t("collab.report.removedEntry", {
-            who: c.targetEmail,
+            who: c.targetEmail ?? t("collab.report.unknownActor"),
             by: c.changedByEmail ?? t("collab.report.unknownActor"),
             date: new Date(c.changedAt).toLocaleString(LOCALE[lang]),
           }),

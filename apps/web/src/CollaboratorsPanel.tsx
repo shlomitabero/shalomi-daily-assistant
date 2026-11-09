@@ -654,7 +654,13 @@ export function CollaboratorsPanel({
     for (const c of collaborators ?? []) emails[c.userId] = c.email;
     return accessChanges.map((c) => ({
       action: c.action,
-      targetEmail: emails[c.targetUserId] ?? c.targetUserId,
+      // Round 1751: this used to fall back to the raw internal userId
+      // string when the target isn't in either current list -- exactly
+      // what happens for a "removed" entry every time, since
+      // removeCollaborator hard-deletes the row this emails map is built
+      // from. changedByEmail (below) already falls back to null
+      // correctly; mirror that instead of leaking the id.
+      targetEmail: emails[c.targetUserId] ?? null,
       changedByEmail: c.changedByUserId ? emails[c.changedByUserId] ?? null : null,
       previousRole: c.previousRole,
       newRole: c.newRole,

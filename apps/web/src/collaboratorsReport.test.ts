@@ -118,6 +118,33 @@ test("formatCollaboratorsReport falls back to the unknown-actor translation when
 });
 
 /**
+ * Round 1751: targetEmail used to fall back to the raw internal userId
+ * string (CollaboratorsPanel.tsx's accessChangesForReport) when the
+ * target isn't in either current list -- which is the normal case for a
+ * "removed" entry, since removeCollaborator hard-deletes the row the
+ * caller's email lookup is built from. A real downloaded/copied report
+ * would then leak a bare database id into human-facing text instead of
+ * naming the removed person, for the single most common case this log
+ * entry exists to describe. Mirrors changedByEmail's own existing
+ * null-fallback to "Unknown" one line below it.
+ */
+test("formatCollaboratorsReport falls back to the unknown-actor translation when a removed entry's targetEmail is null, instead of leaking a raw userId", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const result = formatCollaboratorsReport(owner, [], "CRM", "en", t, [], [
+    {
+      action: "removed",
+      targetEmail: null,
+      changedByEmail: "owner@example.com",
+      previousRole: "editor",
+      newRole: null,
+      changedAt: "2024-02-02T10:00:00.000Z",
+    },
+  ]);
+  assert.ok(result.includes("Unknown was removed from the project by owner@example.com"));
+  assert.ok(!result.includes("undefined"), "must never render the literal string 'undefined'");
+});
+
+/**
  * Round 1654: the sibling action to role_changed/removed above --
  * ownership transfer was the one access-change action round 1636's own
  * sweep missed, despite being the single biggest access-change action in
