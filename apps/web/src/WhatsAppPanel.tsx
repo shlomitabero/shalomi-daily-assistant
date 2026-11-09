@@ -1125,8 +1125,16 @@ export function WhatsAppPanel({
     }
   }
 
+  // Round 1750: both this and handleCopyLog below used to pass the raw,
+  // unfiltered `messages` state -- so a search/directionFilter narrowing
+  // the on-screen list (visibleMessages, below) was silently ignored by
+  // Download/Copy, which always exported the full conversation instead of
+  // what the panel was actually showing. Same "export what's visible"
+  // convention entityFormatting.ts's own selectedOrAllRecords establishes,
+  // and the same shape round 1749 fixed for HistoryPanel's own
+  // Download/Copy timeline buttons.
   function handleDownloadLog() {
-    downloadWhatsAppLog(formatWhatsAppLog(messages, entities, projectName, lang, t, hasMoreMessages), projectName);
+    downloadWhatsAppLog(formatWhatsAppLog(visibleMessages, entities, projectName, lang, t, hasMoreMessages), projectName);
   }
 
   /**
@@ -1139,7 +1147,7 @@ export function WhatsAppPanel({
    */
   async function handleCopyLog() {
     try {
-      await navigator.clipboard.writeText(formatWhatsAppLog(messages, entities, projectName, lang, t, hasMoreMessages));
+      await navigator.clipboard.writeText(formatWhatsAppLog(visibleMessages, entities, projectName, lang, t, hasMoreMessages));
       setCopyStatus("copied");
     } catch {
       setCopyStatus("failed");

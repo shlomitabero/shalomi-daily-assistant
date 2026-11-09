@@ -5758,6 +5758,117 @@ test("WhatsAppPanel's copy button shows a failure label when navigator.clipboard
 });
 
 /**
+ * Round 1750: handleCopyLog used to pass the raw, unfiltered `messages`
+ * state to formatWhatsAppLog, ignoring the search box entirely -- so
+ * narrowing the on-screen list to one matching message still copied the
+ * full 6-message conversation, not just the 1 the search box is actually
+ * showing. Same "export what's visible" convention entityFormatting.ts's
+ * own selectedOrAllRecords establishes, and the same shape round 1749
+ * fixed for HistoryPanel's own Download/Copy timeline buttons.
+ */
+test("WhatsAppPanel's copy button respects the active search filter, copying only the currently-visible messages, not the full log", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const messages: WhatsAppMessageLogEntry[] = [
+      {
+        id: "unique-match",
+        direction: "in",
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: "this one matches the search term",
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received",
+        createdAt: new Date().toISOString(),
+      },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: `plain-${i}`,
+        direction: "in" as const,
+        fromNumber: "972501234567",
+        toNumber: "972521112233",
+        body: `an ordinary message ${i}`,
+        matchedLabel: null,
+        matchedEntityName: null,
+        matchedRecordId: null,
+        status: "received" as const,
+        createdAt: new Date().toISOString(),
+      })),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj-search-copy/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj-search-copy/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj-search-copy",
+              userId: "user1",
+              projectName: "Flower Shop",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 6);
+
+      const searchInput = document.querySelector(".whatsapp-log-search") as HTMLInputElement;
+      assert.ok(searchInput, "the search box must be visible with 6 messages");
+      fireEvent.change(searchInput, { target: { value: "matches the search term" } });
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "📋 Copy History");
+      assert.ok(copyButton, "expected a Copy History button");
+
+      await act(async () => {
+        fireEvent.click(copyButton!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.match(writtenText!, /this one matches the search term/, "the copied text must include the message matching the active search");
+      assert.doesNotMatch(
+        writtenText!,
+        /an ordinary message/,
+        "the copied text must NOT include any of the 5 messages the search filter is currently hiding from the on-screen list",
+      );
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * New in this round: the log's direction/status filter (All/Incoming/
  * Outgoing/Failed) was plain useState with no persistence -- filtering down
  * to "Failed" to track failed sends, closing the panel to check something
