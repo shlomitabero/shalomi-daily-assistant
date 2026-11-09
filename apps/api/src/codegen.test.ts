@@ -24660,6 +24660,114 @@ test("the exported EntityView refetches records when the active entity's own fie
 });
 
 /**
+ * Round 1778: mirrors round 1387's own `.rerender()` test shape just above
+ * (same vehicle for "the SAME mounted EntityView instance gets a new
+ * `entity` prop, never a remount") but for columnWidths, which -- unlike
+ * hiddenFields/columnWidths/sortKeys/columnOrder in the live Forge AI
+ * preview's own EntityPanel.tsx (rounds 897/1766/1767/1768/1777) -- never
+ * got the exported app's own equivalent fix at all. The columnWidths
+ * useState initializer only remaps/drops a dead entry at MOUNT time; before
+ * this round, nothing re-ran that check while the panel stayed mounted
+ * through a live refine, so Object.keys(columnWidths).length > 0 (read by
+ * both the "Reset column widths" button and the <table>'s own
+ * entity-table-resized class) stayed true purely from a dead key, wrongly
+ * locking the WHOLE table into fixed-layout/ellipsis mode for a resize that
+ * no longer affects anything rendered.
+ */
+test("the exported EntityView drops a dead column width when its field is removed without the panel remounting, instead of leaving the whole table stuck in fixed-layout mode", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const customerWithoutStatus: Entity = {
+    ...customerEntity,
+    fields: customerEntity.fields.filter((f) => f.name !== "status"),
+  };
+
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Customer") {
+      return { ok: true, status: 200, json: async () => ({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }) } as Response;
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length > 0,
+        "the initial record fetch never completed",
+      );
+
+      // "status"'s own label ("סטטוס") comes from this file's module-level
+      // `project` fixture, unlike the English-labeled Customer entities a
+      // couple of other tests above build locally -- match on it directly
+      // rather than the English word "Status".
+      const statusHeader = Array.from(view.container.querySelectorAll("th.resizable-col")).find((th) =>
+        /סטטוס/.test(th.textContent ?? ""),
+      ) as HTMLTableCellElement;
+      const handle = statusHeader.querySelector(".column-resize-handle") as HTMLSpanElement;
+      await act(async () => {
+        fireEvent.mouseDown(handle, { clientX: 100 });
+      });
+      await act(async () => {
+        fireEvent.mouseMove(window, { clientX: 160 });
+        fireEvent.mouseUp(window, { clientX: 160 });
+      });
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}").Customer,
+        { status: 60 },
+        "sanity check: resizing must have actually persisted",
+      );
+      assert.ok(
+        view.container.querySelector(".entity-table-resized"),
+        "sanity check: the seeded width must already put the table into fixed-layout mode",
+      );
+
+      // Same entity.name, a field list that no longer includes "status" --
+      // the exact shape of a live refine re-rendering this already-mounted
+      // instance, never a remount (mirrors round 1387's own test above).
+      view.rerender(React.createElement(EntityView, { ...props, entity: customerWithoutStatus }));
+
+      await waitForCondition(
+        () => !view.container.querySelector(".entity-table-resized"),
+        "the table never left fixed-layout mode after its only resized field was removed",
+      );
+      assert.equal(
+        JSON.parse(localStorage.getItem("forge_column_widths") ?? "{}").Customer,
+        undefined,
+        "the dropped 'status' width must also be purged from persisted storage, not just absent from the live DOM",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --

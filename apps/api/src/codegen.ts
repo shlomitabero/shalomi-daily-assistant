@@ -6428,6 +6428,30 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.name, fieldNamesKey]);
 
+  // Round 1778: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // (round 897/1766) for the exact same gap, finally ported here -- the
+  // columnWidths useState initializer above only ever remaps/drops a dead
+  // entry at MOUNT time, never again while this same EntityView instance
+  // stays mounted through a live refine or Time Machine restore (the same
+  // no-remount precondition the effect just above already relies on). A
+  // resized column's width for a field a refine then removes survives in
+  // storage forever, and Object.keys(columnWidths).length > 0 (read at the
+  // "Reset column widths" button and the <table>'s own entity-table-resized
+  // class) stays true purely from that dead key -- wrongly locking the
+  // WHOLE table into fixed-layout/ellipsis mode and showing a reset button
+  // for a resize that no longer affects anything rendered, even though no
+  // currently-visible column is actually resized.
+  useEffect(() => {
+    const validFieldNames = new Set(fieldNamesKey ? fieldNamesKey.split(",") : []);
+    const byLowerName = new Map(entity.fields.map((f) => [f.name.toLowerCase(), f.name]));
+    const remapped = {};
+    for (const [field, width] of Object.entries(getColumnWidths(entity.name))) {
+      const current = validFieldNames.has(field) ? field : byLowerName.get(field.toLowerCase());
+      if (current) remapped[current] = width;
+    }
+    setColumnWidths(replaceColumnWidths(entity.name, remapped));
+  }, [entity.name, fieldNamesKey]);
+
   // Multi-row selection is only ever settable from Table view -- Board's
   // own card and the calendar day cells have no selection checkbox at all
   // -- but selectedIds itself is view-mode-agnostic state, and the
