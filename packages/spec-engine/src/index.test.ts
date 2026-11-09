@@ -262,16 +262,38 @@ test("mergeRefinedSpec keeps an entity the candidate dropped entirely", () => {
       { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
       { name: "Contact", fields: [{ name: "name", type: "text", required: true }] },
     ],
+    screens: [
+      { name: "Dashboard", type: "dashboard" },
+      { name: "Customer List", type: "list", entity: "Customer" },
+      { name: "Customer Form", type: "form", entity: "Customer" },
+      { name: "Contact List", type: "list", entity: "Contact" },
+      { name: "Contact Form", type: "form", entity: "Contact" },
+    ],
   });
   // The candidate re-derived only Customer -- Contact is gone, exactly the
-  // live-repro'd failure.
+  // live-repro'd failure. candidate.screens reflects this: it was computed
+  // (screensFor/buildScreens) from candidate.entities BEFORE the merge ever
+  // restores Contact, so it only has Customer's own screens.
   const candidate = baseSpec({
     entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+    screens: [
+      { name: "Dashboard", type: "dashboard" },
+      { name: "Customer List", type: "list", entity: "Customer" },
+      { name: "Customer Form", type: "form", entity: "Customer" },
+    ],
   });
   const merged = mergeRefinedSpec(current, candidate);
   assert.deepEqual(
     merged.entities.map((e) => e.name).sort(),
     ["Contact", "Customer"],
+  );
+  // Round 1753: the restored Contact entity must also get its screens
+  // back, not just the entity record itself -- otherwise the merged spec
+  // has an entity with zero screens, baked permanently into the resulting
+  // checkpoint.
+  assert.deepEqual(
+    merged.screens.map((s) => s.name).sort(),
+    ["Contact Form", "Contact List", "Customer Form", "Customer List", "Dashboard"],
   );
 });
 
@@ -337,7 +359,7 @@ test("mergeRefinedSpec unions roles the same way as entities", () => {
   assert.deepEqual(merged.roles, ["Admin", "Manager"]);
 });
 
-test("mergeRefinedSpec takes the candidate's own summary/personas/screens/assumptions/openQuestions, not the current spec's", () => {
+test("mergeRefinedSpec takes the candidate's own summary, not the current spec's", () => {
   const current = baseSpec({ summary: "old summary" });
   const candidate = baseSpec({ summary: "new summary reflecting the refine instruction" });
   const merged = mergeRefinedSpec(current, candidate);

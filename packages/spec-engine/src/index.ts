@@ -128,5 +128,19 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
       roleSet.add(candidateRole.toLowerCase());
     }
   }
-  return { ...candidate, entities: mergedEntities, roles: mergedRoles };
+  // candidate.screens was derived (screensFor/buildScreens) from
+  // candidate.entities BEFORE this merge restored any dropped entity, so
+  // it never has List/Form screens for an entity mergedEntities just
+  // brought back -- restore those screens from current.screens the same
+  // "current survives, candidate only adds" way entities/roles are
+  // merged above. Without this, the restored entity has no screens at
+  // all, permanently baking the entities/screens mismatch into this and
+  // every later checkpoint (nothing ever regenerates screens afterward),
+  // and under-reporting Time Machine's own "N screens" count
+  // (HistoryPanel.tsx/checkpointDiff.ts, which read screens.length, not
+  // entities.length, for exactly this reason).
+  const candidateEntityNames = new Set(candidate.entities.map((entity) => entity.name.toLowerCase()));
+  const restoredScreens = current.screens.filter((screen) => screen.entity && !candidateEntityNames.has(screen.entity.toLowerCase()));
+  const mergedScreens = [...candidate.screens, ...restoredScreens];
+  return { ...candidate, entities: mergedEntities, roles: mergedRoles, screens: mergedScreens };
 }
