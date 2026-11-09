@@ -893,6 +893,30 @@ test("recognizes vehicle/garage, event-planning, veterinary, and equipment-renta
   assert.ok(rentalShop.entities.some((e) => e.name === "Rental"));
 });
 
+/**
+ * Round 1752: the Pet entity rule's keywords only ever covered the
+ * clinic/grooming phrasing of a pet business ("veterinary", "vet clinic",
+ * "pet grooming", "animal clinic") -- a dog walking, pet sitting, pet
+ * boarding, or dog daycare business (an equally common pet-care-service
+ * category) had no keyword anywhere matching it, so it fell through to
+ * matchEntities' degenerate generic "Item" fallback instead of a real Pet
+ * entity. Before the fix, `provider.generate("a dog walking business with
+ * walkers, dogs, owners, and walks")` produced entities: ["Item"].
+ */
+test("recognizes dog walking, pet sitting, and dog daycare descriptions as the Pet entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dogWalker = await provider.generate("a dog walking business with walkers, dogs, owners, and walks");
+  assert.ok(dogWalker.entities.some((e) => e.name === "Pet"), "dog walking must match the Pet entity rule");
+  assert.ok(!dogWalker.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const petSitter = await provider.generate("a pet sitting service run by a pet sitter for pets and their owners");
+  assert.ok(petSitter.entities.some((e) => e.name === "Pet"), "pet sitting must match the Pet entity rule");
+
+  const dogDaycare = await provider.generate("a dog daycare tracking dogs, owners, staff, and daily attendance");
+  assert.ok(dogDaycare.entities.some((e) => e.name === "Pet"), "dog daycare must match the Pet entity rule");
+});
+
 test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common unrelated phrases", async () => {
   const provider = new HeuristicSpecProvider();
 

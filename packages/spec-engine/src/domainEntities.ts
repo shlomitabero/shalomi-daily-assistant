@@ -1115,9 +1115,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     },
   },
   {
+    // Round 1752: the original keyword list only ever covered the
+    // clinic/grooming phrasing of a pet business -- a dog walking, pet
+    // sitting, pet boarding, or dog daycare business (an equally common
+    // pet-care-service category) had no keyword anywhere matching it, so
+    // it fell through matchEntities' zero-match path straight to the
+    // degenerate generic "Item" fallback instead of a real Pet entity.
     keywords: [
       "veterinary", "vet clinic", "pet owner", "pet grooming", "animal clinic",
+      "dog walking", "dog walker", "pet sitting", "pet sitter", "pet boarding", "dog daycare",
       "חיית מחמד", "חיות מחמד", "וטרינר", "וטרינרית", "טיפוח כלבים",
+      "טיול כלבים", "פנסיון לכלבים",
     ],
     labelHe: "חיות מחמד",
     descriptionHe: "חיית מחמד שמקבלת טיפול מהעסק.",
