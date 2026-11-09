@@ -6352,6 +6352,50 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       setRecords(visible);
       setRecordListTruncated(truncated);
       setRecordListTotalCount(totalCount);
+      // Round 1786: mirrors the live Forge AI preview's own EntityPanel.tsx
+      // fix (rounds 1754/1771) for the exact same gap -- removePinnedRecord
+      // was only ever called from the delete-undo/commit path below, so a
+      // pin survives in storage forever once a DIFFERENT tab/device deletes
+      // the same record through this exported app's shared (and, per its
+      // own doc comments elsewhere, entirely unauthenticated) server --
+      // this tab's own pinnedIds state and storage never hear about it, the
+      // same "unbounded storage growth across a resource's lifecycle" bug
+      // class rounds 390-1128/1595/1785 already fixed for every other leak
+      // of this shape. selectedIds (the bulk-selection checkbox set) has the
+      // identical gap, with no storage counterpart to clean up -- just the
+      // state setter -- but left stale it silently desyncs the bulk-actions
+      // bar's own "N selected" count and every Export/Copy/Print button's
+      // label from what selectedOrAllRecords actually returns once it
+      // re-filters the now-correct \`records\` by the stale id set. Both
+      // reconciled against \`records\` (the server's real, unfiltered set),
+      // not \`visible\`, so a record this very tab just soft-deleted and
+      // might still Undo isn't mistaken for gone, and both gated on
+      // \`!truncated\`: a capped list's own missing page doesn't mean a
+      // pinned/selected record is actually gone.
+      if (!truncated) {
+        const presentIds = new Set(records.map((r) => r.id));
+        if (pinnedIds.size > 0) {
+          const stalePinnedIds = [...pinnedIds].filter((id) => !presentIds.has(id));
+          if (stalePinnedIds.length > 0) {
+            for (const staleId of stalePinnedIds) removePinnedRecord(entity.name, staleId);
+            setPinnedIds((prev) => {
+              const next = new Set(prev);
+              for (const staleId of stalePinnedIds) next.delete(staleId);
+              return next;
+            });
+          }
+        }
+        if (selectedIds.size > 0) {
+          const staleSelectedIds = [...selectedIds].filter((id) => !presentIds.has(id));
+          if (staleSelectedIds.length > 0) {
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              for (const staleId of staleSelectedIds) next.delete(staleId);
+              return next;
+            });
+          }
+        }
+      }
       // A self-referencing relation field (e.g. Category.parentCategoryId ->
       // Category) makes this entity its own relation target. Without this,
       // relatedRecords[<that field's own relationTo string>] would only

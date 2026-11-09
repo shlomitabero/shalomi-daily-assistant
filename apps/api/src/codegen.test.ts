@@ -25292,6 +25292,215 @@ test("the exported EntityView drops a stale collapsed-group entry when its field
 });
 
 /**
+ * Round 1786: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+ * (round 1754) for the exact same gap, never ported here -- removePinnedRecord
+ * was only ever called from the delete-undo/commit path, so a pin survives
+ * in storage forever once a DIFFERENT tab/device deletes the same record
+ * through this exported app's shared (and, per its own doc comments
+ * elsewhere, entirely unauthenticated) server -- this tab's own pinnedIds
+ * state and storage never heard about it before this round. Pre-seeds the
+ * pin directly into forge_pinned_records (as if pinned in an earlier
+ * session) rather than clicking the pin button, since the point being
+ * tested is refresh()'s own reconciliation. Triggers a real refresh() via
+ * an inline-cell-edit commit on the SURVIVING record (dblclick + Enter),
+ * the same vehicle round 1771's own EntityPanel.tsx test uses.
+ */
+test("the exported EntityView forgets a pinned record's own id once another tab/device deletes it server-side, instead of leaking it in storage forever", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "New" },
+  ];
+
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    if (input === "/api/Customer") {
+      return { ok: true, status: 200, json: async () => ({ records: store }) } as Response;
+    }
+    const patchMatch = input.match(/^\/api\/Customer\/(\d+)$/);
+    if (patchMatch && init?.method === "PATCH") {
+      const id = Number(patchMatch[1]);
+      Object.assign(store.find((r) => r.id === id)!, JSON.parse(init.body as string));
+      return { ok: true, status: 200, json: async () => store.find((r) => r.id === id) } as Response;
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      localStorage.setItem("forge_pinned_records", JSON.stringify({ Customer: [1] }));
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length === 2,
+        "the initial record fetch never completed",
+      );
+      assert.deepEqual(
+        JSON.parse(localStorage.getItem("forge_pinned_records") ?? "{}"),
+        { Customer: [1] },
+        "sanity check: record 1 must start out pinned",
+      );
+
+      // Simulates another tab/device's own real DELETE against the shared
+      // server, outside this tab entirely -- this tab's own commit path
+      // never runs, so this is the only way record 1 can genuinely vanish
+      // from the next listRecords response.
+      store.splice(0, 1);
+
+      // Globex's own name cell -- an inline-edit commit on the SURVIVING
+      // record is purely a vehicle to get a real refresh() to run, which
+      // is the only place record 1's now-stale pin could be reconciled.
+      const nameCell = view.container.querySelector('tr[data-record-id="2"] td.cell-inline-editable') as HTMLTableCellElement;
+      await act(async () => {
+        fireEvent.doubleClick(nameCell);
+      });
+      const input = view.container.querySelector('tr[data-record-id="2"] input[type="text"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Globex Corp" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+
+      await waitForCondition(
+        () => !JSON.parse(localStorage.getItem("forge_pinned_records") ?? "{}").Customer?.includes(1),
+        "a record deleted by ANOTHER tab/device must also be forgotten once refresh() re-fetches and it's no longer in the server's response",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1786: the identical gap round 1754/this-round's own sibling test
+ * just closed for pinnedIds, mirroring the live preview's own round-1771
+ * fix for selectedIds (the bulk-selection checkbox set) -- never
+ * reconciled against the server's real record set inside refresh() here
+ * either. Selects both rows via their real checkboxes (no storage
+ * counterpart to seed directly), then uses the same inline-edit-commit
+ * vehicle as the pinnedIds test above to trigger a real refresh().
+ */
+test("the exported EntityView forgets a selected record's own id once another tab/device deletes it server-side, instead of leaking it in the bulk-selection count forever", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "New" },
+  ];
+
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    if (input === "/api/Customer") {
+      return { ok: true, status: 200, json: async () => ({ records: store }) } as Response;
+    }
+    const patchMatch = input.match(/^\/api\/Customer\/(\d+)$/);
+    if (patchMatch && init?.method === "PATCH") {
+      const id = Number(patchMatch[1]);
+      Object.assign(store.find((r) => r.id === id)!, JSON.parse(init.body as string));
+      return { ok: true, status: 200, json: async () => store.find((r) => r.id === id) } as Response;
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(
+        () => view.container.querySelectorAll("tbody tr").length === 2,
+        "the initial record fetch never completed",
+      );
+
+      for (const checkbox of view.container.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        await act(async () => {
+          fireEvent.click(checkbox);
+        });
+      }
+      await waitForCondition(
+        () => view.container.querySelector(".bulk-actions-bar") !== null,
+        "sanity check: both records must start out selected",
+      );
+      assert.ok(
+        view.container.querySelector(".bulk-actions-bar")!.textContent?.includes("2"),
+        "sanity check: the bulk-actions bar must show a count of 2",
+      );
+
+      // Simulates another tab/device's own real DELETE against the shared
+      // server, outside this tab entirely -- this tab's own selection state
+      // never hears about it until refresh()'s next round trip.
+      store.splice(0, 1);
+
+      const nameCell = view.container.querySelector('tr[data-record-id="2"] td.cell-inline-editable') as HTMLTableCellElement;
+      await act(async () => {
+        fireEvent.doubleClick(nameCell);
+      });
+      const input = view.container.querySelector('tr[data-record-id="2"] input[type="text"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Globex Corp" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+
+      await waitForCondition(
+        () => view.container.querySelector(".bulk-actions-bar")?.textContent?.includes("1") ?? false,
+        "a record deleted by ANOTHER tab/device must also be dropped from the selected-count label, not left inflating it forever",
+      );
+      assert.ok(
+        !view.container.querySelector(".bulk-actions-bar")!.textContent?.includes("2"),
+        "the bulk-actions bar must no longer show the stale count of 2",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Real-DOM companion to the field-filters assertions folded into the
  * pure-function store test above (round 339): proves the actual generated
  * EntityView component -- not just its store helpers in isolation --
