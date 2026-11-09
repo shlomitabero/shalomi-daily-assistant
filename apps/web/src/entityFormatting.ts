@@ -613,7 +613,7 @@ export function matchesSearch(
       field.type === "enum"
         ? (field.enumLabels?.[String(value)] ?? String(value))
         : field.type === "relation" && allEntities && relatedRecords
-          ? relationDisplayLabel(field, value, allEntities, relatedRecords)
+          ? relationDisplayLabel(field, value, allEntities, relatedRecords, lang)
           : field.type === "number" && typeof value === "number"
             ? `${value} ${formatNumberValue(value, lang)}`
             : field.type === "date"

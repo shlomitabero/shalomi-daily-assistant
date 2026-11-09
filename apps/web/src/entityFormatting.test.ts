@@ -492,6 +492,29 @@ test("matchesSearch degrades gracefully to the raw id for a relation whose targe
 });
 
 /**
+ * Regression test: matchesSearch's relation branch used to call
+ * relationDisplayLabel with no `lang` at all, always defaulting to "en" --
+ * the exact same bug family rounds 1772 (CSV export) and 1773 (sort) already
+ * closed, just a third, still-open call site. The gap only shows up when
+ * the related record's own recordDisplayLabel falls through to its
+ * date/number last-resort fallback (round 1072/1227), since those are the
+ * only branches that actually depend on `lang`. Reuses the exact "DailyLog"
+ * fixture (a date-only display field, no name/title field) already
+ * established by round 1072's own recordDisplayLabel test.
+ */
+test("matchesSearch resolves a relation field's date-fallback display label using the given lang, not always English", () => {
+  const dailyLog: Entity = { name: "DailyLog", fields: [{ name: "loggedAt", type: "date", required: true }] };
+  const orderFields: Field[] = [{ name: "logRef", type: "relation", required: true, relationTo: "DailyLog" }];
+  const order = { logRef: 1 };
+  const allEntities = [dailyLog];
+  const relatedRecords = { DailyLog: [{ id: 1, loggedAt: "2026-04-02" }] };
+
+  // On-screen label in a Hebrew project is "2.4.2026" (he-IL), not "4/2/2026" (en-US).
+  assert.ok(matchesSearch(order, orderFields, "2.4.2026", allEntities, relatedRecords, "he"));
+  assert.ok(!matchesSearch(order, orderFields, "4/2/2026", allEntities, relatedRecords, "he"));
+});
+
+/**
  * Regression test: a number field's table cell actually shown on screen
  * (EntityPanel.tsx) renders through formatNumberValue, which adds locale
  * thousands separators (1500 -> "1,500") -- but matchesSearch fell through
