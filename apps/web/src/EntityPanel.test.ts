@@ -11484,6 +11484,18 @@ test("EntityPanel falls back viewMode to 'table' when a schema edit removes the 
         !toggleButtons[1].classList.contains("view-toggle-btn-active"),
         "the Calendar button must not show as active either",
       );
+      // Round 1806: the effect above correctly fixed viewMode's in-memory
+      // React state (asserted above), but used to call only the bare
+      // setViewMode setter, never setViewModePreference -- so the stale
+      // "board" choice survived forever in storage even though the screen
+      // was already showing Table view, ready to silently resurrect itself
+      // on a later refine/reload. Mirrors columnWidths/fieldFilters/
+      // sortKeys' own identical storage-writeback fixes (rounds 1766-1768).
+      assert.equal(
+        getViewMode("proj1", "Deal", "user1"),
+        "table",
+        "the persisted view-mode storage must be corrected too, not just the in-memory state",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

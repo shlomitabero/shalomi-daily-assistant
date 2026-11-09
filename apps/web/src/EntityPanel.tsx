@@ -2610,7 +2610,16 @@ export function EntityPanel({
   useEffect(() => {
     const stored = getViewModePreference(projectId, entity.name, userId);
     const stillValid = stored === "table" || (stored === "board" && boardFieldName) || (stored === "calendar" && dateFieldName);
-    setViewMode(stillValid ? stored : "table");
+    // Round 1806: matches every other setViewMode call site in this file
+    // (the view-toggle buttons below) -- without persisting the fallback
+    // too, this effect correctly fixed the in-memory viewMode (no stuck
+    // Board/Calendar view on screen) but left the now-invalid "board"/
+    // "calendar" choice sitting in storage forever, so a later refine that
+    // re-adds a qualifying field (or simply reloading the page) silently
+    // resurrected the stale view instead of staying on the Table view the
+    // user actually ended up seeing. Same storage-writeback gap rounds
+    // 1766-1768 already fixed for columnWidths/fieldFilters/sortKeys.
+    setViewMode(stillValid ? stored : setViewModePreference(projectId, entity.name, userId, "table"));
   }, [projectId, entity.name, boardFieldName, dateFieldName]);
 
   /**
