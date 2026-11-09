@@ -399,7 +399,16 @@ function Cell({
     // technique styles.css's own .shortcut-hint/.shortcuts-keys already use
     // for an unrelated element, just never applied to a data field before.
     if (isPhoneFieldName(field.name)) return <bdi dir="ltr">{String(value)}</bdi>;
-    return <>{formatNumberValue(Number(value), lang)}</>;
+    // Round 1802: a field retyped to "number" (e.g. via a post-build refine)
+    // leaves every pre-existing record's stored value unconverted -- see
+    // migrate.ts's own "retyping is additive-only" doc comment -- so a
+    // stale non-numeric string here isn't hypothetical. Number(value) on
+    // such a value is NaN, and NaN.toLocaleString() renders the literal
+    // text "NaN", silently replacing whatever the record's real stored
+    // value was. Mirrors the date branch's own NaN fallback above: fall
+    // back to the raw stored value instead of a meaningless "NaN".
+    const num = Number(value);
+    return <>{Number.isNaN(num) ? String(value) : formatNumberValue(num, lang)}</>;
   }
   if (field.type === "longtext") {
     return (

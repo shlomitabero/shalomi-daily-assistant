@@ -3448,7 +3448,15 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
     // groups relative to each other. <bdi dir="ltr"> forces this value's own
     // internal ordering to stay LTR regardless of the surrounding RTL context.
     if (PHONE_FIELD_NAME_HINTS.includes(field.name.toLowerCase())) return <bdi dir="ltr">{String(value)}</bdi>;
-    return <>{Number(value).toLocaleString()}</>;
+    // Round 1802: mirrors the live app's own identical fix -- a field
+    // retyped to "number" leaves pre-existing records' stored values
+    // unconverted, so Number(value) can be NaN here, which
+    // NaN.toLocaleString() would otherwise render as the literal text
+    // "NaN". Falls back to the raw stored value instead, the same way
+    // the date branch above falls back to the raw value on an unparseable
+    // date.
+    const num = Number(value);
+    return <>{Number.isNaN(num) ? String(value) : num.toLocaleString()}</>;
   }
   if (field.type === "longtext") {
     return (

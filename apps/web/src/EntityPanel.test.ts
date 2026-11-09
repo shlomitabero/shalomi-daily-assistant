@@ -17152,6 +17152,50 @@ test("EntityPanel's table cell renders a phone-like-named number field as raw di
 });
 
 /**
+ * Round 1802: a field retyped to "number" via a post-build refine leaves
+ * every pre-existing record's stored value unconverted (see migrate.ts's
+ * own "retyping is additive-only" doc comment and the Build Progress
+ * warning it surfaces) -- a stale non-numeric string in a "number" field
+ * isn't a hypothetical edge case. Before this fix, Number("N/A") is NaN,
+ * and NaN.toLocaleString() renders the literal text "NaN" in the cell,
+ * discarding any indication of what the record's real stored value was.
+ */
+test("EntityPanel's table cell falls back to the raw stored value for a stale non-numeric string in a 'number' field, instead of rendering the literal text 'NaN'", async () => {
+  await withJsdom(async () => {
+    const menuItemEntity: Entity = {
+      name: "MenuItem",
+      label: "MenuItem",
+      fields: [
+        { name: "name", label: "Name", type: "text", required: true },
+        { name: "price", label: "Price", type: "number", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Soup", price: "N/A" },
+      { id: 2, createdAt: "x", name: "Salad", price: 20 },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/MenuItem") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: menuItemEntity, allEntities: [menuItemEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const rows = document.querySelectorAll("table tbody tr");
+      assert.match(rows[0].textContent ?? "", /N\/A/, "the stale non-numeric value must render as its own raw text");
+      assert.doesNotMatch(rows[0].textContent ?? "", /\bNaN\b/, "the stale non-numeric value must never render as the literal text 'NaN'");
+      assert.match(rows[1].textContent ?? "", /Salad20/, "an ordinary numeric value in the same column must still render formatted correctly");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1716: in Hebrew (RTL) mode, a table cell inherits dir="rtl" from
  * <html> with no per-cell bidi isolation -- the browser's Unicode Bidi
  * Algorithm then reorders a hyphen/parenthesis-separated phone number's

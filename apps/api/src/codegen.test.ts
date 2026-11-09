@@ -7170,6 +7170,40 @@ test("the exported record table's Cell renders a phone-like-named number field a
 });
 
 /**
+ * Round 1802: mirrors the live app's own identical EntityPanel.tsx fix. A
+ * field retyped to "number" via a post-build refine leaves every
+ * pre-existing record's stored value unconverted (migrate.ts's own
+ * "retyping is additive-only" doc comment) -- Number("N/A") is NaN, and
+ * NaN.toLocaleString() previously rendered the literal text "NaN" in this
+ * generated Cell, discarding any indication of the record's real stored
+ * value.
+ */
+test("the exported record table's Cell falls back to the raw stored value for a stale non-numeric string in a 'number' field, instead of rendering the literal text 'NaN'", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
+
+  const transformed = transformSync(`${phoneFieldHintsSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+  const Cell = new Function("h", "Frag", `${transformed}\nreturn Cell;`)(
+    (_type: unknown, _props: unknown, ...children: unknown[]) => (children.length === 1 ? children[0] : children),
+    Symbol("Fragment"),
+  );
+
+  assert.equal(
+    Cell({ field: { type: "number", name: "price" }, value: "N/A" }),
+    "N/A",
+    "a stale non-numeric value must render as its own raw text, never the literal 'NaN'",
+  );
+  assert.equal(
+    Cell({ field: { type: "number", name: "price" }, value: 20 }),
+    "20",
+    "an ordinary numeric value in the same field must still render formatted correctly",
+  );
+});
+
+/**
  * Round 1732: mirrors the live app's own identical fix (EntityPanel.tsx,
  * rounds 1716/1717) -- previously missing from this exported app entirely,
  * even though every other EntityPanel.tsx fix (rounds 1723/1724/1726, etc.)
