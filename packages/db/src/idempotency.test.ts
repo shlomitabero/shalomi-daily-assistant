@@ -85,3 +85,25 @@ test("pruneExpiredIdempotencyRecords deletes only rows older than maxAgeMs, done
   );
   assert.ok(getIdempotencyRecord(db, "fresh"), "a row created just now must survive a 24h prune");
 });
+
+/**
+ * Round 1829: idempotency_keys had no secondary index on createdAt, so
+ * pruneExpiredIdempotencyRecords's own `WHERE createdAt < ?` DELETE was a
+ * full table scan -- and withIdempotency (apps/api/src/idempotency.ts)
+ * calls that prune unconditionally on every single request carrying an
+ * X-Idempotency-Key header, across roughly a dozen distinct mutating
+ * routes. Confirmed via SQLite's own `EXPLAIN QUERY PLAN`, the same
+ * technique used to verify a query actually uses an index rather than just
+ * asserting on its result: before the fix this printed "SCAN
+ * idempotency_keys"; after it prints "SEARCH idempotency_keys USING INDEX
+ * idempotency_keys_createdAt_idx".
+ */
+test("pruneExpiredIdempotencyRecords' createdAt lookup uses an index, not a full table scan", () => {
+  const db = setup();
+  const plan = db.prepare("EXPLAIN QUERY PLAN DELETE FROM idempotency_keys WHERE createdAt < ?").all("2024-01-01T00:00:00.000Z") as {
+    detail: string;
+  }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN idempotency_keys\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX idempotency_keys_createdAt_idx/, `expected the new index to be used: ${detail}`);
+});

@@ -34,6 +34,22 @@ export function ensureIdempotencyKeysTable(db: ForgeDatabase): void {
       createdAt TEXT NOT NULL
     )
   `);
+  // Round 1829: pruneExpiredIdempotencyRecords below runs a
+  // `WHERE createdAt < ?` DELETE, and withIdempotency (apps/api/src/
+  // idempotency.ts) calls it unconditionally, first thing, on every single
+  // request that carries an X-Idempotency-Key header -- roughly a dozen
+  // distinct mutating routes across the app. Without an index on createdAt,
+  // that DELETE is a full table scan every time, on a table that is global
+  // (not scoped to one project/user) and holds every "done" row for up to
+  // 24h (IDEMPOTENCY_TTL_MS) -- so its cost grows with overall app usage
+  // and is paid by every guarded request, in proportion to everyone else's
+  // recent activity, not just the caller's own. node:sqlite's API here is
+  // synchronous, so that scan blocks the server's single JS event loop for
+  // its full duration -- real added latency for every other concurrent
+  // request being served by the same process at that moment. Purely
+  // additive: doesn't change any query's result, just lets this existing
+  // prune run in O(log n + k) instead of O(n).
+  db.exec(`CREATE INDEX IF NOT EXISTS idempotency_keys_createdAt_idx ON idempotency_keys (createdAt)`);
 }
 
 export function getIdempotencyRecord(db: ForgeDatabase, key: string): IdempotencyRecord | undefined {
