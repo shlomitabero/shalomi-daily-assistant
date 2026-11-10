@@ -7600,6 +7600,25 @@ test("the exported app's generated styles.css defines .calendar-record-pin, matc
 });
 
 /**
+ * Round 1859: a fresh survey found the Table row's and BoardCard's own pin
+ * buttons (confirmed by name above, in round 1575's own test) reference
+ * "record-pin-active" when pinned, but the generated styles.css never
+ * actually defined that class -- only its Calendar-view sibling
+ * (.calendar-record-pin-active, confirmed by the test just above) and the
+ * My Projects home screen's .my-project-pin-active got the accent-color
+ * highlight. A pinned record in Table/Board view (this app's two most-used
+ * views) got no visible signal beyond the star glyph swapping from ☆ to
+ * ⭐ -- same size, same color, easy to miss in a dense list/board.
+ */
+test("the exported app's generated styles.css defines .record-pin-active, giving the Table row's and BoardCard's pin buttons the same accent-color highlight as their CalendarView and My-Projects siblings", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  const recordPinActive = stylesCss.match(/\.record-pin-active\s*\{[^}]*\}/)?.[0];
+  assert.ok(recordPinActive, "expected a .record-pin-active rule in the generated styles.css for the Table/Board pin buttons' pinned state");
+  assert.match(recordPinActive!, /color:\s*var\(--accent\)/, ".record-pin-active must use the same accent-color highlight as .calendar-record-pin-active/.my-project-pin-active");
+});
+
+/**
  * Round 1843: a live Playwright exploration pass found that the exported
  * app's `.calendar-record-row` rule (the flex row holding the record's
  * label chip plus up to 6 action buttons: move-earlier/-later, print,

@@ -8289,6 +8289,25 @@ test("CalendarView's pin button has its own compact icon-button CSS, matching ev
 });
 
 /**
+ * Round 1859: a fresh survey found the Table row's and BoardCard's own pin
+ * buttons (className={... ? "record-pin record-pin-active" : "record-pin"},
+ * referencing this class pair since round 1574) never actually got a
+ * `.record-pin-active` rule in styles.css -- only their CalendarView sibling
+ * (.calendar-record-pin-active, confirmed by the test just above) and the My
+ * Projects home screen's .my-project-pin-active got the accent-color
+ * highlight. A pinned record in Table or Board view -- this app's two
+ * default/most-used views -- showed no visible signal beyond the star glyph
+ * swapping from ☆ to ⭐, same size and color, easy to miss in a dense list
+ * or board.
+ */
+test("the Table row's and BoardCard's pin buttons get the same accent-color highlight as their CalendarView and My-Projects siblings when pinned", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  const recordPinActive = stylesCss.match(/\.record-pin-active \{[\s\S]*?\}/)?.[0];
+  assert.ok(recordPinActive, "expected a .record-pin-active rule in styles.css for the Table/Board pin buttons' pinned state");
+  assert.match(recordPinActive!, /color:\s*var\(--accent\)/, ".record-pin-active must use the same accent-color highlight as .calendar-record-pin-active/.my-project-pin-active");
+});
+
+/**
  * Round 1801: round 1375's own fix above reset the print sheets' TEXT color,
  * but never gave the sheets themselves a background, and never reset
  * body's own background either. In dark mode, body's dark background (set

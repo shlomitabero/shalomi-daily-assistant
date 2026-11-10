@@ -2188,6 +2188,22 @@ tbody tr:hover {
   color: var(--accent);
 }
 
+/* Round 1859: a fresh survey found the Table/Board-view pin buttons
+   (EntityPanel.tsx's `className={... ? "record-pin record-pin-active" :
+   "record-pin"}`, both the table row and the board card) referencing this
+   exact class pair since round 1574 -- the round-1842 comment above even
+   assumed it already existed -- but no `.record-pin-active` rule was ever
+   actually defined anywhere in this file. The only visible signal a
+   pinned record got in Table/Board view was the star glyph swapping from
+   ☆ to ⭐, with no color highlight, unlike this same feature in Calendar
+   view (.calendar-record-pin-active, directly above) and on the My
+   Projects home screen (.my-project-pin-active). Mirrors both exactly. No
+   base `.record-pin` rule is needed -- its sizing already inherits
+   correctly from `.row-actions button`/the generic button rule. */
+.record-pin-active {
+  color: var(--accent);
+}
+
 .calendar-record-chip:hover {
   background: var(--surface-raised);
   transform: none;

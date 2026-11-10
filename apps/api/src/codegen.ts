@@ -10984,6 +10984,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-pin { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
 .calendar-record-pin:hover { background: var(--bg); }
 .calendar-record-pin-active { color: var(--accent); }
+.record-pin-active { color: var(--accent); }
 .calendar-record-more { font-size: 11px; color: var(--muted); padding: 2px 5px; background: none; border: none; text-align: start; cursor: pointer; font: inherit; }
 .calendar-record-more:hover { color: var(--text); text-decoration: underline; }
 .csv-export-btn, .json-export-btn, .ics-export-btn, .ics-subscribe-btn, .copy-records-btn, .print-list-btn { flex-shrink: 0; padding: 8px 14px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
