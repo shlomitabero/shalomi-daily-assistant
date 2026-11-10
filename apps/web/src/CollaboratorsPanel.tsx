@@ -515,6 +515,15 @@ export function CollaboratorsPanel({
    * with no other warning.
    */
   async function handleRegenerateCalendarFeedToken() {
+    // Round 1860: the same own-click reentrancy gap round 1365/1534 closed
+    // for handleInvite/handleRoleChange/handleRemove/handleTransferOwnership
+    // in this same file -- disabled={regeneratingFeedToken} on the button
+    // below only takes effect after React commits the next render, so a
+    // fast double-click fires this handler twice before that happens. A
+    // double-fire here is externally visible: a successful rotation
+    // best-effort-emails every other collaborator (round 1290), so two
+    // overlapping calls risk two such emails for one click.
+    if (regeneratingFeedToken) return;
     if (!window.confirm(t("collab.calendarFeed.regenerate.confirm"))) return;
     setRegeneratingFeedToken(true);
     setError(null);
@@ -552,6 +561,13 @@ export function CollaboratorsPanel({
     // already closed for the simple sequential case, just reopened here
     // via a race between the two buttons.
     if (checkingLastInboundWebhook) return;
+    // Round 1860: that guard above only cross-gates against the sibling
+    // Check action -- this handler never guarded against its OWN
+    // reentrancy, the same gap just closed on handleRegenerateCalendarFeedToken
+    // just above. disabled={regeneratingWebhookToken || ...} on the button
+    // below only takes effect after React commits the next render, so a
+    // fast double-click still fires this handler twice first.
+    if (regeneratingWebhookToken) return;
     if (!window.confirm(t("collab.webhookIn.regenerate.confirm"))) return;
     setRegeneratingWebhookToken(true);
     setError(null);
