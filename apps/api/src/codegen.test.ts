@@ -13703,6 +13703,28 @@ test("generateExportFiles includes a real render.yaml matching this repo's own p
 });
 
 /**
+ * Round 1870: discovered via live exploration -- this repo's own render.yaml
+ * (the one that deploys the Forge AI platform itself) pins NODE_VERSION
+ * with a comment explaining a real, already-hit Render deploy breakage
+ * from leaving it unpinned (docs/roadmap.md's out-of-band fix between
+ * rounds 923 and 924). The exported app's own generated server.js does
+ * `import { DatabaseSync } from "node:sqlite"` unconditionally -- a hard
+ * requirement on Node >=22.5, matching its own package.json's
+ * `engines: ">=22.5.0"` -- yet the generated render.yaml had no
+ * NODE_VERSION at all, so deploying the exported app via its own included
+ * render.yaml could resolve to a too-old Node and crash on that import,
+ * directly contradicting the README's own unconditional "the free plan
+ * works for this" promise.
+ */
+test("generated render.yaml pins NODE_VERSION, matching this repo's own render.yaml and the exported app's own Node >=22.5 requirement (node:sqlite)", () => {
+  const files = generateExportFiles(project);
+  const renderYaml = files.find((f) => f.path === "render.yaml")!.content;
+  assert.match(renderYaml, /envVars:\s*\n\s*- key: NODE_VERSION\s*\n\s*value: \d+\.\d+\.\d+/, "render.yaml must pin an exact NODE_VERSION, not leave it unresolved");
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /from "node:sqlite"/, "this assertion's premise -- the exported app needs a recent Node for node:sqlite -- must still hold");
+});
+
+/**
  * Round 725's finding: the README above told a user "the free plan works
  * for this" and, separately, "data.sqlite -- your data. Back it up like
  * any file" -- with zero mention that Render's free plan runs on an

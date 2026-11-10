@@ -1767,6 +1767,18 @@ app.listen(port, () => console.log(\`\${${JSON.stringify(project.name)}} running
  */
 function renderRenderYaml(project: Project): string {
   const name = packageName(project.name);
+  // Round 1870: this project's own render.yaml (repo root) pins NODE_VERSION
+  // with a comment explaining why -- Render's docs warn an unbounded engines
+  // range (this exported app's own package.json declares ">=22.5.0") can
+  // silently resolve to an unexpected version, and this repo already hit a
+  // real deploy breakage from exactly that (docs/roadmap.md's "out-of-band
+  // fix between rounds 923 and 924"). The exported app's generated
+  // server.js does `import { DatabaseSync } from "node:sqlite"`
+  // unconditionally -- a hard requirement on Node >=22.5 -- yet the
+  // generated render.yaml had no NODE_VERSION at all, so a Render Blueprint
+  // deploy of the exported app could resolve to a too-old Node and crash on
+  // that import immediately, directly contradicting the README's own
+  // unconditional "the free plan works for this" promise.
   return `services:
   - type: web
     name: ${name}
@@ -1774,6 +1786,9 @@ function renderRenderYaml(project: Project): string {
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
 `;
 }
 
