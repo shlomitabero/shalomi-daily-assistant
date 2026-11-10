@@ -154,6 +154,84 @@ test('ignores a stale actions_log entry from a different day when scanning for t
   assert.equal(performCalls, 1);
 });
 
+test('two concurrent calls for the exact same key never both run perform() - the second is told to retry instead of racing the first', async () => {
+  // Neither call is awaited individually first - both start running before
+  // either's own perform() has a chance to resolve, exactly the
+  // double-click/two-open-tabs scenario this lock exists for. Without it,
+  // both would read "not yet performed today" before either had logged
+  // success, and both would run perform() - for the real publish_product
+  // action, that means two real Paddle price objects created for the same
+  // product.
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  let performCalls = 0;
+  let releasePerform;
+  const performGate = new Promise((resolve) => { releasePerform = resolve; });
+  const perform = async () => {
+    performCalls += 1;
+    await performGate;
+    return 'done';
+  };
+  const firstPromise = executeGatedAction({ opportunityId: 'opp_1', actionType: 'publish_product', perform });
+  const secondPromise = executeGatedAction({ opportunityId: 'opp_1', actionType: 'publish_product', perform });
+  releasePerform();
+  const [first, second] = await Promise.all([firstPromise, secondPromise]);
+  assert.equal(performCalls, 1);
+  const results = [first, second];
+  assert.equal(results.filter((r) => r.allowed).length, 1);
+  assert.equal(results.filter((r) => !r.allowed && r.duplicate).length, 1);
+});
+
+test('a concurrent call for a DIFFERENT opportunity is never blocked by the lock above', async () => {
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  let performCalls = 0;
+  let releasePerform;
+  const performGate = new Promise((resolve) => { releasePerform = resolve; });
+  const perform = async () => {
+    performCalls += 1;
+    await performGate;
+    return 'done';
+  };
+  const firstPromise = executeGatedAction({ opportunityId: 'opp_1', actionType: 'publish_product', perform });
+  const secondPromise = executeGatedAction({ opportunityId: 'opp_other', actionType: 'publish_product', perform });
+  releasePerform();
+  const [first, second] = await Promise.all([firstPromise, secondPromise]);
+  assert.equal(performCalls, 2);
+  assert.equal(first.allowed, true);
+  assert.equal(second.allowed, true);
+});
+
+test('the lock is released after completion, so the same key can run again on a later, separate call', async () => {
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  const first = await executeGatedAction({ opportunityId: 'opp_1', actionType: 'publish_product', perform: async () => 'done' });
+  assert.equal(first.allowed, true);
+  // A second call for the same key on the same day is still correctly
+  // blocked by wasAlreadyPerformed (the pre-existing duplicate-same-day
+  // check), not by the concurrency lock lingering - confirms the lock
+  // itself was released and isn't what's producing this block.
+  const second = await executeGatedAction({ opportunityId: 'opp_1', actionType: 'publish_product', perform: async () => 'done' });
+  assert.equal(second.allowed, false);
+  assert.equal(second.duplicate, true);
+});
+
+test('the lock is released even when perform() throws, so one failed action cannot wedge every future call for that key', async () => {
+  __resetForTests();
+  updateSettings({ mode: 'auto_limited' });
+  await assert.rejects(() => executeGatedAction({
+    opportunityId: 'opp_1', actionType: 'publish_product',
+    perform: async () => { throw new Error('paddle unreachable'); },
+  }));
+  let performCalls = 0;
+  const after = await executeGatedAction({
+    opportunityId: 'opp_1', actionType: 'publish_product',
+    perform: async () => { performCalls += 1; return 'done'; },
+  });
+  assert.equal(after.allowed, true);
+  assert.equal(performCalls, 1);
+});
+
 test('logs a failed outcome and rethrows when perform() throws, instead of swallowing the error', async () => {
   __resetForTests();
   updateSettings({ mode: 'auto_limited' });
