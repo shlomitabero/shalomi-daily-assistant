@@ -221,6 +221,14 @@ export interface BaileysMessageUpdate {
  */
 export interface BaileysCallEvent {
   from: string;
+  // Round 1861: Baileys' own real WACallEvent (Call.d.ts) always carries
+  // this -- a single call's id, stable across its own repeated status
+  // events the same way `callerPn` is -- needed to tell a bare "terminate"
+  // that follows a prior "accept" (the answered call simply ending) apart
+  // from one that doesn't (the caller hung up/cancelled before anyone
+  // answered, a genuine miss). Optional here only so existing fakes/tests
+  // that don't care about that distinction don't need to supply one.
+  id?: string;
   // Round 1731: WhatsApp's own privacy-mode "LID" addressing applies to
   // calls exactly the way it applies to messages (see handleIncomingMessages'
   // own `remoteJidAlt`/`lidMapping` handling) -- `from` is the caller's
@@ -895,6 +903,17 @@ export class WhatsAppWebManager {
    * that round.
    */
   private readonly sendQueue = new Map<string, Promise<void>>();
+  /**
+   * Round 1861: tracks call ids that reached "accept", so a later bare
+   * "terminate" for the same call (the normal end-of-call signal once an
+   * answered call hangs up) isn't mistaken for a missed call in
+   * handleIncomingCalls below. An entry is added on "accept" and removed
+   * the moment its matching "terminate" arrives, so this only ever holds
+   * ids for calls currently answered-and-not-yet-ended -- bounded by real
+   * concurrent calls, the same ephemeral-per-key lifetime as sendQueue/
+   * pendingConnect above.
+   */
+  private readonly acceptedCallIds = new Set<string>();
   private readonly sendSpacingMs: number;
   private readonly sendTimeoutMs: number;
 
@@ -1300,9 +1319,27 @@ export class WhatsAppWebManager {
       // progresses (see BaileysCallEvent's own doc comment) -- "accept"
       // means someone answered (nothing missed to log), and every other
       // non-terminal status is just Baileys replaying the still-ringing
-      // call before its one terminal status arrives. Only these two
-      // terminal statuses mean the call genuinely went unanswered.
-      if (call.status !== "reject" && call.status !== "timeout") continue;
+      // call before its one terminal status arrives. Remember accepted
+      // call ids (see acceptedCallIds' own doc comment) so the "terminate"
+      // check just below can tell an answered call ending apart from a
+      // genuine miss.
+      if (call.status === "accept") {
+        if (call.id) this.acceptedCallIds.add(call.id);
+        continue;
+      }
+      // Round 1861: the installed @whiskeysockets/baileys's own
+      // getCallStatusFromNode (Utils/generics.js) maps the WhatsApp
+      // server's <terminate> stanza to "timeout" only when its reason
+      // attribute says so -- every OTHER terminate reason, including a
+      // plain caller hangup/cancel before anyone answers, surfaces as this
+      // bare "terminate" status (that function's own comment: "fired when
+      // accepted/rejected/timeout/caller hangs up"). So a "terminate" with
+      // no matching prior "accept" is a third genuinely-missed terminal
+      // status, same as reject/timeout; one that DOES match a prior
+      // "accept" is just that answered call ending normally -- consume the
+      // tracked id and skip it, nothing missed.
+      if (call.status === "terminate" && call.id && this.acceptedCallIds.delete(call.id)) continue;
+      if (call.status !== "reject" && call.status !== "timeout" && call.status !== "terminate") continue;
       // A group call's "from" is the group's own initiator, not a 1:1
       // caller a phone number can usefully match against -- the same
       // reasoning as handleIncomingMessages' own "@g.us" exclusion above.

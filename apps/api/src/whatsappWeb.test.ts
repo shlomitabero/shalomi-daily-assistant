@@ -1191,16 +1191,24 @@ test("an incoming call that goes unanswered (rejected or timed out) is logged as
 
   createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "reject" }]);
   createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "timeout", isVideo: true }]);
+  // Round 1861: a bare "terminate" (no prior "accept" for the same call id)
+  // is a third genuinely-missed terminal status -- Baileys' own installed
+  // getCallStatusFromNode maps the WhatsApp server's <terminate> stanza to
+  // "timeout" only when its reason says so; every other reason, including
+  // the caller hanging up/cancelling before anyone answers, surfaces as
+  // this bare "terminate".
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "terminate", id: "call-hangup-1" }]);
 
   // listWhatsAppMessages returns newest-first (see its own doc comment), so
-  // the second call emitted above -- the video one -- is messages[0].
+  // the last call emitted above -- the bare terminate -- is messages[0].
   const { messages } = listWhatsAppMessages(db, project.id);
-  assert.equal(messages.length, 2);
+  assert.equal(messages.length, 3);
   assert.equal(messages[0].direction, "in");
-  assert.equal(messages[0].body, "[Missed video call]");
+  assert.equal(messages[0].body, "[Missed call]");
   assert.equal(messages[0].matchedEntityName, "Customer");
   assert.equal(messages[0].matchedLabel, "Dana Levi");
-  assert.equal(messages[1].body, "[Missed call]");
+  assert.equal(messages[1].body, "[Missed video call]");
+  assert.equal(messages[2].body, "[Missed call]");
 });
 
 /**
@@ -1259,7 +1267,12 @@ test("an incoming call is NOT logged while it is still ringing, once it's answer
 
   createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "offer" }]);
   createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "ringing" }]);
-  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "accept" }]);
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "accept", id: "call-answered-1" }]);
+  // Round 1861: the SAME call id's own later "terminate" -- just the
+  // answered call ending normally, once the two sides hang up -- must
+  // still not be logged, unlike a bare "terminate" with no prior "accept"
+  // (covered by the missed-call test above).
+  createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "terminate", id: "call-answered-1" }]);
   createdSockets[0].emitCall([{ from: "123456789@g.us", status: "reject", isGroup: true }]);
 
   assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
