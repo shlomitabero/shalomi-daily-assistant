@@ -3112,6 +3112,34 @@ test("isAllowedWebhookUrl also blocks an IPv4-mapped IPv6 literal using the RFC 
   assert.equal(isAllowedWebhookUrl("http://[64:ff9b::8.8.8.8]/abc"), true, "a genuinely public IPv4 address wrapped with the NAT64 prefix must still be allowed");
 });
 
+/**
+ * Round 1847: a third, marker-less encoding of the identical hazard --
+ * the deprecated "IPv4-compatible IPv6 address" form, a bare "::" prefix
+ * with no "ffff"/"64:ff9b" tag at all (e.g. "::169.254.169.254"). Node's
+ * URL parser canonicalizes it exactly like the other two, to "[::a9fe:a9fe]"
+ * (confirmed empirically), which matched neither the old "::ffff:|64:ff9b::"
+ * -only regex nor any BLOCKED_OTHER_HOSTNAME_PATTERNS entry (those only
+ * match "::", "::1", fe80::/10, fc00::/7) -- isAllowedWebhookUrl wrongly
+ * returned true for the cloud metadata IP and loopback alike.
+ */
+test("isAllowedWebhookUrl also blocks an IPv4-mapped IPv6 literal using the deprecated bare '::' prefix, without disturbing the '::'/'::1' unspecified/loopback checks", () => {
+  assert.equal(
+    isAllowedWebhookUrl("http://[::169.254.169.254]/latest/meta-data/"),
+    false,
+    "the cloud instance-metadata IP wrapped with a bare '::' prefix must still be blocked",
+  );
+  assert.equal(isAllowedWebhookUrl("http://[::127.0.0.1]/abc"), false, "loopback wrapped with a bare '::' prefix (dotted) must still be blocked");
+  assert.equal(
+    isAllowedWebhookUrl("http://[::7f00:1]/abc"),
+    false,
+    "loopback wrapped with a bare '::' prefix (hex, as Node's URL parser actually normalizes it to) must still be blocked",
+  );
+  assert.equal(isAllowedWebhookUrl("http://[::10.0.0.5]/abc"), false, "a private 10.x address wrapped with a bare '::' prefix must still be blocked");
+  assert.equal(isAllowedWebhookUrl("http://[::8.8.8.8]/abc"), true, "a genuinely public IPv4 address wrapped with a bare '::' prefix must still be allowed");
+  assert.equal(isAllowedWebhookUrl("http://[::]/abc"), false, "the unrelated unspecified-address check ('::' alone) must still work");
+  assert.equal(isAllowedWebhookUrl("http://[::1]/abc"), false, "the unrelated loopback check ('::1' alone) must still work");
+});
+
 test("isAllowedWebhookUrl blocks the IPv6 unspecified address ('::'), the analogue of the already-blocked 0.0.0.0, in every equivalent spelling", () => {
   assert.equal(isAllowedWebhookUrl("http://[::]/abc"), false, "the canonical '::' form must be blocked");
   assert.equal(isAllowedWebhookUrl("http://[::0]/abc"), false, "'::0' must be blocked (Node normalizes it to '::')");

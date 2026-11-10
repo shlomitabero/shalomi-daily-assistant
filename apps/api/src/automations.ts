@@ -804,10 +804,21 @@ const BLOCKED_OTHER_HOSTNAME_PATTERNS = [
  * "[64:ff9b::a9fe:a9fe]" -- the identical hex-pair shape "::ffff:" already
  * produces, just under this other prefix, which the original regex never
  * matched at all.
+ *
+ * Round 1847: a bare "::" prefix (the deprecated "IPv4-compatible IPv6
+ * address" form, e.g. "[::169.254.169.254]") is a third encoding of the
+ * same hazard, with no "ffff"/"64:ff9b" marker at all. Confirmed
+ * empirically that Node's URL parser canonicalizes it exactly like the
+ * other two, to "[::a9fe:a9fe]" -- which matched neither this function's
+ * old regex nor any BLOCKED_OTHER_HOSTNAME_PATTERNS entry (those only
+ * match "::", "::1", fe80::/10, fc00::/7), so it sailed straight through
+ * isAllowedWebhookUrl. The tail-shape check below (exactly one dotted-IPv4
+ * literal, or exactly two hex groups) keeps this from also swallowing
+ * "::1" (tail "1", neither shape) or "::" itself (empty tail).
  */
 function extractIPv4MappedAddress(hostname: string): string | null {
   const stripped = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  const match = /^(?:::ffff:|64:ff9b::)(.+)$/.exec(stripped);
+  const match = /^(?:::ffff:|64:ff9b::|::)(.+)$/.exec(stripped);
   if (!match) return null;
   const tail = match[1]!;
   if (/^\d+\.\d+\.\d+\.\d+$/.test(tail)) return tail;
