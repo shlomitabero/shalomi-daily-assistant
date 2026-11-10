@@ -2497,6 +2497,46 @@ test("incoming WhatsApp events (the chat's own calendar/event-creation action) a
 });
 
 /**
+ * Round 1849: WhatsApp's "share a whole sticker pack" feature -- distinct
+ * from a single stickerMessage (already handled above) -- was previously
+ * dropped with zero trace, the same silent-vanish gap every prior round in
+ * this message-type-coverage family fixed for a different message shape.
+ * IStickerPackMessage's name/publisher/caption fields are plaintext,
+ * confirmed directly against the installed Baileys protobuf types.
+ */
+test("incoming WhatsApp sticker-pack shares are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { stickerPackMessage: { name: "חתולים מצחיקים" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { stickerPackMessage: {} } },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { stickerPackMessage: { name: "חגים", caption: "לכבוד החג!" } },
+      },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: stickerPackMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(stickerPackMessages.length, 3);
+  assert.equal(stickerPackMessages[0].body, "[Sticker pack] חגים -- לכבוד החג!", "a sticker pack with a caption must show both its name and the caption");
+  assert.equal(stickerPackMessages[1].body, "[Sticker pack]", "a sticker pack with no name must fall back to a plain placeholder, not print nothing or throw");
+  assert.equal(stickerPackMessages[2].body, "[Sticker pack] חתולים מצחיקים");
+  for (const m of stickerPackMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1606: the RSVP (Going/Not Going/Maybe) half of eventMessage just
  * above (round 1502) was previously dropped with zero trace, the same
  * silent-vanish gap every prior round in this message-type-coverage family

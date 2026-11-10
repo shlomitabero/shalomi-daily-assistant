@@ -168,6 +168,7 @@ export interface BaileysIncomingMessage {
     cancelPaymentRequestMessage?: Record<string, never>;
     invoiceMessage?: { note?: string };
     albumMessage?: { expectedImageCount?: number; expectedVideoCount?: number };
+    stickerPackMessage?: { name?: string; publisher?: string; caption?: string };
     requestPhoneNumberMessage?: Record<string, never>;
     viewOnceMessage?: { message?: BaileysIncomingMessage["message"] };
     viewOnceMessageV2?: { message?: BaileysIncomingMessage["message"] };
@@ -460,6 +461,17 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   }
   if (message.audioMessage) return message.audioMessage.ptt ? "[Voice note]" : "[Audio]";
   if (message.stickerMessage) return "[Sticker]";
+  // Round 1849: WhatsApp's "share a whole sticker pack" feature -- distinct
+  // from stickerMessage above (a single sticker). IStickerPackMessage in
+  // Baileys' own shipped protobuf types (WAProto/index.d.ts), confirmed
+  // fully plaintext (name/publisher/caption, same bar every prior round in
+  // this message-type family used). Previously fell through to the final
+  // `return null` and vanished with zero trace.
+  if (message.stickerPackMessage) {
+    const sp = message.stickerPackMessage;
+    const label = sp.name ? `[Sticker pack] ${sp.name}` : "[Sticker pack]";
+    return sp.caption ? `${label} -- ${sp.caption}` : label;
+  }
   if (message.locationMessage) {
     const detail = message.locationMessage.name || message.locationMessage.address;
     return detail ? `[Location] ${detail}` : "[Location]";
