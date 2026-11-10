@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from './settings.js';
 import { runAutonomousScan, catchUpAutonomousScanIfMissed } from './autonomousScan.js';
+import { createDigitalProductOpportunityUnderCap } from './opportunities.js';
 
 function withEnv(vars, fn) {
   const originals = {};
@@ -156,6 +157,68 @@ test('runAutonomousScan actually creates a real honest opportunity end-to-end wh
     assert.equal(logged.detail.opportunityId, result.opportunity.id);
     assert.equal(logged.detail.published, false);
   } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
+test('runAutonomousScan backs off cleanly, without creating a second opportunity, when the manual route is mid-request', async () => {
+  // scanInProgress (in this same file) already prevents two scans from
+  // racing each other - this exercises the OTHER half of the fix: the
+  // manual route (routes/opportunities.js) and this scan both ultimately
+  // call createDigitalProductOpportunityUnderCap in services/opportunities.js,
+  // which is where the real lock lives. Simulates the manual route being
+  // mid-request by starting a real call to that same function and holding
+  // its own AI call open (via a fetch that doesn't resolve until released)
+  // for exactly as long as it takes the scan below to reach the same lock.
+  __resetForTests();
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  const topicResponse = {
+    id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+    content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+    stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+  };
+  let releaseHeldCall;
+  const heldCallGate = new Promise((resolve) => { releaseHeldCall = resolve; });
+  let call = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    call += 1;
+    // The first fetch is the "manual route" call's own draftProduct ->
+    // Anthropic call below - held open on purpose so its lock stays set
+    // for as long as this test needs. Every later call (the scan's own
+    // generateTopicIdea) resolves immediately and normally - the scan is
+    // meant to find the lock already held and never even reach its own
+    // draftProduct call, so nothing here needs to serve that response.
+    if (call === 1) {
+      await heldCallGate;
+      throw new Error('released only to let the held call finish cleanly, not to succeed');
+    }
+    return new Response(JSON.stringify(topicResponse), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  // Started, deliberately not awaited yet - its synchronous prefix (the
+  // lock itself) runs to completion before this statement returns control
+  // here, same reasoning as the equivalent test in opportunities.test.js.
+  const heldCallPromise = createDigitalProductOpportunityUnderCap({ topic: 'x', audience: 'y', createdBy: 'owner' });
+  try {
+    const result = await runAutonomousScan();
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, 'יצירת טיוטה אחרת רצה באותו רגע בדיוק — נסה שוב בעוד רגע');
+    assert.equal(db.opportunities.all().length, 0);
+    const logged = db.actions_log.where((a) => a.type === 'autonomous_scan')[0];
+    assert.ok(logged);
+    assert.equal(logged.result, 'skipped: another draft creation was in progress');
+  } finally {
+    releaseHeldCall();
+    await heldCallPromise.catch(() => {});
     globalThis.fetch = originalFetch;
     for (const key of Object.keys(originalEnv)) {
       if (originalEnv[key] === undefined) delete process.env[key];

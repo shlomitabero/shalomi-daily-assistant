@@ -1,7 +1,7 @@
 import { db } from '../db/store.js';
 import { generateTopicIdea } from '../engine/topicIdeation.js';
 import { SOURCE_DEFINITIONS, isSourceConnected } from '../engine/sourceDefinitions.js';
-import { createDigitalProductOpportunity, pendingDraftCount, MAX_PENDING_DRAFTS } from './opportunities.js';
+import { createDigitalProductOpportunityUnderCap, pendingDraftCount, MAX_PENDING_DRAFTS } from './opportunities.js';
 import { publishOpportunity } from './publishing.js';
 import { isPaddleConfigured } from './paddle.js';
 import { getSettings } from './settings.js';
@@ -51,6 +51,13 @@ async function runAutonomousScanOnce() {
     return { ran: false, reason: 'המקור "מוצרים דיגיטליים מבוססי AI" לא מחובר' };
   }
 
+  // A fast-path optimization only, not the real guarantee against the cap -
+  // skips the real idea-generation AI call below outright in the common
+  // case (already over the cap), rather than spending it just to have
+  // createDigitalProductOpportunityUnderCap reject the result afterward.
+  // That function's own lock, not this plain read, is what actually closes
+  // the race between reading this count and writing the new draft - see
+  // its comment in services/opportunities.js.
   const pendingDrafts = pendingDraftCount();
   if (pendingDrafts >= MAX_PENDING_DRAFTS) {
     logAction({ type: 'autonomous_scan', detail: { pendingDrafts }, result: `skipped: ${pendingDrafts} drafts already awaiting review` });
@@ -87,14 +94,33 @@ async function runAutonomousScanOnce() {
     return { ran: false, reason: err.message };
   }
 
-  let opportunity;
+  let result;
   try {
-    opportunity = await createDigitalProductOpportunity({ topic: idea.topic, audience: idea.audience, createdBy: 'autonomous_scan' });
+    result = await createDigitalProductOpportunityUnderCap({ topic: idea.topic, audience: idea.audience, createdBy: 'autonomous_scan' });
   } catch (err) {
     console.error('autonomous scan: createDigitalProductOpportunity failed', err);
     logAction({ type: 'autonomous_scan', detail: { error: err.message }, result: 'failed' });
     return { ran: false, reason: err.message };
   }
+  if (!result.ok) {
+    // scanInProgress above already prevents two scans from racing each
+    // other - this only fires if the manual route (routes/opportunities.js)
+    // happened to be mid-creation at this exact moment instead. Backing off
+    // here, the same way the cap-exceeded case above does, is simpler and
+    // safer than retrying mid-scan: the next scheduled tick (or a manual
+    // "סרוק עכשיו") picks this up again shortly either way.
+    const pendingDraftsNow = result.concurrent ? null : result.pendingDrafts;
+    logAction({
+      type: 'autonomous_scan',
+      detail: result.concurrent ? {} : { pendingDrafts: pendingDraftsNow },
+      result: result.concurrent ? 'skipped: another draft creation was in progress' : `skipped: ${pendingDraftsNow} drafts already awaiting review`,
+    });
+    return {
+      ran: false,
+      reason: result.concurrent ? 'יצירת טיוטה אחרת רצה באותו רגע בדיוק — נסה שוב בעוד רגע' : `${pendingDraftsNow} הזדמנויות כבר ממתינות לסקירה שלך`,
+    };
+  }
+  let opportunity = result.opportunity;
 
   const settings = getSettings();
   if (settings.mode === 'auto_limited' && isPaddleConfigured()) {

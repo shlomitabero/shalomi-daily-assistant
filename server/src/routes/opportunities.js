@@ -6,7 +6,7 @@ import { computeNetProfit } from '../engine/feasibility.js';
 import { rankOpportunities } from '../engine/ranking.js';
 import { isPaddleConfigured } from '../services/paddle.js';
 import { logAction } from '../services/execution.js';
-import { createDigitalProductOpportunity, pendingDraftCount, MAX_PENDING_DRAFTS } from '../services/opportunities.js';
+import { createDigitalProductOpportunityUnderCap } from '../services/opportunities.js';
 import { publishOpportunity } from '../services/publishing.js';
 import { runAutonomousScan } from '../services/autonomousScan.js';
 
@@ -34,19 +34,28 @@ export async function createDigitalProduct(req, res) {
   // realistically blocked by this, since reaching 5 unreviewed drafts in a
   // row (without ever looking at any of them) is the "already enough to
   // review" state this cap exists for either way.
-  const pendingDrafts = pendingDraftCount();
-  if (pendingDrafts >= MAX_PENDING_DRAFTS) {
-    return res.status(409).json({ error: `יש כבר ${pendingDrafts} טיוטות שממתינות לסקירה — סקור או דחה חלק מהן לפני יצירת טיוטה נוספת` });
-  }
-
-  let opportunity;
+  //
+  // Goes through createDigitalProductOpportunityUnderCap, not a separate
+  // pendingDraftCount() check followed by its own createDigitalProductOpportunity
+  // call - two near-simultaneous requests here (a double-click, two open
+  // tabs, or exactly the scripted-client scenario the comment above warns
+  // about) could otherwise both read the count before either had written,
+  // letting through more of these real AI calls than this cap was ever
+  // meant to allow. See services/opportunities.js for the shared lock.
+  let result;
   try {
-    opportunity = await createDigitalProductOpportunity({ topic: topic.trim(), audience: audience.trim(), createdBy: 'owner' });
+    result = await createDigitalProductOpportunityUnderCap({ topic: topic.trim(), audience: audience.trim(), createdBy: 'owner' });
   } catch (err) {
     return res.status(502).json({ error: `יצירת הטיוטה נכשלה: ${err.message}` });
   }
+  if (!result.ok) {
+    if (result.concurrent) {
+      return res.status(409).json({ error: 'יצירת טיוטה אחרת כבר רצה באותו רגע בדיוק — נסה שוב בעוד רגע' });
+    }
+    return res.status(409).json({ error: `יש כבר ${result.pendingDrafts} טיוטות שממתינות לסקירה — סקור או דחה חלק מהן לפני יצירת טיוטה נוספת` });
+  }
 
-  res.status(201).json({ opportunity: withFeasibility(opportunity) });
+  res.status(201).json({ opportunity: withFeasibility(result.opportunity) });
 }
 
 // Manually trigger the same scan the scheduler runs periodically — useful to

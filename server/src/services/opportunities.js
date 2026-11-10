@@ -21,6 +21,42 @@ export function pendingDraftCount() {
   return db.opportunities.where((o) => o.status === 'draft' && !o.productDraft?.demo).length;
 }
 
+// Guards the gap between reading pendingDraftCount() and actually
+// inserting the new draft below. Without this, two near-simultaneous calls
+// into createDigitalProductOpportunityUnderCap (the owner's own manual
+// form double-clicked or left open in two tabs, or a scripted client
+// looping the route) could each read the count before either had written —
+// letting through more real, billed AI calls than MAX_PENDING_DRAFTS was
+// ever meant to allow, exactly the risk createDigitalProduct's own comment
+// in routes/opportunities.js warns about. autonomousScan.js's own
+// scanInProgress flag already closes the equivalent race between ITS two
+// triggers (the startup catch-up and the 4-hour cron tick), but never
+// covered this path — both callers used to do their own separate
+// "check pendingDraftCount, then create" instead of going through one
+// shared, locked chokepoint.
+let draftCreationInProgress = false;
+
+// The one chokepoint both callers (the manual route and the autonomous
+// scan) now go through for the actual check-and-create — see the comment
+// on draftCreationInProgress above for why a plain pendingDraftCount()
+// check immediately before this call isn't enough on its own.
+export async function createDigitalProductOpportunityUnderCap({ topic, audience, createdBy }) {
+  if (draftCreationInProgress) {
+    return { ok: false, concurrent: true };
+  }
+  draftCreationInProgress = true;
+  try {
+    const pendingDrafts = pendingDraftCount();
+    if (pendingDrafts >= MAX_PENDING_DRAFTS) {
+      return { ok: false, concurrent: false, pendingDrafts };
+    }
+    const opportunity = await createDigitalProductOpportunity({ topic, audience, createdBy });
+    return { ok: true, opportunity };
+  } finally {
+    draftCreationInProgress = false;
+  }
+}
+
 // Shared by the owner's manual "new digital product" form and the
 // autonomous scan loop, so both produce identically-shaped, honest
 // opportunity cards — demand is never fabricated here, only drafted.
