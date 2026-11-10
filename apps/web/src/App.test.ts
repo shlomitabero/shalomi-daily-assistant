@@ -6867,43 +6867,52 @@ test("App's checkUnread reads tRef.current fresh on every tick instead of closin
 });
 
 /**
- * Round 1168: App's own top-level `error` banner, rendered right below
- * `wakingBanner` in the exact same JSX block, had no `role` at all --
- * unlike `wakingBanner` right above it, which already carries
- * `role="status"` (see that element's own doc comment), and unlike every
- * other error surface in this app since round 1158's own sweep. Matched
- * via the real JSX source (App.tsx is never fully rendered in this test
- * file; every App.tsx-specific test here works the same way, matching
- * the real JSX text rather than mounting the component).
+ * Round 1168 originally gave App's own top-level `error` banner
+ * role="alert", with no stated rationale for departing from this app's
+ * real, original convention (round 335, git commit c59f4ac): role="alert"
+ * is reserved for inline per-field validation, role="status" for a
+ * whole-panel error banner like this one. Round 1694 then justified its
+ * OWN role="alert" change elsewhere by claiming "every other genuine
+ * error surface in this app uses role="alert"", citing this exact
+ * banner -- but that claim was false: directly grepping the other 8
+ * files' ~20 plain top-level error banners confirmed they all still use
+ * role="status". Round 1877 reverts this banner (and the sibling
+ * verifyEmailResultBanner round 1566 copied the pattern onto) back to
+ * role="status", restoring the single real convention. Matched via the
+ * real JSX source (App.tsx is never fully rendered in this test file;
+ * every App.tsx-specific test here works the same way, matching the real
+ * JSX text rather than mounting the component).
  */
-test("App.tsx's own top-level error banner carries role=\"alert\", the same convention every other error surface in this app already follows", () => {
+test("App.tsx's own top-level error banner carries role=\"status\", the original whole-panel-error convention (round 335), not role=\"alert\" (reserved for inline per-field validation)", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  // Round 1566: tolerates the new verifyEmailResultBanner/verifyEmailBanner
-  // now rendered between wakingBanner and this error banner -- this test's
-  // own intent is the error banner's role="alert", not strict adjacency to
+  // Round 1566: tolerates the verifyEmailResultBanner/verifyEmailBanner
+  // rendered between wakingBanner and this error banner -- this test's
+  // own intent is the error banner's role, not strict adjacency to
   // wakingBanner, which was always just a convenient anchor to avoid
   // accidentally matching some unrelated "error &&" block elsewhere.
   const bannerMatch = appSrc.match(/\{wakingBanner\}[\s\S]*?\{error && \([\s\S]*?\)\}/);
   assert.ok(bannerMatch, "expected to find the top-level error banner's own JSX block, after wakingBanner");
   assert.match(
     bannerMatch![0],
-    /<p className="error banner" role="alert">/,
+    /<p className="error banner" role="status">/,
     "a screen-reader user must be told about a project describe/build/rename/clone/delete failure, not left in total silence while sighted users see the banner appear",
   );
 });
 
 /**
  * Round 1220: the `viewer-readonly-banner` right below the preview topbar
- * had no `role` at all -- unlike `wakingBanner`/the `error` banner (round
- * 1168) and `buildWarning` right below it, all of which already carry
- * `role="status"`/`role="alert"`. myRole is genuinely live, not fixed at
- * page load: subscribeViewerDemoted flips it to "viewer" the instant a
- * write 403s with VIEWER_READ_ONLY, and the checkMyRole poll re-derives it
+ * had no `role` at all -- unlike `wakingBanner`, `buildWarning`, and the
+ * `error` banner right below it, all of which already carry
+ * `role="status"` (the error banner briefly carried `role="alert"` from
+ * round 1168 until round 1877 reverted it back to the original
+ * convention). myRole is genuinely live, not fixed at page load:
+ * subscribeViewerDemoted flips it to "viewer" the instant a write 403s
+ * with VIEWER_READ_ONLY, and the checkMyRole poll re-derives it
  * independently -- so this banner can newly appear (or disappear, on
  * promotion) mid-session with zero announcement to a screen-reader user who
  * was actively editing when their access was downgraded. Informational, not
- * an error, so it mirrors `buildWarning`'s `role="status"`, not `error
- * banner`'s `role="alert"`.
+ * an error, so it mirrors `buildWarning`'s `role="status"`, the same
+ * convention `error banner` itself now follows too.
  */
 test("App.tsx's viewer-readonly-banner carries role=\"status\", since myRole can change mid-session via subscribeViewerDemoted/checkMyRole", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");

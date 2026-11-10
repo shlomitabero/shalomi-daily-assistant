@@ -968,8 +968,8 @@ test("BuildProgress still shows the failed-build banner for a genuine, unrecover
     );
     assert.equal(
       document.querySelector("p.error:not(.banner)")!.getAttribute("role"),
-      "alert",
-      "the failed-build banner must carry role=\"alert\", the same convention round 1694 already applied to the sibling error banner",
+      "status",
+      "the failed-build banner must carry role=\"status\", the original whole-panel-error convention (round 335) round 1877 restored, not role=\"alert\" (reserved for inline per-field validation)",
     );
   });
 });
@@ -1003,12 +1003,15 @@ test("BuildProgress still offers Retry and Back when run() itself rejects before
     assert.equal(runCallCount, 1, "expected run to have been called once on mount");
     const errorBanner = document.querySelector("p.error.banner");
     assert.ok(errorBanner, "expected the raw error banner to show");
-    // Round 1694: this is a genuine error, the same "error banner" class
-    // App.tsx's own top-level error already uses with role="alert" (round
-    // 1168) -- every other genuine error surface in this app follows that
-    // convention; role="status" is reserved for informational, non-error
-    // text (the per-agent caption, round 1558).
-    assert.equal(errorBanner!.getAttribute("role"), "alert", "the error banner must carry role=\"alert\", the same convention every other error surface in this app already follows");
+    // Round 1694 gave this "error banner" class role="alert", claiming
+    // App.tsx's own top-level error banner (round 1168) set a convention
+    // "every other genuine error surface in this app follows" -- but that
+    // claim was false (directly verified by grep: the other 8 files' ~20
+    // plain top-level error banners all used role="status"). Round 1877
+    // reverts this banner back to role="status", the original, deliberate
+    // whole-panel-error convention (round 335, git commit c59f4ac);
+    // role="alert" is reserved for inline per-field validation.
+    assert.equal(errorBanner!.getAttribute("role"), "status", "the error banner must carry role=\"status\", the original whole-panel-error convention (round 335) round 1877 restored");
     assert.equal(document.querySelector("p.error:not(.banner)"), null, "no agent ever reported failed, so the separate failed-build banner must not show");
 
     const retryButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Try again"));

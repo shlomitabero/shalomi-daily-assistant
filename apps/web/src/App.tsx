@@ -1958,7 +1958,11 @@ function AppContent() {
         {t("account.verifyEmail.success")}
       </p>
     ) : verifyEmailStatus === "error" ? (
-      <p className="error banner" role="alert">
+      // Round 1877: reverted to role="status" alongside the other 3
+      // locations that mechanically copied round 1168's mistaken
+      // role="alert" change (see the main `error` banner's own comment
+      // below for the full explanation).
+      <p className="error banner" role="status">
         {t("account.verifyEmail.error")}
       </p>
     ) : null;
@@ -2641,7 +2645,22 @@ function AppContent() {
       {verifyEmailResultBanner}
       {verifyEmailBanner}
       {error && (
-        <p className="error banner" role="alert">
+        // Round 1877: reverted from role="alert" (round 1168) back to
+        // role="status" -- the original, deliberate convention from round
+        // 335 (git commit c59f4ac), which explicitly reserves role="alert"
+        // for inline per-field validation and role="status" for
+        // whole-panel error banners like this one. Round 1168 broke that
+        // convention here with no stated rationale for the switch, round
+        // 1694 then justified ITS OWN role="alert" change on BuildProgress
+        // by claiming "every other genuine error surface in this app uses
+        // role="alert"" -- which was false (directly verified by grep: the
+        // other 8 files' ~20 plain top-level error banners all use
+        // role="status"), and round 1857 extended that same false premise
+        // further. Reverting here (and the sibling verifyEmailResultBanner
+        // just above, which round 1566 copied this pattern from) restores
+        // the single, real, consistently-applied convention instead of
+        // letting the mistaken one keep spreading.
+        <p className="error banner" role="status">
           {error}
         </p>
       )}

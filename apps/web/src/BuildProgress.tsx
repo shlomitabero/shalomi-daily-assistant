@@ -625,14 +625,17 @@ export function BuildProgress({
       </ol>
       {!compact && <p className="muted small">{t("build.footer")}</p>}
       {error && (
-        // Round 1694: this is a genuine error (run() itself rejecting), the
-        // same "error banner" class App.tsx's own top-level error uses with
-        // role="alert" (round 1168) -- every other genuine error surface in
-        // this app follows that convention. role="status" (implicit polite
-        // live region) is reserved here for informational, non-error text
-        // (the per-agent caption just above, round 1558's own addition),
-        // never for a real failure.
-        <p className="error banner" role="alert">
+        // Round 1877: round 1694's own stated rationale for role="alert"
+        // here -- "every other genuine error surface in this app follows
+        // that convention" -- was verified false by directly grepping the
+        // other 8 files with a plain top-level error <p>: all ~20 of them
+        // use role="status", per the original, deliberate convention from
+        // round 335 (git commit c59f4ac): role="alert" is reserved for
+        // inline per-field validation, role="status" for whole-panel
+        // errors like this one. Reverted to restore that single, real
+        // convention instead of letting rounds 1168/1694/1857's mistaken
+        // premise keep spreading to more files.
+        <p className="error banner" role="status">
           {error}
         </p>
       )}
@@ -660,13 +663,12 @@ export function BuildProgress({
       )}
       {failedStep && (
         <div>
-          {/* Round 1857: round 1694 moved the sibling `error` banner just
-           * above to role="alert" for exactly this reason -- this is a
-           * genuine terminal failure (the build is dead), not informational
-           * text, so it belongs to the same assertive convention every
-           * other real error surface in this app already follows, not the
-           * polite role="status" reserved for the per-agent caption. */}
-          <p className="error" role="alert">
+          {/* Round 1877: reverted alongside the sibling `error` banner just
+           * above -- see its own comment. This is the original, deliberate
+           * role="status" convention for a whole-panel error banner (round
+           * 335), not role="alert" (reserved for inline per-field
+           * validation). */}
+          <p className="error" role="status">
             {t("build.failed.banner")}
           </p>
           {/* A SUCCESSFUL build's `finished` state is never actually
