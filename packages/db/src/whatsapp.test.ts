@@ -470,6 +470,30 @@ test("insertWhatsAppMessage defaults waMessageId to null when omitted", () => {
   assert.equal(messages[0].waMessageId, null);
 });
 
+/**
+ * Round 1834: whatsapp_messages had no secondary index at all -- only
+ * `id` via its own PRIMARY KEY -- despite listWhatsAppMessages running
+ * `WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC` on every poll
+ * tick (WhatsAppPanel.tsx polls every 10s while connected, every 1.5s
+ * during the connect/QR flow) and insertWhatsAppMessage's own
+ * retention-prune DELETE running the identical filter+sort on every
+ * single inbound/outbound message. Confirmed via SQLite's own `EXPLAIN
+ * QUERY PLAN`, the same technique rounds 1829/1833 used to verify their
+ * own tables' indexes: before the fix this printed "SCAN
+ * whatsapp_messages"; after it prints "SEARCH whatsapp_messages USING
+ * INDEX whatsapp_messages_projectId_createdAt_rowid_idx".
+ */
+test("listWhatsAppMessages' projectId+createdAt lookup uses an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+  const plan = db
+    .prepare("EXPLAIN QUERY PLAN SELECT *, rowid AS _rowid FROM whatsapp_messages WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC LIMIT ?")
+    .all("proj1", 50) as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN whatsapp_messages\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX whatsapp_messages_projectId_createdAt_idx/, `expected the new index to be used: ${detail}`);
+});
+
 test("markWhatsAppMessageDeliveryFailed flips a sent outgoing message to failed and returns true", () => {
   const db = openDatabase(":memory:");
   ensureWhatsAppMessagesTable(db);

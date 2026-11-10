@@ -166,6 +166,28 @@ export function ensureWhatsAppMessagesTable(db: ForgeDatabase): void {
   if (!columns.includes("waMessageId")) {
     db.exec("ALTER TABLE whatsapp_messages ADD COLUMN waMessageId TEXT");
   }
+  // Round 1834: this table had no secondary index at all -- only `id` via
+  // its own PRIMARY KEY -- despite listWhatsAppMessages (both its
+  // first-page and cursor-paginated queries below) running `WHERE
+  // projectId = ? ORDER BY createdAt DESC, rowid DESC` on every poll tick
+  // (WhatsAppPanel.tsx polls every 10s while connected, every 1.5s during
+  // the connect/QR flow) and insertWhatsAppMessage's own retention-prune
+  // DELETE (this file, just below) running the identical filter+sort on
+  // every single inbound/outbound message. This table's own round-1631
+  // doc comment already notes it "has by far the fastest real-world
+  // growth rate" of this codebase's three retention-capped log tables --
+  // the same unindexed-hot-path-scan class rounds 1829/1833 fixed for
+  // idempotency_keys/automation_runs. `rowid` is deliberately NOT named in
+  // the index itself -- node:sqlite rejects a literal "rowid" column in a
+  // CREATE INDEX column list ("no such column: rowid"), and it doesn't
+  // need to be: SQLite already carries each indexed row's own rowid for
+  // free as the implicit tiebreaker, so `(projectId, createdAt)` alone is
+  // enough to satisfy `ORDER BY createdAt DESC, rowid DESC` via this
+  // index (confirmed live via EXPLAIN QUERY PLAN). Purely additive --
+  // doesn't change any query's result, just lets every one of these
+  // queries run in O(log n + k) instead of a full-table scan across every
+  // project's history.
+  db.exec(`CREATE INDEX IF NOT EXISTS whatsapp_messages_projectId_createdAt_idx ON whatsapp_messages (projectId, createdAt)`);
 }
 
 function rowToMessage(row: Record<string, unknown>): WhatsAppMessage {
