@@ -147,8 +147,26 @@ export function findMatchingRecord(
   const normalizedFrom = normalizePhone(fromNumber);
   if (!normalizedFrom) return null;
 
+  // Round 1840: used to `return` on the very first matching record, the
+  // same bug class this codebase has already named and fixed for every
+  // other "match by display text" problem it has -- see webhookIn.ts's
+  // own relation-label resolution and entityFormatting.ts's
+  // buildImportRecords (mirrored again in codegen.ts): "on zero OR
+  // multiple matches, leave it unresolved -- never guess." Two different
+  // records' phone numbers sharing the same last 7+ digits after
+  // normalization is a real, if not everyday, occurrence (e.g. two
+  // Israeli mobiles on different carrier prefixes both ending in the
+  // same 7 digits) -- silently attributing an inbound message to
+  // whichever record happened to be enumerated first put the wrong
+  // customer's name on someone else's conversation, with no sign
+  // anything was ambiguous. Now collects every DISTINCT record that
+  // matches (a single record matching via more than one of its own
+  // phone-like fields is not ambiguity) and returns null the moment a
+  // second, different record also matches.
+  let match: MatchedRecord | null = null;
   for (const { entity, phoneFields, records } of candidates) {
     for (const record of records) {
+      let recordMatches = false;
       for (const phoneField of phoneFields) {
         const raw = record[phoneField.name];
         // Round 1278: nothing in the spec-generation pipeline, the AI
@@ -173,15 +191,19 @@ export function findMatchingRecord(
         const shorter = normalizedStored.length <= normalizedFrom.length ? normalizedStored : normalizedFrom;
         const longer = normalizedStored.length <= normalizedFrom.length ? normalizedFrom : normalizedStored;
         if (shorter.length >= 7 && (longer.endsWith(shorter) || matchesWithOneEmbeddedZeroRemoved(shorter, longer))) {
-          return {
-            entityName: entity.name,
-            entityLabel: entity.label ?? entity.name,
-            recordId: record.id as number,
-            label: recordDisplayLabel(entity, record, isHebrewText(project.description) ? "he" : "en"),
-          };
+          recordMatches = true;
+          break;
         }
       }
+      if (!recordMatches) continue;
+      if (match) return null;
+      match = {
+        entityName: entity.name,
+        entityLabel: entity.label ?? entity.name,
+        recordId: record.id as number,
+        label: recordDisplayLabel(entity, record, isHebrewText(project.description) ? "he" : "en"),
+      };
     }
   }
-  return null;
+  return match;
 }

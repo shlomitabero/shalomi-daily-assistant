@@ -327,6 +327,72 @@ test("findMatchingRecord checks every phone-like field on an entity, not just th
 });
 
 /**
+ * Round 1840: findMatchingRecord used to `return` on the very first
+ * record whose phone matched, the same bug class this codebase has
+ * already named and fixed for every other "match by display text"
+ * problem it has (webhookIn.ts's relation-label resolution, round 1804;
+ * entityFormatting.ts's buildImportRecords, round 1162, mirrored in
+ * codegen.ts): "on zero OR multiple matches, never guess." Two
+ * different records' phone numbers sharing the same last 7+ digits
+ * after normalization is a real occurrence (two Israeli mobiles on
+ * different carrier prefixes can both end in the same 7 digits) --
+ * silently attributing an inbound message to whichever record happened
+ * to be enumerated first put the wrong customer's name on someone
+ * else's conversation.
+ */
+test("findMatchingRecord returns null, not a guess, when two DIFFERENT records' phones both match the incoming number", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, project.id, project.spec);
+  const customer = project.spec.entities[0];
+  // Dana's stored number matches the incoming number exactly. Noam's
+  // stored number is just its own last 7 digits (a shorter, partial
+  // number as sometimes entered) -- also a genuine 7+ digit suffix match
+  // against that same incoming number, by this function's own rule.
+  insertRecord(db, project.id, customer, { name: "Dana Levi", phone: "0501234567" });
+  insertRecord(db, project.id, customer, { name: "Noam Cohen", phone: "1234567" });
+
+  assert.equal(findMatchingRecord(db, project, "0501234567"), null, "an ambiguous match (two different records) must resolve to null, not whichever record was enumerated first");
+});
+
+/**
+ * Round 1840: a single record matching via more than one of its own
+ * phone-like fields (e.g. both "phone" and "mobile" happen to end in
+ * the same digits) is NOT the ambiguity the fix above guards against --
+ * it's still exactly one real-world match.
+ */
+test("findMatchingRecord still matches cleanly when the SAME record's two phone-like fields both match the incoming number", () => {
+  const twoPhoneFieldsProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "לקוחות",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "phone", label: "טלפון", type: "text", required: false },
+            { name: "mobile", label: "נייד", type: "text", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, twoPhoneFieldsProject.id, twoPhoneFieldsProject.spec);
+  const customer = twoPhoneFieldsProject.spec.entities[0];
+  const inserted = insertRecord(db, twoPhoneFieldsProject.id, customer, {
+    name: "Dana Levi",
+    phone: "050-999-8888",
+    mobile: "050-999-8888",
+  });
+
+  const match = findMatchingRecord(db, twoPhoneFieldsProject, "972509998888");
+  assert.ok(match, "one record matching via two of its own fields is not ambiguity");
+  assert.equal(match!.recordId, inserted.id);
+});
+
+/**
  * Round 1729: findMatchingRecord's own per-call `listRecords` SELECT * is
  * its only real cost. whatsappWeb.ts's handleIncomingMessages/
  * handleIncomingCalls now build one `buildPhoneMatchCandidates` list per
