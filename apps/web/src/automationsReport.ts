@@ -131,7 +131,8 @@ function fieldValueLabel(rule: AutomationRuleView, entities: Entity[], relatedRe
   // own table-cell rendering of the field on its own record.
   if (field?.type === "number") {
     if (isPhoneFieldName(field.name)) return rule.fieldValue;
-    return stripBidiMarks(Number(rule.fieldValue).toLocaleString(LOCALE[lang]));
+    const parsed = Number(rule.fieldValue);
+    return Number.isNaN(parsed) ? rule.fieldValue : stripBidiMarks(parsed.toLocaleString(LOCALE[lang]));
   }
   if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
   return rule.fieldValue;

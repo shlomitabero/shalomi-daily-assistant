@@ -1038,7 +1038,8 @@ export function AutomationsPanel({
     // own condition-value description.
     if (field?.type === "number") {
       if (isPhoneFieldName(field.name)) return rule.fieldValue;
-      return Number(rule.fieldValue).toLocaleString(LOCALE[lang]);
+      const parsed = Number(rule.fieldValue);
+      return Number.isNaN(parsed) ? rule.fieldValue : parsed.toLocaleString(LOCALE[lang]);
     }
     if (field?.type === "boolean") return rule.fieldValue === "true" ? "TRUE" : "FALSE";
     return rule.fieldValue;

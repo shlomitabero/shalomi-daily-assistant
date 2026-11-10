@@ -2810,6 +2810,69 @@ test("AutomationsPanel shows a phone-like-named number field_equals rule's value
 });
 
 /**
+ * Round 1810 regression test: a live refine can retype a field (e.g.
+ * boolean -> number) after a field_equals rule on it was already created.
+ * packages/db/src/migrate.ts's disableAutomationRulesForField correctly
+ * disables the now-mismatched rule, but never clears or revalidates its
+ * stored fieldValue -- the disabled rule still renders in the list (just
+ * with a "Disabled" chip), so fieldValueLabel's number branch still runs
+ * Number(rule.fieldValue) against the field's NEW type against the OLD
+ * value. Without a NaN guard (the date branch right above it already has
+ * one), Number("true") is NaN, and NaN.toLocaleString() renders the
+ * literal string "NaN" in both the rule list and the Copy report, instead
+ * of falling back to the raw stored value the way the date branch does.
+ */
+test("AutomationsPanel falls back to the raw stored value, not the literal string \"NaN\", for a number field_equals rule whose value predates a boolean-to-number retype", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const staleRule = makeRule({
+      id: "rule16",
+      entityName: "Order",
+      trigger: "field_equals",
+      fieldName: "amount",
+      fieldValue: "true",
+      enabled: false,
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj7/automations") {
+        return new Response(JSON.stringify({ rules: [staleRule] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderPanelWith(dateFieldProject);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-condition").length === 1);
+      const conditionText = document.querySelector(".automations-rule-condition")?.textContent ?? "";
+
+      assert.ok(conditionText.includes("true"), `expected the raw stale value "true", got: ${JSON.stringify(conditionText)}`);
+      assert.ok(!conditionText.includes("NaN"), "a stale non-numeric fieldValue must never render as the literal string \"NaN\"");
+
+      const copyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Copy report")) as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(copyButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      assert.equal(typeof writtenText, "string", "clicking Copy must actually call navigator.clipboard.writeText");
+      assert.ok(!writtenText!.includes("NaN"), "the Copy report text must also fall back to the raw value, not \"NaN\"");
+      assert.match(writtenText!, /becomes "true"/, "the Copy report text must show the raw stale value");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * Round 1267 regression test: packages/db/src/migrate.ts's own
  * prevFieldByLowerName treats a case-only field rename (e.g. "dueDate" ->
  * "DueDate") as the very same field, a true no-op -- so an existing rule's

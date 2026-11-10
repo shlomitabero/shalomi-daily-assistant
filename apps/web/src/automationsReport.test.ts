@@ -123,6 +123,32 @@ test("formatAutomationsReport strips the invisible bidi mark toLocaleString adds
 });
 
 /**
+ * Round 1810: a live refine can retype a field (e.g. boolean -> number)
+ * after a field_equals rule on it was already created. migrate.ts's
+ * disableAutomationRulesForField correctly disables the now-mismatched
+ * rule, but never clears or revalidates its stored fieldValue, and the
+ * disabled rule still appears in this report. This module's own
+ * fieldValueLabel (mirroring AutomationsPanel.tsx's sibling) had a date
+ * branch that already falls back to the raw value on an unparseable
+ * date, but its number branch had no matching NaN guard, so
+ * Number("true").toLocaleString() rendered the literal string "NaN".
+ */
+test("formatAutomationsReport falls back to the raw stored value, not the literal string \"NaN\", for a disabled number field_equals rule whose value predates a boolean-to-number retype", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const amountOrderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [{ name: "amount", label: "Amount", type: "number", required: false }],
+  };
+  const rule = makeRule({ fieldName: "amount", fieldValue: "true", enabled: false });
+
+  const report = formatAutomationsReport([rule], [amountOrderEntity], "Shop", "en", t);
+
+  assert.match(report, /becomes "true"/, "the report must show the raw stale value");
+  assert.ok(!report.includes("NaN"), "the report must never show the literal string \"NaN\" for a stale non-numeric fieldValue");
+});
+
+/**
  * Round 1000: this module's own hand-duplicated describeDestination
  * sibling (AutomationsPanel.tsx's own copy got the matching branch in
  * round 996) never handled actionType "send_email" at all -- a static-
