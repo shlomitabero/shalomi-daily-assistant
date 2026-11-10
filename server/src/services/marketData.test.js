@@ -110,6 +110,30 @@ test('fetchQuote times out instead of hanging forever when the provider never re
   }
 });
 
+test('fetchQuote throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when the provider returns a 2xx with a non-JSON body', async () => {
+  // res.json() was the one call in this function left outside any
+  // try/catch - a 200 with a malformed body (a gateway error page, a
+  // truncated response) would throw its own raw English SyntaxError,
+  // reaching the owner verbatim via routes/financial.js's
+  // `לא ניתן היה לקבל מחיר: ${err.message}` on both "add to watchlist"
+  // and "refresh" - untranslated English dropped into an otherwise
+  // all-Hebrew error line.
+  const original = process.env.MARKET_DATA_API_KEY;
+  process.env.MARKET_DATA_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } });
+  console.error = () => {};
+  try {
+    await assert.rejects(() => fetchQuote('AAPL'), /מקור נתוני השוק החזיר תגובה שאינה JSON תקין/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+    else delete process.env.MARKET_DATA_API_KEY;
+  }
+});
+
 test('fetchQuote propagates a malformed-price error instead of returning a NaN quote', async () => {
   const original = process.env.MARKET_DATA_API_KEY;
   process.env.MARKET_DATA_API_KEY = 'test-key';

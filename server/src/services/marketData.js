@@ -37,6 +37,18 @@ export async function fetchQuote(symbol, { timeoutMs = FETCH_TIMEOUT_MS } = {}) 
     clearTimeout(timeout);
   }
   if (!res.ok) throw new Error(`הבקשה למקור נתוני השוק נכשלה עם קוד סטטוס ${res.status}`);
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    // A 2xx response with a body that isn't valid JSON (a gateway error
+    // page, a truncated response) would otherwise throw a raw English
+    // SyntaxError straight from res.json() - unlike every other failure in
+    // this function, this one wasn't caught at all, so it reached the
+    // owner verbatim via routes/financial.js's `לא ניתן היה לקבל מחיר:
+    // ${err.message}` on both the "add to watchlist" and "refresh" actions.
+    console.error('fetchQuote: market data provider returned a non-JSON response', err);
+    throw new Error('מקור נתוני השוק החזיר תגובה שאינה JSON תקין');
+  }
   return { price: parseQuotePrice(data), fetchedAt: new Date().toISOString() };
 }
