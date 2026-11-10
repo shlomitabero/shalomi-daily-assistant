@@ -277,6 +277,7 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
     removedFieldNames: string[];
     tightenedFieldNames: string[];
     retypedFieldNames: string[];
+    retargetedFieldNames: string[];
   }[] = [];
 
   for (const entity of nextSpec.entities) {
