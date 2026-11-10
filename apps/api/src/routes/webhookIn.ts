@@ -245,6 +245,23 @@ function normalizeBodyValues(
   const recordsByTargetEntity = new Map<string, ReturnType<typeof listRecords>>();
   for (const field of entity.fields) {
     const raw = normalized[field.name];
+    if (field.type === "file" && typeof raw !== "string" && raw !== undefined && raw !== null) {
+      // Round 1824: the file-field leniency below (round 1746) only ever
+      // checked `typeof raw === "string"`, so it never ran for an
+      // object/array-shaped value -- e.g. Typeform's own file-upload
+      // question shape (`{"url": "...", "filename": "..."}`) or an array
+      // of such objects, both entirely realistic third-party payload
+      // shapes for an uploaded-file field, and just as unsatisfiable as
+      // the bare URL string round 1746 already handles (coerceValue's own
+      // file branch, repository.ts, rejects Array.isArray outright and
+      // fails to JSON.parse any object's "[object Object]" stringification).
+      // Dropped here the same way round 1746's own string case drops it,
+      // before the blanket `typeof raw !== "string"` guard below would
+      // otherwise skip this field entirely and let coerceValue's
+      // ValidationError hard-reject the whole record.
+      delete normalized[field.name];
+      continue;
+    }
     if (typeof raw !== "string") continue;
     // Round 1598: every comparison below (relation label match, date regex,
     // enum/label match, boolean word list) is an exact or anchored match
