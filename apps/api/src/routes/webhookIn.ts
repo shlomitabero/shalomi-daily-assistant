@@ -610,6 +610,14 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
           // withIdempotency callback for the identical reason.
           const before = getRecord(db, projectId, entity, recordId);
           if (!before) {
+            // Round 1823: unlike resolveWebhookTarget's own 404s above (bad
+            // token/project/entity -- genuinely indistinguishable from
+            // probing, see recordInboundWebhookFailure's own doc comment),
+            // the token and entity are already validated real by this
+            // point, so a stale/wrong recordId carries no enumeration risk
+            // and is exactly the "sender's payload is wrong" case this
+            // function exists to surface.
+            recordInboundWebhookFailure(db, projectId, "Record not found");
             throw new HttpError(404, "Record not found", "WEBHOOK_IN_RECORD_NOT_FOUND");
           }
           let record: ReturnType<typeof updateRecord>;
@@ -718,6 +726,10 @@ export function createInboundWebhookRouter(db: ForgeDatabase, whatsapp: WhatsApp
           // update route's identical comment above for why.
           const before = getRecord(db, projectId, entity, recordId);
           if (!before) {
+            // Round 1823: see the update route's identical comment above --
+            // token+entity are already validated real by this point, so
+            // this 404 is not part of the anti-enumeration surface.
+            recordInboundWebhookFailure(db, projectId, "Record not found");
             throw new HttpError(404, "Record not found", "WEBHOOK_IN_RECORD_NOT_FOUND");
           }
           try {

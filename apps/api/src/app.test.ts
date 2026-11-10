@@ -22778,6 +22778,16 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId 404s for a nonexi
     const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
     const { records } = (await listRes.json()) as { records: unknown[] };
     assert.equal(records.length, 0, "a 404'd update to a nonexistent record id must not create anything");
+
+    // Round 1823: unlike resolveWebhookTarget's own 404s (bad token/project/
+    // entity -- genuinely indistinguishable from probing), the token and
+    // entity here are already validated real, so a wrong recordId is just
+    // as real a "sender's payload is wrong" case as the FK-constraint
+    // failure below, and must be surfaced the same way.
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { lastInboundWebhookFailure } = (await tokenRes.json()) as { lastInboundWebhookFailure?: { at: string; reason: string } };
+    assert.ok(lastInboundWebhookFailure, "a 404'd update to a nonexistent record id must still be recorded as a webhook failure, so the owner can see it");
+    assert.equal(lastInboundWebhookFailure!.reason, "Record not found");
   });
 });
 
@@ -23106,6 +23116,14 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete 404s for a
     const deletionsRes = await fetch(`${baseUrl}/api/projects/${projectId}/record-deletions`, { headers: authHeaders(authToken) });
     const { deletions } = (await deletionsRes.json()) as { deletions: unknown[] };
     assert.equal(deletions.length, 0, "a 404'd delete of a nonexistent record id must not log anything");
+
+    // Round 1823: see the update route's identical test above for why this
+    // 404 (unlike resolveWebhookTarget's own anti-enumeration 404s) must be
+    // surfaced as a webhook failure.
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { lastInboundWebhookFailure } = (await tokenRes.json()) as { lastInboundWebhookFailure?: { at: string; reason: string } };
+    assert.ok(lastInboundWebhookFailure, "a 404'd delete of a nonexistent record id must still be recorded as a webhook failure, so the owner can see it");
+    assert.equal(lastInboundWebhookFailure!.reason, "Record not found");
   });
 });
 
