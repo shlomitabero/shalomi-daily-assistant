@@ -756,7 +756,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // whole word, not a substring) -- lookbehind/lookahead excludes only
       // those specific phrases, the same disambiguation style "garage"
       // (round 454) and "checkout" (round 550) already use.
-      /\b(?<!intellectual\s)(?<!lost[\s-])propert(?:y|ies)\b(?!\s+damage\b)/,
+      //
+      // Round 1828: round 558's own comment calls "property" "genuinely
+      // ambiguous" but only ever patched those 3 idioms -- the generic
+      // "attribute/characteristic" sense of "properties" (material
+      // science, chemistry, physics, or software/data: "the chemical
+      // properties of materials", "CSS properties", "object properties")
+      // is at least as common as those idioms in a non-real-estate app
+      // description, and had no exclusion at all, confirmed live via
+      // matchEntities -- "an app to track the chemical properties of
+      // materials in a lab" got ONLY the real-estate Property entity
+      // injected (address/rooms/price fields), a nonsensical spec for
+      // what the description actually describes. Same multi-word
+      // lookbehind-alternation style this file's own "client(s)" regex
+      // above already uses for an analogous multi-qualifier exclusion.
+      /\b(?<!intellectual\s)(?<!lost[\s-])(?<!\b(?:material|chemical|physical|mechanical|thermal|electrical|magnetic|optical|acoustic|structural|nutritional|medicinal|healing|object|css|data|file|system|software)[\s-])propert(?:y|ies)\b(?!\s+damage\b)/,
       // Bare "listing(s)" (round 457's own \b-bounded fix) is still a
       // genuinely ambiguous whole word, the same "property" shape just
       // above -- "job listing(s)" (a recruitment/job-board app) and

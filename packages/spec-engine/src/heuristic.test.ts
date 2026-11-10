@@ -2450,6 +2450,44 @@ test("Property's 'property' keyword doesn't spuriously match 'intellectual prope
 });
 
 /**
+ * Round 1828: round 558's own comment calls "property" "genuinely
+ * ambiguous" but only ever patched 3 idioms ("intellectual property", "lost
+ * property", "property damage") -- the generic "attribute/characteristic"
+ * sense ("the chemical properties of materials", "CSS properties", "object
+ * properties") is at least as common in a non-real-estate app description
+ * and had no exclusion at all, so a materials-science/chemistry/software
+ * description got ONLY the real-estate Property entity injected -- a
+ * nonsensical address/rooms/price spec for what the description actually
+ * describes.
+ */
+test("Property's 'property' keyword doesn't spuriously match the generic 'attribute' sense (material/chemical/physical/object/css properties)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const chemistry = await provider.generate("An app to track the chemical properties of materials used in a lab.");
+  assert.ok(
+    !chemistry.entities.some((e) => e.name === "Property"),
+    "'chemical properties' alone must not spuriously match Property via a bare 'property' keyword",
+  );
+
+  const css = await provider.generate("A reference tool for looking up CSS properties and their values.");
+  assert.ok(
+    !css.entities.some((e) => e.name === "Property"),
+    "'CSS properties' alone must not spuriously match Property via a bare 'property' keyword",
+  );
+
+  const objectProps = await provider.generate("A tool to visualize object properties in JSON data for developers.");
+  assert.ok(
+    !objectProps.entities.some((e) => e.name === "Property"),
+    "'object properties' alone must not spuriously match Property via a bare 'property' keyword",
+  );
+
+  // The real word still works on its own (this description avoids this
+  // rule's other keywords, so a match here can only come from "property").
+  const realProperty = await provider.generate("A real estate app to manage properties and tenants.");
+  assert.ok(realProperty.entities.some((e) => e.name === "Property"), "'property' must still match Property");
+});
+
+/**
  * Regression test for round 501's finding: Appointment's bare "reservation"
  * keyword is a substring of the unrelated, ordinary word "preservation" --
  * a historic/data/wildlife-preservation description has nothing to do with
