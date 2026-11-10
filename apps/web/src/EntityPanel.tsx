@@ -4595,10 +4595,25 @@ export function EntityPanel({
       const results = await Promise.allSettled(
         ids.map((id) => updateRecord(projectId, entity.name, id, { [bulkEditField]: bulkEditValue })),
       );
-      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      // Round 1874: mirrors round 1864/1873's own NOT_FOUND handling -- a
+      // selected record can be fully deleted by another tab/collaborator
+      // between clicking Apply and this PATCH reaching the server for it.
+      // Treating that the same as every other update failure leaked a raw,
+      // untranslated backend error string (e.g. "Record 42 not found in
+      // Order") straight into the UI instead of quietly dropping it, the
+      // way handleSubmit/commitInlineEdit/handleMoveFields already do.
+      const notFoundIds = new Set(
+        ids.filter((_id, i) => {
+          const r = results[i];
+          return r.status === "rejected" && (r.reason as Error & { code?: string }).code === "NOT_FOUND";
+        }),
+      );
+      const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
       setSelectedIds(new Set(failedIds));
       if (failedIds.length > 0) {
-        const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+        const firstFailure = results.find(
+          (r, i): r is PromiseRejectedResult => r.status === "rejected" && !notFoundIds.has(ids[i]),
+        )!;
         setError(
           failedIds.length === ids.length
             ? (firstFailure.reason as Error).message

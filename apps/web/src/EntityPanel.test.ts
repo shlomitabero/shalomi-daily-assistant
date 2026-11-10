@@ -1786,6 +1786,156 @@ test("EntityPanel's handleBulkUpdate refreshes and keeps only the ids that actua
 });
 
 /**
+ * Round 1874: handleSubmit (round 1864), commitInlineEdit and
+ * handleMoveFields (round 1873) all already treat a PATCH that 404s
+ * NOT_FOUND -- the selected record was fully deleted by another tab/
+ * collaborator between this tab loading it and the PATCH reaching the
+ * server -- as "already gone, nothing to report", silently refresh()ing
+ * instead of surfacing an error. handleBulkUpdate's own updateRecord call
+ * site never got this same check: a bulk-update whose every selected
+ * record was concurrently deleted used to surface the raw backend
+ * NotFoundError message (e.g. "Record 5 not found in Order") verbatim.
+ * Confirms it's now treated the same as every sibling path: no error, the
+ * NOT_FOUND id is dropped from the retry selection, and refresh() still runs.
+ */
+test("EntityPanel's handleBulkUpdate silently drops a selected record that 404s NOT_FOUND (deleted by another tab) instead of surfacing its raw backend message", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch && displayMatch && handlerMatch, "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  let capturedError: string | undefined | null = null;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "writesInFlight",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "status", required: false }] },
+      new Set([5]),
+      "status",
+      "Shipped",
+      (msg: string | null) => {
+        capturedError = msg;
+      },
+      async () => {
+        const err = new Error("Record 5 not found in Order") as Error & { code?: string };
+        err.code = "NOT_FOUND";
+        throw err;
+      },
+      (next: Set<number>) => {
+        capturedSelectedIds = next;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.equal(capturedError, null, "a NOT_FOUND-only batch must never set a real error -- the record is just gone, not a genuine failure, and setError(null) at the top of the function is the only call that should ever land");
+    assert.deepEqual([...capturedSelectedIds!], [], "a NOT_FOUND id must not remain selected for retry -- there's nothing left to retry");
+    assert.equal(refreshCalled, 1, "refresh() must still run to drop the now-gone record from the table");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+test("EntityPanel's handleBulkUpdate excludes a NOT_FOUND id from both the retry selection and the partial-failure count, counting only genuine failures", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch && displayMatch && handlerMatch, "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  let capturedError: string | undefined;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "writesInFlight",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "status", required: false }] },
+      new Set([1, 2, 3]),
+      "status",
+      "Shipped",
+      (msg: string | null) => {
+        capturedError = msg ?? undefined;
+      },
+      async (_projectId: string, _entityName: string, id: number) => {
+        if (id === 2) {
+          const err = new Error("Record 2 not found in Order") as Error & { code?: string };
+          err.code = "NOT_FOUND";
+          throw err;
+        }
+        if (id === 3) throw new Error("record 3 network error");
+      },
+      (next: Set<number>) => {
+        capturedSelectedIds = next;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.deepEqual(
+      [...capturedSelectedIds!],
+      [3],
+      "only the genuinely-failed id must remain selected -- the succeeded id and the NOT_FOUND (already-gone) id must both be dropped",
+    );
+    assert.match(
+      capturedError!,
+      /entity\.bulk\.updatePartialFailure:\{"failed":1,"total":3\}/,
+      "the partial-failure count must reflect only the 1 genuine failure, not the NOT_FOUND id too",
+    );
+    assert.equal(refreshCalled, 1);
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
  * Regression test (round 625): handleBulkUpdate had NEITHER a confirmation
  * dialog NOR any undo window, unlike its sibling handleBulkDelete (which has
  * both -- window.confirm, then the same pendingDelete undo-toast mechanism

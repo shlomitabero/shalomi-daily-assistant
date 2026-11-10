@@ -7919,10 +7919,24 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setError(null);
     try {
       const results = await Promise.allSettled(ids.map((id) => updateRecord(entity.name, id, { [bulkEditField]: bulkEditValue })));
-      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      // Round 1874: mirrors round 1864/1873's own NOT_FOUND handling (and
+      // the live Forge AI preview's own identical round-1874 fix to
+      // EntityPanel.tsx) -- a selected record can be fully deleted by
+      // another tab/collaborator between clicking Apply and this PATCH
+      // reaching the server for it. refresh() already drops it quietly;
+      // treating that the same as every other update failure instead
+      // leaked a raw backend error string (e.g. "Record 42 not found in
+      // Order") straight into the UI.
+      const notFoundIds = new Set(
+        ids.filter((_, i) => {
+          const r = results[i];
+          return r.status === "rejected" && r.reason && r.reason.code === "NOT_FOUND";
+        }),
+      );
+      const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
       setSelectedIds(new Set(failedIds));
       if (failedIds.length > 0) {
-        const firstFailure = results.find((r) => r.status === "rejected");
+        const firstFailure = results.find((r, i) => r.status === "rejected" && !notFoundIds.has(ids[i]));
         setError(
           failedIds.length === ids.length
             ? firstFailure.reason.message

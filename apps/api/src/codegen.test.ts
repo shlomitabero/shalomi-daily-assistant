@@ -9261,6 +9261,112 @@ test("the exported EntityView's handleBulkDuplicate and handleBulkUpdate keep on
     }
   }
 
+  // Round 1874: mirrors the live Forge AI preview's own identical
+  // round-1874 fix to EntityPanel.tsx's handleBulkUpdate -- a selected
+  // record can be fully deleted by another tab/collaborator between
+  // clicking Apply and this PATCH reaching the server for it. Before this
+  // fix, that NOT_FOUND-coded rejection was treated the same as every
+  // other update failure, surfacing a raw backend error string (e.g.
+  // "Record 5 not found in Order") instead of the clean, silent drop
+  // round 1864/1873 already give the identical race elsewhere.
+  {
+    let capturedError: string | undefined | null = null;
+    let capturedSelectedIds: Set<number> | undefined;
+    let refreshCalled = 0;
+    const originalConfirm = globalThis.window?.confirm;
+    (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+    try {
+      const fn = new Function(
+        "writesInFlight",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order", fields: [{ name: "status", required: false }] },
+        "status",
+        "Shipped",
+        new Set([5]),
+        () => {},
+        (next: Set<number>) => (capturedSelectedIds = next),
+        (msg: string | null) => (capturedError = msg),
+        async () => {
+          const err = new Error("Record 5 not found in Order") as Error & { code?: string };
+          err.code = "NOT_FOUND";
+          throw err;
+        },
+        async () => {
+          refreshCalled += 1;
+        },
+      );
+      await fn();
+      assert.equal(capturedError, null, "a NOT_FOUND-only batch must never set a real error -- the record is just gone, not a genuine failure");
+      assert.deepEqual([...capturedSelectedIds!], [], "a NOT_FOUND id must not remain selected for retry -- there's nothing left to retry");
+      assert.equal(refreshCalled, 1, "refresh() must still run to drop the now-gone record from the table");
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
+  }
+  {
+    let capturedError: string | undefined;
+    let capturedSelectedIds: Set<number> | undefined;
+    let refreshCalled = 0;
+    const originalConfirm = globalThis.window?.confirm;
+    (globalThis.window as unknown as { confirm: () => boolean }).confirm = () => true;
+    try {
+      const fn = new Function(
+        "writesInFlight",
+        "entity",
+        "bulkEditField",
+        "bulkEditValue",
+        "selectedIds",
+        "setBulkActionBusy",
+        "setSelectedIds",
+        "setError",
+        "updateRecord",
+        "refresh",
+        `${handleBulkUpdateSrc}\nreturn handleBulkUpdate;`,
+      )(
+        false,
+        { name: "Order", fields: [{ name: "status", required: false }] },
+        "status",
+        "Shipped",
+        new Set([1, 2, 3]),
+        () => {},
+        (next: Set<number>) => (capturedSelectedIds = next),
+        (msg: string) => (capturedError = msg),
+        async (_entityName: string, id: number) => {
+          if (id === 2) {
+            const err = new Error("Record 2 not found in Order") as Error & { code?: string };
+            err.code = "NOT_FOUND";
+            throw err;
+          }
+          if (id === 3) throw new Error("record 3 update failed");
+        },
+        async () => {
+          refreshCalled += 1;
+        },
+      );
+      await fn();
+      assert.deepEqual(
+        [...capturedSelectedIds!],
+        [3],
+        "only the genuinely-failed id must remain selected -- the succeeded id and the NOT_FOUND (already-gone) id must both be dropped",
+      );
+      assert.equal(capturedError, "1 of 3 records could not be updated.", "the partial-failure count must reflect only the 1 genuine failure, not the NOT_FOUND id too");
+      assert.equal(refreshCalled, 1);
+    } finally {
+      if (originalConfirm) (globalThis.window as unknown as { confirm: () => boolean }).confirm = originalConfirm;
+    }
+  }
+
   // Regression test (round 625): handleBulkUpdate in the exported app had
   // the same gap as the live preview -- no confirmation at all before
   // overwriting a real field's value across every selected record, unlike
