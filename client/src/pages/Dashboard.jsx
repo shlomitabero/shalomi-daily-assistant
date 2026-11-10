@@ -16,23 +16,49 @@ export default function Dashboard() {
   const [sources, setSources] = useState([]);
   const [settings, setSettings] = useState(null);
   const [error, setError] = useState('');
+  // Promise.all meant a single failing call among these five (a transient
+  // blip hitting just /sources, say) blanked this entire page down to one
+  // error line - even though the other four, including the owner's own
+  // cash-in/cash-out numbers, loaded perfectly fine. summary/settings are
+  // genuinely load-bearing for everything below (budget ratios, the mode
+  // card, the cash boxes), so a failure in either of those two still blocks
+  // the page same as before - but opportunities/approvals/sources each get
+  // their own section below, so a failure in just one of those three
+  // shouldn't take the whole dashboard down with it.
+  const [sectionErrors, setSectionErrors] = useState({});
 
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       api.getLedgerSummary(),
       api.getOpportunities(),
       api.getApprovals(),
       api.getSources(),
       api.getSettings(),
-    ])
-      .then(([s, o, a, src, set]) => {
-        setSummary(s.summary);
-        setOpportunities(o.opportunities);
-        setApprovals(a.approvals.filter((x) => x.status === 'approved'));
-        setSources(src.sources);
-        setSettings(set.settings);
-      })
-      .catch((err) => setError(err.data?.error || err.message));
+    ]).then(([sRes, oRes, aRes, srcRes, setRes]) => {
+      const critical = sRes.status === 'rejected' ? sRes : setRes.status === 'rejected' ? setRes : null;
+      if (critical) {
+        setError(critical.reason?.data?.error || critical.reason?.message);
+        return;
+      }
+      setSummary(sRes.value.summary);
+      setSettings(setRes.value.settings);
+
+      // opportunities/approvals/sources default to [] (their initial state)
+      // on failure - that must never be shown as if it were real data (an
+      // honest "0 opportunities" and a failed-to-load "0 opportunities"
+      // look identical otherwise, exactly the kind of fabricated-looking
+      // number this app exists to avoid), so each section below checks
+      // sectionErrors first and shows an explicit load failure instead of
+      // silently rendering the empty fallback as if it were the truth.
+      const errors = {};
+      if (oRes.status === 'fulfilled') setOpportunities(oRes.value.opportunities);
+      else errors.opportunities = oRes.reason?.data?.error || oRes.reason?.message;
+      if (aRes.status === 'fulfilled') setApprovals(aRes.value.approvals.filter((x) => x.status === 'approved'));
+      else errors.approvals = aRes.reason?.data?.error || aRes.reason?.message;
+      if (srcRes.status === 'fulfilled') setSources(srcRes.value.sources);
+      else errors.sources = srcRes.reason?.data?.error || srcRes.reason?.message;
+      setSectionErrors(errors);
+    });
   }, []);
 
   // An approval has already done its job once its opportunity is published —
@@ -41,6 +67,11 @@ export default function Dashboard() {
     const opp = opportunities.find((o) => o.id === a.opportunityId);
     return opp?.status === 'draft';
   });
+  // pendingApprovals looks up each approval's own opportunity by id - a
+  // failed opportunities load (not just a failed approvals load) makes
+  // this count just as unreliable, since every lookup above would
+  // silently miss against an empty opportunities array.
+  const approvalsUnreliable = Boolean(sectionErrors.approvals || sectionErrors.opportunities);
   // A demo draft (no ANTHROPIC_API_KEY when it was drafted) can never
   // actually be published - publishing.js refuses it - and this list is
   // sliced down to the top 3 below, so without this exclusion a demo
@@ -86,6 +117,12 @@ export default function Dashboard() {
       text: 'המצב הנוכחי הוא "מחקר בלבד" — המערכת מאתרת ומכינה הזדמנויות, אבל לעולם לא מפרסמת ולא גובה כסף אמיתי בעצמה. כדי שהרווח יתחיל לקרות בפועל, צריך לבחור מצב אחר בהגדרות.',
       to: '/settings', cta: 'להגדרות',
     };
+  } else if (sectionErrors.opportunities) {
+    // opportunities.length === 0 after a failed load is empty, not
+    // genuinely zero - the branch below would otherwise tell the owner
+    // "you have no opportunities yet," which isn't true, it just failed
+    // to load this time.
+    nextStep = { text: 'לא ניתן לטעון את ההזדמנויות כרגע — נסה לרענן את העמוד.', to: '/opportunities', cta: 'לנסות שוב' };
   } else if (opportunities.length === 0) {
     nextStep = { text: 'עדיין אין אף הזדמנות. אפשר לסרוק אוטומטית או ליצור מוצר דיגיטלי ידנית.', to: '/opportunities', cta: 'להזדמנויות' };
   } else if (activeOpportunities.length >= 5) {
@@ -210,11 +247,15 @@ export default function Dashboard() {
 
       <section className="section">
         <div className="section-header">
-          <h2>הזדמנויות פעילות ({activeOpportunities.length})</h2>
+          <h2>הזדמנויות פעילות {sectionErrors.opportunities ? '' : `(${activeOpportunities.length})`}</h2>
           <Link className="link" to="/opportunities">הכל ←</Link>
         </div>
-        {activeOpportunities.length === 0 && <p className="hint">אין הזדמנות מספקת כרגע — זה תקין, אין צורך לפעול רק בשביל לפעול.</p>}
-        {activeOpportunities.slice(0, 3).map((o) => (
+        {sectionErrors.opportunities ? (
+          <p className="form-error">לא ניתן לטעון הזדמנויות כרגע — {sectionErrors.opportunities}</p>
+        ) : activeOpportunities.length === 0 ? (
+          <p className="hint">אין הזדמנות מספקת כרגע — זה תקין, אין צורך לפעול רק בשביל לפעול.</p>
+        ) : null}
+        {!sectionErrors.opportunities && activeOpportunities.slice(0, 3).map((o) => (
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-row">
             <span className="opp-title">{o.title}</span>
             <span className="opp-profit">{o.netProfitMid != null ? formatMoney(o.netProfitMid, 0) : 'חסר מידע'}</span>
@@ -224,7 +265,7 @@ export default function Dashboard() {
 
       <section className="section">
         <div className="section-header">
-          <h2>ממתין לאישור ({pendingApprovals.length})</h2>
+          <h2>ממתין לאישור {approvalsUnreliable ? '' : `(${pendingApprovals.length})`}</h2>
           <Link className="link" to="/approvals">הכל ←</Link>
         </div>
         {/* Unlike "הזדמנויות פעילות" right above, this section showed only a
@@ -237,9 +278,18 @@ export default function Dashboard() {
             this section was the one exception, showing its header and count
             then nothing at all underneath when empty, easy to mistake for
             "still loading" instead of the normal, common state it actually
-            is (nothing to approve right now). */}
-        {pendingApprovals.length === 0 && <p className="hint">אין כרגע שום פעולה שממתינה לאישור שלך.</p>}
-        {pendingApprovals.slice(0, 3).map((a) => {
+            is (nothing to approve right now). pendingApprovals itself looks
+            up each approval's opportunity by id, so a failed opportunities
+            load (not just a failed approvals load) makes this count just as
+            unreliable - both must show the honest failure, not a
+            fabricated zero that looks identical to "genuinely nothing
+            pending". */}
+        {approvalsUnreliable ? (
+          <p className="form-error">לא ניתן לטעון אישורים כרגע — {sectionErrors.approvals || sectionErrors.opportunities}</p>
+        ) : pendingApprovals.length === 0 ? (
+          <p className="hint">אין כרגע שום פעולה שממתינה לאישור שלך.</p>
+        ) : null}
+        {!approvalsUnreliable && pendingApprovals.slice(0, 3).map((a) => {
           const opp = opportunities.find((o) => o.id === a.opportunityId);
           return (
             <Link key={a.id} to={`/opportunities/${a.opportunityId}`} className="opp-row">
@@ -252,10 +302,11 @@ export default function Dashboard() {
 
       <section className="section">
         <div className="section-header">
-          <h2>מקורות הכנסה ({connectedCount}/{sources.length} מחוברים)</h2>
+          <h2>מקורות הכנסה {sectionErrors.sources ? '' : `(${connectedCount}/${sources.length} מחוברים)`}</h2>
           <Link className="link" to="/sources">פרטים ←</Link>
         </div>
-        {sources.map((s) => (
+        {sectionErrors.sources && <p className="form-error">לא ניתן לטעון מקורות הכנסה כרגע — {sectionErrors.sources}</p>}
+        {!sectionErrors.sources && sources.map((s) => (
           <div key={s.id} className="source-row">
             <span className={`dot ${s.connected ? 'dot-on' : 'dot-off'}`} />
             <span className="source-name">{s.name}</span>
