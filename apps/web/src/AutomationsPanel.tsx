@@ -870,7 +870,21 @@ export function AutomationsPanel({
         setMessageTemplate("");
       }
     } catch (err) {
-      setError((err as Error).message);
+      // Round 1875: mirrors EntityPanel.tsx's own NOT_FOUND handling
+      // (rounds 1864/1873/1874) for the identical cross-tab race -- another
+      // tab/collaborator can fully delete the rule this form is mid-edit on
+      // between opening it and this PATCH reaching the server. Left
+      // unhandled, the form stayed stuck on "Edit rule" with stale data and
+      // a live Save button, repeating the same 404 forever with no way out
+      // except Cancel -- the exact dead end the in-form Delete button's own
+      // round-803 fix already avoids for the same-tab case.
+      const error = err as Error & { code?: string };
+      if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+        loadRules();
+        if (editingRuleId) resetToCreateMode();
+        return;
+      }
+      setError(error.message);
     } finally {
       setCreateBusy(false);
     }
@@ -883,7 +897,17 @@ export function AutomationsPanel({
       const { rule: updated } = await updateAutomationRule(projectId, rule.id, { enabled: !rule.enabled });
       setRules((prev) => (prev ?? []).map((r) => (r.id === rule.id ? updated : r)));
     } catch (err) {
-      setError((err as Error).message);
+      // Round 1875: mirrors handleSubmit's own identical fix just above --
+      // another tab/collaborator can delete this rule between the toggle
+      // click and this PATCH reaching the server. refresh() drops the
+      // now-gone row instead of leaving it stuck, repeating the same 404 on
+      // every further click.
+      const error = err as Error & { code?: string };
+      if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+        loadRules();
+        return;
+      }
+      setError(error.message);
     } finally {
       setBusyRuleId(null);
     }

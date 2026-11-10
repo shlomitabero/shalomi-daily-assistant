@@ -4399,6 +4399,111 @@ test("deleting the rule currently open for editing returns the form to create mo
 });
 
 /**
+ * Round 1875: round 803 (just above) fixed the SAME-tab sequence --
+ * deleting the rule this tab's own form is mid-edit on, via this tab's own
+ * Delete button. It never considered another tab/collaborator deleting
+ * that same rule while this tab's edit form is open: Save then PATCHes a
+ * rule that's already gone server-side, 404ing AUTOMATION_RULE_NOT_FOUND.
+ * Before this fix, handleSubmit's catch block treated that identically to
+ * every other failure -- an error banner, editingRuleId left pointing at
+ * the now-gone rule, the stale row still in the list, and "Save changes"
+ * still live, repeating the same 404 on every further click with no way
+ * out except Cancel. Mirrors EntityPanel.tsx's own handleSubmit NOT_FOUND
+ * fix (round 1864).
+ */
+test("saving an edit whose rule was deleted by another tab/collaborator returns the form to create mode and drops the row, instead of leaving it stuck on a 404 forever", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    // Starts present so the initial load and the Edit click both see it;
+    // flips once the PATCH 404s, modeling the other tab/collaborator's
+    // delete having fully committed server-side by then -- the refresh
+    // triggered by the fix under test must see it already gone.
+    let deletedElsewhere = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: deletedElsewhere ? [] : [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        // The other tab/collaborator's delete fully commits between this
+        // tab opening the edit form and this PATCH reaching the server.
+        deletedElsewhere = true;
+        return new Response(JSON.stringify({ error: "Automation rule \"rule1\" not found", code: "AUTOMATION_RULE_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement,
+      );
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/, "expected the form to actually be in edit mode before saving");
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "updated message" } });
+      const submitButton = document.querySelector('.automations-create-form button[type="submit"]') as HTMLButtonElement;
+      fireEvent.click(submitButton);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+      assert.match(
+        document.querySelector(".automations-new-heading")!.textContent ?? "",
+        /New rule/,
+        "the form must return to create mode once the rule it was saving is discovered to already be gone",
+      );
+      assert.equal(document.querySelector("p.error"), null, "no raw 404 error banner should be left showing -- this is a clean drop of a vanished rule, not a save failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1875: mirrors the test just above, for handleToggle's own
+ * updateAutomationRule call (the Enable/Disable button) instead of
+ * handleSubmit's. Confirms the now-gone rule's row quietly disappears
+ * instead of showing an error and staying stuck in a permanently-broken
+ * toggle state.
+ */
+test("toggling a rule that was deleted by another tab/collaborator drops the row instead of showing a stuck error", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deletedElsewhere = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: deletedElsewhere ? [] : [makeRule({ enabled: true })] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        deletedElsewhere = true;
+        return new Response(JSON.stringify({ error: "Automation rule \"rule1\" not found", code: "AUTOMATION_RULE_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(document.querySelector(".automations-rule-actions button") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+      assert.equal(document.querySelector("p.error"), null, "no raw 404 error banner should be left showing -- this is a clean drop of a vanished rule, not a toggle failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 831's finding: the rule list's own Edit/Toggle/Delete buttons were
  * only ever disabled by busyRuleId (toggle/delete's own in-flight state),
  * never by createBusy (the shared create-form's own in-flight Save/Create
