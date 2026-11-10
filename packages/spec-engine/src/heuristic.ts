@@ -170,6 +170,34 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "dental clinic", "medical clinic", "dental practice", "medical practice", "private practice",
   "doctor's office", "physical therapy clinic", "chiropractic clinic", "private clinic",
   "מרפאת שיניים", "קליניקה פרטית", "מרפאה פרטית",
+  // Round 1872: the exact same drift rounds 1819/1831/1841 already fixed
+  // for salons/spas, pet care, and private medical/dental clinics, this
+  // time for photography studios, tattoo studios, and catering companies.
+  // A photography-studio description ("A photography studio to manage
+  // client sessions and wedding packages.") matches only Customer/Event;
+  // a tattoo-studio description matches only Appointment; a catering
+  // description matches only Customer/Appointment (or, in Hebrew phrasing
+  // that happens to contain "הזמנות", also Order) -- none of these
+  // entities are in BILLING_ENTITY_NAMES below (Appointment/Customer are
+  // excluded for the same bare-word ambiguity Service/Pet/Patient were,
+  // and Event/Order aren't reliable standalone signals either), and none
+  // of this array's existing phrases fire for them, so all three got
+  // recommended "No payments" despite being textbook paid small-business
+  // verticals charging per session/tattoo/event. Confirmed live that
+  // "photography studio"/"tattoo studio"/"catering company" each fixed
+  // their own English case, and the Hebrew equivalents fixed both the
+  // literal reported cases and a second Hebrew catering phrasing that
+  // doesn't happen to contain "הזמנות" (so wasn't already covered via
+  // Order). Bare "photographer"/"tattoo"/"catering" are deliberately
+  // excluded -- a hobbyist photography club or a non-commercial tattoo-
+  // design app has zero commercial intent, the same reasoning this file
+  // already applies to bare "clinic"/"appointment"/"service".
+  "photography studio", "wedding photographer", "freelance photographer", "photo package", "photography package",
+  "tattoo studio", "tattoo shop", "tattoo parlor", "tattoo artist",
+  "catering company", "catering service", "catering business",
+  "סטודיו צילום", "צילום חתונות", "חבילת צילום",
+  "סטודיו קעקועים",
+  "חברת קייטרינג", "שירותי קייטרינג",
 ];
 
 /**

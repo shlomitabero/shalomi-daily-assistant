@@ -578,6 +578,63 @@ test("still recommends 'No payments' for a non-commercial public health clinic, 
 });
 
 /**
+ * Round 1872: the exact same drift rounds 1819/1831/1841 fixed for salons/
+ * spas, pet care, and private medical/dental clinics, this time for
+ * photography studios, tattoo studios, and catering companies. A
+ * photography-studio description matches only Customer/Event, a tattoo-
+ * studio description matches only Appointment, and a catering description
+ * matches only Customer/Appointment -- none of these are in
+ * BILLING_ENTITY_NAMES, and none of this file's existing PAYMENT_KEYWORDS
+ * phrases fired for them, so all three got recommended "No payments"
+ * despite being textbook paid small-business verticals. Fixed by adding
+ * specific photography/tattoo/catering phrases to PAYMENT_KEYWORDS,
+ * mirroring round 1819/1831/1841's own fix shape.
+ */
+test("asks about payments (recommending Stripe) for a photography studio, tattoo studio, or catering company description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const photography = await provider.generate("A photography studio to manage client sessions and wedding packages.");
+  assert.ok(photography.entities.some((e) => e.name === "Customer" || e.name === "Event"));
+  const photographyPaymentQuestion = photography.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(photographyPaymentQuestion);
+  assert.equal(photographyPaymentQuestion!.recommendation, "Stripe");
+
+  const tattoo = await provider.generate("A tattoo studio app to manage appointments with artists.");
+  assert.ok(tattoo.entities.some((e) => e.name === "Appointment"));
+  const tattooPaymentQuestion = tattoo.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(tattooPaymentQuestion);
+  assert.equal(tattooPaymentQuestion!.recommendation, "Stripe");
+
+  const catering = await provider.generate("A catering company managing event bookings for clients.");
+  const cateringPaymentQuestion = catering.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(cateringPaymentQuestion);
+  assert.equal(cateringPaymentQuestion!.recommendation, "Stripe");
+
+  const photographyHe = await provider.generate("סטודיו צילום לניהול לקוחות וחבילות חתונה.");
+  const photographyHePaymentQuestion = photographyHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(photographyHePaymentQuestion);
+  assert.equal(photographyHePaymentQuestion!.recommendation, "Stripe");
+
+  const tattooHe = await provider.generate("סטודיו קעקועים לניהול תורים עם אומנים.");
+  const tattooHePaymentQuestion = tattooHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(tattooHePaymentQuestion);
+  assert.equal(tattooHePaymentQuestion!.recommendation, "Stripe");
+
+  const cateringHe = await provider.generate("חברת קייטרינג המספקת אוכל לאירועים פרטיים.");
+  const cateringHePaymentQuestion = cateringHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(cateringHePaymentQuestion);
+  assert.equal(cateringHePaymentQuestion!.recommendation, "Stripe");
+});
+
+test("still recommends 'No payments' for a non-commercial photography club, confirming the round-1872 photography-studio fix doesn't regress bare 'photography' ambiguity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const club = await provider.generate("A photography club for hobbyists to share photos.");
+  const paymentQuestion = club.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/
