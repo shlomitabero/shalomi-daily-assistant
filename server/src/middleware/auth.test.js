@@ -36,6 +36,18 @@ test('requireOwner rejects a well-formed but invalid/garbage token', () => {
   assert.equal(nextCalled, false);
 });
 
+test('requireOwner rejects with a clean Hebrew error, not raw English, so a flash of it before the login redirect is never untranslated', () => {
+  // Every other error in this codebase is Hebrew - this 401 body was the
+  // one exception ('not authenticated'). client/src/api.js's auth:expired
+  // handling already redirects to /login purely off the status code, so
+  // this message is never pattern-matched anywhere; it only needs to read
+  // right if a page's own error line renders it in the gap before that
+  // redirect takes effect.
+  const res = makeRes();
+  requireOwner({ headers: {} }, res, () => {});
+  assert.equal(res.body.error, 'לא מחובר — יש להתחבר מחדש');
+});
+
 test('requireOwner calls next() with no response sent for a genuine owner token', () => {
   const res = makeRes();
   let nextCalled = false;
