@@ -34,3 +34,22 @@ test('getEntries returns an empty list rather than throwing when the ledger is e
   getEntries({}, res);
   assert.deepEqual(res.body.entries, []);
 });
+
+test('getEntries caps the response at 200, newest first, instead of returning the entire lifetime ledger', () => {
+  // Same precedent as listActions (actions.js, 200), listDigests
+  // (digest.js, 90), and listPaperTrades (financial.js, 100) - this route
+  // was the one list endpoint left with no cap at all, growing forever
+  // for an app meant to run indefinitely.
+  __resetForTests();
+  for (let i = 0; i < 205; i += 1) {
+    db.ledger.insert({
+      id: makeId('led'), type: 'revenue', amount: i,
+      createdAt: new Date(2026, 0, 1, 0, 0, i).toISOString(),
+    });
+  }
+  const res = makeRes();
+  getEntries({}, res);
+  assert.equal(res.body.entries.length, 200);
+  assert.equal(res.body.entries[0].amount, 204);
+  assert.equal(res.body.entries[199].amount, 5);
+});
