@@ -1659,9 +1659,15 @@ test("HistoryPanel's successful restore clears a stale delete-error banner left 
     const cp1 = makeCheckpoint("cp1", "Initial build");
     const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
 
+    // Round 1856: counts the GET .../checkpoints calls so the test can wait
+    // for handleRestore's own round-1568 fire-and-forget listCheckpoints()
+    // refresh to have actually reached this mock (see below) -- not just
+    // for the initial page load.
+    let checkpointsFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        checkpointsFetchCount += 1;
         return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -1710,7 +1716,25 @@ test("HistoryPanel's successful restore clears a stale delete-error banner left 
 
       const restoreButtons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
       fireEvent.click(restoreButtons[0]); // cp1's own button
-      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2 && document.querySelector(".error") === null);
+      // Round 1856: the DOM-only predicate below (list length + no error
+      // banner) was already true before handleRestore's own await even
+      // resolved -- setError(null) runs synchronously at the top of
+      // handleRestore, and the restore never changes the list length.
+      // That let this test tear down (the finally below, restoring the
+      // REAL globalThis.fetch) while handleRestore's post-await
+      // continuation was still pending its own fire-and-forget
+      // listCheckpoints(projectId) call (round 1568). That call then hit
+      // the real, un-mocked fetch with a relative URL, which throws --
+      // fetchWithWakeRetry (wakeRetry.ts) treats that throw as a Render
+      // cold-start and retries with a REAL setTimeout backoff for up to
+      // REQUEST_TIMEOUT_MS, a live timer the test file's own process
+      // never exits while, visible only as a `--test-timeout`-forced kill
+      // well after this test itself already reported passing. Requiring
+      // the post-restore refresh to have actually landed on this mock
+      // (checkpointsFetchCount reaching 2) closes that race.
+      await waitForCondition(
+        () => document.querySelectorAll(".checkpoint-list li").length === 2 && document.querySelector(".error") === null && checkpointsFetchCount >= 2,
+      );
 
       assert.equal(document.querySelector(".error") === null, true, "the stale delete-error banner must not survive an unrelated, successful restore");
     } finally {
