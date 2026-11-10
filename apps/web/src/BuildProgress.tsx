@@ -660,7 +660,13 @@ export function BuildProgress({
       )}
       {failedStep && (
         <div>
-          <p className="error" role="status">
+          {/* Round 1857: round 1694 moved the sibling `error` banner just
+           * above to role="alert" for exactly this reason -- this is a
+           * genuine terminal failure (the build is dead), not informational
+           * text, so it belongs to the same assertive convention every
+           * other real error surface in this app already follows, not the
+           * polite role="status" reserved for the per-agent caption. */}
+          <p className="error" role="alert">
             {t("build.failed.banner")}
           </p>
           {/* A SUCCESSFUL build's `finished` state is never actually

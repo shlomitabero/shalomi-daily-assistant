@@ -968,8 +968,8 @@ test("BuildProgress still shows the failed-build banner for a genuine, unrecover
     );
     assert.equal(
       document.querySelector("p.error:not(.banner)")!.getAttribute("role"),
-      "status",
-      "the failed-build banner must be announced to screen readers, not just shown visually",
+      "alert",
+      "the failed-build banner must carry role=\"alert\", the same convention round 1694 already applied to the sibling error banner",
     );
   });
 });
