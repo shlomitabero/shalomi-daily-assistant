@@ -150,6 +150,7 @@ export interface BaileysIncomingMessage {
     interactiveMessage?: { body?: { text?: string } };
     liveLocationMessage?: { caption?: string };
     groupInviteMessage?: { groupName?: string; caption?: string };
+    newsletterAdminInviteMessage?: { newsletterName?: string; caption?: string };
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
@@ -482,6 +483,18 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.groupInviteMessage) {
     const g = message.groupInviteMessage;
     return g.groupName ? `[Group Invite] ${g.groupName}` : "[Group Invite]";
+  }
+  // Round 1850: WhatsApp's "invite someone to be an admin of a Channel
+  // (newsletter)" feature. INewsletterAdminInviteMessage in Baileys' own
+  // shipped protobuf types (WAProto/index.d.ts), confirmed fully plaintext
+  // (newsletterName/caption, same bar every prior round in this
+  // message-type family used -- identical shape to groupInviteMessage
+  // above). Previously fell through to the final `return null` and
+  // vanished with zero trace.
+  if (message.newsletterAdminInviteMessage) {
+    const n = message.newsletterAdminInviteMessage;
+    const label = n.newsletterName ? `[Channel Admin Invite] ${n.newsletterName}` : "[Channel Admin Invite]";
+    return n.caption ? `${label} -- ${n.caption}` : label;
   }
   if (message.productMessage) {
     const p = message.productMessage;
