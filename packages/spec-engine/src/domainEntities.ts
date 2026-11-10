@@ -1208,6 +1208,25 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // rounds 576-584 already found elsewhere in this file. A plural-only
       // phrasing matched no Rental-specific keyword at all.
       "השכרות ציוד", "השכרות רכב",
+      // Round 1812: every existing English keyword above names a specific
+      // rental shape ("equipment"/"tool"/"gear" rental, or "rental
+      // business") -- the single most generic, natural phrasing for this
+      // category ("bike rental", "party rental", "kayak rental shop")
+      // matched none of them and fell through to the degenerate generic
+      // Item fallback. \b-bounded against "parental" (a real substring
+      // collision: "parental".includes("rental") is true, but no word
+      // boundary separates "pa" from "rental" inside it), the same pattern
+      // this file's other bare-word fixes already use.
+      //
+      // A bare Hebrew "השכרה" counterpart was considered and rejected: it
+      // is a substring of Property's own "...להשכרה" keyword and of this
+      // file's existing Vehicle-fleet-for-rental Hebrew test fixture
+      // ("ניהול צי רכבים להשכרה"), so adding it would make a plain
+      // apartment-for-rent or vehicle-fleet-for-rental description also
+      // match Rental, blurring an entity boundary this file deliberately
+      // keeps separate (the same reason WorkOrder deliberately avoids
+      // Vehicle's own "מוסך"/"מכונאי" keywords above).
+      /\brental(s)?\b/,
     ],
     labelHe: "השכרות",
     descriptionHe: "פריט שהושכר ללקוח לתקופה מוגדרת.",

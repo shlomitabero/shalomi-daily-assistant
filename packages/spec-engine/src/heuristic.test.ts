@@ -893,6 +893,26 @@ test("recognizes vehicle/garage, event-planning, veterinary, and equipment-renta
   assert.ok(rentalShop.entities.some((e) => e.name === "Rental"));
 });
 
+// Round 1812: every one of Rental's existing English keywords names a
+// specific rental shape ("equipment"/"tool"/"gear" rental, or "rental
+// business") -- the single most generic, natural phrasing for this very
+// common category (a bike/party/kayak rental shop) matched none of them
+// and fell through to the degenerate generic Item fallback.
+test("recognizes a plain 'bike rental'/'party rental' description as the Rental entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const bikeRental = await provider.generate("An app for a bike rental shop.");
+  assert.ok(bikeRental.entities.some((e) => e.name === "Rental"), "'bike rental' alone must match Rental, not fall through to Item");
+
+  const partyRental = await provider.generate("A party rental company renting tents and tables for events.");
+  assert.ok(partyRental.entities.some((e) => e.name === "Rental"), "'party rental' alone must match Rental, not fall through to Item");
+
+  // The bare 'rental(s)' keyword must not spuriously match the unrelated
+  // "parental" (no word boundary separates "pa" from "rental" inside it).
+  const parentalControls = await provider.generate("An app for setting up parental controls and screen-time limits.");
+  assert.ok(!parentalControls.entities.some((e) => e.name === "Rental"), "'parental' must not spuriously match Rental via a bare 'rental' substring");
+});
+
 /**
  * Round 1752: the Pet entity rule's keywords only ever covered the
  * clinic/grooming phrasing of a pet business ("veterinary", "vet clinic",
