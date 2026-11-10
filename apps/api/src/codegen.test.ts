@@ -26059,6 +26059,181 @@ test("the exported EntityView forgets a selected record's own id once another ta
 });
 
 /**
+ * Round 1873: the exact same cross-tab race round 1864 fixed for this
+ * exported app's own add/edit form Save button (see that round's own doc
+ * comment on handleSubmit) was never ported to this file's two OTHER
+ * updateRecord-issuing mutation paths that share the identical hazard --
+ * commitInlineEdit (double-click-a-cell inline editing) and
+ * handleMoveFields (the board dropdown, board drag, calendar drag). Both
+ * 404 NOT_FOUND once another tab/collaborator has fully deleted the
+ * record being edited/moved, and neither checked for it: the row just
+ * stayed listed, highlighted red forever, repeating the identical 404 on
+ * every further interaction. Confirms commitInlineEdit now refreshes the
+ * list and drops the ghost row instead, mirroring the live Forge AI
+ * preview's own identical round-1873 fix to EntityPanel.tsx.
+ */
+test("the exported EntityView's inline cell edit drops the ghost row (instead of leaving it stuck, highlighted red) when its PATCH 404s NOT_FOUND because another tab already fully deleted the record", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    if (input === "/api/Customer") {
+      // JSON round-trip, same as every other mock in this file -- the
+      // response must NOT hand the component the live `store` array
+      // itself, or the test's own later store.splice() below would mutate
+      // whatever's already sitting in the component's own records state
+      // (same array reference) independently of any refresh(), making the
+      // row vanish regardless of whether the fix under test ever runs.
+      return new Response(JSON.stringify({ records: store, totalCount: store.length, truncated: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (input === "/api/Customer/1" && init?.method === "PATCH") {
+      // The other tab's delete fully commits between this GET and this
+      // PATCH -- the server-side row is already gone by the time the
+      // PATCH actually reaches it.
+      return new Response(JSON.stringify({ error: "Record 1 not found in Customer", code: "NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(() => view.container.querySelectorAll("tbody tr").length === 1, "the initial record fetch never completed");
+
+      const nameCell = view.container.querySelector('tr[data-record-id="1"] td.cell-inline-editable') as HTMLTableCellElement;
+      await act(async () => {
+        fireEvent.doubleClick(nameCell);
+      });
+      const input = view.container.querySelector('tr[data-record-id="1"] input[type="text"]') as HTMLInputElement;
+      // Only now, once the PATCH is actually in flight, does the other
+      // tab's delete land in this store -- mirrors the round-1864 test's
+      // own "delete commits after editing started, before the commit lands" ordering.
+      store.splice(0, 1);
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "Acme Corporation" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
+
+      await waitForCondition(() => view.container.querySelectorAll("tbody tr").length === 0, "a PATCH that 404s NOT_FOUND against its own record must refresh() and drop the now-gone row, not leave it stuck");
+      assert.equal(
+        view.container.querySelector(".board-card-move-error, .record-row-move-error"),
+        null,
+        "no move-error marker should be left showing -- this is a clean drop of a vanished row, not a save failure the user needs to retry",
+      );
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported EntityView's board-view move drops the ghost card (instead of leaving it stuck, highlighted red) when its PATCH 404s NOT_FOUND because another tab already fully deleted the record", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+  const store = [{ id: 1, name: "Acme Corp", status: "New" }];
+
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    if (input === "/api/Customer") {
+      // JSON round-trip, same as every other mock in this file -- see the
+      // identical comment on the inline-cell-edit test above for why the
+      // live `store` array must never be handed to the component directly.
+      return new Response(JSON.stringify({ records: store, totalCount: store.length, truncated: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (input === "/api/Customer/1" && init?.method === "PATCH") {
+      return new Response(JSON.stringify({ error: "Record 1 not found in Customer", code: "NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const view = render(React.createElement(EntityView, props));
+      await waitForCondition(() => view.container.querySelectorAll("tbody tr").length === 1, "the initial record fetch never completed");
+
+      const boardToggle = view.container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      await waitForCondition(() => view.container.querySelectorAll(".board-card").length === 1, "the board view never rendered its one card");
+
+      const moveSelect = view.container.querySelector(".board-card-move") as HTMLSelectElement;
+      // The other tab's delete fully commits after the board already
+      // rendered this card, before the dropdown change's own PATCH fires.
+      store.splice(0, 1);
+      await act(async () => {
+        fireEvent.change(moveSelect, { target: { value: "Won" } });
+      });
+
+      await waitForCondition(() => view.container.querySelectorAll(".board-card").length === 0, "a PATCH that 404s NOT_FOUND against its own record must refresh() and drop the now-gone card, not leave it stuck");
+
+      view.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1787: mirrors the live Forge AI preview's own EntityPanel.tsx fix
  * for the exact same gap, never ported here -- the viewMode useState
  * initializer only ever validates the persisted Table/Board/Calendar

@@ -5033,7 +5033,19 @@ export function EntityPanel({
       await updateRecord(projectId, entity.name, id, fields);
       await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      const error = err as Error & { code?: string };
+      // Round 1873: mirrors handleSubmit's own round-1864 fix -- another
+      // tab/collaborator can fully delete this record between the board
+      // dropdown change/card drag/calendar drag starting and this PATCH
+      // reaching the server, 404ing NOT_FOUND. Left unhandled, the row
+      // just stayed highlighted red forever, repeating the identical 404
+      // on every further interaction. refresh() drops the now-gone row
+      // instead, the same as Save already does for this exact race.
+      if (error.code === "NOT_FOUND") {
+        await refresh();
+        return;
+      }
+      setError(error.message);
       setMoveErrorId(id);
     }
   }
@@ -5199,7 +5211,20 @@ export function EntityPanel({
       await updateRecord(projectId, entity.name, recordId, { [field]: value });
       await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      const error = err as Error & { code?: string };
+      // Round 1873: mirrors handleSubmit's own round-1864 fix -- another
+      // tab/collaborator can fully delete this record between the
+      // double-click that opened this cell and the Enter/blur commit's
+      // own PATCH reaching the server, 404ing NOT_FOUND. Left unhandled,
+      // the row just stayed highlighted red forever, repeating the
+      // identical 404 on every further interaction. refresh() drops the
+      // now-gone row instead, the same as Save already does for this
+      // exact race.
+      if (error.code === "NOT_FOUND") {
+        await refresh();
+        return;
+      }
+      setError(error.message);
       setMoveErrorId(recordId);
     }
   }

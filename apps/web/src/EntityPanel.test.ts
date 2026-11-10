@@ -19807,6 +19807,102 @@ test("EntityPanel closes the edit form and drops the ghost row when Save discove
 });
 
 /**
+ * Round 1873: the exact same cross-tab race round 1864 fixed for the
+ * single-record add/edit form's Save button, left open for commitInlineEdit
+ * (double-click-a-cell inline editing) and handleMoveFields (the board
+ * dropdown, board drag-and-drop, calendar drag-and-drop) -- both funnel
+ * through the identical updateRecord PATCH, both 404 NOT_FOUND once
+ * another tab/collaborator has fully deleted the record, and neither
+ * checked for it: the row just stayed listed, highlighted red forever,
+ * repeating the same 404 on every further interaction. Confirms
+ * commitInlineEdit now refreshes the list and drops the ghost row instead,
+ * the same as Save already does.
+ */
+test("EntityPanel's inline cell edit drops the ghost row (instead of leaving it stuck, highlighted red) when its PATCH 404s NOT_FOUND because another tab already fully deleted the record", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        // The other tab's delete fully commits between this GET and this
+        // PATCH -- the server-side row is already gone by the time the
+        // PATCH actually reaches it.
+        return new Response(JSON.stringify({ error: "Record 1 not found in Deal", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // The GET keeps returning the store unfiltered -- this tab's own
+      // table still shows the row right up until refresh() (triggered by
+      // the NOT_FOUND catch below) re-fetches and this array is emptied.
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Acme Corporation" } });
+      // Only now, once the PATCH is actually in flight, does the other
+      // tab's delete land in this store -- mirrors the round-1864 test's
+      // own "delete commits after the form opened, before Save is clicked" ordering.
+      store.splice(0, 1);
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+      assert.equal(
+        document.querySelector("p.error"),
+        null,
+        "no error banner should be left showing -- this is a clean drop of a vanished row, not a save failure the user needs to retry",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("EntityPanel's board-view move drops the ghost card (instead of leaving it stuck, highlighted red) when its PATCH 404s NOT_FOUND because another tab already fully deleted the record", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({ error: "Record 1 not found in Deal", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const moveSelect = document.querySelector(".board-card-move") as HTMLSelectElement;
+      // The other tab's delete fully commits after the board already
+      // rendered this card, before the dropdown change's own PATCH fires.
+      store.splice(0, 1);
+      fireEvent.change(moveSelect, { target: { value: "won" } });
+
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 0);
+      assert.equal(
+        document.querySelector("p.error"),
+        null,
+        "no error banner should be left showing -- this is a clean drop of a vanished card, not a save failure the user needs to retry",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1004: the "jump straight to a different record without saving or
  * cancelling first" abandonment path -- startEdit's own new cleanup call,
  * distinct from both the explicit Cancel button and Escape.

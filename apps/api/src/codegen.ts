@@ -7969,6 +7969,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       await updateRecord(entity.name, id, fields);
       await refresh();
     } catch (err) {
+      // Round 1873: mirrors handleSubmit's own round-1864 fix (and the
+      // live Forge AI preview's EntityPanel.tsx identical doc comment) --
+      // another tab/collaborator can fully delete this record between
+      // the board dropdown change/card drag/calendar drag starting and
+      // this PATCH reaching the server, 404ing NOT_FOUND. refresh() drops
+      // the now-gone row instead of leaving it stuck highlighted red,
+      // repeating the identical 404 on every further interaction.
+      if (err.code === "NOT_FOUND") {
+        await refresh();
+        return;
+      }
       setError(err.message);
       setMoveErrorId(id);
     }
@@ -8028,6 +8039,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       await updateRecord(entity.name, recordId, { [field]: value });
       await refresh();
     } catch (err) {
+      // Round 1873: mirrors handleSubmit's own round-1864 fix -- another
+      // tab/collaborator can fully delete this record between the
+      // double-click that opened this cell and the Enter/blur commit's
+      // own PATCH reaching the server, 404ing NOT_FOUND. refresh() drops
+      // the now-gone row instead of leaving it stuck highlighted red,
+      // repeating the identical 404 on every further interaction.
+      if (err.code === "NOT_FOUND") {
+        await refresh();
+        return;
+      }
       setError(err.message);
       setMoveErrorId(recordId);
     }
