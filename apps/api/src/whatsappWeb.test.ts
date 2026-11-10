@@ -2912,6 +2912,78 @@ test("an incoming WhatsApp payment-invite message (paymentInviteMessage) is logg
 });
 
 /**
+ * Round 1863: callLogMesssage (Baileys' own three-s typo) is WhatsApp's
+ * "call log" chat bubble -- the system message that appears directly in
+ * the conversation after a voice/video call, structurally separate from
+ * the real-time `call` socket event handleIncomingCalls above logs missed
+ * calls from (rounds 1612/1861). Confirmed against the installed Baileys
+ * protobuf (WAProto/index.d.ts): `isVideo`/`callOutcome`/`durationSecs`,
+ * CallOutcome enum CONNECTED=0/.../ONGOING=5/.... Only CONNECTED/
+ * ACCEPTED_ELSEWHERE/ONGOING are handled -- a call that actually
+ * connected previously left zero trace anywhere in this app's WhatsApp
+ * log. MISSED/REJECTED/FAILED/SILENCED_* are deliberately NOT handled
+ * here, to avoid double-logging a call handleIncomingCalls' own
+ * reject/timeout/bare-terminate path already covers (see the next test).
+ */
+test("an incoming WhatsApp call-log message (callLogMesssage) for a call that actually connected is logged with a descriptive placeholder including its duration, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { callOutcome: 0, durationSecs: 332 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { isVideo: true, callOutcome: 4 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: callLogMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(callLogMessages.length, 2);
+  assert.equal(callLogMessages[0].body, "[Video call answered on another device]");
+  assert.equal(callLogMessages[1].body, "[Call, 5:32]");
+  for (const m of callLogMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
+ * Round 1863: the non-duplication half of the fix above -- a MISSED/
+ * REJECTED/FAILED/SILENCED_* outcome on callLogMesssage must stay
+ * unhandled (fall through to null, dropped), since that same call was
+ * already logged as "[Missed call]" by handleIncomingCalls' own real-time
+ * `call`-event pipeline (rounds 1612/1861). Handling it here too would
+ * double-log the identical call.
+ */
+test("an incoming WhatsApp call-log message for a call that was missed/rejected/failed is NOT logged a second time -- handleIncomingCalls' own real-time call-event pipeline already covers it", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { callOutcome: 1 } } }, // MISSED
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { callOutcome: 2 } } }, // FAILED
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { callOutcome: 3 } } }, // REJECTED
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { callOutcome: 6 } } }, // SILENCED_BY_DND
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { callLogMesssage: { callOutcome: 7 } } }, // SILENCED_UNKNOWN_CALLER
+    ],
+  });
+
+  assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
+/**
  * Round 1600: encReactionMessage is the separate, genuinely-encrypted
  * sibling of reactionMessage (round 1088) this file's own doc comment
  * already named but never actually handled. Confirmed directly against

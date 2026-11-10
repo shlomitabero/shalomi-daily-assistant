@@ -185,6 +185,7 @@ export interface BaileysIncomingMessage {
     associatedChildMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessageV2?: { message?: BaileysIncomingMessage["message"] };
+    callLogMesssage?: { isVideo?: boolean; callOutcome?: number; durationSecs?: number };
   };
 }
 
@@ -832,6 +833,41 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // "[Payment request declined]". Previously fell through to the final
   // `return null` below and vanished from the message log with zero trace.
   if (message.requestPhoneNumberMessage) return "[Phone number requested]";
+  // Round 1863: WhatsApp's own "call log" chat bubble (the system message
+  // that appears directly in the conversation after a voice/video call,
+  // e.g. "Voice call, 5:32") -- confirmed against the installed Baileys
+  // protobuf (WAProto/index.d.ts: `callLogMesssage` -- note Baileys' own
+  // three-s typo -- carrying `isVideo`/`callOutcome`/`durationSecs`,
+  // CallOutcome enum CONNECTED=0/MISSED=1/FAILED=2/REJECTED=3/
+  // ACCEPTED_ELSEWHERE=4/ONGOING=5/SILENCED_BY_DND=6/
+  // SILENCED_UNKNOWN_CALLER=7). This is structurally separate from the
+  // real-time `call` socket event (offer/ringing/accept/reject/timeout/
+  // terminate) handleIncomingCalls above already logs missed calls from
+  // (rounds 1612/1861) -- delivered here instead via the ordinary
+  // messages.upsert stream this function already processes everything
+  // else from. Only handling the outcomes handleIncomingCalls can never
+  // already have logged a row for (a call that actually connected) --
+  // MISSED/FAILED/REJECTED/SILENCED_* are deliberately left alone here to
+  // avoid double-logging the same call handleIncomingCalls' own
+  // reject/timeout/bare-terminate path already covers.
+  if (message.callLogMesssage) {
+    const CONNECTED = 0;
+    const ACCEPTED_ELSEWHERE = 4;
+    const ONGOING = 5;
+    const { isVideo, callOutcome, durationSecs } = message.callLogMesssage;
+    const label = isVideo ? "Video call" : "Call";
+    if (callOutcome === CONNECTED) {
+      if (durationSecs != null && durationSecs > 0) {
+        const mins = Math.floor(durationSecs / 60);
+        const secs = durationSecs % 60;
+        return `[${label}, ${mins}:${String(secs).padStart(2, "0")}]`;
+      }
+      return `[${label} connected]`;
+    }
+    if (callOutcome === ACCEPTED_ELSEWHERE) return `[${label} answered on another device]`;
+    if (callOutcome === ONGOING) return `[${label} in progress]`;
+    return null;
+  }
   return null;
 }
 
