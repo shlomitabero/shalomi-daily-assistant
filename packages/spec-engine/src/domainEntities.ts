@@ -1818,6 +1818,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "עמותה"/"עמותות". Either plural-only phrasing ("עורכי דין"/
       // "עורכות דין") matched no domain entity at all.
       "עורך דין", "עורכי דין", "עורכת דין", "עורכות דין",
+      // Round 1813: the Hebrew side already has the bare profession nouns
+      // above, but the English side only ever got the specific phrases
+      // "legal case"/"law firm"/"case management"/"legal matter" -- the
+      // single most natural phrasing a real solo lawyer/attorney would
+      // type ("an app for a divorce lawyer", "a personal injury attorney")
+      // matched none of them and fell through to Customer-only or the
+      // degenerate Item fallback. Plain substrings (not \b-bounded regexes
+      // like this file's other bare-word fixes) because "lawyer"/"attorney"
+      // aren't substrings of any other common English word or any other
+      // entity's keyword in this file, unlike "case" itself (never added
+      // bare for that reason) -- "lawyers"/"attorneys" already match via
+      // the singular being a prefix of the plural.
+      "lawyer", "attorney",
     ],
     labelHe: "תיקים",
     descriptionHe: "תיק משפטי שמנוהל עבור לקוח.",

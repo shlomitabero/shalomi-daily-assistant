@@ -3190,6 +3190,25 @@ test("Case's 'עורך דין'/'עורכת דין' keywords also match their plu
   assert.ok(femSingular.entities.some((e) => e.name === "Case"), "'עורכת דין' (female singular) must still match Case");
 });
 
+// Round 1813: Case's Hebrew keywords already cover the bare profession
+// noun ("עורך דין"), but the English side only ever got specific phrases
+// ("legal case"/"law firm"/"case management"/"legal matter") -- a plain
+// "lawyer"/"attorney" description matched none of them.
+test("Case's bare 'lawyer'/'attorney' keywords match, not just the specific English phrases or their Hebrew equivalents", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const divorceLawyer = await provider.generate("An app for a divorce lawyer.");
+  assert.ok(divorceLawyer.entities.some((e) => e.name === "Case"), "'lawyer' alone must match Case, not fall through to the generic Item fallback");
+
+  const injuryAttorney = await provider.generate("A personal injury attorney wants to track settlements and clients.");
+  assert.ok(injuryAttorney.entities.some((e) => e.name === "Case"), "'attorney' alone must match Case");
+
+  // "lawyers"/"attorneys" (plural) already match via the singular being a
+  // substring prefix of the plural -- no separate plural keyword needed.
+  const lawyersPlural = await provider.generate("An app for a firm of lawyers to track their cases.");
+  assert.ok(lawyersPlural.entities.some((e) => e.name === "Case"), "'lawyers' (plural) must also match Case");
+});
+
 /**
  * Regression test for round 579's finding: InsuranceClaim's Hebrew
  * keyword "פוליסת ביטוח" (insurance policy) had no plural entry. It's
