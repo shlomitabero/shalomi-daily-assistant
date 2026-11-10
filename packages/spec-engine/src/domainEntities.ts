@@ -1791,6 +1791,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "tailor shop", "tailoring shop", "tailoring business", "alterations shop",
       /\bclothing alterations?\b/, /\bgarment alterations?\b/, "seamstress", "dressmaker",
       "חייט", "חייטת", "חייטים", "תיקוני בגדים",
+      // Round 1827: a moving/relocation company is an equally common small-
+      // business vertical as the tailoring shop round 1816 added -- same
+      // shape (technician = moving crew, scheduledDate = moving day), but
+      // had no WorkOrder keyword at all, so "a moving company tracking
+      // jobs and crews" fell through to the generic Item fallback.
+      // Deliberately NOT a bare "mover(s)": that collides with the common
+      // idiom "movers and shakers" (confirmed live), the same bare-noun
+      // pitfall round 1816's own comment documents for "tailor". Phrase-
+      // only keywords avoid that false positive while still closing the
+      // realistic cases. Hebrew "מוביל"/"מובילים" deliberately excluded
+      // too -- that word doubles as the ordinary adjective "leading"
+      // ("החברה המובילה בתחום" = "the leading company in the field",
+      // confirmed live), an even more common false-positive source than
+      // the English "mover(s)" case.
+      "moving company", "moving business", "moving service", "moving services",
+      "relocation company", "relocation service", "relocation services", "relocation business",
+      "movers and packers", /\blocal movers\b/,
+      "חברת הובלות", "חברת הובלה", "שירותי הובלה", "הובלת דירות",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",

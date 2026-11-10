@@ -1465,6 +1465,48 @@ test("WorkOrder's tailoring/alterations keywords match, and a bare 'tailor' idio
   );
 });
 
+// Round 1827: a moving/relocation company is the same small-business vertical
+// gap as round 1816's tailoring-shop fix -- no WorkOrder keyword matched it
+// at all, so it fell through to the generic Item fallback. Also confirms two
+// deliberate false-positive guards: a bare "mover(s)" keyword was NOT added,
+// because "movers and shakers" is a common idiom in ordinary app
+// descriptions, and the Hebrew "מוביל"/"מובילים" were NOT added, because
+// that word doubles as the ordinary adjective "leading" ("החברה המובילה
+// בתחום" = "the leading company in the field").
+test("WorkOrder's moving/relocation keywords match, and bare 'movers'/'מוביל' idioms do not spuriously match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const movingCompany = await provider.generate("A moving company tracking jobs and crews.");
+  assert.ok(movingCompany.entities.some((e) => e.name === "WorkOrder"), "'moving company' alone must match WorkOrder");
+
+  const relocation = await provider.generate("A relocation business managing moves for corporate clients.");
+  assert.ok(
+    relocation.entities.some((e) => e.name === "WorkOrder"),
+    "'relocation business' must match WorkOrder",
+  );
+
+  const moversAndPackers = await provider.generate("An app for movers and packers to schedule jobs.");
+  assert.ok(
+    moversAndPackers.entities.some((e) => e.name === "WorkOrder"),
+    "'movers and packers' must match WorkOrder",
+  );
+
+  const movingHe = await provider.generate("אפליקציה לחברת הובלות לניהול הובלות.");
+  assert.ok(movingHe.entities.some((e) => e.name === "WorkOrder"), "'חברת הובלות' must match WorkOrder");
+
+  const idiom = await provider.generate("An app for movers and shakers in the startup scene.");
+  assert.ok(
+    !idiom.entities.some((e) => e.name === "WorkOrder"),
+    "the idiom 'movers and shakers' must not spuriously match WorkOrder",
+  );
+
+  const leadingHe = await provider.generate("החברה המובילה בתחום ניהול פרויקטים.");
+  assert.ok(
+    !leadingHe.entities.some((e) => e.name === "WorkOrder"),
+    "the Hebrew adjective 'המובילה' (leading) must not spuriously match WorkOrder",
+  );
+});
+
 test("Customer's 'lead' keyword doesn't spuriously match plain 'leaders'/'leadership' text", async () => {
   const provider = new HeuristicSpecProvider();
   const leadership = await provider.generate("An app for managing team leaders and their schedules.");
