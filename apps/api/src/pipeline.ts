@@ -18,7 +18,7 @@ import {
   type ForgeDatabase,
   type MigrationChange,
 } from "@forge/db";
-import { detectLikelyEntityRenames, requestSpecFix } from "@forge/spec-engine";
+import { detectLikelyEntityRenames, detectLikelyFieldRenames, requestSpecFix } from "@forge/spec-engine";
 import { deleteUploadedFile } from "./uploadPaths.js";
 
 const RESERVED_SQL_WORDS = new Set([
@@ -419,6 +419,11 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
   // one into it), same optional-and-silent-when-absent shape as every
   // other caller-specific hazard clause here.
   const likelyRenames = rawCandidateSpec ? detectLikelyEntityRenames(previousSpec, rawCandidateSpec) : [];
+  // Round 1825: the field-level analog of the entity check just above --
+  // same "must run against the RAW pre-merge candidate" reasoning applies
+  // identically one level down, inside an entity that itself survives the
+  // merge (mergeRefinedSpec's own field loop never removes a field either).
+  const likelyFieldRenames = rawCandidateSpec ? detectLikelyFieldRenames(previousSpec, rawCandidateSpec) : [];
   // An entity that still exists can nonetheless lose one of its OWN fields
   // (same root cause as an entity disappearing outright, one level down).
   // computeImpact already computes this per entity
@@ -462,6 +467,9 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
       : "") +
     (likelyRenames.length > 0
       ? ` Warning: ${likelyRenames.map((r) => `"${r.from}" looks like it was meant to become "${r.to}"`).join("; ")} -- both entities now exist side by side; if this was meant to be a rename, delete the old one yourself.`
+      : "") +
+    (likelyFieldRenames.length > 0
+      ? ` Warning: ${likelyFieldRenames.map((r) => `${r.entity}'s "${r.from}" field looks like it was meant to become "${r.to}"`).join("; ")} -- both fields now exist side by side; if this was meant to be a rename, delete the old one yourself.`
       : "")
   );
 }

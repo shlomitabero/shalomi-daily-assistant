@@ -221,3 +221,49 @@ export function detectLikelyEntityRenames(current: ProductSpec, candidate: Produ
   }
   return renames;
 }
+
+/**
+ * Round 1825: the field-level analog of detectLikelyEntityRenames above --
+ * that function only ever matches a current entity the candidate drops
+ * entirely against a brand-new candidate entity, but mergeRefinedSpec's
+ * own per-entity field loop (lines 115-121 above) has the exact same
+ * "candidate only adds, current survives" limitation one level down,
+ * inside an entity that itself matched and survives the merge (e.g.
+ * "rename the priority field to urgencyLevel" on Ticket): the old field
+ * is never removed, the new one gets added, and the entity ends up with
+ * both -- the same silent-duplication shape, one level down, with the
+ * same real consequence (diffAndMigrate genuinely ADD COLUMNs the new
+ * field while leaving the old column intact).
+ *
+ * Deliberately scoped narrowly to avoid a false positive: only when a
+ * surviving entity drops EXACTLY ONE field and gains EXACTLY ONE new
+ * field (no ambiguity about which pair goes together, unlike the
+ * entity-level check above which can lean on a whole field-name-set
+ * match), and the two share the same type (plus, for a relation field,
+ * the same relationTo -- a same-named field keeping its name but
+ * changing type/relationTo is already covered by computeImpact's own
+ * retypedFields/retargetedFields, a different, already-handled shape).
+ */
+export function detectLikelyFieldRenames(current: ProductSpec, candidate: ProductSpec): { entity: string; from: string; to: string }[] {
+  const currentByLowerName = new Map(current.entities.map((entity) => [entity.name.toLowerCase(), entity]));
+  const renames: { entity: string; from: string; to: string }[] = [];
+  for (const candidateEntity of candidate.entities) {
+    const currentEntity = currentByLowerName.get(candidateEntity.name.toLowerCase());
+    if (!currentEntity) continue;
+    const candidateFieldNames = new Set(candidateEntity.fields.map((field) => field.name.toLowerCase()));
+    const currentFieldNames = new Set(currentEntity.fields.map((field) => field.name.toLowerCase()));
+    const droppedFields = currentEntity.fields.filter((field) => !candidateFieldNames.has(field.name.toLowerCase()));
+    const addedFields = candidateEntity.fields.filter((field) => !currentFieldNames.has(field.name.toLowerCase()));
+    if (droppedFields.length !== 1 || addedFields.length !== 1) continue;
+    const [dropped] = droppedFields;
+    const [added] = addedFields;
+    if (dropped.type !== added.type) continue;
+    if (dropped.type === "relation" && (dropped.relationTo ?? "").toLowerCase() !== (added.relationTo ?? "").toLowerCase()) continue;
+    renames.push({
+      entity: candidateEntity.label || candidateEntity.name,
+      from: dropped.label || dropped.name,
+      to: added.label || added.name,
+    });
+  }
+  return renames;
+}

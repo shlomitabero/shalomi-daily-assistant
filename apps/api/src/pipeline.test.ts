@@ -2340,6 +2340,62 @@ test("describeImpactHazards omits the rename warning when no rawCandidateSpec is
 });
 
 /**
+ * Round 1825: the field-level analog of the round-1803 test above --
+ * mergeRefinedSpec's own per-entity field loop has the exact same
+ * "candidate only adds, current survives" limitation one level down, inside
+ * an entity that itself matched and survives the merge (e.g. "rename the
+ * priority field to urgencyLevel" on Ticket).
+ */
+test("describeImpactHazards warns about a likely field rename when given the raw pre-merge candidate, even though the merged nextSpec itself keeps both fields", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Ticket",
+        fields: [{ name: "subject", type: "text", required: true }, { name: "priority", type: "enum", required: false, enumValues: ["Low", "High"] }],
+      },
+    ],
+  };
+  // What generateSpec() actually returned for "rename priority to
+  // urgencyLevel on Ticket" -- urgencyLevel instead of priority, never
+  // alongside it, on the same surviving Ticket entity.
+  const rawCandidateSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Ticket",
+        fields: [{ name: "subject", type: "text", required: true }, { name: "urgencyLevel", type: "enum", required: false, enumValues: ["Low", "High"] }],
+      },
+    ],
+  };
+  // What mergeRefinedSpec's own "current always survives" rule actually
+  // produces: priority restored, urgencyLevel added alongside it.
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [
+      {
+        name: "Ticket",
+        fields: [...previousSpec.entities[0].fields, ...rawCandidateSpec.entities[0].fields.slice(1)],
+      },
+    ],
+  };
+
+  assert.doesNotMatch(
+    describeImpactHazards(previousSpec, nextSpec),
+    /looks like it was meant to become/,
+    "without rawCandidateSpec, this looks like a harmless pure addition -- priority is still right there in nextSpec",
+  );
+  const hazards = describeImpactHazards(previousSpec, nextSpec, rawCandidateSpec);
+  assert.match(hazards, /Ticket's "priority" field looks like it was meant to become "urgencyLevel"/);
+  assert.match(hazards, /both fields now exist side by side/);
+});
+
+/**
  * Round 947: carryForwardLabels' own counterpart to the describeImpactHazards
  * tests above -- a case-only entity/field rename must still carry the
  * user's own prior label forward, the exact same label-loss regression

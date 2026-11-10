@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProductSpec } from "@forge/shared";
 import { AnthropicSpecProvider, SYSTEM_PROMPT } from "./anthropic.js";
-import { selectProvider, generateSpec, mergeRefinedSpec, detectLikelyEntityRenames } from "./index.js";
+import { selectProvider, generateSpec, mergeRefinedSpec, detectLikelyEntityRenames, detectLikelyFieldRenames } from "./index.js";
 
 function baseSpec(overrides: Partial<ProductSpec> = {}): ProductSpec {
   return {
@@ -458,4 +458,68 @@ test("detectLikelyEntityRenames is a no-op when nothing was dropped or added (a 
     entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }, { name: "phone", type: "text", required: false }] }],
   });
   assert.deepEqual(detectLikelyEntityRenames(current, candidate), []);
+});
+
+/**
+ * Round 1825: the field-level analog of detectLikelyEntityRenames above --
+ * mergeRefinedSpec's own per-entity field loop has the exact same
+ * "candidate only adds, current survives" limitation one level down, inside
+ * an entity that itself matched and survives the merge.
+ */
+test("detectLikelyFieldRenames flags a field the candidate dropped paired with a brand-new same-type field on the same surviving entity", () => {
+  const current = baseSpec({
+    entities: [
+      {
+        name: "Ticket",
+        label: "Ticket",
+        fields: [{ name: "subject", type: "text", required: true }, { name: "priority", label: "Priority", type: "enum", required: false, enumValues: ["Low", "High"] }],
+      },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "Ticket",
+        label: "Ticket",
+        fields: [{ name: "subject", type: "text", required: true }, { name: "urgencyLevel", label: "Urgency Level", type: "enum", required: false, enumValues: ["Low", "High"] }],
+      },
+    ],
+  });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), [{ entity: "Ticket", from: "Priority", to: "Urgency Level" }]);
+});
+
+test("detectLikelyFieldRenames finds nothing when the candidate genuinely just adds a new, unrelated field (current field survives untouched)", () => {
+  const current = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "subject", type: "text", required: true }] }] });
+  const candidate = baseSpec({
+    entities: [{ name: "Ticket", fields: [{ name: "subject", type: "text", required: true }, { name: "assignee", type: "text", required: false }] }],
+  });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), []);
+});
+
+test("detectLikelyFieldRenames finds nothing when the dropped and added fields have different types", () => {
+  const current = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "priority", type: "enum", required: false, enumValues: ["Low", "High"] }] }] });
+  const candidate = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "urgencyLevel", type: "number", required: false }] }] });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), []);
+});
+
+test("detectLikelyFieldRenames finds nothing for a relation field repointed to a different entity -- that's computeImpact's own retargetedFields shape, not a rename", () => {
+  const current = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "owner", type: "relation", relationTo: "Agent", required: false }] }] });
+  const candidate = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "handler", type: "relation", relationTo: "Team", required: false }] }] });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), []);
+});
+
+test("detectLikelyFieldRenames is a no-op when the candidate entity doesn't exist in current (that's detectLikelyEntityRenames's own job, not this function's)", () => {
+  const current = baseSpec({ entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
+  const candidate = baseSpec({ entities: [{ name: "Client", fields: [{ name: "fullName", type: "text", required: true }] }] });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), []);
+});
+
+test("detectLikelyFieldRenames stays silent when more than one field is dropped/added at once -- too ambiguous to pair confidently", () => {
+  const current = baseSpec({
+    entities: [{ name: "Ticket", fields: [{ name: "priority", type: "enum", required: false, enumValues: ["Low", "High"] }, { name: "status", type: "enum", required: false, enumValues: ["Open", "Closed"] }] }],
+  });
+  const candidate = baseSpec({
+    entities: [{ name: "Ticket", fields: [{ name: "urgencyLevel", type: "enum", required: false, enumValues: ["Low", "High"] }, { name: "state", type: "enum", required: false, enumValues: ["Open", "Closed"] }] }],
+  });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), []);
 });
