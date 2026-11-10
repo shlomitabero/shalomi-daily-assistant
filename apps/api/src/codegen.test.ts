@@ -7609,6 +7609,37 @@ test("the exported app's generated styles.css lets the calendar record row's act
 });
 
 /**
+ * Round 1844: applying the same codegen.ts CSS-parity-audit technique
+ * rounds 1842/1843 used on Calendar view to Table/Board view's shared
+ * `.row-actions` class (used as both a `<td>` in the table row and a
+ * `<div>` in BoardCard -- apps/api/src/codegen.ts:5384/:8369, mirroring
+ * the live app's EntityPanel.tsx:794/:5343) found the generated
+ * styles.css was missing the base `.row-actions` layout rule entirely --
+ * only `.row-actions button`'s own button styling was ever emitted, never
+ * the `display: flex; gap: 6px; justify-content: flex-end` rule the live
+ * app's styles.css has at line 1517. Without it, the exported app's
+ * table-row action buttons (Edit/Duplicate/Print/Delete/Pin) aren't
+ * right-aligned or evenly gapped, and -- since there's no flex container
+ * to wrap in the first place -- BoardCard's buttons never got round
+ * 1348's own `.board-card .row-actions { flex-wrap: wrap; ... }` overflow
+ * fix either (styles.css:1870), so the exported app's Board view never
+ * received that fix at all.
+ */
+test("the exported app's generated styles.css defines the base .row-actions layout rule and BoardCard's round-1348 flex-wrap override, not just the button styling", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const rowActions = stylesCss.match(/(?<!\.board-card )\.row-actions\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(rowActions, "expected a base .row-actions rule in the generated styles.css, not just .row-actions button");
+  assert.match(rowActions!, /display:\s*flex/, ".row-actions must lay out its buttons as a flex row, matching the live app's own rule");
+  assert.match(rowActions!, /justify-content:\s*flex-end/, ".row-actions must right-align its buttons in the table-row <td>, matching the live app's own rule");
+
+  const boardCardRowActions = stylesCss.match(/\.board-card \.row-actions\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(boardCardRowActions, "expected a .board-card .row-actions override in the generated styles.css, matching the live app's own round-1348 fix");
+  assert.match(boardCardRowActions!, /flex-wrap:\s*wrap/, ".board-card .row-actions must allow its buttons to wrap, matching the live app's own round-1348 overflow fix");
+});
+
+/**
  * Round 1385: mirrors the live preview's own round-1384 fix. The exported
  * CalendarView's chip offered reschedule only via native HTML5
  * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day

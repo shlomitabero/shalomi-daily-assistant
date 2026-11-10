@@ -10837,6 +10837,7 @@ button[type="submit"], .btn { padding: 9px 18px; border-radius: 8px; border: non
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .row-actions button { margin-inline-start: 4px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .muted { color: var(--muted); font-size: 13px; }
 .error { color: var(--danger); }
@@ -10921,6 +10922,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .board-card-move-error { border-color: var(--danger); background: var(--danger-soft); }
 .board-card-field { display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; overflow-wrap: anywhere; }
 .board-card-move { margin-top: 4px; }
+.board-card .row-actions { flex-wrap: wrap; justify-content: flex-start; }
 .calendar-view { display: flex; flex-direction: column; gap: 10px; }
 .calendar-nav { display: flex; align-items: center; justify-content: center; gap: 16px; }
 .calendar-nav button { padding: 4px 12px; font-size: 16px; line-height: 1; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
