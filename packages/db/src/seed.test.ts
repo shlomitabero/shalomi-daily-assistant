@@ -131,14 +131,18 @@ test("the newer domain entities (MenuItem, Vehicle, Project, Event, Course, Pet,
   const [petRecord] = generateSeedRecords(pet, 1);
   assert.equal(petRecord.name, "Rex");
   assert.doesNotMatch(petRecord.species as string, /Pet species/);
-  assert.doesNotMatch(petRecord.ownerName as string, /Pet ownerName/);
+  // Round 1832: ownerName now gets its own dedicated pool, disjoint from
+  // Customer's generic PERSON_NAMES_HE/EN -- "Dana Levi" was only ever
+  // this field's value because Pet had no pool of its own before.
+  assert.equal(petRecord.ownerName, "Reut Ben-Zvi");
 
   const [propertyRecord] = generateSeedRecords(property, 1);
   assert.doesNotMatch(propertyRecord.address as string, /Property address/);
 
   const [rentalRecord] = generateSeedRecords(rental, 1);
   assert.doesNotMatch(rentalRecord.itemName as string, /Rental itemName/);
-  assert.doesNotMatch(rentalRecord.renterName as string, /Rental renterName/);
+  // Round 1832: same as ownerName above -- renterName now gets its own pool.
+  assert.equal(rentalRecord.renterName, "Yael Carmi");
 });
 
 test("the Ticket, Subscription, and JobApplicant entities each get believable seed values, not the generic placeholder formula", () => {
@@ -202,7 +206,10 @@ test("the Donation, Shipment, and InsuranceClaim entities each get believable se
   };
 
   const [donationRecord] = generateSeedRecords(donation, 1);
-  assert.equal(donationRecord.donorName, "Dana Levi");
+  // Round 1832: donorName now gets its own dedicated pool, disjoint from
+  // Customer's generic PERSON_NAMES_HE/EN -- "Dana Levi" was only ever
+  // this field's value because Donation had no pool of its own before.
+  assert.equal(donationRecord.donorName, "Avraham Weinstein");
   assert.doesNotMatch(donationRecord.campaign as string, /Donation campaign/);
 
   const [shipmentRecord] = generateSeedRecords(shipment, 1);
@@ -212,7 +219,10 @@ test("the Donation, Shipment, and InsuranceClaim entities each get believable se
   assert.doesNotMatch(shipmentRecord.destination as string, /Shipment destination/);
 
   const [claimRecord] = generateSeedRecords(claim, 1);
-  assert.equal(claimRecord.claimant, "Dana Levi");
+  // Round 1832: claimant now gets its own dedicated pool, same reasoning
+  // as donorName above -- "Dana Levi" was only ever this field's value
+  // because InsuranceClaim had no pool of its own before.
+  assert.equal(claimRecord.claimant, "Merav Shaham");
   assert.match(claimRecord.policyNumber as string, /^POL-\d+$/);
 });
 
@@ -254,7 +264,13 @@ test("the Vendor, Expense, and Review entities each get believable seed values, 
   assert.notEqual(expenseRecord.vendor, "Dana Levi");
 
   const [reviewRecord] = generateSeedRecords(review, 1);
-  assert.equal(reviewRecord.reviewerName, "Dana Levi");
+  // Round 1832: reviewerName now gets its own dedicated pool, same
+  // reasoning as donorName/claimant above -- "Dana Levi" was only ever
+  // this field's value because Review had no pool of its own before.
+  // Especially important for Review: its own keywords ("customer review",
+  // "customer feedback") contain the literal substring "customer", so a
+  // description matching Review almost always also matches Customer.
+  assert.equal(reviewRecord.reviewerName, "Nadine Habib");
   // A star rating must stay in its real 1-5 domain, not the generic
   // (index+1)*10 formula every other numeric field uses.
   assert.ok((reviewRecord.rating as number) >= 1 && (reviewRecord.rating as number) <= 5);
@@ -1282,4 +1298,45 @@ test("WorkOrder's 'technician', Deal's 'owner', and Task's/Ticket's 'assignee' s
   for (const name of dealOwnerNames) {
     assert.ok(!taskAssigneeNames.has(name), `Deal's owner "${name}" must not be one of Task's own assignee names`);
   }
+});
+
+/**
+ * Round 1832's finding: the exact same gap round 1830 fixed one case
+ * block above, missed for the very next case block -- Pet.ownerName,
+ * Rental.renterName, Donation.donorName, InsuranceClaim.claimant, and
+ * Review.reviewerName all had zero entity-aware branching and fell
+ * through to the same generic PERSON_NAMES pool that is Customer.name's
+ * own fallback. Review is the most important of these to check: its own
+ * keywords ("customer review", "customer feedback") contain the literal
+ * substring "customer", so a description matching Review almost always
+ * also matches Customer -- showing the reviewer as the literal same
+ * person as an unrelated customer on the same row.
+ */
+test("Pet's 'ownerName', Rental's 'renterName', Donation's 'donorName', InsuranceClaim's 'claimant', and Review's 'reviewerName' seed values are each their own pool, not Customer's exact same values", () => {
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const customerNames = new Set(generateSeedRecords(customerPerson, 4).map((r) => r.name as string));
+
+  const pet: Entity = { name: "Pet", fields: [{ name: "ownerName", type: "text", required: false }] };
+  const rental: Entity = { name: "Rental", fields: [{ name: "renterName", type: "text", required: false }] };
+  const donation: Entity = { name: "Donation", fields: [{ name: "donorName", type: "text", required: true }] };
+  const claim: Entity = { name: "InsuranceClaim", fields: [{ name: "claimant", type: "text", required: true }] };
+  const review: Entity = { name: "Review", fields: [{ name: "reviewerName", type: "text", required: true }] };
+
+  const petOwnerNames = generateSeedRecords(pet, 4).map((r) => r.ownerName as string);
+  for (const name of petOwnerNames) assert.ok(!customerNames.has(name), `Pet's ownerName "${name}" must not be one of Customer's own sample names`);
+
+  const renterNames = generateSeedRecords(rental, 4).map((r) => r.renterName as string);
+  for (const name of renterNames) assert.ok(!customerNames.has(name), `Rental's renterName "${name}" must not be one of Customer's own sample names`);
+
+  const donorNames = generateSeedRecords(donation, 4).map((r) => r.donorName as string);
+  for (const name of donorNames) assert.ok(!customerNames.has(name), `Donation's donorName "${name}" must not be one of Customer's own sample names`);
+
+  const claimantNames = generateSeedRecords(claim, 4).map((r) => r.claimant as string);
+  for (const name of claimantNames) assert.ok(!customerNames.has(name), `InsuranceClaim's claimant "${name}" must not be one of Customer's own sample names`);
+
+  const reviewerNames = generateSeedRecords(review, 4).map((r) => r.reviewerName as string);
+  for (const name of reviewerNames) assert.ok(!customerNames.has(name), `Review's reviewerName "${name}" must not be one of Customer's own sample names`);
 });

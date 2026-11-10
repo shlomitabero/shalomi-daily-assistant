@@ -147,6 +147,28 @@ const TASK_ASSIGNEE_NAMES_HE = ["גיל אלמוג", "נטלי בר-און", "ע
 const TASK_ASSIGNEE_NAMES_EN = ["Gil Almog", "Natalie Bar-On", "Ido Regev", "Hadar Mor"];
 const TICKET_ASSIGNEE_NAMES_HE = ["נועם גפן", "אור בכרי", "שני וייס", "דור חן"];
 const TICKET_ASSIGNEE_NAMES_EN = ["Noam Gefen", "Or Bachri", "Shani Weiss", "Dor Chen"];
+// Round 1832: the exact same gap round 1830 fixed one case block above,
+// missed for the very next case block -- "ownerName"/"renterName"/
+// "donorName"/"claimant"/"reviewerName" (Pet, Rental, Donation,
+// InsuranceClaim, and Review respectively) all had zero entity-aware
+// branching and fell through to the same generic PERSON_NAMES_HE/EN pool
+// that is Customer.name's own fallback. Review in particular is almost
+// guaranteed to co-occur with Customer: its own keywords ("customer
+// review", "customer feedback") contain the literal substring "customer",
+// so a description that matches Review almost always also matches
+// Customer via its own bare "customer" keyword -- showing the reviewer as
+// the literal same person as an unrelated customer on the same row. Own
+// pools per entity, same shape as round 1830's.
+const PET_OWNER_NAMES_HE = ["רעות בן-צבי", "עמית שגב", "נויה פלד", "תומר אשד"];
+const PET_OWNER_NAMES_EN = ["Reut Ben-Zvi", "Amit Segev", "Noya Peled", "Tomer Eshed"];
+const RENTER_NAMES_HE = ["יעל כרמי", "דביר אוסטרובסקי", "רוני אפרתי", "מורן זיו"];
+const RENTER_NAMES_EN = ["Yael Carmi", "Dvir Ostrovsky", "Roni Efrati", "Moran Ziv"];
+const DONOR_NAMES_HE = ["אברהם ויינשטיין", "חן יוגב", "שלי אלקיים", "בועז נתיב"];
+const DONOR_NAMES_EN = ["Avraham Weinstein", "Chen Yogev", "Shelly Elkayam", "Boaz Nativ"];
+const CLAIMANT_NAMES_HE = ["מירב שחם", "יובל אברג'יל", "אסנת ברעם", "גדי פורת"];
+const CLAIMANT_NAMES_EN = ["Merav Shaham", "Yuval Abargil", "Osnat Bar-Am", "Gadi Porat"];
+const REVIEWER_NAMES_HE = ["נדין חביב", "שון מויאל", "קארין דהן", "אלעד צדוק"];
+const REVIEWER_NAMES_EN = ["Nadine Habib", "Shawn Moyal", "Karin Dahan", "Elad Tzadok"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -485,11 +507,15 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       if (fieldName === "assignee" && entityName === "Ticket") return pick(isHebrew ? TICKET_ASSIGNEE_NAMES_HE : TICKET_ASSIGNEE_NAMES_EN, index);
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "ownerName":
+      return pick(isHebrew ? PET_OWNER_NAMES_HE : PET_OWNER_NAMES_EN, index);
     case "renterName":
+      return pick(isHebrew ? RENTER_NAMES_HE : RENTER_NAMES_EN, index);
     case "donorName":
+      return pick(isHebrew ? DONOR_NAMES_HE : DONOR_NAMES_EN, index);
     case "claimant":
+      return pick(isHebrew ? CLAIMANT_NAMES_HE : CLAIMANT_NAMES_EN, index);
     case "reviewerName":
-      return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
+      return pick(isHebrew ? REVIEWER_NAMES_HE : REVIEWER_NAMES_EN, index);
     case "contactPerson":
       // Round 1742: Vendor (domainEntities.ts) and Supplier (templates.ts)
       // both have their own "name" field pool already (VENDOR_NAMES_HE/EN,
