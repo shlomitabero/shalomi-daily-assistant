@@ -459,6 +459,42 @@ test("asks about payments (recommending Stripe) for a field-service/repair descr
 });
 
 /**
+ * Round 1819: a hair salon/barbershop/spa/massage description matches only
+ * Appointment (rounds 1799/1800's own keywords), which was explicitly NOT
+ * added to BILLING_ENTITY_NAMES (rounds 1345/1346 both flagged it, then
+ * deferred the decision, since the bare "appointment" word is as
+ * genuinely ambiguous as Service's own bare word -- see that Set's own doc
+ * comment above). Fixed instead by adding specific salon/spa/massage
+ * phrases to PAYMENT_KEYWORDS, mirroring round 893's own "narrow,
+ * specific phrase" fix for Product -- a commercial salon/spa business is
+ * plainly a paid transaction, but the fix must not regress a genuinely
+ * non-commercial appointment scheduler (the test below this one).
+ */
+test("asks about payments (recommending Stripe) for a hair salon/spa/massage description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const salon = await provider.generate("A booking app for a hair salon to manage client appointments.");
+  assert.ok(salon.entities.some((e) => e.name === "Appointment"));
+  const salonPaymentQuestion = salon.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(salonPaymentQuestion);
+  assert.equal(salonPaymentQuestion!.recommendation, "Stripe");
+
+  const spa = await provider.generate("A spa offering massages, with appointments and clients.");
+  const spaPaymentQuestion = spa.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(spaPaymentQuestion);
+  assert.equal(spaPaymentQuestion!.recommendation, "Stripe");
+});
+
+test("still recommends 'No payments' for a genuinely non-commercial appointment scheduler, confirming the round-1819 salon/spa fix doesn't regress bare 'appointment' ambiguity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const school = await provider.generate("A school's system for scheduling parent-teacher conference appointments.");
+  assert.ok(school.entities.some((e) => e.name === "Appointment"));
+  const paymentQuestion = school.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/

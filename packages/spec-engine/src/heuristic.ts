@@ -117,6 +117,24 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   /\bsell(?:ing)?\s+(?:online\s+)?courses?\b/,
   /\bpaid\s+(?:online\s+)?courses?\b/,
   "למכור קורסים", "מכירת קורסים", "קורסים בתשלום", "קורס בתשלום",
+  // Round 1819: a hair salon/barbershop/spa/massage business matches only
+  // Appointment (rounds 1799/1800's own keywords), which isn't in
+  // BILLING_ENTITY_NAMES below and hits none of this array's other
+  // phrases, so it got recommended "No payments" despite being a
+  // textbook paid small-business vertical. Rounds 1345/1346 explicitly
+  // considered and deferred adding "Appointment" to BILLING_ENTITY_NAMES
+  // itself for this exact reason -- plenty of real appointment apps are
+  // genuinely non-commercial (school/government/volunteer bookings), the
+  // same bare-word ambiguity already documented above for why Service was
+  // excluded; confirmed live that doing so would wrongly recommend Stripe
+  // for e.g. a school's parent-teacher-conference scheduler. Instead,
+  // mirroring the exact same specific, low-ambiguity phrases
+  // Appointment's own keyword list already uses (domainEntities.ts) --
+  // these phrases only ever describe an actual commercial salon/spa
+  // business, never a free/government/school/volunteer booking.
+  "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
+  /\bspa\b/, "massage", "massage therapy",
+  "מספרה", "סלון יופי", "ספא", "עיסוי",
 ];
 
 /**
@@ -189,6 +207,20 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
  * keywords ("insurance claim", "policyholder", "claims processing") are
  * narrowly insurance-specific, not the bare-word ambiguity Service/Course
  * were excluded for. Added "InsuranceClaim" below.
+ *
+ * Appointment was explicitly considered for this same drift (rounds 1345
+ * and 1346 both flagged it, deferring the decision) and deliberately NOT
+ * added here: unlike Rental/Property/MenuItem/WorkOrder/InsuranceClaim's
+ * narrowly-commercial triggers, Appointment matches on the bare, generic
+ * word "appointment"/"booking"/"reservation", which shows up constantly in
+ * genuinely non-commercial contexts (school parent-teacher conferences,
+ * government/DMV bookings, free clinics, volunteer scheduling) -- the same
+ * bare-word ambiguity Service was excluded for above. Confirmed live that
+ * adding "Appointment" here would wrongly recommend Stripe for e.g. a
+ * school's parent-teacher-conference scheduler. Round 1819 instead closed
+ * the specific commercial-salon/spa/massage case via PAYMENT_KEYWORDS
+ * phrases (see that array above), leaving this Set's Appointment omission
+ * intentional.
  */
 const BILLING_ENTITY_NAMES = new Set([
   "Invoice",
