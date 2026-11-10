@@ -4,6 +4,11 @@ export function buildDailyDigest({
   ledgerSummary, actionsToday = [], failuresToday = [], topOpportunity = null, emergencyStop = false, mode = null,
   approvedAwaitingPublish = 0, budget = null, budgetConfigured = false, maxLoss = null,
   scanPaused = false, pendingDrafts = 0, unrecordedSales = 0, scansRanToday = 0, scansSucceededToday = 0,
+  // Defaults to true (no warning) rather than false - an owner who never
+  // passes this (every existing caller before this field existed, and any
+  // test that doesn't care about it) must never see a false "not
+  // configured" warning just because the field was left out.
+  jwtSecretConfigured = true,
 }) {
   // Dashboard.jsx warns the owner in the app itself once spentSoFar/
   // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
@@ -54,6 +59,13 @@ export function buildDailyDigest({
     ...(unrecordedSales > 0
       ? [`🚨 ${unrecordedSales} תשלומים אמיתיים התקבלו אך לא נרשמו ביומן בגלל שגיאה בעיבוד — בדוק ביומן הפעולות ואת לוגי השרת.`]
       : []),
+    // Dashboard.jsx already shows this as a banner once the owner logs in
+    // - but, same reasoning as every other warning above, an owner who
+    // only ever reads the digest (not the dashboard itself) would never
+    // see it there. Without a stable JWT_SECRET, every login session is
+    // silently invalidated on each redeploy (engine/auth.js) - this app's
+    // own hourly upgrade routine makes that routine, not rare.
+    ...(!jwtSecretConfigured ? ['⚠️ JWT_SECRET לא מוגדר — ההתחברות מתבטלת בכל פריסה (deploy) מחדש של האפליקציה. הגדר אותו כמשתנה סביבה קבוע ב-Railway כדי להישאר מחובר.'] : []),
     // Answers "is the scanner even running" directly, every single day,
     // without the owner having to open the activity log and count entries
     // themselves - the one question that actually prompted this app's

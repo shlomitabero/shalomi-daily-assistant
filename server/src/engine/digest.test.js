@@ -166,3 +166,24 @@ test('says nothing about unrecorded sales when there were none', () => {
   const digest = buildDailyDigest({ ledgerSummary, unrecordedSales: 0 });
   assert.doesNotMatch(digest.text, /תשלומים אמיתיים התקבלו/);
 });
+
+test('warns about an unset JWT_SECRET, since an owner who only reads the digest would otherwise never learn why they keep getting logged out', () => {
+  // Dashboard.jsx already shows this as a banner, but this app's own daily
+  // digest exists specifically to reach an owner who never opens the
+  // dashboard itself - same reasoning already applied above to the
+  // emergency-stop/research-mode/unrecorded-sales lines.
+  const digest = buildDailyDigest({ ledgerSummary, jwtSecretConfigured: false });
+  assert.match(digest.text, /JWT_SECRET לא מוגדר/);
+});
+
+test('says nothing about JWT_SECRET when it is configured, or when the caller never passes the field at all', () => {
+  // Defaults to true (no warning), not false - every caller before this
+  // field existed never passed it, and must never see a false "not
+  // configured" warning just because it omitted a field it doesn't know
+  // about.
+  const digestConfigured = buildDailyDigest({ ledgerSummary, jwtSecretConfigured: true });
+  assert.doesNotMatch(digestConfigured.text, /JWT_SECRET/);
+
+  const digestOmitted = buildDailyDigest({ ledgerSummary });
+  assert.doesNotMatch(digestOmitted.text, /JWT_SECRET/);
+});

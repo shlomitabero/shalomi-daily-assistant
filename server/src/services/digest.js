@@ -82,6 +82,11 @@ export function generateDailyDigest(now = new Date()) {
     emergencyStop: settings.emergencyStop, mode: settings.mode, approvedAwaitingPublish,
     budget: settings.budget, budgetConfigured: settings.budgetConfigured, maxLoss: settings.maxLoss,
     scanPaused, pendingDrafts, unrecordedSales, scansRanToday, scansSucceededToday,
+    // Same env var, same check as routes/health.js's own jwtSecretConfigured
+    // flag (which Dashboard.jsx already surfaces as a banner) - reading it
+    // directly here rather than importing from a route file keeps the
+    // existing services->routes dependency direction intact.
+    jwtSecretConfigured: Boolean(process.env.JWT_SECRET),
   });
 
   // The owner can click "generate now" on the Digests page any number of

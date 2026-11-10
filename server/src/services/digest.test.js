@@ -156,6 +156,36 @@ test('generateDailyDigest reflects a currently-active emergency stop in the text
   assert.match(digest.text, /עצירת חירום הייתה פעילה/);
 });
 
+test('generateDailyDigest warns in the real digest text when JWT_SECRET is genuinely unset in the environment', () => {
+  // Same env var, same check as routes/health.js's own jwtSecretConfigured
+  // flag - must actually reach buildDailyDigest() via a real
+  // process.env.JWT_SECRET read, not just a hand-fed boolean in
+  // digest.test.js (engine/), which only proves the text itself is
+  // correct once the flag is already false.
+  __resetForTests();
+  const original = process.env.JWT_SECRET;
+  delete process.env.JWT_SECRET;
+  try {
+    const digest = generateDailyDigest();
+    assert.match(digest.text, /JWT_SECRET לא מוגדר/);
+  } finally {
+    if (original !== undefined) process.env.JWT_SECRET = original;
+  }
+});
+
+test('generateDailyDigest says nothing about JWT_SECRET when it is actually configured', () => {
+  __resetForTests();
+  const original = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'a-stable-secret';
+  try {
+    const digest = generateDailyDigest();
+    assert.doesNotMatch(digest.text, /JWT_SECRET/);
+  } finally {
+    if (original !== undefined) process.env.JWT_SECRET = original;
+    else delete process.env.JWT_SECRET;
+  }
+});
+
 test('generateDailyDigest reflects research mode (the default) in the text', () => {
   __resetForTests();
   const digest = generateDailyDigest();
