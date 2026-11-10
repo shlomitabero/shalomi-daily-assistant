@@ -1613,6 +1613,14 @@ test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in t
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let capturedSendBody: string | undefined;
+    // Round 1858 (second instance, same file): counts the GET
+    // .../messages calls so the test can wait for handleSendTest's own
+    // trailing listWhatsAppMessages(projectId) refresh
+    // (apps/web/src/WhatsAppPanel.tsx:864-868) to have actually reached
+    // this mock, not just the initial page load -- see the identical fix
+    // a few hundred lines up, on this same round, for the handleRetry
+    // race this mirrors.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -1622,6 +1630,7 @@ test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in t
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
@@ -1662,7 +1671,17 @@ test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in t
       assert.match(document.querySelector(".whatsapp-attachment-field .file-field-current")!.textContent ?? "", /brochure\.pdf/);
 
       fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
-      await waitForCondition(() => typeof capturedSendBody === "string");
+      // Round 1858: the original predicate (capturedSendBody is set)
+      // was already true before handleSendTest's own trailing await
+      // listWhatsAppMessages(projectId) call even ran -- capturedSendBody
+      // is captured inside the send mock itself, which resolves before
+      // that trailing refresh starts. That let this test's own finally
+      // restore the REAL globalThis.fetch while the trailing refresh
+      // call was still pending, which then threw on the real, un-mocked
+      // fetch and triggered fetchWithWakeRetry's real ~280s cold-start
+      // retry loop. Requiring messagesFetchCount to reach 2 (initial
+      // load + the post-send refresh) closes it here too.
+      await waitForCondition(() => typeof capturedSendBody === "string" && messagesFetchCount >= 2);
 
       const parsed = JSON.parse(capturedSendBody!);
       assert.deepEqual(parsed.attachment, {
@@ -1769,6 +1788,14 @@ test("WhatsAppPanel clears the chosen attachment after a failed send, instead of
 test("WhatsAppPanel keeps the chosen attachment selected after a failed send that never reached the server's own attachment cleanup (e.g. WHATSAPP_NOT_CONNECTED)", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
+    // Round 1858 (third instance, same file): counts the GET
+    // .../messages calls so the test can wait for handleSendTest's own
+    // trailing listWhatsAppMessages(projectId) refresh
+    // (apps/web/src/WhatsAppPanel.tsx:864-868) to have actually reached
+    // this mock -- that trailing call runs regardless of result.ok, so
+    // even a FAILED send still races the test's finally teardown the
+    // same way the two instances above this one do.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -1778,6 +1805,7 @@ test("WhatsAppPanel keeps the chosen attachment selected after a failed send tha
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/attachments/upload") {
@@ -1797,7 +1825,7 @@ test("WhatsAppPanel keeps the chosen attachment selected after a failed send tha
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -1819,12 +1847,19 @@ test("WhatsAppPanel keeps the chosen attachment selected after a failed send tha
       await waitForCondition(() => document.querySelector(".whatsapp-attachment-field .file-field-current") !== null);
 
       fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
-      await waitForCondition(() => document.querySelector("form.whatsapp-test-form p.error") !== null);
+      // Round 1858: requiring messagesFetchCount to reach 2 (initial load
+      // + handleSendTest's own trailing refresh, which fires even on this
+      // failure path) closes the same race the two instances above this
+      // one close -- see their comments.
+      await waitForCondition(
+        () => document.querySelector("form.whatsapp-test-form p.error") !== null && messagesFetchCount >= 2,
+      );
 
       assert.ok(
         document.querySelector(".whatsapp-attachment-field .file-field-current") !== null,
         "the attachment must stay selected -- the real file is still sitting on disk, untouched, so discarding the only client-side reference to it would orphan it permanently",
       );
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2740,6 +2775,13 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let capturedSendBody: string | undefined;
+    // Round 1858 (fourth instance, same file): counts the GET
+    // .../messages calls so the test can wait for handleSendTest's own
+    // trailing listWhatsAppMessages(projectId) refresh
+    // (apps/web/src/WhatsAppPanel.tsx:864-868) to have actually reached
+    // this mock, not just the initial page load -- see the identical fix
+    // earlier in this file, on this same round.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -2749,6 +2791,7 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
@@ -2758,7 +2801,7 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -2787,8 +2830,12 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
       fireEvent.change(messageInput, { target: { value: "Hi from the record row" } });
       fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
 
-      await waitForCondition(() => typeof capturedSendBody === "string");
+      // Round 1858: requiring messagesFetchCount to reach 2 (initial load
+      // + the post-send refresh) closes the same handleSendTest-vs-test-
+      // teardown race fixed elsewhere in this file on this same round.
+      await waitForCondition(() => typeof capturedSendBody === "string" && messagesFetchCount >= 2);
       assert.equal(JSON.parse(capturedSendBody!).to, "0501234567", "submitting without touching the prefilled field must send the exact prefilled number");
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2824,6 +2871,13 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
       },
     ];
     let capturedSendBody: string | undefined;
+    // Round 1858 (fifth instance, same file): counts the GET .../messages
+    // calls so the test can wait for handleSendTest's own trailing
+    // listWhatsAppMessages(projectId) refresh
+    // (apps/web/src/WhatsAppPanel.tsx:864-868) to have actually reached
+    // this mock, not just the initial page load -- see the identical fix
+    // earlier in this file, on this same round.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -2833,6 +2887,7 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
@@ -2842,7 +2897,7 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -2867,10 +2922,14 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
       fireEvent.change(messageInput, { target: { value: "Yes, it's in stock!" } });
       fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
 
-      await waitForCondition(() => typeof capturedSendBody === "string");
+      // Round 1858: requiring messagesFetchCount to reach 2 (initial load
+      // + the post-send refresh) closes the same handleSendTest-vs-test-
+      // teardown race fixed elsewhere in this file on this same round.
+      await waitForCondition(() => typeof capturedSendBody === "string" && messagesFetchCount >= 2);
       const parsed = JSON.parse(capturedSendBody!);
       assert.equal(parsed.to, "972521112233", "sending after Reply must use the replied-to sender, not a stale or empty value");
       assert.equal(parsed.message, "Yes, it's in stock!");
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -3271,6 +3330,16 @@ test("WhatsAppPanel shows a blocked message, not an enable button, when notifica
 test("WhatsAppPanel remembers a sent test number as a clickable recent-number chip", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
+    // Round 1858 (sixth instance, same file): the recent-number chip is
+    // written synchronously at the TOP of handleSendTest
+    // (apps/web/src/WhatsAppPanel.tsx:824, before either await), so
+    // waiting only for the chip let this test's own finally restore the
+    // REAL globalThis.fetch while BOTH the send call and handleSendTest's
+    // own trailing listWhatsAppMessages(projectId) refresh were still
+    // pending -- the same race fixed elsewhere in this file on this same
+    // round. Counting the GET .../messages calls and requiring 2 (initial
+    // load + the post-send refresh) closes it here too.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -3280,6 +3349,7 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
@@ -3288,7 +3358,7 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -3304,7 +3374,7 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
       fireEvent.change(messageInput, { target: { value: "Hi" } });
       fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
 
-      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers .chip-text") !== null);
+      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers .chip-text") !== null && messagesFetchCount >= 2);
       const chip = document.querySelector(".whatsapp-recent-numbers .chip-text") as HTMLButtonElement;
       assert.equal(chip.textContent, "972521112233", "the just-sent number must appear as a recent-number chip");
 
@@ -3312,6 +3382,7 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
       assert.equal(toInput.value, "", "sanity check: the To field is genuinely cleared before clicking the chip");
       fireEvent.click(chip);
       assert.equal(toInput.value, "972521112233", "clicking the chip must fill the To field with that number");
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -3330,6 +3401,10 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
 test("WhatsAppPanel's recent-number chip has a working per-number remove button", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
+    // Round 1858 (seventh instance, same file): same
+    // handleSendTest-vs-test-teardown race as the test immediately above
+    // this one -- see its comment.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -3339,6 +3414,7 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
@@ -3347,7 +3423,7 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -3361,7 +3437,7 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
       fireEvent.change(inputs[1], { target: { value: "Hi" } });
       fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
 
-      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers") !== null);
+      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers") !== null && messagesFetchCount >= 2);
       fireEvent.click(document.querySelector(".whatsapp-recent-numbers .chip-remove") as HTMLButtonElement);
 
       assert.equal(
@@ -3369,6 +3445,7 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
         null,
         "removing the only recent number must make the whole recent-numbers block disappear, not leave an empty chip row",
       );
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -5471,6 +5548,12 @@ test("WhatsAppPanel's successful retry of one message also clears a stale delete
       createdAt: new Date("2026-03-15T14:33:00Z").toISOString(),
     };
     let sendCalls = 0;
+    // Round 1858: counts the GET .../messages calls so the test can wait
+    // for handleRetry's own trailing listWhatsAppMessages(projectId)
+    // refresh (apps/web/src/WhatsAppPanel.tsx:1108-1112) to have actually
+    // reached this mock, not just the initial page load -- mirrors round
+    // 1856's identical fix for HistoryPanel.test.ts's handleRestore race.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -5480,6 +5563,7 @@ test("WhatsAppPanel's successful retry of one message also clears a stale delete
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [failedOutbound, other] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       const deleteOneMatch = /^\/api\/projects\/proj1\/integrations\/whatsapp\/messages\/([^/]+)$/.exec(input);
@@ -5523,7 +5607,19 @@ test("WhatsAppPanel's successful retry of one message also clears a stale delete
       const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
       assert.ok(retryButton, "expected the first message's own Retry button");
       fireEvent.click(retryButton);
-      await waitForCondition(() => sendCalls === 1 && document.querySelector(".error") === null);
+      // Round 1858: the original predicate (sendCalls === 1 && .error ===
+      // null) was already true before handleRetry's own trailing await
+      // listWhatsAppMessages(projectId) call even ran -- .error is cleared
+      // synchronously at the top of handleRetry, before either await, and
+      // sendCalls increments as soon as the FIRST await (sendWhatsAppMessage)
+      // resolves. That let this test's own finally restore the REAL
+      // globalThis.fetch while the trailing refresh call was still
+      // pending, which then threw on the real, un-mocked fetch and
+      // triggered fetchWithWakeRetry's real ~280s cold-start retry loop --
+      // the same race round 1856 found and fixed for HistoryPanel.test.ts.
+      // Requiring messagesFetchCount to reach 2 (initial load + the
+      // post-retry refresh) closes it here too.
+      await waitForCondition(() => sendCalls === 1 && document.querySelector(".error") === null && messagesFetchCount >= 2);
 
       assert.equal(
         document.querySelector(".error") === null,
@@ -6757,6 +6853,14 @@ test("WhatsAppPanel's Retry button warns and waits for confirmation before resen
       hadAttachment: true,
     };
     let sendCalls = 0;
+    // Round 1858 (eighth instance, same file): counts the GET
+    // .../messages calls so the test can wait for handleRetry's own
+    // trailing listWhatsAppMessages(projectId) refresh
+    // (apps/web/src/WhatsAppPanel.tsx:1108-1112) to have actually reached
+    // this mock, not just the initial page load -- the same race round
+    // 1856 fixed for HistoryPanel.test.ts's handleRestore and this file's
+    // own earlier handleRetry test (line ~5579).
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -6766,6 +6870,7 @@ test("WhatsAppPanel's Retry button warns and waits for confirmation before resen
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [failedWithAttachment] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
@@ -6775,7 +6880,7 @@ test("WhatsAppPanel's Retry button warns and waits for confirmation before resen
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -6799,9 +6904,10 @@ test("WhatsAppPanel's Retry button warns and waits for confirmation before resen
       const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
       assert.ok(retryButton, "expected the failed message's own Retry button");
       fireEvent.click(retryButton);
-      await waitForCondition(() => sendCalls === 1);
+      await waitForCondition(() => sendCalls === 1 && messagesFetchCount >= 2);
 
       assert.equal(confirmCalls, 1, "expected exactly one confirm prompt before resending an attachment-bearing message");
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
@@ -6902,6 +7008,9 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
       hadAttachment: false,
     };
     let sendCalls = 0;
+    // Round 1858 (ninth instance, same file): same handleRetry-vs-test-
+    // teardown race as the test above this one -- see its comment.
+    let messagesFetchCount = 0;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -6911,6 +7020,7 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
         );
       }
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesFetchCount += 1;
         return new Response(JSON.stringify({ messages: [failedTextOnly] }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
@@ -6920,7 +7030,7 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -6944,7 +7054,8 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
       const retryButton = document.querySelectorAll(".whatsapp-log-list li")[0].querySelector("button.secondary.small") as HTMLButtonElement;
       assert.ok(retryButton, "expected the failed message's own Retry button");
       fireEvent.click(retryButton);
-      await waitForCondition(() => sendCalls === 1);
+      await waitForCondition(() => sendCalls === 1 && messagesFetchCount >= 2);
+      view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
