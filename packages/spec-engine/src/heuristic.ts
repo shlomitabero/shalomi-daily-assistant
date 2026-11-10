@@ -153,6 +153,23 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "dog walking", "dog walker", "pet sitting", "pet sitter", "pet boarding", "dog daycare",
   "veterinary", "vet clinic", "animal clinic",
   "טיפוח כלבים", "טיפוח חתולים", "טיול כלבים", "פנסיון לכלבים", "וטרינר", "וטרינרית",
+  // Round 1841: the exact same drift rounds 1819/1831 already fixed for
+  // salons/spas and pet care, this time for human medical/dental care. A
+  // dental/medical clinic or private practice matches only Patient
+  // (domainEntities.ts), which was deliberately NOT added to
+  // BILLING_ENTITY_NAMES below -- a public hospital or free/community
+  // clinic's patient tracker also matches Patient with zero commercial
+  // intent, the same bare-word ambiguity Service/Appointment/Pet were
+  // excluded for (see that Set's own doc comment). Bare "clinic" stays
+  // excluded for the identical reason -- a government or non-profit
+  // clinic is exactly as real as a private one. These phrases are
+  // specific to an explicitly PRIVATE/commercial practice, never a public
+  // or charity one, confirmed live: "a public health clinic tracking
+  // patients" and "a non-profit free clinic" both still correctly stay
+  // "No payments".
+  "dental clinic", "medical clinic", "dental practice", "medical practice", "private practice",
+  "doctor's office", "physical therapy clinic", "chiropractic clinic", "private clinic",
+  "מרפאת שיניים", "קליניקה פרטית", "מרפאה פרטית",
 ];
 
 /**

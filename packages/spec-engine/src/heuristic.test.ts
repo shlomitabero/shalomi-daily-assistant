@@ -535,6 +535,49 @@ test("still recommends 'No payments' for a non-commercial animal shelter, confir
 });
 
 /**
+ * Round 1841: the exact same drift rounds 1819/1831 fixed for salons/spas
+ * and pet care, this time for human medical/dental care. A dental/medical
+ * clinic or private practice description matches only Patient
+ * (domainEntities.ts), which was deliberately NOT added to
+ * BILLING_ENTITY_NAMES -- a public hospital or free/community clinic's
+ * patient tracker also matches Patient with zero commercial intent, the
+ * same bare-word ambiguity Service/Appointment/Pet were excluded for (see
+ * that Set's own doc comment). Fixed by adding specific private-practice
+ * phrases to PAYMENT_KEYWORDS, mirroring round 1819/1831's own fix shape --
+ * bare "clinic" stays excluded, since a government or non-profit clinic is
+ * exactly as real as a private one.
+ */
+test("asks about payments (recommending Stripe) for a private dental/medical clinic description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dental = await provider.generate("A private dental clinic app for managing patients and scheduling checkups.");
+  assert.ok(dental.entities.some((e) => e.name === "Patient"));
+  const dentalPaymentQuestion = dental.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(dentalPaymentQuestion);
+  assert.equal(dentalPaymentQuestion!.recommendation, "Stripe");
+
+  const practice = await provider.generate("A medical practice tracking patients and doctor appointments.");
+  const practicePaymentQuestion = practice.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(practicePaymentQuestion);
+  assert.equal(practicePaymentQuestion!.recommendation, "Stripe");
+});
+
+test("still recommends 'No payments' for a non-commercial public health clinic, confirming the round-1841 private-practice fix doesn't regress bare 'clinic'/Patient ambiguity", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const publicClinic = await provider.generate("A public health clinic tracking patients for free community care.");
+  assert.ok(publicClinic.entities.some((e) => e.name === "Patient"));
+  const publicPaymentQuestion = publicClinic.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(publicPaymentQuestion);
+  assert.equal(publicPaymentQuestion!.recommendation, "No payments");
+
+  const freeClinic = await provider.generate("A non-profit free clinic providing care to uninsured patients.");
+  const freePaymentQuestion = freeClinic.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freePaymentQuestion);
+  assert.equal(freePaymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/
