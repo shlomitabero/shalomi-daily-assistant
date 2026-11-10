@@ -49,6 +49,32 @@ function purchaseStorageKey(slug) {
   return `profitai_purchase_${slug}`;
 }
 
+// Some restricted browser contexts (Safari private browsing with storage
+// fully disabled is the documented example elsewhere in this app - see
+// ErrorBoundary.jsx's own getToken() guard) throw on any localStorage
+// access at all. This page's own three call sites were the one place that
+// gap was never closed - worse here than anywhere else, since the write
+// happens inside Paddle's own checkout.completed callback: a throw there
+// would stop pollForGuide() from ever running right after a REAL customer
+// just paid, silently stranding them with no guide and no error, on the
+// one page this entire feature exists to deliver through.
+function safeGetStoredTransactionId(slug) {
+  try {
+    return localStorage.getItem(purchaseStorageKey(slug));
+  } catch {
+    return null;
+  }
+}
+function safeSetStoredTransactionId(slug, transactionId) {
+  try {
+    localStorage.setItem(purchaseStorageKey(slug), transactionId);
+  } catch {
+    // Losing the "resume after a reload" convenience on this one browser
+    // is an acceptable tradeoff; losing the guide itself is not - the
+    // caller must still proceed to pollForGuide() regardless.
+  }
+}
+
 export default function ProductPage() {
   const { slug } = useParams();
   const [data, setData] = useState(null);
@@ -86,7 +112,7 @@ export default function ProductPage() {
   }
 
   async function onCheckAgain() {
-    const transactionId = localStorage.getItem(purchaseStorageKey(slug));
+    const transactionId = safeGetStoredTransactionId(slug);
     if (!transactionId) return;
     setCheckingPayment(true);
     try {
@@ -120,7 +146,7 @@ export default function ProductPage() {
           if (event?.name !== 'checkout.completed') return;
           const transactionId = event.data?.transaction_id;
           if (!transactionId) return;
-          localStorage.setItem(purchaseStorageKey(slug), transactionId);
+          safeSetStoredTransactionId(slug, transactionId);
           pollForGuide(transactionId);
         },
       });
@@ -129,7 +155,7 @@ export default function ProductPage() {
       // A reload right after paying (or before this session's own poll
       // finished) must not force the customer to find and re-enter a
       // checkout — resume from the transaction id saved on this device.
-      const savedTransactionId = localStorage.getItem(purchaseStorageKey(slug));
+      const savedTransactionId = safeGetStoredTransactionId(slug);
       if (savedTransactionId) pollForGuide(savedTransactionId);
     }).catch((err) => setError(err.data?.error || err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps

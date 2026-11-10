@@ -1,12 +1,33 @@
 const TOKEN_KEY = 'profitai_token';
 
+// Some restricted browser contexts (Safari private browsing with storage
+// fully disabled is the documented example elsewhere in this app - see
+// ErrorBoundary.jsx's own getToken() guard) throw on any localStorage
+// access at all. Unguarded here was far worse than anywhere else: every
+// single request() call below - authenticated or not, including the
+// public getProduct/getProductGuide calls a real paying customer's own
+// browser makes on the product page - reads getToken() first, before the
+// actual fetch. A throw here failed the request before it even started,
+// with no network error to show, just a raw exception surfacing as
+// "המוצר לא נמצא" on the one page a real customer trying to buy something
+// actually lands on.
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function setToken(token) {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Best-effort only, same reasoning as the getter above - losing
+    // "stay logged in" on this one restricted browser is an acceptable
+    // tradeoff; crashing every request this app makes is not.
+  }
 }
 
 async function request(path, { method = 'GET', body } = {}) {

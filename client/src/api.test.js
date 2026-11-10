@@ -43,6 +43,36 @@ test('setToken(null) removes the stored token rather than storing the string "nu
   assert.equal(getToken(), null);
 });
 
+test('getToken returns null instead of throwing when localStorage access itself throws', () => {
+  // Some restricted browser contexts (Safari private browsing with storage
+  // fully disabled) throw on any localStorage access - every single
+  // request() call reads getToken() first, including the public,
+  // unauthenticated getProduct/getProductGuide calls a real paying
+  // customer's own browser makes on the product page, so this must never
+  // throw regardless of what the real token value would have been.
+  const original = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => { throw new DOMException('restricted'); } };
+  try {
+    assert.equal(getToken(), null);
+  } finally {
+    globalThis.localStorage = original;
+  }
+});
+
+test('setToken does not throw when localStorage access itself throws', () => {
+  const original = globalThis.localStorage;
+  globalThis.localStorage = {
+    setItem: () => { throw new DOMException('restricted'); },
+    removeItem: () => { throw new DOMException('restricted'); },
+  };
+  try {
+    assert.doesNotThrow(() => setToken('abc123'));
+    assert.doesNotThrow(() => setToken(null));
+  } finally {
+    globalThis.localStorage = original;
+  }
+});
+
 test('a request includes an Authorization header only when a token is set', async () => {
   setToken(null);
   const restore = stubFetchOnce(() => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
