@@ -31,6 +31,16 @@ export function ensureProjectCollaboratorsTable(db: ForgeDatabase): void {
   if (!hasRoleColumn) {
     db.exec("ALTER TABLE project_collaborators ADD COLUMN role TEXT NOT NULL DEFAULT 'editor'");
   }
+
+  // Round 1839: see ensureProjectsTable's own identical fix (projects.ts)
+  // for the full story -- this table's own PRIMARY KEY is the composite
+  // (projectId, userId), keyed by projectId first, so it can't satisfy a
+  // userId-only lookup at all. Backs both listCollaboratedProjectIds'
+  // (this file) own `WHERE userId = ?` and, via projects.ts's own
+  // listProjectsForUser rewrite, the home-screen "My Projects" listing's
+  // own per-user id lookup -- previously a full scan of every
+  // collaborator grant across every user, on every single GET /projects.
+  db.exec(`CREATE INDEX IF NOT EXISTS project_collaborators_userId_idx ON project_collaborators (userId)`);
 }
 
 /** Idempotent: adding an existing collaborator again is a silent no-op rather than a duplicate-key error (their existing role is left untouched -- use updateCollaboratorRole to change it). */

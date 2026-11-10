@@ -230,6 +230,38 @@ test("listProjectsForUser reports a fresh, later sharedAt once a removed collabo
   }
 });
 
+/**
+ * Round 1839: see listProjectsForUser's own doc comment -- mirrors rounds
+ * 1829/1833/1834/1838's own EXPLAIN QUERY PLAN technique. This is the
+ * route behind GET /projects (the home/"My Projects" screen), hit on
+ * every login and every navigation back to it, so a full `SCAN projects`
+ * here is this app's single hottest unindexed query. A naive index on
+ * ownerId alone does NOT fix the original `OR` form (confirmed live
+ * before settling on this rewrite) -- the query itself had to change.
+ */
+test("listProjectsForUser's own query uses an index for both halves of the owner/collaborator membership test, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const plan = db
+    .prepare(
+      `EXPLAIN QUERY PLAN SELECT projects.*, project_collaborators.addedAt AS sharedAt FROM projects
+       LEFT JOIN project_collaborators ON project_collaborators.projectId = projects.id AND project_collaborators.userId = ?
+       WHERE projects.id IN (
+         SELECT id FROM projects WHERE ownerId = ?
+         UNION
+         SELECT projectId FROM project_collaborators WHERE userId = ?
+       )
+       ORDER BY projects.createdAt DESC, projects.rowid DESC`,
+    )
+    .all("alice", "alice", "alice") as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN projects\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.doesNotMatch(detail, /SCAN project_collaborators\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX projects_ownerId_idx/, `expected the new projects index to be used: ${detail}`);
+  assert.match(detail, /USING INDEX project_collaborators_userId_idx/, `expected the new project_collaborators index to be used: ${detail}`);
+});
+
 test("updateProjectName changes only the name, leaving every other field (spec, description, status, ownerId) untouched", () => {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);

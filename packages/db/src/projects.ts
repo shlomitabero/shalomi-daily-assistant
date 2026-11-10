@@ -71,6 +71,21 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
   if (!columns.includes("lastRestoredAt")) {
     db.exec("ALTER TABLE projects ADD COLUMN lastRestoredAt TEXT");
   }
+  // Round 1839: see rounds 1829/1833/1834/1838's own identical fix for
+  // idempotency_keys/automation_runs/whatsapp_messages/sessions -- this
+  // table had no secondary index at all (only `id` via its own PRIMARY
+  // KEY), despite listProjectsForUser's own `WHERE projects.ownerId = ? OR
+  // project_collaborators.userId = ?` running on every single GET
+  // /projects call -- the route that backs the home/"My Projects" screen,
+  // hit on every login landing and every navigation back to it. Confirmed
+  // via `EXPLAIN QUERY PLAN` that this index alone does NOT fix that
+  // query's own `SCAN projects` -- an OR spanning a column from the
+  // LEFT-JOINed table (project_collaborators.userId) can't be satisfied by
+  // an index on either side, a genuine SQLite planner limitation, not a
+  // missing index. See listProjectsForUser's own doc comment for the
+  // actual fix (a WHERE id IN (subquery) rewrite) that this index exists
+  // to back.
+  db.exec(`CREATE INDEX IF NOT EXISTS projects_ownerId_idx ON projects (ownerId)`);
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
@@ -212,13 +227,37 @@ export function listProjectsForOwner(db: ForgeDatabase, ownerId: string): Projec
  * project_collaborators' own PRIMARY KEY (projectId, userId) guarantees at
  * most one matching join row per project for this specific userId, so this
  * never needs a DISTINCT to avoid duplicate rows.
+ *
+ * Round 1839: the WHERE clause is deliberately `projects.id IN (<a UNION
+ * of two single-table id lookups>)`, not the more obvious
+ * `projects.ownerId = ? OR project_collaborators.userId = ?` this
+ * originally read -- confirmed live via EXPLAIN QUERY PLAN that the
+ * simpler OR form always does a full `SCAN projects` regardless of any
+ * index on ownerId, because the OR spans a column from the LEFT-JOINed
+ * project_collaborators table: SQLite's planner can't decide whether to
+ * include a `projects` row without first checking the join, so it can
+ * never restrict the OUTER loop over `projects` to an index seek. Rewritten
+ * so each half of the membership test is its own single-table, fully
+ * indexed lookup (projects_ownerId_idx / project_collaborators_userId_idx,
+ * see ensureProjectsTable/ensureProjectCollaboratorsTable's own comments),
+ * unioned into the id set the outer query then seeks into via projects'
+ * own PRIMARY KEY -- turning this route's own full-table-scan-on-every-
+ * home-screen-load into a lookup bounded by this ONE user's own project
+ * count, not the total across every user. Functionally identical to the
+ * original OR form (same set-membership test, same LEFT JOIN for sharedAt)
+ * -- verified against every existing test below, including the owner/
+ * collaborator/dedup/sharedAt/re-invite cases.
  */
 export function listProjectsForUser(db: ForgeDatabase, userId: string): Project[] {
   const rows = db
     .prepare(
       `SELECT projects.*, project_collaborators.addedAt AS sharedAt FROM projects
        LEFT JOIN project_collaborators ON project_collaborators.projectId = projects.id AND project_collaborators.userId = ?
-       WHERE projects.ownerId = ? OR project_collaborators.userId = ?
+       WHERE projects.id IN (
+         SELECT id FROM projects WHERE ownerId = ?
+         UNION
+         SELECT projectId FROM project_collaborators WHERE userId = ?
+       )
        ORDER BY projects.createdAt DESC, projects.rowid DESC`,
     )
     .all(userId, userId, userId) as Record<string, unknown>[];
