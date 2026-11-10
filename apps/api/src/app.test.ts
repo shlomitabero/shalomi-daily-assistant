@@ -5125,6 +5125,143 @@ test("POST .../automations/:ruleId/runs/:runId/retry succeeds for a record_delet
 });
 
 /**
+ * Round 1837: an "inbound_webhook"-triggered rule can fire on a deletion
+ * event too (round 1688's own matchesTrigger fix -- the public webhook-in
+ * DELETE route calls runAutomationsForRecordChange with event: "deleted"),
+ * but before this round, recordSnapshot was only ever captured when
+ * rule.trigger === "record_deleted" -- never when the trigger was
+ * "inbound_webhook" even though the EVENT was just as much a deletion. So
+ * a failed run fired this way had recordSnapshot: null, and the retry
+ * route's own branch (also keyed off rule.trigger === "record_deleted")
+ * fell into the getRecord() branch, which is GUARANTEED to find nothing
+ * for a record that's actually gone -- Retry 404'd with
+ * AUTOMATION_RUN_RECORD_GONE every single time, with no sequence of
+ * actions that could ever make it succeed. This is the exact same
+ * permanently-broken-retry bug round 991 already fixed for the
+ * "record_deleted" trigger, just reachable through a second trigger round
+ * 991 didn't know existed yet. Confirms both halves of the round-1837 fix:
+ * recordSnapshot is now captured based on the EVENT (event === "deleted"),
+ * not the trigger name, and the retry route now replays from
+ * run.recordSnapshot whenever one exists, regardless of rule.trigger.
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry succeeds for an inbound_webhook-triggered run that fired on a deletion event, instead of 404ing", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `retry-inbound-webhook-deleted-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Lead",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "phone", type: "text", required: true },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Leads", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "inbound_webhook",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Goodbye {{name}}, your lead was removed.",
+        }),
+      });
+      assert.equal(ruleRes.status, 201);
+      const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+      const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(token) });
+      const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+      // WhatsApp deliberately never connected yet -- both this create and
+      // the delete below fire their own inbound_webhook run and fail with
+      // "not connected", mirroring round 991's own test setup exactly.
+      const createRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Dana Levi", phone: "972501234567" }),
+      });
+      assert.equal(createRes.status, 201);
+      const { id: recordId } = (await createRes.json()) as { id: number };
+
+      const deleteRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead/${recordId}/delete?token=${webhookToken}`, {
+        method: "POST",
+      });
+      assert.equal(deleteRes.status, 204);
+
+      // Both the create and the delete above fire their own inbound_webhook
+      // run, and both fail (WhatsApp never connected) -- wait for both,
+      // then pick the one this round's own fix actually targets: the
+      // deletion-triggered run, identified by its own recordSnapshot now
+      // being populated (never the created-event run, which has none).
+      let runs: { id: string; status: string; error: string | null; recordId: number | null; recordSnapshot: string | null }[] = [];
+      for (let i = 0; i < 40 && runs.filter((r) => r.status === "failed").length < 2; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const runsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, { headers: authHeaders(token) });
+        ({ runs } = (await runsRes.json()) as { runs: typeof runs });
+      }
+      assert.equal(runs.filter((r) => r.status === "failed").length, 2, "both the created and deleted events must have fired and failed");
+      const failedRun = runs.find((r) => r.status === "failed" && r.recordSnapshot !== null);
+      assert.ok(failedRun, "the deletion-triggered run must have captured a recordSnapshot -- this round's own fix");
+      assert.match(failedRun!.error ?? "", /not connected/i);
+
+      // The record is genuinely, permanently gone.
+      const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(token) });
+      const { records } = (await listRes.json()) as { records: unknown[] };
+      assert.equal(records.length, 0);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550002222:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const retryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${failedRun!.id}/retry`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      assert.equal(
+        retryRes.status,
+        200,
+        "retrying an inbound_webhook run triggered by a deletion event must succeed now that its data was captured at fire time, not 404",
+      );
+      const { run: newRun } = (await retryRes.json()) as { run: { id: string; status: string } | null };
+      assert.equal(newRun?.status, "sent");
+      assert.notEqual(newRun?.id, failedRun!.id);
+
+      assert.deepEqual(
+        createdSockets[0].sendCalls,
+        [{ jid: "972501234567@s.whatsapp.net", text: "Goodbye Dana Levi, your lead was removed.", content: { text: "Goodbye Dana Levi, your lead was removed." } }],
+        "the retry must resend using the deleted record's own last-known name/phone, not a blank/missing value",
+      );
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 971: two cases genuinely have nothing to retry -- a "schedule"
  * rule's own run (never tied to one record; already retries
  * automatically on its own via isScheduledRuleDue) and a record-triggered

@@ -6200,24 +6200,19 @@ export function createProjectsRouter(
         return;
       }
       const entity = findEntity(project, rule.entityName);
-      // Round 991: unlike record_created/field_equals, a "record_deleted"
-      // rule's own triggering event IS that record's deletion -- getRecord
-      // below is GUARANTEED to find nothing for one of these, every single
-      // time, not just occasionally, so retrying one could never have
-      // worked at all before recordSnapshot existed to replay against
-      // instead. See AutomationRun.recordSnapshot's own doc comment
-      // (packages/db/src/automations.ts) for why this is captured only for
-      // this one trigger -- record_created/field_equals still intentionally
-      // re-fetch the record's CURRENT state below, unchanged.
+      // Round 991, revised round 1837: a run's OWN recordSnapshot (not the
+      // rule's CURRENT trigger name) is what says its triggering record is
+      // gone and getRecord below is GUARANTEED to find nothing -- a rule
+      // can fire on a deletion via either the "record_deleted" trigger or
+      // an "inbound_webhook" trigger matching a delete event (round 1688),
+      // and either way recordAutomationRun's own event-driven capture
+      // (see fireWebhookAction/fireEmailAction/fireRule's own recordSnapshot
+      // lines) is the one source of truth for whether a snapshot exists to
+      // replay against. record_created/field_equals runs never get one and
+      // still intentionally re-fetch the record's CURRENT state below,
+      // unchanged.
       let record: EntityRecord;
-      if (rule.trigger === "record_deleted") {
-        if (!run.recordSnapshot) {
-          throw new HttpError(
-            404,
-            "This run fired before its triggering record's data was saved for retry, so there's nothing left to resend",
-            "AUTOMATION_RUN_RECORD_GONE",
-          );
-        }
+      if (run.recordSnapshot) {
         record = JSON.parse(run.recordSnapshot) as EntityRecord;
       } else {
         const current = getRecord(db, project.id, entity, run.recordId);
@@ -6232,7 +6227,24 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
         async () => {
-          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`);
+          // Round 1837: re-pass "deleted" whenever we're replaying from a
+          // snapshot, so a retry that itself fails again still captures a
+          // fresh recordSnapshot on the new run instead of silently losing
+          // it (fireRule's own recordSnapshot capture now keys off this
+          // event, not rule.trigger -- see its own doc comment).
+          await fireRule(
+            db,
+            whatsapp,
+            emailSender,
+            project,
+            entity,
+            rule,
+            record,
+            uploadsDir,
+            `${req.protocol}://${req.get("host")}`,
+            false,
+            run.recordSnapshot ? "deleted" : "updated",
+          );
           const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
           return { status: 200, body: { run: latestRun ?? null } };
         },

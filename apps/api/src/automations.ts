@@ -702,7 +702,7 @@ export async function runAutomationsForRecordChange(
   for (const rule of rules) {
     if (!matchesTrigger(rule, event, record, changedFields, entity, source)) continue;
     try {
-      await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, baseUrl);
+      await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, baseUrl, false, event);
     } catch (err) {
       // Defensive only -- fireRule's own try/catch below already handles
       // every expected failure mode. This exists so a genuinely
@@ -920,11 +920,14 @@ async function fireWebhookAction(
   // Round 1261: see recordAutomationRun's own doc comment (packages/db).
   // Only fireScheduledRule's own Test-route call site ever passes true.
   skipRuleSummaryUpdate: boolean = false,
+  // Round 1837: see AutomationRun.recordSnapshot's own doc comment -- what
+  // matters is the DELETION EVENT, not the "record_deleted" trigger name;
+  // since round 1688, an "inbound_webhook" rule fires on a deletion too.
+  // Defaults to "updated" so every pre-existing caller (which never had an
+  // event to pass) keeps recordSnapshot behaving exactly as before.
+  event: "created" | "updated" | "deleted" = "updated",
 ): Promise<void> {
-  // Round 991: see AutomationRun.recordSnapshot's own doc comment --
-  // "record_deleted" is the one trigger a later retry can never re-fetch
-  // the record for, since the triggering event IS that record's deletion.
-  const recordSnapshot = rule.trigger === "record_deleted" && record ? JSON.stringify(record) : null;
+  const recordSnapshot = event === "deleted" && record ? JSON.stringify(record) : null;
   if (!rule.webhookUrl || !isAllowedWebhookUrl(rule.webhookUrl)) {
     recordAutomationRun(
       db,
@@ -1134,11 +1137,10 @@ async function fireEmailAction(
   now: Date = new Date(),
   // Round 1261: see fireWebhookAction's own identical parameter just above.
   skipRuleSummaryUpdate: boolean = false,
+  // Round 1837: see fireWebhookAction's own identical parameter just above.
+  event: "created" | "updated" | "deleted" = "updated",
 ): Promise<void> {
-  // Round 991: see AutomationRun.recordSnapshot's own doc comment --
-  // "record_deleted" is the one trigger a later retry can never re-fetch
-  // the record for, since the triggering event IS that record's deletion.
-  const recordSnapshot = rule.trigger === "record_deleted" && record ? JSON.stringify(record) : null;
+  const recordSnapshot = event === "deleted" && record ? JSON.stringify(record) : null;
   // Round 1188: resolve against the entity's current field casing -- see
   // resolveStoredFieldName's own doc comment. entity/record are null only
   // for a schedule rule (no record context at all), in which case toField
@@ -1369,20 +1371,23 @@ export async function fireRule(
   // caller of this function) deliberately keeps isManualTest=false, since
   // a successful retry SHOULD count as the rule's real last outcome.
   isManualTest: boolean = false,
+  // Round 1837: see fireWebhookAction's own identical parameter -- what
+  // matters for recordSnapshot below (and the two calls just below it) is
+  // the DELETION EVENT, not the "record_deleted" trigger name. Defaults to
+  // "updated" so the Test route's own call site (which only ever tests a
+  // currently-live record) keeps behaving exactly as before.
+  event: "created" | "updated" | "deleted" = "updated",
 ): Promise<void> {
   const now = new Date();
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, entity, rule, record, baseUrl, now, isManualTest);
+    await fireWebhookAction(db, project, entity, rule, record, baseUrl, now, isManualTest, event);
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir, now, isManualTest);
+    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir, now, isManualTest, event);
     return;
   }
-  // Round 991: see AutomationRun.recordSnapshot's own doc comment --
-  // "record_deleted" is the one trigger a later retry can never re-fetch
-  // the record for, since the triggering event IS that record's deletion.
-  const recordSnapshot = rule.trigger === "record_deleted" ? JSON.stringify(record) : null;
+  const recordSnapshot = event === "deleted" ? JSON.stringify(record) : null;
   // Round 1188: resolve against the entity's current field casing -- see
   // resolveStoredFieldName's own doc comment.
   const resolvedToField = rule.toField ? resolveStoredFieldName(entity, rule.toField) : null;

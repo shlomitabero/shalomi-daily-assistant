@@ -294,27 +294,38 @@ export interface AutomationRun {
    * whatever that record looks like now, not what it looked like then.
    *
    * Round 991: that "re-fetch the current state" design is unreachable for
-   * a "record_deleted"-triggered run specifically -- the triggering event
-   * IS that record's own deletion, so by the time any run recorded against
-   * it could ever be retried, recordId is GUARANTEED to resolve to nothing,
-   * every single time, not just occasionally the way it can for
+   * a run fired on a record's own DELETION specifically -- the triggering
+   * event IS that record's own deletion, so by the time any run recorded
+   * against it could ever be retried, recordId is GUARANTEED to resolve to
+   * nothing, every single time, not just occasionally the way it can for
    * record_created/field_equals. See recordSnapshot below, which is what
-   * actually makes a "record_deleted" run retryable.
+   * actually makes a deletion-triggered run retryable.
+   *
+   * Round 1837: this was originally written as "a 'record_deleted'-
+   * triggered run specifically", since that was the only trigger that
+   * could ever fire on a deletion at the time. Since round 1688, an
+   * "inbound_webhook" rule can ALSO fire on a deletion event (see
+   * matchesTrigger's own inbound_webhook branch) -- recordSnapshot below
+   * is keyed off the EVENT that fired the run, not the rule's trigger name.
    */
   recordId: number | null;
   /**
-   * Round 991: a JSON snapshot of the triggering record's own field values
-   * at the moment this run fired -- null for every run except a
-   * "record_deleted"-triggered one (the only trigger where recordId above
-   * can never again resolve to a live row, so a retry has nothing else to
-   * replay against), and still null for any "record_deleted" run recorded
-   * before this column existed (additive-only migration, no backfill, same
-   * convention as every other column here). Deliberately NOT captured for
-   * record_created/field_equals runs -- their own retry re-fetching the
-   * record's CURRENT state is intentional (recordId's own doc comment
-   * above), and snapshotting every record-triggered run regardless of
-   * trigger would store full record JSON for potentially high-volume rules
-   * that never need it.
+   * Round 991, revised round 1837: a JSON snapshot of the triggering
+   * record's own field values at the moment this run fired -- null for
+   * every run except one fired on a DELETION event (recordId above can
+   * never again resolve to a live row for one of these, so a retry has
+   * nothing else to replay against), and still null for any deletion-
+   * triggered run recorded before this column existed (additive-only
+   * migration, no backfill, same convention as every other column here).
+   * A deletion event can come from either the "record_deleted" trigger or
+   * an "inbound_webhook" trigger matching a delete (round 1688) -- see
+   * apps/api/src/automations.ts's own fireWebhookAction/fireEmailAction/
+   * fireRule, which all capture this based on the fired EVENT, not
+   * rule.trigger. Deliberately NOT captured for record_created/field_equals
+   * runs -- their own retry re-fetching the record's CURRENT state is
+   * intentional (recordId's own doc comment above), and snapshotting every
+   * record-triggered run regardless of trigger would store full record
+   * JSON for potentially high-volume rules that never need it.
    */
   recordSnapshot: string | null;
   triggeredAt: string;
