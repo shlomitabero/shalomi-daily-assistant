@@ -430,6 +430,26 @@ export function findOversizedGeneratedSpecField(spec: ProductSpec): string | nul
   if (spec.entities.length > GENERATED_SPEC_MAX_ENTITIES) {
     return `the entities list (${spec.entities.length} items, max ${GENERATED_SPEC_MAX_ENTITIES})`;
   }
+  // Round 1878: round 1695's own "sweep every array" fix (see its comment
+  // above GENERATED_SPEC_MAX_ENTITIES) never actually covered `screens`,
+  // ProductSpecSchema's own 8th top-level array (declared right alongside
+  // entities/roles/personas/assumptions/openQuestions above) -- it's just
+  // as exposed to the token-repetition failure mode this whole function
+  // exists to catch, and it's genuinely read on every page load
+  // (HistoryPanel.tsx's checkpoint list, checkpointDiff.ts's diff/timeline
+  // rendering, routes/projects.ts's entity add/delete) and re-sent on
+  // every GET /projects/:id, same as every other array checked here.
+  if (spec.screens.length > GENERATED_SPEC_MAX_LIST_ITEMS) {
+    return `the screens list (${spec.screens.length} items, max ${GENERATED_SPEC_MAX_LIST_ITEMS})`;
+  }
+  for (const screen of spec.screens) {
+    if (screen.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+      return `a screen name "${screen.name.slice(0, 40)}..." (${screen.name.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+    }
+    if (screen.entity && screen.entity.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
+      return `screen "${screen.name}"'s entity (${screen.entity.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;
+    }
+  }
   for (const entity of spec.entities) {
     if (entity.name.length > GENERATED_SPEC_LABEL_MAX_LENGTH) {
       return `entity name "${entity.name.slice(0, 40)}..." (${entity.name.length} characters, max ${GENERATED_SPEC_LABEL_MAX_LENGTH})`;

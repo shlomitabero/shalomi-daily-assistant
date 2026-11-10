@@ -394,6 +394,41 @@ test("findOversizedGeneratedSpecField flags an oversized roles/openQuestions/ope
 });
 
 /**
+ * Round 1878: round 1695's own "sweep every array" fix never actually
+ * covered `screens`, ProductSpecSchema's own 8th top-level array
+ * (declared right alongside entities/roles/personas/assumptions/
+ * openQuestions) -- it's just as exposed to the token-repetition failure
+ * mode this whole function exists to catch.
+ */
+test("findOversizedGeneratedSpecField flags an oversized screens list or an oversized screen name/entity, and leaves a normal spec alone", () => {
+  const normalEntity = { name: "Order", fields: [{ name: "total", type: "number", required: true }] };
+
+  const normalScreens = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    screens: [{ name: "Orders", type: "list", entity: "Order" }],
+  });
+  assert.equal(findOversizedGeneratedSpecField(normalScreens), null, "a normal, correctly-sized screens list must not be flagged");
+
+  const oversizedScreens = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    screens: Array.from({ length: GENERATED_SPEC_MAX_LIST_ITEMS + 1 }, (_, i) => ({ name: `Screen ${i}`, type: "list", entity: "Order" })),
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedScreens)!, /screens list/);
+
+  const oversizedScreenName = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    screens: [{ name: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1), type: "dashboard" }],
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedScreenName)!, /screen name/);
+
+  const oversizedScreenEntity = ProductSpecSchema.parse({
+    ...baseSpec([normalEntity]),
+    screens: [{ name: "Orders", type: "list", entity: "x".repeat(GENERATED_SPEC_LABEL_MAX_LENGTH + 1) }],
+  });
+  assert.match(findOversizedGeneratedSpecField(oversizedScreenEntity)!, /screen "Orders"'s entity/);
+});
+
+/**
  * Round 1710: round 1695's own array-count sweep above never touched
  * enumLabels -- a z.record (FieldSchema's own declaration), not an array --
  * even though it's exposed to the identical token-repetition failure mode:
