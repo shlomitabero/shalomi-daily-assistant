@@ -2,13 +2,27 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api.js';
 
-// Paddle's SDK loads from a CDN <script> tag in index.html — if that's
-// blocked (an ad/privacy blocker commonly flags paddle.com) or just slow
-// on a bad connection, window.Paddle may not exist yet, or ever, by the
-// time this page's data comes back. Polling a few times before giving up
-// tells the two cases apart: "still loading" vs. "actually failed" — a
-// real paying customer on this page deserves an error, not a button that
-// stays disabled forever with no explanation.
+// Paddle's SDK is the only external script this app ever loads — until now
+// index.html loaded it globally via a static <script> tag, so every single
+// page load (including every visit to the owner's own private dashboard —
+// Settings, Activity Log, Financial, none of which ever touch window.Paddle)
+// fetched this third-party script for no reason. Only this one public page
+// actually opens a Paddle checkout, so the script only needs to start
+// loading when this page itself mounts.
+const PADDLE_SCRIPT_SRC = 'https://cdn.paddle.com/paddle/v2/paddle.js';
+function ensurePaddleScriptLoading() {
+  if (document.querySelector(`script[src="${PADDLE_SCRIPT_SRC}"]`)) return;
+  const script = document.createElement('script');
+  script.src = PADDLE_SCRIPT_SRC;
+  document.head.appendChild(script);
+}
+
+// If that's blocked (an ad/privacy blocker commonly flags paddle.com) or
+// just slow on a bad connection, window.Paddle may not exist yet, or ever,
+// by the time this page's data comes back. Polling a few times before
+// giving up tells the two cases apart: "still loading" vs. "actually
+// failed" — a real paying customer on this page deserves an error, not a
+// button that stays disabled forever with no explanation.
 function waitForPaddle({ retries = 10, intervalMs = 300 } = {}) {
   return new Promise((resolve) => {
     let attempts = 0;
@@ -93,6 +107,7 @@ export default function ProductPage() {
         setPaddleNotConfigured(true);
         return;
       }
+      ensurePaddleScriptLoading();
       const paddle = await waitForPaddle();
       if (!paddle) {
         setPaddleFailed(true);
