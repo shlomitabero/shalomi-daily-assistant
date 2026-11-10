@@ -20416,3 +20416,35 @@ test("the board view's column has a fixed min-width and its card field wraps, in
     ".board-card-field must allow an unbreakable field value to wrap mid-word once the column itself is correctly sized, instead of overflowing/clipping inside it",
   );
 });
+
+/*
+ * Round 1848: FieldInput's own relation picker (`.relation-field-input`,
+ * used by the record create/edit form, bulk-edit, and inline cell
+ * editing -- line 1525) wraps an optional narrowing `.relation-filter-input`,
+ * an optional `.relation-filter-truncated-hint`, and the `<select>`. The
+ * entity toolbar's own relation *filter* dropdown (`.entity-status-filter-relation`,
+ * round 1646) has the identical three-part shape, and its own CSS comment
+ * explicitly says it "mirrors FieldInput's own .relation-field-input
+ * layout" -- but no `.relation-field-input` rule ever actually existed in
+ * styles.css (confirmed via grep: the class appears only in that comment
+ * and in the JSX, never as a CSS selector). Without it, the filter input
+ * and <select> (both full-width via the global input/select rule) stack
+ * with zero gap between them, while the truncation-hint <p> gets the
+ * browser's unreset default margin instead of a consistent 4px rhythm.
+ * jsdom has no layout engine and can't detect this missing spacing (see
+ * this file's other CSS-only-bug tests above), so this reads styles.css's
+ * own source directly instead.
+ */
+test("FieldInput's own relation-picker wrapper has its own CSS layout, matching the toolbar's relation filter's own documented-parity rule", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const relationFieldInput = stylesCss.match(/\.relation-field-input \{[\s\S]*?\}/)?.[0];
+  assert.ok(relationFieldInput, "expected a .relation-field-input rule in styles.css");
+  assert.match(relationFieldInput!, /display:\s*flex/, ".relation-field-input must lay out its filter input/hint/select as a flex column");
+  assert.match(relationFieldInput!, /flex-direction:\s*column/, ".relation-field-input must stack its children vertically");
+  assert.match(relationFieldInput!, /gap:\s*4px/, ".relation-field-input must space its children, matching .entity-status-filter-relation's own 4px gap");
+
+  const hintReset = stylesCss.match(/\.relation-field-input \.relation-filter-truncated-hint \{[\s\S]*?\}/)?.[0];
+  assert.ok(hintReset, "expected a .relation-field-input .relation-filter-truncated-hint rule resetting the hint's default margin");
+  assert.match(hintReset!, /margin:\s*0/, "the truncation hint's default browser margin must be reset so the flex gap alone controls its spacing");
+});

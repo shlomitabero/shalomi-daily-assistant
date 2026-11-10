@@ -10895,6 +10895,8 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .entity-status-filter, .entity-group-by { max-width: 200px; margin-bottom: 0; flex-shrink: 0; }
 .entity-status-filter-relation { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
 .entity-status-filter-relation .entity-status-filter, .entity-status-filter-relation .relation-filter-input { max-width: 200px; margin-bottom: 0; }
+.relation-field-input { display: flex; flex-direction: column; gap: 4px; }
+.relation-field-input .relation-filter-truncated-hint { margin: 0; }
 .entity-group-header-row td { background: var(--surface-subtle); font-weight: 600; padding: 6px 10px; }
 .entity-group-totals-row td { background: var(--surface-subtle); border-bottom: 1px solid var(--border); font-weight: 600; }
 .entity-group-toggle { background: none; border: none; cursor: pointer; padding: 0 4px; font-size: 12px; color: inherit; }

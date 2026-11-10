@@ -7676,6 +7676,31 @@ test("the exported app's generated styles.css styles the entity toolbar's clear/
 });
 
 /**
+ * Round 1848: same "live-app fix never ported to codegen.ts" shape -- but
+ * this time the gap exists in BOTH files. The exported app's own
+ * `.relation-field-input` (the exported FieldInput's relation picker,
+ * JSX around lines 5514/8690) has no CSS of its own, just like the live
+ * app's own class before this round's companion fix. Confirmed via grep
+ * that the generated stylesheet only ever defines `.entity-status-filter-relation`
+ * (the toolbar's own relation filter, which has the identical three-part
+ * shape), never `.relation-field-input` itself.
+ */
+test("the exported app's generated styles.css styles FieldInput's own relation-picker wrapper, matching the toolbar's relation filter's own layout", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const relationFieldInput = stylesCss.match(/\.relation-field-input\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(relationFieldInput, "expected a .relation-field-input rule in the generated styles.css");
+  assert.match(relationFieldInput!, /display:\s*flex/, ".relation-field-input must lay out its filter input/hint/select as a flex column");
+  assert.match(relationFieldInput!, /flex-direction:\s*column/, ".relation-field-input must stack its children vertically");
+  assert.match(relationFieldInput!, /gap:\s*4px/, ".relation-field-input must space its children, matching .entity-status-filter-relation's own 4px gap");
+
+  const hintReset = stylesCss.match(/\.relation-field-input \.relation-filter-truncated-hint\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(hintReset, "expected a .relation-field-input .relation-filter-truncated-hint rule resetting the hint's default margin");
+  assert.match(hintReset!, /margin:\s*0/, "the truncation hint's default browser margin must be reset so the flex gap alone controls its spacing");
+});
+
+/**
  * Round 1385: mirrors the live preview's own round-1384 fix. The exported
  * CalendarView's chip offered reschedule only via native HTML5
  * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day

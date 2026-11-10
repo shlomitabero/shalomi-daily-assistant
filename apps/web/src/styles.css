@@ -1583,6 +1583,23 @@ tbody tr:hover {
   margin-bottom: 0;
 }
 
+/* Round 1848: FieldInput's own relation picker (record create/edit form,
+   bulk-edit, inline cell editing) -- the comment above claims this rule
+   mirrors .relation-field-input's own layout, but .relation-field-input
+   never actually had a CSS rule of its own. Without one, its filter
+   input and <select> (both full-width via the global input/select rule)
+   stacked with zero gap between them, while the truncation-hint <p> got
+   the browser's unreset default margin instead of a consistent rhythm. */
+.relation-field-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.relation-field-input .relation-filter-truncated-hint {
+  margin: 0;
+}
+
 .entity-group-header-row td {
   background: var(--surface-subtle);
   font-weight: 600;
