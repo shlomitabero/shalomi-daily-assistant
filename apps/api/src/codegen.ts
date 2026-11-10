@@ -314,12 +314,38 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new DatabaseSync(path.join(__dirname, "data.sqlite"));
-// Without this, a relation field's REFERENCES clause below is pure
-// decoration -- SQLite never actually enforces foreign keys unless this
-// pragma is turned on for the connection. Mirrors the live Forge AI
-// backend's own connection.ts.
-db.exec("PRAGMA foreign_keys = ON;");
+
+// Round 1871: a data.sqlite that's missing, truncated, or not a valid
+// SQLite file at all (an interrupted copy, a disk-full write, or a partial
+// backup/restore -- exactly the manual workflow this file's own generated
+// README instructs for Render's free plan, under "Back it up... before
+// every redeploy or restart") used to crash this whole process with a raw,
+// uncaught "file is not a database" SQLite error (confirmed live: SQLite
+// doesn't actually validate the file until the first real read/write
+// touches it, which can be this PRAGMA or the CREATE TABLE loop below,
+// not the DatabaseSync() constructor itself) and no actionable message --
+// the HTTP server never binds, so there's nothing to show a non-technical
+// "own your code" user except a Node stack trace. Both call sites below
+// that can hit this are now wrapped and point the user at the fix instead.
+function reportDatabaseSetupFailure(err) {
+  console.error(
+    "\\nCouldn't open data.sqlite: " + err.message + "\\n\\n" +
+      "This usually means the file is missing, truncated, or not a valid SQLite database -- often from an interrupted copy, a disk-full write, or a partial backup/restore. If you have a backup, restore it over data.sqlite and restart. Otherwise, move data.sqlite aside (or delete it) and restart -- a fresh, empty database is created automatically.\\n",
+  );
+  process.exit(1);
+}
+
+let db;
+try {
+  db = new DatabaseSync(path.join(__dirname, "data.sqlite"));
+  // Without this, a relation field's REFERENCES clause below is pure
+  // decoration -- SQLite never actually enforces foreign keys unless this
+  // pragma is turned on for the connection. Mirrors the live Forge AI
+  // backend's own connection.ts.
+  db.exec("PRAGMA foreign_keys = ON;");
+} catch (err) {
+  reportDatabaseSetupFailure(err);
+}
 
 const ENTITIES = ${entitiesJson};
 
@@ -355,6 +381,7 @@ const ENTITY_NAMES = new Set(ENTITIES.map((e) => e.name));
 // resolveRelationTarget fix for the identical gap in the live backend.
 const ENTITY_NAMES_LOWER = new Set(ENTITIES.map((e) => e.name.toLowerCase()));
 
+try {
 for (const entity of ENTITIES) {
   assertSafe(entity.name);
   const columns = ["id INTEGER PRIMARY KEY AUTOINCREMENT", "createdAt TEXT NOT NULL", "updatedAt TEXT"];
@@ -425,6 +452,9 @@ for (const entity of ENTITIES) {
     const references = field.type === "relation" && field.relationTo && ENTITY_NAMES_LOWER.has(field.relationTo.toLowerCase()) ? \` REFERENCES \${q(field.relationTo)}(id)\` : "";
     db.exec(\`ALTER TABLE \${q(entity.name)} ADD COLUMN \${q(field.name)} \${sqlType(field.type)}\${references}\`);
   }
+}
+} catch (err) {
+  reportDatabaseSetupFailure(err);
 }
 
 const DATE_FORMAT = /^(\\d{4})-(\\d{2})-(\\d{2})$/;

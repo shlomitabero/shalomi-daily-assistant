@@ -13725,6 +13725,100 @@ test("generated render.yaml pins NODE_VERSION, matching this repo's own render.y
 });
 
 /**
+ * Round 1871: a data.sqlite that's missing, truncated, or not a valid SQLite
+ * file at all (an interrupted copy, a disk-full write, or a partial
+ * backup/restore -- exactly the manual workflow the README above instructs
+ * for Render's free plan, under "Back it up... before every redeploy or
+ * restart") used to crash this whole process with a raw, uncaught "file is
+ * not a database" SQLite error before the HTTP server ever bound -- no
+ * actionable message for this feature's explicit non-technical "own your
+ * code" target audience. Spawns a real server.js (same pattern as the
+ * round-1010 feed test above) against a deliberately-corrupted data.sqlite
+ * and confirms it now exits cleanly with an actionable message instead of
+ * an uncaught stack trace, then confirms the untouched case (no data.sqlite
+ * at all) still starts up normally and serves real requests -- proving the
+ * new try/catch didn't turn the ordinary fresh-install path into a false
+ * failure.
+ */
+test("generated server.js reports a clean, actionable error (not a raw stack trace) when data.sqlite is corrupted, and still starts normally with no data.sqlite at all", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-corrupt-db-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+  writeFileSync(path.join(dir, "data.sqlite"), "not a valid sqlite file, truncated garbage");
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const [exitCode] = await new Promise<[number | null]>((resolve) => {
+      child.on("exit", (code) => resolve([code]));
+    });
+    assert.notEqual(exitCode, 0, `a corrupted data.sqlite must exit non-zero, not hang or silently succeed:\n${stderr}`);
+    assert.doesNotMatch(stderr, /Uncaught|ERR_SQLITE_ERROR|at Object\.<anonymous>/, `must not leak a raw uncaught stack trace to a non-technical user:\n${stderr}`);
+    assert.match(stderr, /data\.sqlite/i, "the message must name the file at fault");
+    assert.match(stderr, /back ?up|restore|delete/i, "the message must tell the user what to actually do about it");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generated server.js still starts up normally and serves real requests when data.sqlite is simply missing (fresh install)", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-fresh-db-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const res = await fetch(`http://localhost:${port}/api/Customer`);
+        assert.equal(res.status, 200);
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 725's finding: the README above told a user "the free plan works
  * for this" and, separately, "data.sqlite -- your data. Back it up like
  * any file" -- with zero mention that Render's free plan runs on an
