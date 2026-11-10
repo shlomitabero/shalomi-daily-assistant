@@ -2131,6 +2131,23 @@ test("Shipment's 'shipping' keyword doesn't spuriously match 'worshipping'", asy
   assert.ok(realShipping.entities.some((e) => e.name === "Shipment"), "'shipping' must still match Shipment");
 });
 
+// Round 1814: Shipment's own keyword list never had the entity's own name
+// ("shipment"/"shipments") -- only the narrower "shipping"/"logistics"/
+// "warehouse management"/"package tracking"/"freight" phrases. A
+// description naming the entity's own fields directly ("carrier",
+// "destination") matched none of them and fell through to Customer only.
+test("Shipment's bare 'shipment'/'shipments' keyword matches, not just the narrower logistics phrases", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const trackShipments = await provider.generate(
+    "An app for my small business to create and track shipments to customers, with a carrier and destination.",
+  );
+  assert.ok(trackShipments.entities.some((e) => e.name === "Shipment"), "'shipments' alone must match Shipment, not fall through to Customer-only");
+
+  const createShipment = await provider.generate("An app to create a new shipment and assign it a carrier.");
+  assert.ok(createShipment.entities.some((e) => e.name === "Shipment"), "'shipment' (singular) must also match Shipment");
+});
+
 /**
  * Regression test for a real bug surfaced (but left unverified) by round
  * 455's systematic survey and verified+fixed in round 456: Project's bare

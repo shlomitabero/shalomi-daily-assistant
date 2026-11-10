@@ -1480,6 +1480,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // this entity. \b-bounded, same pitfall-1 shape as the twelve other
       // collision fixes already in this file.
       /\bshipping\b/, "logistics", "warehouse management", "package tracking", "freight",
+      // Round 1814: the entity's own name ("Shipment") and the single most
+      // natural word for describing it ("track shipments", "create a
+      // shipment") was never in its own keyword list -- only the narrower
+      // "shipping"/"logistics"/"warehouse management"/"package tracking"/
+      // "freight" phrases were. A description naming the entity's own
+      // fields directly ("track shipments... with a carrier and
+      // destination") matched none of them and fell through to Customer
+      // only (via the bare "customer" keyword) or the generic Item
+      // fallback. Collision-free: not a substring of "worshipping" (the
+      // existing "shipping" collision), "membership", or "dealership" --
+      // confirmed live.
+      /\bshipments?\b/,
       "שילוח", "לוגיסטיקה", "ניהול מחסן", "מעקב חבילות",
     ],
     labelHe: "משלוחים ומעקב",
