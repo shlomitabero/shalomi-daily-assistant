@@ -4261,7 +4261,9 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
 
       if (field.type === "relation") {
         if (!relationResolvable(field)) continue;
-        if (raw === null || raw === undefined) {
+        // Round 1852: raw === "" must be treated as missing here too, same as
+        // null/undefined -- mirrors the live preview's own round-1852 fix.
+        if (raw === null || raw === undefined || raw === "") {
           if (field.required) {
             rowError = \`Row \${rowIndex + 1}: missing required field "\${field.label || field.name}".\`;
             break;

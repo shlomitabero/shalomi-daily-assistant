@@ -14160,6 +14160,58 @@ test("the exported EntityView's own generated buildImportRecordsFromJson accepts
   assert.deepEqual(result.records, [{ active: true }, { active: false }, { active: true }, { active: false }]);
 });
 
+/**
+ * Round 1852: ports the live preview's own round-1852 fix
+ * (entityFormatting.ts) to the exported app's generated
+ * buildImportRecordsFromJson -- the relation branch's own null check
+ * never included `raw === ""`, so an optional relation field cleared to
+ * "" (e.g. via Export JSON -> re-import) fell through to Number("") === 0,
+ * which never matches a real record id, producing a confusing "doesn't
+ * match any record" error instead of clearing the field like every other
+ * optional field type and the CSV-import sibling do.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson treats an optional relation field's empty string as null, matching every other optional field type here", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = 'const ALL_ENTITIES = [{ name: "Courier", label: "Courier" }];';
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const relatedRecords = { Courier: [{ id: 1, name: "Yossi Cohen" }] };
+  const result = buildImportRecordsFromJson(fields, [{ name: "Order A", courierId: "" }], relatedRecords);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A", courierId: null }]);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson treats a required relation field's empty string as missing, not as an unmatched id", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = 'const ALL_ENTITIES = [{ name: "Courier", label: "Courier" }];';
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "Courier" },
+  ];
+  const relatedRecords = { Courier: [{ id: 1, name: "Yossi Cohen" }] };
+  const result = buildImportRecordsFromJson(fields, [{ name: "Order A", courierId: "" }], relatedRecords);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /missing required field/);
+  assert.match(result.errors[0], /Courier/);
+});
+
 test("the exported EntityView's own generated buildImportRecordsFromJson still rejects a boolean field's value that isn't a real boolean or a recognized true/false string", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;

@@ -3485,6 +3485,42 @@ test("buildImportRecordsFromJson rejects a relation id that doesn't match any re
   assert.match(result.errors[0], /doesn't match any Courier record/);
 });
 
+/**
+ * Round 1852: the relation branch's own null check (`raw === null ||
+ * raw === undefined`) never included `raw === ""`, unlike every other
+ * field-type branch in this function and unlike buildImportRecords' own
+ * CSV-side relation branch. Reachable via Export JSON -> re-import of an
+ * optional relation field that was cleared: `Number("")` is `0`, which
+ * never matches a real record id (ids start at 1), so the row was
+ * rejected with a confusing "doesn't match any record" error instead of
+ * being cleared like every other optional field type.
+ */
+test("buildImportRecordsFromJson treats an optional relation field's empty string as null, matching every other optional field type here", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: false, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 1, name: "Yossi Cohen" }];
+  const rows = [{ name: "Order A", courierId: "" }];
+  const result = buildImportRecordsFromJson(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ name: "Order A", courierId: null }]);
+});
+
+test("buildImportRecordsFromJson treats a required relation field's empty string as missing, not as an unmatched id", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "courierId", label: "Courier", type: "relation", required: true, relationTo: "Courier" },
+  ];
+  const couriers: EntityRecord[] = [{ id: 1, name: "Yossi Cohen" }];
+  const rows = [{ name: "Order A", courierId: "" }];
+  const result = buildImportRecordsFromJson(fields, rows, [courierEntity], { Courier: couriers });
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /missing required field/);
+  assert.match(result.errors[0], /Courier/);
+});
+
 test("buildImportRecordsFromJson ignores an optional relation field when its target entity's records weren't loaded, instead of failing on it", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },

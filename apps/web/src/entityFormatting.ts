@@ -2507,7 +2507,14 @@ export function buildImportRecordsFromJson(
 
       if (field.type === "relation") {
         if (!relationResolvable(field)) continue; // see doc comment: no related records loaded, keep ignoring the field
-        if (raw === null || raw === undefined) {
+        // Round 1852: raw === "" must be treated as missing here too, same as
+        // null/undefined -- mirroring buildImportRecords' own relation-branch
+        // check. Without this, a JSON import with "" for an optional relation
+        // field (e.g. a hand-edited recordsToJson export) fell through to
+        // Number("") === 0, which never matches a real record id, producing a
+        // confusing "doesn't match any record" error instead of clearing the
+        // field like every other field type and the CSV-import sibling do.
+        if (raw === null || raw === undefined || raw === "") {
           if (field.required) {
             rowError = `Row ${rowIndex + 1}: missing required field "${field.label ?? field.name}".`;
             break;
