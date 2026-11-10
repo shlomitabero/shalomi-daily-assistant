@@ -192,6 +192,38 @@ test("formatOpenQuestionsProgress picks the 'all answered' phrasing once every q
   assert.equal(formatOpenQuestionsProgress(questions, { "0": "כן", "1": "לא" }, tr), "ענית על כל 2 השאלות ✓");
 });
 
+/**
+ * Round 1868: the heuristic (non-AI) spec engine's own buildOpenQuestions
+ * always returns exactly one open question, so this single-question case is
+ * not a rare edge case -- it is the ONLY case whenever the AI generation
+ * path is skipped or falls back. Before this fix, both the "none answered"
+ * and "all answered" strings hardcoded a plural noun with no singular form
+ * (unlike every other count-bearing i18n key in this file, e.g.
+ * entity.recordCount.all.one/.many), so a single open question rendered as
+ * grammatically wrong "...the 1 questions yet"/"Answered all 1 questions"
+ * in English, and the doubly-wrong "1 השאלות" (a bare numeral next to a
+ * plural definite-article noun) in Hebrew.
+ */
+test("formatOpenQuestionsProgress uses the singular phrasing, not a hardcoded plural noun, when there is exactly one open question", () => {
+  const questions = [question("Which payment provider should this use?")];
+  const trEn = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const trHe = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+
+  assert.equal(formatOpenQuestionsProgress(questions, {}, trEn), "You haven't answered the question yet — that's fine, it's optional");
+  assert.equal(formatOpenQuestionsProgress(questions, { "0": "Stripe" }, trEn), "Answered the question ✓");
+  assert.equal(formatOpenQuestionsProgress(questions, {}, trHe), "עדיין לא ענית על השאלה — זה בסדר, אפשר גם בלי");
+  assert.equal(formatOpenQuestionsProgress(questions, { "0": "Stripe" }, trHe), "ענית על השאלה ✓");
+
+  for (const rendered of [
+    formatOpenQuestionsProgress(questions, {}, trEn),
+    formatOpenQuestionsProgress(questions, { "0": "Stripe" }, trEn),
+    formatOpenQuestionsProgress(questions, {}, trHe),
+    formatOpenQuestionsProgress(questions, { "0": "Stripe" }, trHe),
+  ]) {
+    assert.doesNotMatch(rendered, /\b1\b/, `a single open question must never render a bare "1": ${rendered}`);
+  }
+});
+
 test("summarizeRefineImpact prefers the LAST successful Architect event, not the first, so a Debug Agent recovery's corrected detail wins", () => {
   // Mirrors the real pipeline.ts behavior (architectEvent() called a
   // second time after a Debug Agent recovery, see the "Re-emit the

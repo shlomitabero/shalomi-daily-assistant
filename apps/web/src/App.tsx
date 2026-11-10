@@ -335,8 +335,8 @@ export function formatOpenQuestionsProgress(
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
   const { answered, total } = countAnsweredOpenQuestions(openQuestions, selectedAnswers);
-  if (answered === 0) return t("spec.openQuestions.answeredCount.none", { total });
-  if (answered === total) return t("spec.openQuestions.answeredCount.all", { total });
+  if (answered === 0) return t(total === 1 ? "spec.openQuestions.answeredCount.none.one" : "spec.openQuestions.answeredCount.none.many", { total });
+  if (answered === total) return t(total === 1 ? "spec.openQuestions.answeredCount.all.one" : "spec.openQuestions.answeredCount.all.many", { total });
   return t("spec.openQuestions.answeredCount.some", { answered, total });
 }
 
