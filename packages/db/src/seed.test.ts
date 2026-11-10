@@ -1234,3 +1234,52 @@ test("VolunteerEvent's 'name' seed values are entity-appropriate event names, no
     assert.ok(eventNames.has(name), `VolunteerEvent's name "${name}" must reuse Event's own event-name pool, not fall through to a random person's name`);
   }
 });
+
+/**
+ * Round 1830's finding: unlike the "name"/"email"/"phone" cases, the
+ * "customerName"/"owner"/"assignee"/"instructor"/"technician" case had no
+ * entity-aware branching at all (aside from "instructor", which is
+ * entity-independent) -- so WorkOrder.technician, Deal.owner, and
+ * Task.assignee/Ticket.assignee all fell through to the exact same
+ * generic PERSON_NAMES pool that is Customer.name's own fallback. A
+ * field-service app (WorkOrder+Customer), a CRM (Deal+Task+Customer), or
+ * a support desk (Ticket+Customer) could all seed the technician/deal-
+ * owner/assignee as the literal same person as an unrelated customer on
+ * the same row. Deal and Task can also co-occur with EACH OTHER in a CRM,
+ * so they're cross-checked against each other too, the same
+ * "could plausibly co-occur" reasoning round 1736 used for Employee vs.
+ * Volunteer.
+ */
+test("WorkOrder's 'technician', Deal's 'owner', and Task's/Ticket's 'assignee' seed values are each their own pool, not Customer's exact same values", () => {
+  const customerPerson: Entity = {
+    name: "Customer",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const customerNames = new Set(generateSeedRecords(customerPerson, 4).map((r) => r.name as string));
+
+  const workOrder: Entity = { name: "WorkOrder", fields: [{ name: "technician", type: "text", required: false }] };
+  const deal: Entity = { name: "Deal", fields: [{ name: "owner", type: "text", required: false }] };
+  const task: Entity = { name: "Task", fields: [{ name: "assignee", type: "text", required: false }] };
+  const ticket: Entity = { name: "Ticket", fields: [{ name: "assignee", type: "text", required: false }] };
+
+  const technicianNames = generateSeedRecords(workOrder, 4).map((r) => r.technician as string);
+  for (const name of technicianNames) assert.ok(!customerNames.has(name), `WorkOrder's technician "${name}" must not be one of Customer's own sample names`);
+
+  const dealOwnerNames = generateSeedRecords(deal, 4).map((r) => r.owner as string);
+  for (const name of dealOwnerNames) assert.ok(!customerNames.has(name), `Deal's owner "${name}" must not be one of Customer's own sample names`);
+
+  const taskAssigneeNames = new Set(generateSeedRecords(task, 4).map((r) => r.assignee as string));
+  for (const name of taskAssigneeNames) assert.ok(!customerNames.has(name), `Task's assignee "${name}" must not be one of Customer's own sample names`);
+
+  const ticketAssigneeNames = generateSeedRecords(ticket, 4).map((r) => r.assignee as string);
+  for (const name of ticketAssigneeNames) {
+    assert.ok(!customerNames.has(name), `Ticket's assignee "${name}" must not be one of Customer's own sample names`);
+    assert.ok(!dealOwnerNames.includes(name), `Ticket's assignee "${name}" must not be one of Deal's own owner names`);
+  }
+
+  // Deal and Task both commonly appear together in a Sales CRM -- cross-check
+  // Deal's owner names against Task's own assignee names too.
+  for (const name of dealOwnerNames) {
+    assert.ok(!taskAssigneeNames.has(name), `Deal's owner "${name}" must not be one of Task's own assignee names`);
+  }
+});

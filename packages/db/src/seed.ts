@@ -126,6 +126,27 @@ const TEAM_MEMBER_NAMES_EN = ["Ronit Abutbul", "Doron Shahar", "Liron Malka", "O
 const TEAM_MEMBER_EMAIL_LOCAL_PARTS = ["ronit.abutbul", "doron.shahar", "liron.malka", "omri.sasson"];
 const TEAM_MEMBER_PHONES_HE = ["054-222-7733", "058-333-8844", "050-444-9955", "052-555-1166"];
 const TEAM_MEMBER_PHONES_EN = ["(555) 222-7733", "(555) 333-8844", "(555) 444-9955", "(555) 555-1166"];
+// Round 1830: the "customerName"/"owner"/"assignee"/"instructor"/
+// "technician" case below is the one switch case among "name"'s siblings
+// with no entity-aware branching at all (aside from "instructor", which
+// applies regardless of entity name) -- so WorkOrder.technician,
+// Deal.owner, Task.assignee, and Ticket.assignee all fell through to the
+// exact same generic PERSON_NAMES_HE/EN pool that is Customer.name's own
+// fallback. Each of these can plausibly co-occur with Customer in the same
+// generated spec (a field-service app has WorkOrder+Customer; a CRM has
+// Deal+Task+Customer; a support desk has Ticket+Customer) -- and Deal and
+// Task can also co-occur with EACH OTHER (a CRM has both) -- so a shared
+// pool, index-aligned, risked showing the technician/deal-owner/assignee as
+// the literal same person as the customer, or as each other, on the same
+// row. Own pools per entity, same shape as rounds 1707/1736/1740/1742/1743.
+const TECHNICIAN_NAMES_HE = ["משה אדרי", "אלה טל", "יואב נגר", "רותי שדה"];
+const TECHNICIAN_NAMES_EN = ["Moshe Edri", "Ella Tal", "Yoav Nagar", "Ruti Sadeh"];
+const DEAL_OWNER_NAMES_HE = ["אוריה בן-שושן", "דקלה קרני", "איתמר זוהר", "שירלי אבגי"];
+const DEAL_OWNER_NAMES_EN = ["Uriah Ben-Shushan", "Dikla Karni", "Itamar Zohar", "Shirly Avgi"];
+const TASK_ASSIGNEE_NAMES_HE = ["גיל אלמוג", "נטלי בר-און", "עידו רגב", "הדר מור"];
+const TASK_ASSIGNEE_NAMES_EN = ["Gil Almog", "Natalie Bar-On", "Ido Regev", "Hadar Mor"];
+const TICKET_ASSIGNEE_NAMES_HE = ["נועם גפן", "אור בכרי", "שני וייס", "דור חן"];
+const TICKET_ASSIGNEE_NAMES_EN = ["Noam Gefen", "Or Bachri", "Shani Weiss", "Dor Chen"];
 const SOURCES_HE = ["אתר האינטרנט", "המלצה מלקוח", "פייסבוק", "חיפוש בגוגל"];
 const SOURCES_EN = ["Website", "Customer referral", "Facebook Ads", "Google Search"];
 const ROLES_HE = ["מוכר/ת", "טכנאי/ת", "מנהל/ת משמרת", "רכז/ת שירות"];
@@ -450,9 +471,19 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
     case "assignee":
     case "instructor":
     case "technician":
-      return fieldName === "instructor"
-        ? pick(isHebrew ? INSTRUCTORS_HE : INSTRUCTORS_EN, index)
-        : pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
+      // Round 1830: see this pool group's own comment above -- technician/
+      // owner/assignee each need their own entity-aware branch here, the
+      // same precedence pattern "name" uses below, instead of all sharing
+      // Customer's own PERSON_NAMES_HE/EN fallback. "customerName" is left
+      // alone: it's a free-text field literally naming a customer (no
+      // Customer relation implied), so sharing that pool is correct, not a
+      // bug.
+      if (fieldName === "instructor") return pick(isHebrew ? INSTRUCTORS_HE : INSTRUCTORS_EN, index);
+      if (fieldName === "technician") return pick(isHebrew ? TECHNICIAN_NAMES_HE : TECHNICIAN_NAMES_EN, index);
+      if (fieldName === "owner" && entityName === "Deal") return pick(isHebrew ? DEAL_OWNER_NAMES_HE : DEAL_OWNER_NAMES_EN, index);
+      if (fieldName === "assignee" && entityName === "Task") return pick(isHebrew ? TASK_ASSIGNEE_NAMES_HE : TASK_ASSIGNEE_NAMES_EN, index);
+      if (fieldName === "assignee" && entityName === "Ticket") return pick(isHebrew ? TICKET_ASSIGNEE_NAMES_HE : TICKET_ASSIGNEE_NAMES_EN, index);
+      return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     case "ownerName":
     case "renterName":
     case "donorName":
