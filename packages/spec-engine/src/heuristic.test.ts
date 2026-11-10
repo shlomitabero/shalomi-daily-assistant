@@ -938,6 +938,40 @@ test("recognizes dog walking, pet sitting, and dog daycare descriptions as the P
 });
 
 /**
+ * Round 1817: round 1752's own "pet grooming" keyword only ever covered
+ * that exact phrase -- a dog or cat groomer/grooming business (usually
+ * described by the specific animal, not the generic word "pet") had no
+ * keyword anywhere matching it, so it fell through to matchEntities'
+ * degenerate generic "Item" fallback. Before the fix,
+ * `provider.generate("a dog grooming business")` produced entities: ["Item"].
+ * Also confirms a bare "groom" keyword was deliberately never added --
+ * "groom" alone is a substring of ordinary unrelated phrases ("the bride
+ * and groom", "groom the product backlog") this entity must not match.
+ */
+test("recognizes dog/cat grooming descriptions as the Pet entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dogGrooming = await provider.generate("a dog grooming business");
+  assert.ok(dogGrooming.entities.some((e) => e.name === "Pet"), "'dog grooming' must match the Pet entity rule");
+  assert.ok(!dogGrooming.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const catGrooming = await provider.generate("a cat grooming salon");
+  assert.ok(catGrooming.entities.some((e) => e.name === "Pet"), "'cat grooming' must match the Pet entity rule");
+
+  const dogGroomer = await provider.generate("a dog groomer scheduling clients");
+  assert.ok(dogGroomer.entities.some((e) => e.name === "Pet"), "'dog groomer' must match the Pet entity rule");
+
+  const hebrewCatGrooming = await provider.generate("עסק לטיפוח חתולים", true);
+  assert.ok(hebrewCatGrooming.entities.some((e) => e.name === "Pet"), "Hebrew 'טיפוח חתולים' must match the Pet entity rule");
+
+  const weddingGroom = await provider.generate("a wedding planning business for the bride and groom");
+  assert.ok(!weddingGroom.entities.some((e) => e.name === "Pet"), "'groom' in 'bride and groom' must not spuriously match Pet");
+
+  const backlogGrooming = await provider.generate("software to groom the product backlog");
+  assert.ok(!backlogGrooming.entities.some((e) => e.name === "Pet"), "'groom' in 'groom the backlog' must not spuriously match Pet");
+});
+
+/**
  * Round 1769: the Student entity rule's keywords only ever covered the
  * "student"/"learner"/"pupil" phrasing of an educational program -- a
  * daycare, preschool, or childcare business (an equally common

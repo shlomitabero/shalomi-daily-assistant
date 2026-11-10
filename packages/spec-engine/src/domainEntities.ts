@@ -1178,10 +1178,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // pet-care-service category) had no keyword anywhere matching it, so
     // it fell through matchEntities' zero-match path straight to the
     // degenerate generic "Item" fallback instead of a real Pet entity.
+    // Round 1817: the original "pet grooming" keyword (round 1752) only
+    // ever covered that exact phrase -- a dog or cat groomer/grooming
+    // business (just as common a pet-care-service category, and usually
+    // described by the specific animal rather than the generic word "pet")
+    // had no keyword anywhere matching it either. Live-confirmed:
+    // `matchEntities("a dog grooming business", false)` and
+    // `matchEntities("a cat grooming salon", false)` both produced only the
+    // degenerate generic Item fallback -- "pet grooming" never matches as a
+    // substring of either (neither contains the word "pet" at all). The
+    // Hebrew side already had this covered via round 1752's own "טיפוח
+    // כלבים" (dog grooming), just never extended to cats; added the
+    // matching "טיפוח חתולים" (cat grooming) for the identical reason.
+    // Scoped to full "dog/cat groom(ing/er)" phrases rather than a bare
+    // "groom" -- confirmed live that "groom" alone is a substring of
+    // ordinary unrelated phrases this entity must not match ("the bride
+    // and groom", "groom the product backlog").
     keywords: [
       "veterinary", "vet clinic", "pet owner", "pet grooming", "animal clinic",
       "dog walking", "dog walker", "pet sitting", "pet sitter", "pet boarding", "dog daycare",
-      "חיית מחמד", "חיות מחמד", "וטרינר", "וטרינרית", "טיפוח כלבים",
+      "dog grooming", "cat grooming", "dog groomer", "cat groomer", "pet groomer",
+      "חיית מחמד", "חיות מחמד", "וטרינר", "וטרינרית", "טיפוח כלבים", "טיפוח חתולים",
       "טיול כלבים", "פנסיון לכלבים",
     ],
     labelHe: "חיות מחמד",
