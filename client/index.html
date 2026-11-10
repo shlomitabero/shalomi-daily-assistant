@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PROFIT AI</title>
+    <!-- With no favicon file in this project, a browser still requests
+         /favicon.ico automatically on every single page load - that request
+         falls through express.static's "not found" into server.js's own SPA
+         catch-all route, which serves back the entire index.html document
+         mislabeled as an icon (200 OK, text/html) instead of a clean 404.
+         This empty data: URI is the standard way to tell the browser there
+         is no icon at all, so it stops asking - no binary asset needed. -->
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <div id="root"></div>
