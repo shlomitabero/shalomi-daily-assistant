@@ -514,3 +514,26 @@ test("recordEntityHistory writes every entity name of a spec into the ledger wit
   assert.deepEqual(listHistoricalEntityNames(db, "proj1").sort(), ["Invoice", "LineItem"]);
   assert.equal(listCheckpoints(db, "proj1").length, 0, "recordEntityHistory must not create a checkpoint row of its own");
 });
+
+/**
+ * Round 1853: checkpoints had no secondary index at all -- only `id` via
+ * its own PRIMARY KEY -- despite listCheckpoints running `WHERE projectId
+ * = ? ORDER BY createdAt DESC, rowid DESC` every time the Time Machine
+ * history panel opens, and insertCheckpoint's own retention-prune DELETE
+ * running the identical `WHERE projectId = ?` filter on every single
+ * successful build/refine. Confirmed via SQLite's own `EXPLAIN QUERY
+ * PLAN`, the same technique rounds 1829/1833/1834/1838/1839 used to
+ * verify their own tables' indexes: before the fix this printed "SCAN
+ * checkpoints"; after it prints "SEARCH checkpoints USING INDEX
+ * checkpoints_projectId_createdAt_idx".
+ */
+test("listCheckpoints' projectId+createdAt lookup uses an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+  const plan = db
+    .prepare("EXPLAIN QUERY PLAN SELECT * FROM checkpoints WHERE projectId = ? ORDER BY createdAt DESC, rowid DESC")
+    .all("proj1") as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN checkpoints\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX checkpoints_projectId_createdAt_idx/, `expected the new index to be used: ${detail}`);
+});

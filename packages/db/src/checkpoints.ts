@@ -22,6 +22,28 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
       createdAt TEXT NOT NULL
     )
   `);
+  // Round 1853: this table had no index at all beyond the implicit one on
+  // its own PRIMARY KEY `id`, despite listCheckpoints (runs whenever the
+  // Time Machine history panel opens), insertCheckpoint's own retention-
+  // prune DELETE just below (runs on every single successful build/refine
+  // -- one of the hottest actions in the product), and
+  // listAllCheckpointedEntityNames (deleteProject) all filtering by
+  // `WHERE projectId = ?`. Without an index, every one of those queries
+  // scans this table's rows across *every* project on the instance, not
+  // just the one being queried -- the same unindexed-hot-path-scan class
+  // rounds 1829/1833/1834/1838/1839 already fixed for idempotency_keys/
+  // automation_runs/whatsapp_messages/sessions/projects+project_
+  // collaborators, but this table was never reached by that series.
+  // `rowid` is deliberately NOT named in the index itself -- node:sqlite
+  // rejects a literal "rowid" column in a CREATE INDEX column list, and it
+  // doesn't need to be: SQLite already carries each indexed row's own
+  // rowid for free as the implicit tiebreaker, so `(projectId, createdAt)`
+  // alone is enough to satisfy listCheckpoints' own `ORDER BY createdAt
+  // DESC, rowid DESC` via this index (confirmed live via EXPLAIN QUERY
+  // PLAN). Purely additive -- doesn't change any query's result, just lets
+  // every one of these queries run in O(log n + k) instead of a full-table
+  // scan across every project's checkpoint history.
+  db.exec(`CREATE INDEX IF NOT EXISTS checkpoints_projectId_createdAt_idx ON checkpoints (projectId, createdAt)`);
   // A table created by an older version of this app has no `kind` column at
   // all -- additive-only, same discipline migrate.ts uses for every
   // per-project entity table, so a pre-existing checkpoints table is never
