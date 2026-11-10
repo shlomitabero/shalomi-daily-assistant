@@ -10,14 +10,36 @@ export default function Approvals() {
   const [opportunities, setOpportunities] = useState([]);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  const [opportunitiesError, setOpportunitiesError] = useState('');
 
   function refresh() {
-    Promise.all([api.getApprovals(), api.getOpportunities()])
-      .then(([a, o]) => {
-        setApprovals(a.approvals);
-        setOpportunities(o.opportunities);
-      })
-      .catch((err) => setError(err.data?.error || err.message));
+    // getOpportunities() here is only an enrichment of getApprovals()'s own
+    // data - every lookup below already falls back to the raw
+    // a.opportunityId via `opp?.title ?? a.opportunityId` when an
+    // opportunity isn't found. Promise.all meant a transient failure in
+    // that one enrichment call blanked this entire page down to an error
+    // line, even when the actual approvals list (the one thing this page
+    // exists to show) had loaded fine. Same fix as Dashboard.jsx's
+    // equivalent Promise.all -> Promise.allSettled change.
+    Promise.allSettled([api.getApprovals(), api.getOpportunities()]).then(([aRes, oRes]) => {
+      if (aRes.status === 'rejected') {
+        setError(aRes.reason?.data?.error || aRes.reason?.message);
+        return;
+      }
+      setError('');
+      setApprovals(aRes.value.approvals);
+      if (oRes.status === 'fulfilled') {
+        setOpportunities(oRes.value.opportunities);
+        setOpportunitiesError('');
+      } else {
+        // Degrade honestly, not silently: every card below will fall back
+        // to showing a.opportunityId instead of a real title, and "בטל
+        // אישור" will stay hidden wherever that lookup needed opp.status -
+        // without this notice the owner would see unexplained raw ids
+        // with no indication anything failed to load.
+        setOpportunitiesError(oRes.reason?.data?.error || oRes.reason?.message);
+      }
+    });
   }
 
   useEffect(refresh, []);
@@ -52,6 +74,9 @@ export default function Approvals() {
     <div className="page">
       <h1>אישורים</h1>
       {error && <p className="form-error">{error}</p>}
+      {opportunitiesError && (
+        <p className="form-error">לא ניתן לטעון את פרטי ההזדמנויות כרגע ({opportunitiesError}) — הכרטיסים למטה יוצגו עם מזהה בלבד, בלי כותרת.</p>
+      )}
       {approvals.length === 0 && <p className="hint">אין אישורים עדיין. אישור נוצר מתוך כרטיס הזדמנות כשהמצב הוא "אישור לביצוע".</p>}
       {sortedApprovals.length > MAX_APPROVALS_SHOWN && (
         <p className="hint">מוצגים {MAX_APPROVALS_SHOWN} האחרונים מתוך {sortedApprovals.length}.</p>
