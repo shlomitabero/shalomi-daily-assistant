@@ -10942,7 +10942,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-day-number { font-size: 12px; font-weight: 600; color: var(--muted); }
 .calendar-day-today .calendar-day-number { color: var(--accent); font-weight: 700; }
 .calendar-day-records { display: flex; flex-direction: column; gap: 3px; }
-.calendar-record-row { display: flex; align-items: stretch; gap: 2px; }
+.calendar-record-row { display: flex; align-items: stretch; flex-wrap: wrap; gap: 2px; }
 .calendar-record-chip { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 5px; font-size: 11.5px; text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; color: var(--text); flex: 1; min-width: 0; }
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }

@@ -7581,6 +7581,34 @@ test("the exported app's generated styles.css defines .calendar-record-pin, matc
 });
 
 /**
+ * Round 1843: a live Playwright exploration pass found that the exported
+ * app's `.calendar-record-row` rule (the flex row holding the record's
+ * label chip plus up to 6 action buttons: move-earlier/-later, print,
+ * duplicate, delete, pin) never got round 1351's own `flex-wrap: wrap`
+ * fix -- unlike styles.css (the live preview), which has had it since
+ * round 1351 for exactly this overflow. Every exported app's Calendar
+ * view day cell is `overflow: hidden` on a 7-column grid, routinely well
+ * under 200px wide, so this unwrapped row clips the label chip to an
+ * unreadable glyph and pushes several action buttons fully outside the
+ * cell and unclickable -- confirmed live via a standalone Playwright
+ * repro rendering the exported CSS/JSX at a realistic day-cell width.
+ * Mirrors this file's own round-1842 technique and the live-app's
+ * existing "the calendar view's record row lets its action buttons wrap"
+ * test in EntityPanel.test.ts (round 1351).
+ */
+test("the exported app's generated styles.css lets the calendar record row's action buttons wrap onto a second line instead of overflowing the day cell", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  const calendarRecordRow = stylesCss.match(/\.calendar-record-row\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(calendarRecordRow, "expected a .calendar-record-row rule in the generated styles.css");
+  assert.match(
+    calendarRecordRow!,
+    /flex-wrap:\s*wrap/,
+    ".calendar-record-row must allow its action buttons to wrap onto a second line instead of overflowing the narrow day cell, matching the live app's own round-1351 fix",
+  );
+});
+
+/**
  * Round 1385: mirrors the live preview's own round-1384 fix. The exported
  * CalendarView's chip offered reschedule only via native HTML5
  * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day
