@@ -42,6 +42,10 @@ test('actionTypeLabel falls back to the raw code for an unknown type, rather tha
   assert.equal(actionTypeLabel('some_future_type'), 'some_future_type');
 });
 
+test('actionTypeLabel translates a login_attempt entry (a brute-force attempt against the owner\'s own login)', () => {
+  assert.equal(actionTypeLabel('login_attempt'), 'ניסיון התחברות');
+});
+
 test('resultLabel translates just the leading word and keeps the free-text detail as-is', () => {
   assert.equal(resultLabel('blocked: תקציב לא מוגדר'), 'נחסם: תקציב לא מוגדר');
 });

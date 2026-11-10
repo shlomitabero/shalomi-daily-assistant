@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { login } from './auth.js';
 import { verifyOwnerToken } from '../engine/auth.js';
+import { db, __resetForTests } from '../db/store.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -67,6 +68,30 @@ test('login issues a real, verifiable owner token for the correct password', () 
   });
 });
 
+test('a wrong password logs a login_attempt entry to the activity log, with the source ip but never the password itself', () => {
+  // A brute-force attempt against the owner's own login was invisible
+  // anywhere in the app before this - not logged here, and console.error
+  // never fired for it either, so even Railway's own log viewer showed
+  // nothing.
+  __resetForTests();
+  withOwnerPassword('the-real-password', () => {
+    const ip = uniqueIp();
+    login({ ip, body: { password: 'a-wrong-guess' } }, makeRes());
+    const logged = db.actions_log.where((a) => a.type === 'login_attempt' && a.detail?.ip === ip);
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].result, 'failed');
+    assert.equal(JSON.stringify(logged[0]).includes('a-wrong-guess'), false);
+  });
+});
+
+test('a successful login does not write a login_attempt entry - only a failure/block is worth the owner\'s attention', () => {
+  __resetForTests();
+  withOwnerPassword('the-real-password', () => {
+    login({ ip: uniqueIp(), body: { password: 'the-real-password' } }, makeRes());
+    assert.equal(db.actions_log.where((a) => a.type === 'login_attempt').length, 0);
+  });
+});
+
 test('login rejects a request with no password in the body instead of throwing', () => {
   withOwnerPassword('the-real-password', () => {
     const res = makeRes();
@@ -111,6 +136,21 @@ test('login blocks further attempts from the same source after too many wrong pa
     const res = makeRes();
     login({ ip, body: { password: 'wrong' } }, res);
     assert.equal(res.statusCode, 429);
+  });
+});
+
+test('a rate-limited block logs its own login_attempt entry, distinguishable from an ordinary wrong-password failure', () => {
+  __resetForTests();
+  withOwnerPassword('the-real-password', () => {
+    const ip = uniqueIp();
+    for (let i = 0; i < 10; i += 1) {
+      login({ ip, body: { password: 'wrong' } }, makeRes());
+    }
+    login({ ip, body: { password: 'wrong' } }, makeRes()); // the 11th attempt - rate-limited, not re-checked against the password at all
+    const logged = db.actions_log.where((a) => a.type === 'login_attempt' && a.detail?.ip === ip);
+    assert.equal(logged.length, 11);
+    assert.equal(logged.filter((a) => a.result === 'failed').length, 10);
+    assert.equal(logged.filter((a) => a.result.startsWith('blocked:')).length, 1);
   });
 });
 
