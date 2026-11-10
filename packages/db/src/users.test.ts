@@ -50,6 +50,30 @@ test("deleteExpiredSessions is a harmless no-op when there are no expired sessio
   assert.equal(deleteExpiredSessions(db), 0);
 });
 
+/**
+ * Round 1838: see ensureUsersTable's own doc comment on sessions_expiresAt_idx/
+ * sessions_userId_idx -- mirrors rounds 1829/1833/1834's own EXPLAIN QUERY
+ * PLAN technique for idempotency_keys/automation_runs/whatsapp_messages.
+ * Covers the hottest of the four newly-indexed queries (deleteExpiredSessions,
+ * called on every single login/signup via createSession) and one of the
+ * three userId-filtered ones (deleteAllSessionsForUser's shape is identical
+ * to deleteOtherSessionsForUser's and countOtherSessionsForUser's own
+ * `WHERE userId = ?` prefix, so one plan check for each index is enough).
+ */
+test("deleteExpiredSessions' own expiresAt lookup and the userId-filtered session queries use an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureUsersTable(db);
+  const expiresAtPlan = db.prepare("EXPLAIN QUERY PLAN DELETE FROM sessions WHERE expiresAt <= ?").all("x") as { detail: string }[];
+  const expiresAtDetail = expiresAtPlan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(expiresAtDetail, /SCAN sessions\b/, `expected an index-backed search, got a full table scan: ${expiresAtDetail}`);
+  assert.match(expiresAtDetail, /USING INDEX sessions_expiresAt_idx/, `expected the new index to be used: ${expiresAtDetail}`);
+
+  const userIdPlan = db.prepare("EXPLAIN QUERY PLAN DELETE FROM sessions WHERE userId = ?").all("u1") as { detail: string }[];
+  const userIdDetail = userIdPlan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(userIdDetail, /SCAN sessions\b/, `expected an index-backed search, got a full table scan: ${userIdDetail}`);
+  assert.match(userIdDetail, /USING INDEX sessions_userId_idx/, `expected the new index to be used: ${userIdDetail}`);
+});
+
 test("createSession opportunistically prunes already-expired sessions on every call, so the table doesn't grow forever with only lazy per-read filtering", () => {
   const db = openDatabase(":memory:");
   ensureUsersTable(db);

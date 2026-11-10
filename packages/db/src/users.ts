@@ -52,6 +52,23 @@ export function ensureUsersTable(db: ForgeDatabase): void {
       expiresAt TEXT NOT NULL
     )
   `);
+  // Round 1838: see rounds 1829/1833/1834's own identical fix for
+  // idempotency_keys/automation_runs/whatsapp_messages -- this table had
+  // no secondary index at all (only `token` via its own PRIMARY KEY),
+  // despite deleteExpiredSessions' own `WHERE expiresAt <= ?` DELETE
+  // running unconditionally from createSession on every single login/
+  // signup/login-code verification (routes/auth.ts's issueSession), the
+  // hottest of the four unindexed queries this fixes -- and
+  // deleteAllSessionsForUser/deleteOtherSessionsForUser/
+  // countOtherSessionsForUser's own `WHERE userId = ? ...` queries, each
+  // scanning every OTHER user's rows too instead of being bounded to just
+  // this one. Two separate indexes (not a composite) since the four
+  // queries filter on `expiresAt` alone, `userId` alone, or `userId` plus
+  // a `token !=` exclusion SQLite can't use an index for anyway -- a
+  // `userId`-only index already lets it seek straight to this user's own
+  // rows before applying that filter in memory.
+  db.exec(`CREATE INDEX IF NOT EXISTS sessions_expiresAt_idx ON sessions (expiresAt)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS sessions_userId_idx ON sessions (userId)`);
   // Round 1566: backs the "verify your email" feature -- additive-only,
   // same discipline as projects.ts's own calendarFeedToken/
   // inboundWebhookToken columns. Unlike those (lazily null forever until
