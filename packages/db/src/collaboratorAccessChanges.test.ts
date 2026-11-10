@@ -208,3 +208,15 @@ test("deleteCollaboratorAccessChangesForProject removes only the given project's
   assert.equal(listCollaboratorAccessChanges(db, "proj1").length, 0);
   assert.equal(listCollaboratorAccessChanges(db, "proj2").length, 1);
 });
+
+/** Round 1867: see recordDeletions.test.ts's own identical test and checkpoints.test.ts's round-1853 original for why. */
+test("listCollaboratorAccessChanges' projectId+changedAt lookup uses an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureCollaboratorAccessChangesTable(db);
+  const plan = db
+    .prepare("EXPLAIN QUERY PLAN SELECT * FROM collaborator_access_changes WHERE projectId = ? ORDER BY changedAt DESC, rowid DESC")
+    .all("proj1") as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN collaborator_access_changes\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX collaborator_access_changes_projectId_changedAt_idx/, `expected the new index to be used: ${detail}`);
+});

@@ -22,6 +22,20 @@ export function ensureRecordDeletionsTable(db: ForgeDatabase): void {
       deletedAt TEXT NOT NULL
     )
   `);
+  // Round 1867: this table had no index at all beyond the implicit one on
+  // its own PRIMARY KEY `id`, despite listRecordDeletions (runs every time
+  // the Collaborators panel opens) and insertRecordDeletion's own
+  // retention-prune DELETE just below (runs on every single record
+  // deletion in the whole app) both filtering by `WHERE projectId = ?` --
+  // the exact unindexed-hot-path-scan class rounds 1829/1833/1834/1838/
+  // 1839/1853 already fixed for idempotency_keys/automation_runs/
+  // whatsapp_messages/sessions/projects+project_collaborators/checkpoints,
+  // but this table was never reached by that series. Confirmed live via
+  // EXPLAIN QUERY PLAN: `(projectId, deletedAt)` alone satisfies both
+  // queries' own `ORDER BY deletedAt DESC, id DESC` (SQLite's rowid serves
+  // as the free implicit tiebreaker), turning a full-table SCAN across
+  // every project's own deletion history into an indexed SEARCH.
+  db.exec(`CREATE INDEX IF NOT EXISTS record_deletions_projectId_deletedAt_idx ON record_deletions (projectId, deletedAt)`);
 }
 
 /**

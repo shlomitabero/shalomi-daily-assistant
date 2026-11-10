@@ -54,6 +54,12 @@ export function ensureCollaboratorAccessChangesTable(db: ForgeDatabase): void {
       changedAt TEXT NOT NULL
     )
   `);
+  // Round 1867: see recordDeletions.ts's own identical fix -- this table had
+  // the same unindexed-hot-path-scan gap (listCollaboratorAccessChanges and
+  // insertCollaboratorAccessChange's own retention-prune DELETE both filter
+  // by `WHERE projectId = ?` with no index to serve it beyond the implicit
+  // one on `id`), missed by rounds 1829/1833/1834/1838/1839/1853's own sweep.
+  db.exec(`CREATE INDEX IF NOT EXISTS collaborator_access_changes_projectId_changedAt_idx ON collaborator_access_changes (projectId, changedAt)`);
 }
 
 /**

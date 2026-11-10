@@ -25,6 +25,12 @@ export function ensureAutomationRuleDeletionsTable(db: ForgeDatabase): void {
       deletedAt TEXT NOT NULL
     )
   `);
+  // Round 1867: see recordDeletions.ts's own identical fix -- this table had
+  // the same unindexed-hot-path-scan gap (listAutomationRuleDeletions and
+  // insertAutomationRuleDeletion's own retention-prune DELETE both filter by
+  // `WHERE projectId = ?` with no index to serve it beyond the implicit one
+  // on `id`), missed by rounds 1829/1833/1834/1838/1839/1853's own sweep.
+  db.exec(`CREATE INDEX IF NOT EXISTS automation_rule_deletions_projectId_deletedAt_idx ON automation_rule_deletions (projectId, deletedAt)`);
 }
 
 /**

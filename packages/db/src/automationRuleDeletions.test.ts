@@ -178,3 +178,15 @@ test("deleteAutomationRuleDeletionsForProject removes only the given project's o
   assert.equal(listAutomationRuleDeletions(db, "proj1").length, 0);
   assert.equal(listAutomationRuleDeletions(db, "proj2").length, 1);
 });
+
+/** Round 1867: see recordDeletions.test.ts's own identical test and checkpoints.test.ts's round-1853 original for why. */
+test("listAutomationRuleDeletions' projectId+deletedAt lookup uses an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRuleDeletionsTable(db);
+  const plan = db
+    .prepare("EXPLAIN QUERY PLAN SELECT * FROM automation_rule_deletions WHERE projectId = ? ORDER BY deletedAt DESC, rowid DESC")
+    .all("proj1") as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN automation_rule_deletions\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX automation_rule_deletions_projectId_deletedAt_idx/, `expected the new index to be used: ${detail}`);
+});

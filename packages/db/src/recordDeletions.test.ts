@@ -109,3 +109,24 @@ test("deleteRecordDeletionsForProject removes only the given project's own delet
   assert.equal(listRecordDeletions(db, "proj1").length, 0);
   assert.equal(listRecordDeletions(db, "proj2").length, 1);
 });
+
+/**
+ * Round 1867: see checkpoints.test.ts's own identical round-1853 test --
+ * this table had no secondary index at all, only `id` via its own PRIMARY
+ * KEY, despite listRecordDeletions and insertRecordDeletion's own
+ * retention-prune DELETE both running `WHERE projectId = ?` on every single
+ * record deletion in the whole app. Confirmed via SQLite's own `EXPLAIN
+ * QUERY PLAN`: before the fix this printed "SCAN record_deletions"; after
+ * it prints "SEARCH record_deletions USING INDEX
+ * record_deletions_projectId_deletedAt_idx".
+ */
+test("listRecordDeletions' projectId+deletedAt lookup uses an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureRecordDeletionsTable(db);
+  const plan = db
+    .prepare("EXPLAIN QUERY PLAN SELECT * FROM record_deletions WHERE projectId = ? ORDER BY deletedAt DESC, rowid DESC")
+    .all("proj1") as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN record_deletions\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX record_deletions_projectId_deletedAt_idx/, `expected the new index to be used: ${detail}`);
+});

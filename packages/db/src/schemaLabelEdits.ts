@@ -56,6 +56,12 @@ export function ensureSchemaLabelEditsTable(db: ForgeDatabase): void {
       changedAt TEXT NOT NULL
     )
   `);
+  // Round 1867: see recordDeletions.ts's own identical fix -- this table had
+  // the same unindexed-hot-path-scan gap (listSchemaLabelEdits and
+  // insertSchemaLabelEdit's own retention-prune DELETE both filter by
+  // `WHERE projectId = ?` with no index to serve it beyond the implicit one
+  // on `id`), missed by rounds 1829/1833/1834/1838/1839/1853's own sweep.
+  db.exec(`CREATE INDEX IF NOT EXISTS schema_label_edits_projectId_changedAt_idx ON schema_label_edits (projectId, changedAt)`);
 }
 
 /**

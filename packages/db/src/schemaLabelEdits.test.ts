@@ -192,3 +192,15 @@ test("deleteSchemaLabelEditsForProject removes only the given project's own entr
   assert.equal(listSchemaLabelEdits(db, "proj1").length, 0);
   assert.equal(listSchemaLabelEdits(db, "proj2").length, 1);
 });
+
+/** Round 1867: see recordDeletions.test.ts's own identical test and checkpoints.test.ts's round-1853 original for why. */
+test("listSchemaLabelEdits' projectId+changedAt lookup uses an index, not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureSchemaLabelEditsTable(db);
+  const plan = db
+    .prepare("EXPLAIN QUERY PLAN SELECT * FROM schema_label_edits WHERE projectId = ? ORDER BY changedAt DESC, rowid DESC")
+    .all("proj1") as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN schema_label_edits\b/, `expected an index-backed search, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX schema_label_edits_projectId_changedAt_idx/, `expected the new index to be used: ${detail}`);
+});
