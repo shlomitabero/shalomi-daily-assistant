@@ -242,7 +242,21 @@ export default function OpportunityDetail() {
       ) : (
         <div className="card">
           <h3>פרסום</h3>
-          <p className="hint">מצב נוכחי: {settings?.mode === 'research' ? 'מחקר בלבד — לא יפרסם' : settings?.mode === 'approve' ? 'דורש אישור' : 'אוטומטי מוגבל'}</p>
+          {/* While settings is still null (either not loaded yet - opp,
+              settings and approvals are three independent calls with no
+              guaranteed order, so opp can easily resolve first - or genuinely
+              failed to load), every settings?.mode comparison below silently
+              read as false, which fell through to "אוטומטי מוגבל" as if
+              that were confirmed, real data instead of a data-not-loaded
+              default - the one mode of the three that never requires a
+              second step before a real charge goes through. Worse, the
+              publish button's own disabled check below had the exact same
+              gap: null !== 'research' and null !== 'approve' are both true,
+              so the button defaulted to enabled during that same window -
+              a real-money action that was never, on inspection of the
+              surrounding comments, meant to be clickable on data this page
+              hadn't actually confirmed yet. */}
+          <p className="hint">מצב נוכחי: {!settings ? 'טוען…' : settings.mode === 'research' ? 'מחקר בלבד — לא יפרסם' : settings.mode === 'approve' ? 'דורש אישור' : 'אוטומטי מוגבל'}</p>
           {settings?.mode === 'approve' && (
             hasPublishApproval ? (
               // Before this, clicking "אשר פרסום" gave no feedback at all -
@@ -261,15 +275,17 @@ export default function OpportunityDetail() {
             )
           )}
           <button
-            className={`btn ${settings?.mode === 'approve' && !hasPublishApproval ? 'btn-ghost' : 'btn-primary'}`}
+            className={`btn ${!settings || (settings.mode === 'approve' && !hasPublishApproval) ? 'btn-ghost' : 'btn-primary'}`}
             onClick={onPublish}
-            disabled={busy || settings?.mode === 'research' || (settings?.mode === 'approve' && !hasPublishApproval)}
+            disabled={busy || !settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval)}
             title={
-              settings?.mode === 'research'
-                ? 'מצב מחקר בלבד — שום פעולה לא מתבצעת אוטומטית'
-                : settings?.mode === 'approve' && !hasPublishApproval
-                  ? 'צריך ללחוץ קודם על "אשר פרסום" למעלה'
-                  : undefined
+              !settings
+                ? 'טוען מצב פעולה…'
+                : settings.mode === 'research'
+                  ? 'מצב מחקר בלבד — שום פעולה לא מתבצעת אוטומטית'
+                  : settings.mode === 'approve' && !hasPublishApproval
+                    ? 'צריך ללחוץ קודם על "אשר פרסום" למעלה'
+                    : undefined
             }
           >
             פרסם מוצר (יצירת תשלום אמיתי)
