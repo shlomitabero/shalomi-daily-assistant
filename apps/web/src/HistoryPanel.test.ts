@@ -109,7 +109,7 @@ test("HistoryPanel shows a real error with a Retry button when the initial load 
         }
         return new Response(JSON.stringify({ checkpoints: [cp1] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -205,7 +205,7 @@ test("HistoryPanel disables every restore button while one restore is in flight,
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     const originalConfirm = globalThis.window?.confirm;
@@ -321,7 +321,7 @@ test("HistoryPanel shows the server's migrationWarning after a restore, and repl
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     const originalConfirm = globalThis.window?.confirm;
@@ -412,7 +412,7 @@ test("HistoryPanel's restore button asks for confirmation naming the checkpoint,
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = ((message: string) => {
       confirmMessage = message;
@@ -504,7 +504,7 @@ test("HistoryPanel's 'What would change?' toggle shows the real entities/fields 
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -576,7 +576,7 @@ test("HistoryPanel marks the checkpoint matching the current spec with a 'Curren
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -649,7 +649,7 @@ test("HistoryPanel's screen-count line reads the checkpoint's real screens array
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -706,7 +706,7 @@ test("HistoryPanel's screen-count line uses the singular noun form when a checkp
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -765,7 +765,7 @@ test("HistoryPanel's search box (shown once there are more than 5 checkpoints) n
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -854,7 +854,7 @@ test("HistoryPanel's search filter stops applying once a delete drops the checkp
       if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp6") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -936,7 +936,7 @@ test("HistoryPanel's search box has a 'Clear search' button and Escape-to-clear,
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1017,7 +1017,7 @@ test("HistoryPanel's Escape-to-clear still works when focus has moved from the s
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let closeCalls = 0;
     try {
@@ -1096,7 +1096,7 @@ test("HistoryPanel's type filter (shown once there are more than 5 checkpoints) 
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1174,7 +1174,7 @@ test("HistoryPanel shows a download button only once there are checkpoints, and 
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     // jsdom doesn't implement the real Blob-URL machinery -- stub just
@@ -1280,7 +1280,7 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1388,7 +1388,7 @@ test("HistoryPanel's 'Compare with' dropdown shows two checkpoints sharing an id
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1467,7 +1467,7 @@ test("HistoryPanel's delete button asks for confirmation naming the checkpoint, 
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = ((message: string) => {
       confirmMessage = message;
@@ -1534,7 +1534,7 @@ test("HistoryPanel's delete button does nothing when the confirm is declined", a
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => false) as typeof window.confirm;
 
@@ -1605,7 +1605,7 @@ test("HistoryPanel's successful delete clears a stale restore-error banner left 
       if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp2") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1679,7 +1679,7 @@ test("HistoryPanel's successful restore clears a stale delete-error banner left 
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1758,7 +1758,7 @@ test("HistoryPanel disables every restore button while a delete is in flight, an
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1825,7 +1825,7 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
         const body = JSON.parse(init!.body as string) as { label: string };
         return new Response(JSON.stringify({ checkpoint: { ...cp1, label: body.label } }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1903,7 +1903,7 @@ test("HistoryPanel's successful rename clears a stale delete-error banner left o
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1982,7 +1982,7 @@ test("HistoryPanel's own Escape-cancels-rename and Escape-clears-search never al
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let closeCalls = 0;
@@ -2072,7 +2072,7 @@ test("HistoryPanel's copy button writes the real formatted timeline to the clipb
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -2161,7 +2161,7 @@ test("HistoryPanel's copy button respects the active search filter, copying only
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -2234,7 +2234,7 @@ test("HistoryPanel's copy button shows a failure label when navigator.clipboard.
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     Object.defineProperty(navigator, "clipboard", {
@@ -2320,7 +2320,7 @@ test("HistoryPanel remembers a committed checkpoint search as a recent-search ch
       if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
         return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     function renderPanel() {
@@ -2438,7 +2438,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -2534,7 +2534,7 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -2660,7 +2660,7 @@ test("HistoryPanel shows a resolved 'last restored by' line when the server repo
         if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
           return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
         }
-        throw new Error(`unexpected request ${method} ${input}`);
+        return new Response(null, { status: 404 });
       }) as typeof fetch;
       render(
         React.createElement(

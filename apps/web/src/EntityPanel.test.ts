@@ -1394,7 +1394,7 @@ test("EntityPanel's record-form guards its own Save button against a fast double
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -1574,7 +1574,7 @@ test("EntityPanel restores only the records whose real delete actually failed on
           { status: 409, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
     try {
@@ -1636,7 +1636,7 @@ test("EntityPanel's 'Clear selection' button empties the current selection witho
         getCount += 1;
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -2355,7 +2355,7 @@ test("EntityPanel shows a real error with a Retry button when the initial load f
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -2400,7 +2400,7 @@ test("EntityPanel shows a truncated-list hint naming the shown/total counts when
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -2426,7 +2426,7 @@ test("EntityPanel shows no truncated-list hint when the server reports every rec
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -2468,7 +2468,7 @@ test("EntityPanel's Export CSV button fetches every record via GET .../export wh
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
     const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
@@ -2713,7 +2713,7 @@ function mockRecordsFetch(store: EntityRecord[], onDelete?: (id: number) => void
       onDelete?.(Number(deleteMatch[1]));
       return new Response(null, { status: 204 });
     }
-    throw new Error(`mockRecordsFetch: unexpected request ${method} ${input}`);
+    return new Response(null, { status: 404 });
   };
 }
 
@@ -2803,7 +2803,7 @@ test("EntityPanel's created-at cell carries a tooltip naming who created the rec
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -2858,7 +2858,7 @@ test("EntityPanel's created-at cell tooltip names who/when a record was last upd
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -2925,7 +2925,7 @@ test("EntityPanel's created-at cell exposes its who/when audit info to assistive
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -3536,7 +3536,7 @@ test("EntityPanel's per-field filter offers a relation field too, with the relat
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -3597,7 +3597,7 @@ test("EntityPanel's 'Group by' dropdown also offers a relation field, clustering
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -3674,7 +3674,7 @@ test("EntityPanel's bulk-edit 'Set field' picker now offers a relation field, wi
         Object.assign(record, body);
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
     try {
@@ -3746,7 +3746,7 @@ function mockTaskRecordsFetch(store: EntityRecord[]) {
     if (input === "/api/projects/proj1/entities/Task") {
       return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    throw new Error(`mockTaskRecordsFetch: unexpected request ${input}`);
+    return new Response(null, { status: 404 });
   };
 }
 
@@ -4403,7 +4403,7 @@ function mockListRecordsFetch(store: EntityRecord[]) {
     if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
       return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    throw new Error(`mockListRecordsFetch: unexpected request ${method} ${input}`);
+    return new Response(null, { status: 404 });
   };
 }
 
@@ -4603,7 +4603,7 @@ test("EntityPanel's calendar view record chip has a Duplicate action that create
         createdPayloads.push(body);
         return new Response(JSON.stringify({ record: { id: 2, ...body } }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderAppointmentPanel();
@@ -4654,7 +4654,7 @@ test("EntityPanel's calendar view record chip has a Delete action that removes t
         deletedId = 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => {
       confirmCalled = true;
@@ -4839,7 +4839,7 @@ test("EntityPanel's calendar day-chip renders a boolean label field as TRUE/FALS
       if (input === "/api/projects/proj1/entities/CheckIn") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: checkInEntity, allEntities: [checkInEntity] });
@@ -5241,7 +5241,7 @@ test("EntityPanel's calendar view reschedules a record via a real drag-and-drop 
         Object.assign(record, lastPatchBody);
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderAppointmentPanel();
@@ -5324,7 +5324,7 @@ test("EntityPanel's calendar view drag-over highlight clears when a drag is canc
       if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderAppointmentPanel();
@@ -5388,7 +5388,7 @@ test("EntityPanel marks the specific calendar chip with a move-error indicator w
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderAppointmentPanel();
@@ -5656,7 +5656,7 @@ test("EntityPanel's calendar Subscribe button only appears in calendar view, fet
       if (method === "GET" && input === "/api/projects/proj1/calendar-feed-token") {
         return new Response(JSON.stringify({ token: "real-feed-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -5725,7 +5725,7 @@ test("EntityPanel's webhook-URL button renders in any view but not for a read-on
       if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
         return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -5780,7 +5780,7 @@ test("EntityPanel's webhook-URL button is hidden from a read-only collaborator",
       if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -5818,7 +5818,7 @@ test("EntityPanel's update/delete webhook-URL buttons copy the correct URL templ
       if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
         return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -5893,7 +5893,7 @@ test("EntityPanel's update/delete webhook-URL buttons fold their {recordId} hint
       if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
         return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     Object.defineProperty(navigator, "clipboard", {
@@ -6005,7 +6005,7 @@ function mockRentalListFetch(store: EntityRecord[]) {
     if (method === "GET" && input === "/api/projects/proj1/entities/Rental") {
       return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    throw new Error(`mockRentalListFetch: unexpected request ${method} ${input}`);
+    return new Response(null, { status: 404 });
   };
 }
 
@@ -6144,7 +6144,7 @@ test("EntityPanel's calendar view shifts a ranged record by the days actually dr
         Object.assign(record, lastPatchBody);
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderRentalPanel();
@@ -6237,7 +6237,7 @@ test("EntityPanel's calendar view lets a ranged record be rescheduled by one day
         Object.assign(record, lastPatchBody);
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderRentalPanel();
@@ -6338,7 +6338,7 @@ test("EntityPanel's calendar view accepts a drop onto a leading/trailing day cel
         Object.assign(record, lastPatchBody);
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderRentalPanel();
@@ -6395,7 +6395,7 @@ function mockCustomerListFetch(store: EntityRecord[]) {
     if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
       return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    throw new Error(`mockCustomerListFetch: unexpected request ${method} ${input}`);
+    return new Response(null, { status: 404 });
   };
 }
 
@@ -6684,7 +6684,7 @@ test("EntityPanel's CSV import creates a real record from an uploaded file and s
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -6767,7 +6767,7 @@ test("EntityPanel's CSV import surfaces a possible-duplicate warning for a new r
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -6849,7 +6849,7 @@ test("EntityPanel's CSV import 'all failed' message uses the singular noun form 
       if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
         return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -6924,7 +6924,7 @@ test("EntityPanel's CSV import sends X-Suppress-Automations on the real POST req
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -7009,7 +7009,7 @@ test("EntityPanel's CSV import updates an existing record by its id column inste
         Object.assign(record!, JSON.parse(init!.body as string));
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -7094,7 +7094,7 @@ test("EntityPanel's JSON import creates a real record from an uploaded file and 
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -7175,7 +7175,7 @@ test("EntityPanel's JSON import updates an existing record by its id key instead
         Object.assign(record!, JSON.parse(init!.body as string));
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -7637,7 +7637,7 @@ test("EntityPanel's print-row sheet, print-list sheet, and board cards all disam
       if (input === "/api/projects/proj1/entities/Order") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const originalPrint = window.print;
     let printCalls = 0;
@@ -7769,7 +7769,7 @@ test("EntityPanel's main table header, bulk-edit field picker, columns menu, fil
       if (input === "/api/projects/proj1/entities/Order") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
@@ -8473,7 +8473,7 @@ test("EntityPanel's Export CSV button sanitizes the entity name before using it 
       if (input === "/api/projects/proj1/entities/Foo%2FBar") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
     const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
@@ -9335,7 +9335,7 @@ test("EntityPanel applies an incoming createPrefill by case-insensitive field ma
       if (input === "/api/projects/proj1/entities/Deal") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let handledCount = 0;
     const onCreatePrefillHandled = () => {
@@ -9859,7 +9859,7 @@ test("EntityPanel's record-form gains a real Duplicate button once editing an ex
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -10078,7 +10078,7 @@ test("EntityPanel restores the row and shows an error when the deferred real del
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
     try {
@@ -10147,7 +10147,7 @@ test("EntityPanel sends the delete-time record snapshot with the real DELETE cal
           { status: 409, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
     try {
@@ -10523,7 +10523,7 @@ test("EntityPanel refetches records when the active entity's own field list chan
         const record = fetchCount === 1 ? { id: 1, name: "Acme Corp" } : { id: 1, name: "Acme Corp", company: "Raw Materials Ltd." };
         return new Response(JSON.stringify({ records: [record] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const view = renderEntityPanel({ entity: dealWithoutCompany, allEntities: [dealWithoutCompany] });
@@ -13177,7 +13177,7 @@ test("EntityPanel's 'd' shortcut duplicates the focused row via the real API, wi
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -13242,7 +13242,7 @@ test("EntityPanel's table-row shortcuts ignore Ctrl/Cmd/Alt-held keys, so a brow
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -13322,7 +13322,7 @@ test("EntityPanel's Enter shortcut does not hijack Enter from a focused Save/Edi
         patchedIds.push(Number(patchMatch[1]));
         return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -13557,7 +13557,7 @@ test("EntityPanel's main Edit form saves only the field the user actually touche
         Object.assign(record!, data);
         return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel();
@@ -13634,7 +13634,7 @@ test("EntityPanel's record-form survives a different record's in-progress edit w
       if (method === "PATCH" && input === "/api/projects/proj1/entities/Deal/1") {
         return patchHeld; // record 1's own Save stays in flight until the test resolves it
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -13714,7 +13714,7 @@ test("EntityPanel's fresh draft started after Escape abandons a slow edit surviv
       if (method === "PATCH" && input === "/api/projects/proj1/entities/Deal/1") {
         return patchHeld; // the abandoned record's own Save stays in flight until the test resolves it
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -13777,7 +13777,7 @@ test("EntityPanel's fresh draft started after the Cancel button abandons a slow 
       if (method === "PATCH" && input === "/api/projects/proj1/entities/Deal/1") {
         return patchHeld; // the abandoned record's own Save stays in flight until the test resolves it
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -14209,7 +14209,7 @@ test("EntityPanel reloads each entity's own persisted column order when switchin
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierStore }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const view = renderEntityPanel({ allEntities: [DEAL_ENTITY, COURIER_ENTITY] });
@@ -14518,7 +14518,7 @@ test("EntityPanel's inline cell editor refuses to commit a non-numeric value for
         Object.assign(store[0], JSON.parse(init!.body as string));
         return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: invoiceEntity, allEntities: [invoiceEntity] });
@@ -14771,7 +14771,7 @@ test("EntityPanel's relation field never falls back to a raw, unvalidated number
         await courierFetchHeld; // held open to simulate the real pre-resolve window
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -14851,7 +14851,7 @@ test("EntityPanel's relation field still renders the real searchable picker, not
       if (input === "/api/projects/proj1/entities/courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -14912,7 +14912,7 @@ test("EntityPanel's toolbar filter dropdown still renders a relation field's opt
       if (input === "/api/projects/proj1/entities/courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -14970,7 +14970,7 @@ test("EntityPanel's field-filter revalidation effect still keeps a persisted fil
       if (input === "/api/projects/proj1/entities/courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15035,7 +15035,7 @@ test("EntityPanel's relation field keeps the record's real stored value selectab
         // swallows the resulting thrown Error into [] just as fast.
         return new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15095,7 +15095,7 @@ test("EntityPanel excludes the record currently being edited from its own self-r
       if (input === "/api/projects/proj1/entities/Employee") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: employeeEntity, allEntities: [employeeEntity] });
@@ -15150,7 +15150,7 @@ test("EntityPanel excludes the record currently being edited from its own self-r
       if (input === "/api/projects/proj1/entities/Employee") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: employeeEntity, allEntities: [employeeEntity] });
@@ -15212,7 +15212,7 @@ test("EntityPanel's relation field offers no filter input at all for a short lis
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15264,7 +15264,7 @@ test("EntityPanel's relation field offers a filter input once there are enough r
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15340,7 +15340,7 @@ test("EntityPanel's relation field caps the number of rendered options for a ver
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15419,7 +15419,7 @@ test("EntityPanel's toolbar filter-by-relation dropdown caps its rendered option
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15503,7 +15503,7 @@ test("EntityPanel's search box matches a relation field's resolved display label
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15573,7 +15573,7 @@ test("EntityPanel's relation column header sorts by the related record's resolve
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15652,7 +15652,7 @@ test("EntityPanel's relation cell still resolves to the real display label when 
       if (input === "/api/projects/proj1/entities/courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15698,7 +15698,7 @@ test("EntityPanel never opens an inline editor for a relation field's cell", asy
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -15766,7 +15766,7 @@ test("EntityPanel's self-referencing relation field picker includes a record cre
           return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
         }
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: categoryEntity, allEntities: [categoryEntity] });
@@ -15843,7 +15843,7 @@ test("EntityPanel's self-referencing relation field picker includes a record cre
           return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
         }
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: categoryEntity, allEntities: [categoryEntity] });
@@ -15926,7 +15926,7 @@ test("EntityPanel's self-referencing relation field picker keeps a just-created 
           return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
         }
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: categoryEntity, allEntities: [categoryEntity] });
@@ -16007,7 +16007,7 @@ test("EntityPanel's relation cell jumps to the related record when onJumpToRecor
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let jumped: [string, number] | null = null;
     try {
@@ -16074,7 +16074,7 @@ test("EntityPanel's relation cell resolves a case-mismatched relationTo to the t
       if (input === "/api/projects/proj1/entities/courier") {
         return new Response(JSON.stringify({ records: courierRelated }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let jumped: [string, number] | null = null;
     try {
@@ -16136,7 +16136,7 @@ test("EntityPanel's row-level 'Send WhatsApp' action appears only for a phone-be
       if (input === "/api/projects/proj1/entities/Lead") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let sentTo: string | null = null;
     try {
@@ -16172,7 +16172,7 @@ test("EntityPanel's row-level 'Send WhatsApp' action does not render at all for 
       if (input === "/api/projects/proj1/entities/Note") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: noteEntity, allEntities: [noteEntity], onSendWhatsApp: () => {} });
@@ -16223,7 +16223,7 @@ test("EntityPanel's board view cards get the same Print and Send WhatsApp row ac
       if (input === "/api/projects/proj1/entities/Lead") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const originalPrint = window.print;
     let printCalls = 0;
@@ -16295,7 +16295,7 @@ test("EntityPanel's row-level 'Send WhatsApp' action falls through to a sibling 
       if (input === "/api/projects/proj1/entities/Lead") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let sentTo: string | null = null;
     try {
@@ -16344,7 +16344,7 @@ test("EntityPanel's board view card's Send WhatsApp action also falls through to
       if (input === "/api/projects/proj1/entities/Lead") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let sentTo: string | null = null;
     try {
@@ -16401,7 +16401,7 @@ test("EntityPanel's longtext cell carries its full value in a title attribute, b
       if (input === "/api/projects/proj1/entities/Customer" && (init?.method ?? "GET") === "GET") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: noteEntity, allEntities: [noteEntity] });
@@ -16529,7 +16529,7 @@ test("EntityPanel's 'Group by' choice survives an unmount+remount of the same en
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected request ${input}`);
+        return new Response(null, { status: 404 });
       }) as typeof fetch;
       renderEntityPanel({ entity: otherEntity, allEntities: [otherEntity] });
       await waitForCondition(() => document.querySelector(".entity-group-by") !== null);
@@ -16737,7 +16737,7 @@ test("EntityPanel's Table/Board/Calendar view choice survives an unmount+remount
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected request ${input}`);
+        return new Response(null, { status: 404 });
       }) as typeof fetch;
       renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -16817,7 +16817,7 @@ test("EntityPanel's multi-column sort survives an unmount+remount of the same en
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected request ${input}`);
+        return new Response(null, { status: 404 });
       }) as typeof fetch;
       renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -16881,7 +16881,7 @@ test("EntityPanel's per-field enum filter survives an unmount+remount of the sam
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected request ${input}`);
+        return new Response(null, { status: 404 });
       }) as typeof fetch;
       renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -16985,7 +16985,7 @@ test("EntityPanel's relation filter select keeps a stale persisted id visibly se
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const firstView = renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -17180,7 +17180,7 @@ test("EntityPanel's table shows a totals row summing each numeric column over th
       if (input === "/api/projects/proj1/entities/Invoice") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: invoiceEntity, allEntities: [invoiceEntity] });
@@ -17209,7 +17209,7 @@ test("EntityPanel's table shows a totals row summing each numeric column over th
             headers: { "content-type": "application/json" },
           });
         }
-        throw new Error(`unexpected request ${input}`);
+        return new Response(null, { status: 404 });
       }) as typeof fetch;
       renderEntityPanel({ entity: textOnlyEntity, allEntities: [textOnlyEntity] });
       await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
@@ -17253,7 +17253,7 @@ test("EntityPanel's table cell renders a phone-like-named number field as raw di
       if (input === "/api/projects/proj1/entities/Contact") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
@@ -17297,7 +17297,7 @@ test("EntityPanel's table cell falls back to the raw stored value for a stale no
       if (input === "/api/projects/proj1/entities/MenuItem") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: menuItemEntity, allEntities: [menuItemEntity] });
@@ -17345,7 +17345,7 @@ test("EntityPanel's table cell wraps a phone-like-named field's value in a bidi-
       if (input === "/api/projects/proj1/entities/Contact") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
@@ -17401,7 +17401,7 @@ test("EntityPanel's relation cell wraps a phone-shaped related-record label in <
       if (input === "/api/projects/proj1/entities/Courier") {
         return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity, courierEntity] });
@@ -17457,7 +17457,7 @@ test("EntityPanel's grouped table shows a numeric subtotal row per group, summin
       if (input === "/api/projects/proj1/entities/Order") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
@@ -17538,7 +17538,7 @@ test("EntityPanel's Board view shows a numeric subtotal per column, summing only
       if (input === "/api/projects/proj1/entities/Order") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
@@ -17619,7 +17619,7 @@ test("EntityPanel's grand-total tfoot excludes a collapsed group's records, matc
       if (input === "/api/projects/proj1/entities/Order") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: orderEntity, allEntities: [orderEntity] });
@@ -17692,7 +17692,7 @@ test("EntityPanel's table shows no totals row at all when the only number-typed 
       if (input === "/api/projects/proj1/entities/Contact") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
@@ -17736,7 +17736,7 @@ test("EntityPanel's table totals footer skips a phone-like-named column but stil
       if (input === "/api/projects/proj1/entities/Contact") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: contactEntity, allEntities: [contactEntity] });
@@ -17791,7 +17791,7 @@ test("EntityPanel's number field input is a plain text input with a decimal keyb
       if (input === "/api/projects/proj1/entities/Invoice") {
         return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       // allEntities intentionally omits "Courier" -- relatedEntity stays
@@ -17857,7 +17857,7 @@ test("EntityPanel's number field input lets a user type a negative value startin
         postedBodies.push(body);
         return new Response(JSON.stringify({ record: { id: 1, ...body } }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: dealEntity, allEntities: [dealEntity] });
@@ -17919,7 +17919,7 @@ test("EntityPanel's add/edit form refuses a non-numeric value for a 'number' fie
         postCalled = true;
         return new Response(JSON.stringify({ record: { id: 1 } }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: dealEntity, allEntities: [dealEntity] });
@@ -17995,7 +17995,7 @@ test("EntityPanel's enum field can be cleared back to no value once it has a rea
         patchedBodies.push(body);
         return new Response(JSON.stringify({ record: { ...store[0], ...body } }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: ticketEntity, allEntities: [ticketEntity] });
@@ -18060,7 +18060,7 @@ test("EntityPanel's add/edit form wires field.required into the real required at
       if (input === "/api/projects/proj1/entities/Lead") {
         return new Response(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: leadEntity, allEntities: [leadEntity] });
@@ -18301,7 +18301,7 @@ test("a date field named like a deadline is visually flagged overdue/due-soon in
       if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
@@ -18363,7 +18363,7 @@ test("the overdue/due-soon date span exposes BOTH its urgency and the date itsel
       if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
@@ -18428,7 +18428,7 @@ test("an overdue/dueSoon-shaped date on a record whose own status is already ter
       if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
@@ -18483,7 +18483,7 @@ test("EntityPanel's per-field filter offers a deadline-named date field too, nar
       if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
@@ -18549,7 +18549,7 @@ test("EntityPanel applies an incoming createDateFilter by pre-applying the match
       if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let handledCount = 0;
     const onCreateDateFilterHandled = () => {
@@ -18625,7 +18625,7 @@ test("EntityPanel applies an incoming createDateFilter by case-insensitive field
       if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     let handledCount = 0;
     const onCreateDateFilterHandled = () => {
@@ -18683,7 +18683,7 @@ test("an ordinary (non-deadline-named) date field in the past is never flagged o
       if (method === "GET" && input === "/api/projects/proj1/entities/Person") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: personEntity, allEntities: [personEntity] });
@@ -18724,7 +18724,7 @@ test("EntityPanel shows a translated required-field error instead of relying on 
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -18782,7 +18782,7 @@ test("EntityPanel's required-field check treats a whitespace-only value as blank
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -18843,7 +18843,7 @@ test("EntityPanel's record form submits on Ctrl+Enter or Cmd+Enter from a longte
         store.push(record);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -18920,7 +18920,7 @@ test("EntityPanel's inline cell editor lets a bare Enter insert a newline in a l
         Object.assign(store[0], JSON.parse(init!.body as string));
         return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: noteEntity, allEntities: [noteEntity] });
@@ -18988,7 +18988,7 @@ test("EntityPanel's add form uploads a chosen file for a 'file' field and submit
         store.push(record as unknown as EntityRecord);
         return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19059,7 +19059,7 @@ test("EntityPanel's create form deletes a superseded file upload from disk when 
         deleteCalls.push({ url: (JSON.parse(init!.body as string) as { url: string }).url });
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19127,7 +19127,7 @@ test("EntityPanel's edit form never deletes a file upload from disk just from re
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19198,7 +19198,7 @@ test("EntityPanel's edit form deletes a SECOND (or later) superseded file replac
         deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19287,7 +19287,7 @@ test("EntityPanel's edit form deletes a file upload directly, instead of merging
         deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19374,7 +19374,7 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
         deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19431,7 +19431,7 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
         deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19501,7 +19501,7 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
       if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/1") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -19580,7 +19580,7 @@ test("EntityPanel deletes an abandoned file replacement from disk when the compo
         deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19741,7 +19741,7 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
         deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19813,7 +19813,7 @@ test("EntityPanel's file field rejects an oversized file before ever uploading i
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19878,7 +19878,7 @@ test("EntityPanel's file field upload error from the create form does not bleed 
       if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -19928,7 +19928,7 @@ test("EntityPanel's table cell renders a 'file' field's stored descriptor as a r
       if (input === "/api/projects/proj1/entities/Applicant") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
@@ -19967,7 +19967,7 @@ test("EntityPanel's search box highlights the matched substring within a 'file' 
       if (input === "/api/projects/proj1/entities/Applicant") {
         return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });

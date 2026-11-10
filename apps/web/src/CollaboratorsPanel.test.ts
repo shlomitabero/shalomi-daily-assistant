@@ -120,7 +120,7 @@ test("CollaboratorsPanel's header shows the real total count -- the owner plus e
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -169,7 +169,7 @@ test("CollaboratorsPanel shows a real error with a Retry button when the initial
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -222,7 +222,19 @@ test("CollaboratorsPanel disables the invite submit button while the initial col
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ error: "Server exploded" }), { status: 500, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input} -- the invite form must not be able to submit while the list has failed to load`);
+      // Round 1855: this guard's own documented intent is "no POST is ever
+      // sent" -- it must stay a loud throw for any mutation. But treating
+      // every OTHER unmocked GET the same way (the 4 independent,
+      // silently-failing background fetches loadCollaborators also fires
+      // -- see their own round 1632/1636/1639/1666 comments) made this
+      // mock a fetchWithWakeRetry cold-start retry trap: a thrown fetch()
+      // is indistinguishable from a real network failure, so those GETs
+      // each sat retrying for up to REQUEST_TIMEOUT_MS, leaving the whole
+      // test file's process alive long after every real assertion passed.
+      if (method !== "GET") {
+        throw new Error(`unexpected mutation ${method} ${input} -- the invite form must not be able to submit while the list has failed to load`);
+      }
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -270,7 +282,7 @@ test("CollaboratorsPanel's remove button asks for confirmation, and declining le
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = ((message: string) => {
       confirmMessage = message;
@@ -318,7 +330,7 @@ test("CollaboratorsPanel shows the owner as the first row with an 'Owner (You)' 
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -354,7 +366,7 @@ test("CollaboratorsPanel shows the real owner's email with a plain 'Owner' badge
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -392,7 +404,7 @@ test("CollaboratorsPanel actually removes the collaborator once the confirmation
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -440,7 +452,7 @@ test("CollaboratorsPanel tells the owner when the invited email already has acce
           { status: 201, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -500,7 +512,7 @@ test("CollaboratorsPanel's invite form rejects a malformed email with a translat
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -566,7 +578,7 @@ test("CollaboratorsPanel's invite button guards against a fast double-click, so 
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -641,7 +653,7 @@ test("CollaboratorsPanel's role-change select guards against firing twice before
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -691,7 +703,7 @@ test("CollaboratorsPanel tells the owner their role pick was ignored when re-inv
           { status: 201, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -758,7 +770,7 @@ test("CollaboratorsPanel's re-invite message reflects the fresh server response,
           { status: 201, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -818,7 +830,7 @@ test("CollaboratorsPanel does not show the 'already has access' message for a ge
           { status: 201, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -862,7 +874,7 @@ test("CollaboratorsPanel shows a 'Leave' button only on the current user's own r
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -914,7 +926,7 @@ test("CollaboratorsPanel's Leave button asks for confirmation, calls the real DE
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = ((message: string) => {
       confirmMessage = message;
@@ -976,7 +988,7 @@ test("CollaboratorsPanel's invite form defaults to the 'editor' role, and submit
           { status: 201, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1028,7 +1040,7 @@ test("CollaboratorsPanel lets the owner change a collaborator's role via a per-r
         patchBody = JSON.parse(init!.body as string);
         return new Response(JSON.stringify({ collaborators: [danaAsViewer] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1069,7 +1081,7 @@ test("CollaboratorsPanel shows a collaborator's role as read-only text (not a se
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1133,7 +1145,7 @@ test("CollaboratorsPanel disables every row's role select and remove button whil
         deleteCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1231,7 +1243,7 @@ test("CollaboratorsPanel cross-gates the invite form against any role update or 
         await deletePromise;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1326,7 +1338,7 @@ test("CollaboratorsPanel cross-gates Resend invite against removal (and vice ver
         await deletePromise;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1388,7 +1400,7 @@ test("CollaboratorsPanel's calendar-feed regenerate button only renders for the 
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1430,7 +1442,7 @@ test("CollaboratorsPanel's calendar-feed regenerate button asks for confirmation
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => false) as typeof window.confirm;
 
@@ -1467,7 +1479,7 @@ test("CollaboratorsPanel's calendar-feed regenerate button calls the real endpoi
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1511,7 +1523,7 @@ test("CollaboratorsPanel's inbound-webhook regenerate button only renders for th
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1553,7 +1565,7 @@ test("CollaboratorsPanel's inbound-webhook section is hidden entirely for a read
       if (method === "GET" && input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1585,7 +1597,7 @@ test("CollaboratorsPanel's inbound-webhook regenerate button asks for confirmati
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => false) as typeof window.confirm;
 
@@ -1625,7 +1637,7 @@ test("CollaboratorsPanel's inbound-webhook regenerate button calls the real endp
         regenerateCalls += 1;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1675,7 +1687,7 @@ test("CollaboratorsPanel's \"Check last delivery\" button shows \"No deliveries 
         tokenFetchCalls += 1;
         return new Response(JSON.stringify({ token: "abc" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1705,7 +1717,7 @@ test("CollaboratorsPanel's \"Check last delivery\" button shows the real, format
       if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
         return new Response(JSON.stringify({ token: "abc", lastInboundWebhookAt: deliveredAt }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1742,7 +1754,7 @@ test("CollaboratorsPanel's \"Check last delivery\" button also shows the last re
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -1787,7 +1799,7 @@ test("CollaboratorsPanel clears its own displayed \"Last delivery received\" lin
       if (method === "POST" && input === "/api/projects/proj1/inbound-webhook-token/regenerate?lang=en") {
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1855,7 +1867,7 @@ test("CollaboratorsPanel cross-gates \"Check last delivery\" against \"Regenerat
         await regeneratePromise;
         return new Response(JSON.stringify({ token: "brand-new-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -1926,7 +1938,7 @@ test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible 
         tokenCalls += 1;
         return new Response(JSON.stringify({ token: "real-feed-token" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | null = null;
@@ -1977,7 +1989,7 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
       if (input === "/api/projects/proj1/collaborators") {
         return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let closeCalls = 0;
@@ -2078,7 +2090,7 @@ test("CollaboratorsPanel's transfer-ownership button asks for confirmation, send
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = ((message: string) => {
       confirmMessage = message;
@@ -2154,7 +2166,7 @@ test("CollaboratorsPanel's transfer-ownership reports the acting owner's own fre
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => true) as typeof window.confirm;
 
@@ -2206,7 +2218,7 @@ test("CollaboratorsPanel's transfer-ownership button, when declined, leaves the 
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     globalThis.window.confirm = (() => false) as typeof window.confirm;
 
@@ -2239,7 +2251,7 @@ test("CollaboratorsPanel shows Copy/Download buttons only once loaded, and Copy 
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -2327,7 +2339,7 @@ test("CollaboratorsPanel's Copy report resolves a deleted record's entityName to
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -2386,7 +2398,7 @@ test("CollaboratorsPanel's Copy report resolves a schema label edit's entityName
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -2433,7 +2445,7 @@ test("CollaboratorsPanel's Download button downloads the real list as a named fi
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     // jsdom doesn't implement the real Blob-URL machinery -- stub just
@@ -2523,7 +2535,7 @@ test("the invite-email input caps at 320 chars, matching the server's .max(320) 
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {

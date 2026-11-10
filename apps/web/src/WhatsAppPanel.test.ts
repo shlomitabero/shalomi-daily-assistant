@@ -1158,7 +1158,7 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1226,7 +1226,7 @@ test("WhatsAppPanel shows a 'waiting for owner/editor' message instead of a QR i
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1284,7 +1284,7 @@ test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecu
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     t.mock.timers.enable({ apis: ["setInterval"] });
@@ -1381,7 +1381,7 @@ test("WhatsAppPanel sends the exact typed recipient/message and refreshes the me
         sent = true;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1441,7 +1441,7 @@ test("WhatsAppPanel's test-send recipient input caps at 50 chars client-side, ma
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1502,7 +1502,7 @@ test("WhatsAppPanel's test-send button guards against a fast double-click, so on
         }
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1570,7 +1570,7 @@ test("WhatsAppPanel's test-send form rejects a blank 'to' field with a translate
         sendCount++;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1634,7 +1634,7 @@ test("WhatsAppPanel uploads a chosen attachment and includes its descriptor in t
         capturedSendBody = init!.body as string;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1716,7 +1716,7 @@ test("WhatsAppPanel clears the chosen attachment after a failed send, instead of
         // failure looks like.
         return new Response(JSON.stringify({ ok: false, error: "recipient not found" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1794,7 +1794,7 @@ test("WhatsAppPanel keeps the chosen attachment selected after a failed send tha
           { status: 409, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1863,7 +1863,7 @@ test("WhatsAppPanel's attachment Remove button deletes the real upload from the 
         deleteRequest = JSON.parse(init!.body as string) as { url: string };
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -1933,7 +1933,7 @@ test("WhatsAppPanel deletes a chosen but never-sent/never-removed attachment fro
         deleteRequest = JSON.parse(init!.body as string) as { url: string };
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const view = render(
@@ -1985,7 +1985,7 @@ test("WhatsAppPanel never fires a delete on close when no attachment was ever ch
         deleteCalled = true;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const view = render(
@@ -2051,7 +2051,7 @@ test("WhatsAppPanel deletes a just-uploaded attachment from the server when the 
         deleteRequest = JSON.parse(init!.body as string) as { url: string };
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const view = render(
@@ -2122,7 +2122,7 @@ test("WhatsAppPanel does not start polling from its initial status fetch if the 
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       const view = render(
@@ -2192,7 +2192,7 @@ test("WhatsAppPanel's connection-status captions are live regions that announce 
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     t.mock.timers.enable({ apis: ["setInterval"] });
@@ -2258,7 +2258,7 @@ test("WhatsAppPanel clears the recipient and message inputs after a successful s
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -2319,7 +2319,7 @@ test("WhatsAppPanel's Reply button clears any already-drafted message, not just 
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -2401,7 +2401,7 @@ test("WhatsAppPanel's Reply button also clears and deletes any already-chosen at
         deleteRequest = JSON.parse(init!.body as string) as { url: string };
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -2557,7 +2557,7 @@ test("WhatsAppPanel disables every message's Retry button while any one retry is
         await sendGate;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -2678,7 +2678,7 @@ test("WhatsAppPanel's Delete and Clear History buttons are disabled while a retr
         clearCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -2755,7 +2755,7 @@ test("WhatsAppPanel's prefillTo prop pre-fills the real test-send 'to' input, wh
         capturedSendBody = init!.body as string;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -2839,7 +2839,7 @@ test("WhatsAppPanel's Reply button on an inbound message fills the real test-sen
         capturedSendBody = init!.body as string;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -2937,7 +2937,7 @@ test("WhatsAppPanel's 'Create new record' button appears only on an unmatched in
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -3024,7 +3024,7 @@ test("WhatsAppPanel's 'Create new record' button does not render when no single 
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -3109,7 +3109,7 @@ test("WhatsAppPanel marks the newest loaded message as 'seen' in localStorage on
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       assert.equal(getWhatsAppLastSeen("proj1", "user1"), null, "nothing should be marked seen before the panel has ever loaded anything");
@@ -3153,7 +3153,7 @@ function mockConnectedStatusFetch(): typeof fetch {
     if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
       return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    throw new Error(`unexpected request ${method} ${input}`);
+    return new Response(null, { status: 404 });
   }) as typeof fetch;
 }
 
@@ -3285,7 +3285,7 @@ test("WhatsAppPanel remembers a sent test number as a clickable recent-number ch
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -3344,7 +3344,7 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
       if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -3412,7 +3412,7 @@ test("WhatsAppPanel's log search box remembers a query on Enter, shows it as a c
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -3499,7 +3499,7 @@ test("WhatsAppPanel's log search box has a 'Clear search' button and Escape-to-c
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let closeCalls = 0;
@@ -3608,7 +3608,7 @@ test("WhatsAppPanel's log search Escape-to-clear still works when focus has move
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let closeCalls = 0;
@@ -3686,7 +3686,7 @@ test("WhatsAppPanel's test-send form has Escape-to-clear for an in-progress draf
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let closeCalls = 0;
@@ -3777,7 +3777,7 @@ test("WhatsAppPanel's message log shows each message's own real timestamp", asyn
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -3858,7 +3858,7 @@ test("WhatsAppPanel's message log makes a matched sender's name a real jump-to-R
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const entityJumps: string[] = [];
     const recordJumps: [string, number][] = [];
@@ -3942,7 +3942,7 @@ test("WhatsAppPanel falls back to onJumpToEntity when a message matched an entit
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const entityJumps: string[] = [];
     const recordJumps: [string, number][] = [];
@@ -4052,7 +4052,7 @@ test("WhatsAppPanel's log shows which entity a matched message belongs to, disam
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -4135,7 +4135,7 @@ test("WhatsAppPanel's log entity label resolves a stale-cased matchedEntityName 
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -4214,7 +4214,7 @@ test("WhatsAppPanel's jump-to-entity/jump-to-record handlers resolve a stale-cas
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     const entityJumps: string[] = [];
     try {
@@ -4292,7 +4292,7 @@ test("WhatsAppPanel's message log shows a download button only once there are me
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     // jsdom doesn't implement the real Blob-URL machinery -- stub just
@@ -4402,7 +4402,7 @@ test("WhatsAppPanel shows a search box only once the log passes the threshold, f
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -4507,7 +4507,7 @@ test("WhatsAppPanel's search box highlights the matched text within both a messa
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -4599,7 +4599,7 @@ test("WhatsAppPanel renders a URL or email embedded in a message's own body as a
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -4687,7 +4687,7 @@ test("WhatsAppPanel's direction filter narrows the real rendered log to incoming
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -4792,7 +4792,7 @@ test("WhatsAppPanel shows a delivered badge for a delivered message and a read b
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -4885,7 +4885,7 @@ test("WhatsAppPanel's per-message delete button sends a real DELETE for that one
         store.splice(index, 1);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -4963,7 +4963,7 @@ test("WhatsAppPanel's per-message delete button sends no request at all when the
         deleteRequestSent = true;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5036,7 +5036,7 @@ test("WhatsAppPanel's per-message delete button calls onMessageDeleted with the 
       if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages/m1") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5111,7 +5111,7 @@ test("WhatsAppPanel's 'Clear history' button calls onHistoryCleared", async () =
       if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5196,7 +5196,7 @@ test("WhatsAppPanel's 'Clear history' also clears a stale deleteError banner lef
       if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5286,7 +5286,7 @@ test("WhatsAppPanel's Disconnect also clears a stale deleteError banner left ove
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5388,7 +5388,7 @@ test("WhatsAppPanel's successful delete of one message also clears a stale retry
         deleteOneCalls += 1;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5490,7 +5490,7 @@ test("WhatsAppPanel's successful retry of one message also clears a stale delete
         sendCalls += 1;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -5576,7 +5576,7 @@ test("WhatsAppPanel's copy button writes the real formatted log to the clipboard
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -5690,7 +5690,7 @@ test("WhatsAppPanel's copy button includes each matched message's own (disambigu
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -5771,7 +5771,7 @@ test("WhatsAppPanel's copy button shows a failure label when navigator.clipboard
           headers: { "content-type": "application/json" },
         });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     Object.defineProperty(navigator, "clipboard", {
@@ -5869,7 +5869,7 @@ test("WhatsAppPanel's copy button respects the active search filter, copying onl
       if (method === "GET" && input === "/api/projects/proj-search-copy/integrations/whatsapp/messages") {
         return new Response(JSON.stringify({ messages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     let writtenText: string | undefined;
@@ -5968,7 +5968,7 @@ test("WhatsAppPanel's log filter choice survives a real unmount+remount, and is 
       if (method === "GET" && (input as string) === `/api/projects/${projectId}/integrations/whatsapp/messages`) {
         return new Response(JSON.stringify({ messages: manyMessages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     function renderPanel(projectId: string) {
@@ -6042,7 +6042,7 @@ test("WhatsAppPanel does not let a stale persisted directionFilter hide messages
       if (method === "GET" && (input as string) === `/api/projects/${projectId}/integrations/whatsapp/messages`) {
         return new Response(JSON.stringify({ messages: fewMessages }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -6148,7 +6148,7 @@ test("WhatsAppPanel does not let a stale search term hide every remaining messag
         store.splice(index, 1);
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -6278,7 +6278,7 @@ test("WhatsAppPanel's 'Load older messages' button appends the next page without
         }
         throw new Error(`unexpected cursor in ${input}`);
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -6421,7 +6421,7 @@ test("WhatsAppPanel's 'Clear history' button is disabled while 'Load older messa
       if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
         return new Response(null, { status: 204 });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -6566,7 +6566,7 @@ test("WhatsAppPanel's 'Load older messages' doesn't duplicate a message that's b
         }
         throw new Error(`unexpected cursor in ${input}`);
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -6679,7 +6679,7 @@ test("WhatsAppPanel's handleSendTest preserves older pages loaded via 'Load olde
         sent = true;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     try {
@@ -6772,7 +6772,7 @@ test("WhatsAppPanel's Retry button warns and waits for confirmation before resen
         sendCalls += 1;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -6843,7 +6843,7 @@ test("WhatsAppPanel's Retry button sends no request at all when the attachment-l
         sendCalls += 1;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
@@ -6917,7 +6917,7 @@ test("WhatsAppPanel's Retry button resends immediately with no confirm prompt wh
         sendCalls += 1;
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      throw new Error(`unexpected request ${method} ${input}`);
+      return new Response(null, { status: 404 });
     }) as typeof fetch;
     try {
       render(
