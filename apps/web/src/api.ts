@@ -266,7 +266,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const match = path.match(/^\/projects\/([^/]+)/);
       if (match) notifyViewerDemoted(match[1]);
     }
-    throw new Error(message);
+    // Round 1864: attached so a caller can tell "record genuinely gone"
+    // (NOT_FOUND) apart from every other save failure without parsing
+    // `message` text -- see EntityPanel.tsx's handleSubmit catch block.
+    throw Object.assign(new Error(message), { code });
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

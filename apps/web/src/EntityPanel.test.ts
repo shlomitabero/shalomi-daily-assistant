@@ -19732,6 +19732,81 @@ test("EntityPanel closes the edit form when the record it has open is included i
 });
 
 /**
+ * Round 1864: a live two-tab Playwright exploration found the gap round
+ * 1017/1021 (same-tab delete while this form is open) and round 1527/1529
+ * (this form's own save landing while a delete is still pending elsewhere)
+ * never covered between them -- a delete from ANOTHER tab that fully
+ * commits server-side BEFORE this form's own Save is even clicked.
+ * updateRecord (repository.ts) 404s with NOT_FOUND once the row is
+ * actually gone, but the old catch block just showed that error and left
+ * the form open on the now-phantom record: Save would repeat the exact
+ * same error forever, with the ghost row still listed below looking
+ * perfectly editable. Confirms Save instead closes the form and refreshes
+ * the list the same way round 1017 already does for the same-tab case --
+ * with no error banner shown (nothing left here needs it).
+ */
+test("EntityPanel closes the edit form and drops the ghost row when Save discovers, via a 404 NOT_FOUND, that another tab already fully deleted the record being edited", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id);
+        if (!record) {
+          return new Response(JSON.stringify({ error: `Record ${id} not found in Deal`, code: "NOT_FOUND" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        Object.assign(record, JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Acme Corp");
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Save", "sanity check: the form must actually be in edit mode for record 1 before its server-side row vanishes");
+
+      // The other tab's delete fully commits here -- after the form already
+      // opened on record 1, but before this tab's own Save is clicked.
+      store.splice(
+        store.findIndex((r) => r.id === 1),
+        1,
+      );
+
+      const nameInput = document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Acme Corp (renamed)" } });
+      fireEvent.submit(document.querySelector(".record-form") as HTMLFormElement);
+
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.equal(
+        (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement).textContent,
+        "Add",
+        "a save that 404s NOT_FOUND against its own editingId must close the form (editingId reset), not leave it stuck open on a vanished row",
+      );
+      assert.equal((document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement).value, "", "the form must also reset to blank");
+      assert.equal(document.getElementById("entity-form-error-Deal"), null, "no error banner should be left showing -- this is a clean close, not a save failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1004: the "jump straight to a different record without saving or
  * cancelling first" abandonment path -- startEdit's own new cleanup call,
  * distinct from both the explicit Cancel button and Escape.

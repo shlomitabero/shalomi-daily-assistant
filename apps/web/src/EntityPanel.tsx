@@ -3984,7 +3984,31 @@ export function EntityPanel({
       }
       await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      const error = err as Error & { code?: string };
+      // Round 1864: another tab (or collaborator) can delete the record
+      // this form is editing, with its DELETE fully committing, before
+      // this PATCH ever reaches the server -- updateRecord (repository.ts)
+      // then 404s with NOT_FOUND. Round 1017/1021 already closes this form
+      // the moment a same-tab delete removes its open record, and round
+      // 1527/1529 already blocks the opposite ordering (this save landing
+      // first) with a 409 in the DELETE route itself -- but a save
+      // discovered-too-late against a record already fully gone was never
+      // handled: left open, the form just re-shows this same error on
+      // every further Save, with the deleted row still listed below
+      // looking perfectly editable. Treating it the same way those two
+      // handle a now-gone editingId -- close the form, refresh() to drop
+      // the ghost row -- clears it instead of leaving it stuck.
+      if (error.code === "NOT_FOUND" && editingId != null) {
+        if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+          setForm(emptyForm(entity));
+          setEditingId(null);
+          editingOriginalRef.current = null;
+          bumpFormInstanceKey();
+        }
+        await refresh();
+        return;
+      }
+      setError(error.message);
     } finally {
       setSubmitBusy(false);
     }

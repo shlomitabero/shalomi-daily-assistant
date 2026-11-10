@@ -1925,7 +1925,10 @@ async function request(path, opts) {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error || \`Request failed (\${res.status})\`);
+    // Round 1864: attached so a caller can tell "record genuinely gone"
+    // (NOT_FOUND) apart from every other save failure without parsing
+    // \`message\` text -- see EntityView's handleSubmit catch block.
+    throw Object.assign(new Error(body.error || \`Request failed (\${res.status})\`), { code: body.code });
   }
   if (res.status === 204) return undefined;
   return res.json();
@@ -7454,6 +7457,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       }
       await refresh();
     } catch (err) {
+      // Round 1864: see the live Forge AI preview's EntityPanel.tsx
+      // handleSubmit's own identical doc comment -- another tab can
+      // fully delete this form's record before this PATCH lands,
+      // 404ing NOT_FOUND. Close the form and refresh() to drop the
+      // ghost row instead of leaving Save stuck repeating this error.
+      if (err.code === "NOT_FOUND" && editingId != null) {
+        if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+          setForm(emptyForm(entity));
+          setEditingId(null);
+          editingOriginalRef.current = null;
+          bumpFormInstanceKey();
+        }
+        await refresh();
+        return;
+      }
       setError(err.message);
     } finally {
       setSubmitBusy(false);
