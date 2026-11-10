@@ -6845,3 +6845,57 @@ test("App.tsx warns via useBeforeUnloadWarning before a tab close/refresh/naviga
     "expected a useBeforeUnloadWarning call guarding the post-build Refine box's in-progress instruction",
   );
 });
+
+/**
+ * Round 1865: a round-1865 WCAG-contrast audit (empirically computing
+ * relative luminance from the theme's own hex values, cross-checked
+ * against live computed styles in a real rendered DOM) found that the
+ * light theme's `--muted` (#83786a, used nowhere but as `.muted`'s/other
+ * secondary text's own `color:`) fell short of WCAG 2.1 SC 1.4.3's 4.5:1
+ * floor for ordinary-weight text: only 3.87:1 against `--bg` (#f6f2ea)
+ * and 4.26:1 against `--surface` (#fffdfa). The dark theme's own
+ * `--muted` (#a89d8c) was never short the same way (6.88:1/6.35:1
+ * against its own `--bg`/`--surface`), so this was a one-sided oversight
+ * in the light palette, not a design choice -- confirmed by grepping
+ * docs/roadmap.md for `--muted`/`83786a` and finding no prior round ever
+ * measured this. jsdom doesn't compute real contrast against rendered
+ * backgrounds, so this reads styles.css's own source and recomputes the
+ * same WCAG relative-luminance formula a real auditor/browser devtools
+ * would use, directly from its hex values.
+ */
+test("the light theme's --muted text color clears WCAG AA's 4.5:1 contrast floor against both --bg and --surface", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const lightRoot = stylesCss.match(/:root \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(lightRoot, "expected a :root {...} block defining the light theme's variables");
+
+  function hexOf(varName: string): [number, number, number] {
+    const match = lightRoot!.match(new RegExp(`--${varName}:\\s*#([0-9a-fA-F]{6})`));
+    assert.ok(match, `expected --${varName} to be defined in the light :root block`);
+    const hex = match![1];
+    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+  }
+
+  // WCAG 2.1's own relative-luminance / contrast-ratio formulas.
+  function relativeLuminance([r, g, b]: [number, number, number]): number {
+    const linearize = (c: number) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+  }
+  function contrastRatio(a: [number, number, number], b: [number, number, number]): number {
+    const [l1, l2] = [relativeLuminance(a), relativeLuminance(b)];
+    const [lighter, darker] = l1 >= l2 ? [l1, l2] : [l2, l1];
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  const muted = hexOf("muted");
+  const bg = hexOf("bg");
+  const surface = hexOf("surface");
+
+  const vsBg = contrastRatio(muted, bg);
+  const vsSurface = contrastRatio(muted, surface);
+  assert.ok(vsBg >= 4.5, `--muted vs --bg contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${vsBg.toFixed(2)}:1`);
+  assert.ok(vsSurface >= 4.5, `--muted vs --surface contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${vsSurface.toFixed(2)}:1`);
+});

@@ -10781,7 +10781,7 @@ function renderStylesCss(): string {
   --surface-muted: #faf7f1;
   --surface-subtle: #fdfbf7;
   --text: #241f19;
-  --muted: #83786a;
+  --muted: #6b5f50;
   --accent: #d9622b;
   --accent-contrast: #ffffff;
   --accent-soft: #fbe4d4;

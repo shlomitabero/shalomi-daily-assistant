@@ -6,7 +6,13 @@
   --border: #e6ddcc;
   --border-soft: #efe8da;
   --text: #241f19;
-  --muted: #83786a;
+  /* Round 1865: #83786a (ordinary-weight text on --bg #f6f2ea) was 3.87:1,
+     and on --surface #fffdfa 4.26:1 -- both below WCAG 2.1 SC 1.4.3's 4.5:1
+     floor for normal text, unlike the dark theme's own --muted (#a89d8c),
+     which clears 6.3:1+ against both of ITS backgrounds. --muted is used
+     nowhere but `color:` in this file, so darkening it within the same
+     hue family only affects text contrast: #6b5f50 gives 5.57:1/6.12:1. */
+  --muted: #6b5f50;
   --accent: #d9622b;
   --accent-deep: #b84e1e;
   --accent-contrast: #fffaf5;
