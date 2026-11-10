@@ -495,6 +495,46 @@ test("still recommends 'No payments' for a genuinely non-commercial appointment 
 });
 
 /**
+ * Round 1831: the exact same drift round 1819 fixed for salons/spas, this
+ * time for pet care. A dog/cat grooming, pet sitting/boarding/walking, or
+ * veterinary description matches only Pet (rounds 1752/1817's own
+ * keywords in domainEntities.ts), which was deliberately NOT added to
+ * BILLING_ENTITY_NAMES -- a public animal shelter's intake tracker also
+ * matches Pet with zero commercial intent, the same bare-word ambiguity
+ * Service/Appointment were excluded for (see that Set's own doc comment).
+ * Fixed instead by adding specific grooming/sitting/boarding/walking/vet
+ * phrases to PAYMENT_KEYWORDS, mirroring round 1819's own fix shape.
+ */
+test("asks about payments (recommending Stripe) for a dog/cat grooming or veterinary description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const grooming = await provider.generate("A dog grooming business to manage pets and their owners.");
+  assert.ok(grooming.entities.some((e) => e.name === "Pet"));
+  const groomingPaymentQuestion = grooming.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(groomingPaymentQuestion);
+  assert.equal(groomingPaymentQuestion!.recommendation, "Stripe");
+
+  const vet = await provider.generate("A veterinary clinic to manage pets and owners.");
+  const vetPaymentQuestion = vet.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(vetPaymentQuestion);
+  assert.equal(vetPaymentQuestion!.recommendation, "Stripe");
+
+  const sitting = await provider.generate("A pet sitting and dog boarding service for busy pet owners.");
+  const sittingPaymentQuestion = sitting.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(sittingPaymentQuestion);
+  assert.equal(sittingPaymentQuestion!.recommendation, "Stripe");
+});
+
+test("still recommends 'No payments' for a non-commercial animal shelter, confirming the round-1831 pet-care fix doesn't regress bare 'Pet' ambiguity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const shelter = await provider.generate("A non-profit animal shelter that lets pet owners list lost pets for free adoption.");
+  assert.ok(shelter.entities.some((e) => e.name === "Pet"));
+  const paymentQuestion = shelter.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paymentQuestion);
+  assert.equal(paymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/

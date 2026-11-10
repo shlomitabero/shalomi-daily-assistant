@@ -135,6 +135,24 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
   /\bspa\b/, "massage", "massage therapy",
   "מספרה", "סלון יופי", "ספא", "עיסוי",
+  // Round 1831: the exact same drift round 1819 fixed for salons/spas,
+  // this time for pet care. A dog/cat grooming, pet sitting/boarding/
+  // walking, or veterinary business matches only Pet (rounds 1752/1817's
+  // own keywords in domainEntities.ts), which isn't in BILLING_ENTITY_
+  // NAMES below and hits none of this array's other phrases, so it got
+  // recommended "No payments" despite dog/cat grooming, pet sitting/
+  // boarding/walking, and veterinary care all being textbook paid small-
+  // business services. "Pet" itself was deliberately NOT added to
+  // BILLING_ENTITY_NAMES below -- same bare-word-ambiguity reasoning that
+  // Set's own comment already documents for Service/Appointment: a public
+  // animal shelter's intake tracker also matches Pet with zero commercial
+  // intent. These specific phrases, already proven unambiguous as Pet's
+  // own entity-matching keywords, are commercial-only the same way
+  // round 1819's salon/spa/massage phrases are.
+  "pet grooming", "dog grooming", "cat grooming", "dog groomer", "cat groomer", "pet groomer",
+  "dog walking", "dog walker", "pet sitting", "pet sitter", "pet boarding", "dog daycare",
+  "veterinary", "vet clinic", "animal clinic",
+  "טיפוח כלבים", "טיפוח חתולים", "טיול כלבים", "פנסיון לכלבים", "וטרינר", "וטרינרית",
 ];
 
 /**
