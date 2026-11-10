@@ -10881,6 +10881,7 @@ th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--bo
 .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); background: var(--surface-subtle); border: 1px dashed var(--border); border-radius: 10px; }
 .entity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .entity-toolbar .entity-search { margin-bottom: 0; flex: 1; }
+.entity-clear-search, .entity-clear-filters, .entity-reset-column-widths, .entity-clear-sort { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
 .entity-record-count { white-space: nowrap; }
 .entity-search-recent { margin-top: -6px; margin-bottom: 14px; }
 .entity-search-recent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }

@@ -7651,6 +7651,31 @@ test("the exported app's generated styles.css defines the base .row-actions layo
 });
 
 /**
+ * Round 1846: the exported app's entity-list toolbar has four "clear/reset"
+ * buttons (clear search, clear filters, reset column widths, clear sort --
+ * apps/api/src/codegen.ts, JSX around lines 8596/8707/8835/8840) that in the
+ * live app carry `className="secondary small entity-clear-*"` (EntityPanel.tsx
+ * lines 5655/5785/5993/6002), picking up the app's flat bordered button look
+ * from styles.css's generic `button {}`/`button.secondary`/`.small` rules.
+ * The exported app's generated stylesheet never defined any CSS for these
+ * four scoped classes at all (confirmed by grep), and codegen's design system
+ * has no generic `button {}`/`.secondary`/`.small` base rules to fall back
+ * on either, so every exported app rendered these four buttons as unstyled
+ * native browser buttons -- visibly inconsistent with every other button in
+ * the exported app, in both light and dark mode.
+ */
+test("the exported app's generated styles.css styles the entity toolbar's clear/reset buttons, not just the live app's own", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  for (const className of ["entity-clear-search", "entity-clear-filters", "entity-reset-column-widths", "entity-clear-sort"]) {
+    const rule = stylesCss.match(new RegExp(`\\.${className}\\s*[,{][\\s\\S]*?\\{[\\s\\S]*?\\}`))?.[0];
+    assert.ok(rule, `expected a CSS rule covering .${className} in the generated styles.css, matching the live app's own bordered secondary-button look`);
+    assert.match(rule!, /border:\s*1px solid var\(--border\)/, `.${className} must have the app's flat bordered look, not fall through to the raw browser default button chrome`);
+  }
+});
+
+/**
  * Round 1385: mirrors the live preview's own round-1384 fix. The exported
  * CalendarView's chip offered reschedule only via native HTML5
  * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day
