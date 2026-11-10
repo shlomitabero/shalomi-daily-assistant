@@ -1997,6 +1997,12 @@ test("AutomationsPanel's field_equals Value picker caps its rendered options for
       assert.ok(hint, "a hint must explain the list is truncated");
       assert.ok(hint?.textContent?.includes("200"), "the hint must name how many options are actually shown");
       assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+      // Round 1821: this hint had neither the "muted small" styling classes
+      // nor role="status" that every sibling truncated-hint paragraph in
+      // this app carries (record-list-truncated-hint, global-search-truncated-hint).
+      assert.ok(hint?.className.includes("muted"), "the hint must carry the app's established 'muted' de-emphasis class, like its sibling truncated-hint paragraphs");
+      assert.ok(hint?.className.includes("small"), "the hint must carry the app's established 'small' class, like its sibling truncated-hint paragraphs");
+      assert.equal(hint?.getAttribute("role"), "status", "the hint must be announced to screen readers via role=\"status\", like its sibling truncated-hint paragraphs");
 
       const filterInput = document.querySelector(".relation-filter-input") as HTMLInputElement;
       // "Courier 123" (not "Courier 7") so the substring match is

@@ -1732,7 +1732,7 @@ export function AutomationsPanel({
                       />
                     )}
                     {isFieldValueRelationFilterTruncated && (
-                      <p className="relation-filter-truncated-hint">
+                      <p className="relation-filter-truncated-hint muted small" role="status">
                         {t("entity.relation.optionCapHint", {
                           shown: displayedFieldValueRelationRecords.length,
                           total: filteredFieldValueRelationRecords?.length ?? 0,

@@ -1534,7 +1534,7 @@ function FieldInput({
           />
         )}
         {isTruncated && (
-          <p className="relation-filter-truncated-hint">
+          <p className="relation-filter-truncated-hint muted small" role="status">
             {t("entity.relation.optionCapHint", { shown: displayedRecords.length, total: filteredRecords.length })}
           </p>
         )}
@@ -5771,7 +5771,7 @@ export function EntityPanel({
                     />
                   )}
                   {isRelationFilterTruncated && (
-                    <p className="relation-filter-truncated-hint">
+                    <p className="relation-filter-truncated-hint muted small" role="status">
                       {t("entity.relation.optionCapHint", { shown: displayedRelationRecords.length, total: filteredRelationRecords.length })}
                     </p>
                   )}
