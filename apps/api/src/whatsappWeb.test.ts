@@ -2874,6 +2874,44 @@ test("incoming WhatsApp payment-request decline/cancel messages are logged with 
 });
 
 /**
+ * Round 1862: paymentInviteMessage is a distinct WhatsApp Pay message from
+ * requestPaymentMessage/sendPaymentMessage (round 1538) -- a contact's
+ * client inviting the other side to set up a payment method before any
+ * specific request/send exists. Confirmed directly against the installed
+ * Baileys protobuf (WAProto/index.d.ts: IPaymentInviteMessage{serviceType,
+ * expiryTimestamp}, serviceType the ServiceType enum UNKNOWN/FBPAY/NOVI/
+ * UPI) -- no sub-message to recurse into, the same "detect presence only"
+ * bar declinePaymentRequestMessage/cancelPaymentRequestMessage just above
+ * already met.
+ */
+test("an incoming WhatsApp payment-invite message (paymentInviteMessage) is logged with a descriptive placeholder naming its service, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { paymentInviteMessage: { serviceType: 3 } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { paymentInviteMessage: { serviceType: 0 } } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: inviteMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(inviteMessages.length, 2);
+  assert.equal(inviteMessages[0].body, "[Payment invite]");
+  assert.equal(inviteMessages[1].body, "[Payment invite: UPI]");
+  for (const m of inviteMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1600: encReactionMessage is the separate, genuinely-encrypted
  * sibling of reactionMessage (round 1088) this file's own doc comment
  * already named but never actually handled. Confirmed directly against

@@ -168,6 +168,7 @@ export interface BaileysIncomingMessage {
     sendPaymentMessage?: { noteMessage?: BaileysIncomingMessage["message"] };
     declinePaymentRequestMessage?: Record<string, never>;
     cancelPaymentRequestMessage?: Record<string, never>;
+    paymentInviteMessage?: { serviceType?: number };
     invoiceMessage?: { note?: string };
     albumMessage?: { expectedImageCount?: number; expectedVideoCount?: number };
     stickerPackMessage?: { name?: string; publisher?: string; caption?: string };
@@ -774,6 +775,22 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // or canceled.
   if (message.declinePaymentRequestMessage) return "[Payment request declined]";
   if (message.cancelPaymentRequestMessage) return "[Payment request canceled]";
+  // Round 1862: a distinct WhatsApp Pay message from requestPaymentMessage/
+  // sendPaymentMessage just above -- paymentInviteMessage is the message a
+  // contact's client produces when it invites the other side to set up a
+  // payment method before any specific request/send exists yet. Confirmed
+  // against the installed Baileys protobuf (WAProto/index.d.ts:7636-7639:
+  // IPaymentInviteMessage{serviceType, expiryTimestamp}, serviceType being
+  // the ServiceType enum at line 7656 -- UNKNOWN/FBPAY/NOVI/UPI). No
+  // sub-message to recurse into (unlike requestPaymentMessage's noteMessage
+  // above), same "detect presence only" bar as declinePaymentRequestMessage
+  // just above. Previously fell through to the final `return null` below
+  // and vanished with zero trace.
+  if (message.paymentInviteMessage) {
+    const serviceType = message.paymentInviteMessage.serviceType;
+    const serviceLabel = serviceType === 1 ? "FBPay" : serviceType === 2 ? "Novi" : serviceType === 3 ? "UPI" : null;
+    return serviceLabel ? `[Payment invite: ${serviceLabel}]` : "[Payment invite]";
+  }
   // Round 1576: WhatsApp Business's native "Create/Send Invoice" chat
   // action produces invoiceMessage -- confirmed against the installed
   // Baileys protobuf (WAProto.proto: InvoiceMessage's `note` is plaintext;
