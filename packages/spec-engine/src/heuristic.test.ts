@@ -1130,6 +1130,21 @@ test("Ticket/Subscription/JobApplicant keywords avoid the substring collisions t
   assert.ok(!recruitingHe.entities.some((e) => e.name === "Employee"), "'גיוס' must not spuriously match Employee via an 'עובדים' substring that was deliberately left out");
 });
 
+// Round 1818: "recruitment"/"hiring" were JobApplicant's only English
+// keywords -- the equally common gerund/noun forms a real description
+// actually uses ("recruiting app", "recruiting platform", "our recruiters")
+// matched nothing at all and fell through to the generic Item fallback.
+test("JobApplicant's 'recruiting'/'recruiter(s)' keywords match, not just 'recruitment'/'hiring'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const recruitingApp = await provider.generate("A recruiting app to track candidates and resumes.");
+  assert.ok(recruitingApp.entities.some((e) => e.name === "JobApplicant"), "'recruiting' alone must match JobApplicant");
+  assert.ok(!recruitingApp.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const recruiters = await provider.generate("A CRM for recruiters to track candidates.");
+  assert.ok(recruiters.entities.some((e) => e.name === "JobApplicant"), "'recruiters' alone must match JobApplicant");
+});
+
 /**
  * Regression test for a real bug found in round 371: Deal's own keyword
  * list used to include bare "pipeline", which is also the single most

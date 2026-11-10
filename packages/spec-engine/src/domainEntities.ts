@@ -1375,6 +1375,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   {
     keywords: [
       "job applicant", "job application", "recruitment", "hiring", "candidate tracking",
+      // Round 1818: "recruitment"/"hiring" were already covered, but the
+      // equally common gerund/noun forms a real recruiting-app description
+      // actually uses -- "recruiting platform", "recruiting software",
+      // "our recruiters" -- matched nothing at all, falling through to the
+      // generic Item fallback. Confirmed live: "a recruiting app to track
+      // candidates and resumes" matched zero entities before this fix.
+      // "recruit"/"recruiting"/"recruiter(s)" don't appear anywhere else in
+      // this file's keywords or any existing test-fixture description, and
+      // unlike "pipeline" (Deal's own documented collision) there's no
+      // ordinary idiom that repurposes "recruiting"/"recruiter(s)" for an
+      // unrelated meaning.
+      "recruiting", "recruiter", "recruiters",
       "מועמד", "מועמדים",
       // Round 1536: bare "גיוס" is a substring of the equally ordinary
       // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
