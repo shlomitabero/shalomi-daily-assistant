@@ -151,6 +151,7 @@ export interface BaileysIncomingMessage {
     liveLocationMessage?: { caption?: string };
     groupInviteMessage?: { groupName?: string; caption?: string };
     newsletterAdminInviteMessage?: { newsletterName?: string; caption?: string };
+    newsletterFollowerInviteMessageV2?: { newsletterName?: string; caption?: string };
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
@@ -494,6 +495,18 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.newsletterAdminInviteMessage) {
     const n = message.newsletterAdminInviteMessage;
     const label = n.newsletterName ? `[Channel Admin Invite] ${n.newsletterName}` : "[Channel Admin Invite]";
+    return n.caption ? `${label} -- ${n.caption}` : label;
+  }
+  // Round 1851: WhatsApp's "invite someone to follow a Channel (newsletter)"
+  // feature -- distinct from newsletterAdminInviteMessage (round 1850,
+  // "invite someone to be an *admin*"). INewsletterFollowerInviteMessage in
+  // Baileys' own shipped protobuf types (WAProto/index.d.ts), confirmed
+  // fully plaintext (newsletterName/caption), identical shape to
+  // newsletterAdminInviteMessage above. Previously fell through to the
+  // final `return null` and vanished with zero trace.
+  if (message.newsletterFollowerInviteMessageV2) {
+    const n = message.newsletterFollowerInviteMessageV2;
+    const label = n.newsletterName ? `[Channel Invite] ${n.newsletterName}` : "[Channel Invite]";
     return n.caption ? `${label} -- ${n.caption}` : label;
   }
   if (message.productMessage) {

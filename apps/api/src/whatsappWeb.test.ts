@@ -2584,6 +2584,46 @@ test("incoming WhatsApp Channel admin invites are logged with a descriptive plac
   }
 });
 
+test("incoming WhatsApp Channel follow invites are logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { newsletterFollowerInviteMessageV2: { newsletterName: "חדשות העסק" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { newsletterFollowerInviteMessageV2: {} } },
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { newsletterFollowerInviteMessageV2: { newsletterName: "מבצעים", caption: "עקבו אחרינו" } },
+      },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: followerInviteMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(followerInviteMessages.length, 3);
+  assert.equal(
+    followerInviteMessages[0].body,
+    "[Channel Invite] מבצעים -- עקבו אחרינו",
+    "a Channel follow invite with a caption must show both its name and the caption",
+  );
+  assert.equal(
+    followerInviteMessages[1].body,
+    "[Channel Invite]",
+    "a Channel follow invite with no name must fall back to a plain placeholder, not print nothing or throw",
+  );
+  assert.equal(followerInviteMessages[2].body, "[Channel Invite] חדשות העסק");
+  for (const m of followerInviteMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
 /**
  * Round 1606: the RSVP (Going/Not Going/Maybe) half of eventMessage just
  * above (round 1502) was previously dropped with zero trace, the same
