@@ -1470,6 +1470,13 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
     "VERSION:2.0",
     foldFeedIcsLine(\`PRODID:-//Forge AI//\${feedIcsEscapeText(entity.label ?? entity.name)}//EN\`),
     "CALSCALE:GREGORIAN",
+    // Round 1854: ported from the live backend's own round-1854 fix
+    // (calendarFeed.ts) -- PRODID is internal product metadata that
+    // virtually no real calendar client displays. X-WR-CALNAME is the
+    // de-facto-standard property Google Calendar/Apple Calendar/Outlook
+    // all read when "Subscribe by URL" is used, to give the resulting
+    // calendar a real name in the calendar list.
+    foldFeedIcsLine(\`X-WR-CALNAME:\${feedIcsEscapeText(entity.label ?? entity.name)}\`),
   ];
   for (const record of records) {
     const raw = record[dateField.name];
@@ -1597,7 +1604,10 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
       recordIndexByEntity[field.relationTo] = new Map(targetRecords.map((r) => [Number(r.id), r]));
     }
   }
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Forge AI//All Entities//EN", "CALSCALE:GREGORIAN"];
+  // Round 1854: see buildCalendarFeedIcs's own doc comment above -- same
+  // "subscribed calendar shows up blank/untitled" gap, for the combined
+  // whole-project feed.
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Forge AI//All Entities//EN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:All Entities"];
   for (const entity of dateBearingEntities) {
     const records = recordsByEntityName[entity.name] || [];
     const dateField = findFeedDateField(entity.fields);
@@ -4813,7 +4823,18 @@ function formatIcsDescriptionNumber(value, fieldName) {
 function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity.fields) {
   const dtstamp = formatIcsTimestamp(now || new Date());
   const descriptionFields = orderedFields.filter((f) => f.name !== dateField.name && f.name !== labelField.name && f.name !== (endField && endField.name));
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", foldIcsLine(\`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`), "CALSCALE:GREGORIAN"];
+  // Round 1854: ported from the live preview's own round-1854 fix
+  // (calendarIcs.ts) -- PRODID is internal product metadata that
+  // virtually no real calendar client displays; X-WR-CALNAME is the
+  // de-facto-standard property real calendar apps read to name the
+  // calendar this file imports into.
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    foldIcsLine(\`PRODID:-//Forge AI//\${icsEscapeText(entity.label || entity.name)}//EN\`),
+    "CALSCALE:GREGORIAN",
+    foldIcsLine(\`X-WR-CALNAME:\${icsEscapeText(entity.label || entity.name)}\`),
+  ];
   for (const record of records) {
     const raw = record[dateField.name];
     if (raw === null || raw === undefined || raw === "") continue;

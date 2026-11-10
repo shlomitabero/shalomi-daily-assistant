@@ -280,6 +280,10 @@ test("generated server.js serves a real, working calendar subscription feed for 
         // preview's own calendarFeed.ts/calendarIcs.ts fix.
         assert.match(ics, /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/);
         assert.match(ics, /END:VCALENDAR/);
+        // Round 1854: ported from the live backend's own round-1854 fix --
+        // without X-WR-CALNAME, every subscribed feed from this exported
+        // app showed up blank/untitled in a real calendar app forever.
+        assert.match(ics, /X-WR-CALNAME:Deals\r\n/);
 
         const noDateFeedRes = await fetch(`http://localhost:${port}/api/calendar/Note.ics`);
         assert.equal(noDateFeedRes.status, 404, "an entity with no date field at all must 404, not serve an always-empty feed");
@@ -395,6 +399,10 @@ test("generated server.js serves a real combined calendar feed merging every dat
         // same fix) in its own separate VEVENT-building loop.
         assert.match(ics, /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/);
         assert.match(ics, /END:VCALENDAR/);
+        // Round 1854: see the per-entity feed test's own identical comment
+        // above -- this combined feed shares the same gap (and now the
+        // same fix) in its own separate VCALENDAR header.
+        assert.match(ics, /X-WR-CALNAME:All Entities\r\n/);
         return;
       } catch (err) {
         lastErr = err;
@@ -7896,6 +7904,10 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   assert.match(ics, /DTSTART;VALUE=DATE:20260315/);
   assert.match(ics, /DTEND;VALUE=DATE:20260316/, "an all-day single-day event's DTEND must be the next day (exclusive end), not the same day");
   assert.match(ics, /SUMMARY:Dana\\, Levi/, "a comma in the summary must be backslash-escaped per RFC 5545 §3.3.11");
+  // Round 1854: ported from the live preview's own round-1854 fix
+  // (calendarIcs.ts) -- without X-WR-CALNAME, an exported .ics showed up
+  // blank/untitled once opened in a real calendar app.
+  assert.match(ics, /X-WR-CALNAME:תורים\r\n/);
 });
 
 /**

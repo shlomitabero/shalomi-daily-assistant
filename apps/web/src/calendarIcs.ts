@@ -180,6 +180,12 @@ export function buildCalendarIcs(
     // foldIcsLine exists to enforce (round 551).
     foldIcsLine(`PRODID:-//Forge AI//${icsEscapeText(entity.label ?? entity.name)}//EN`),
     "CALSCALE:GREGORIAN",
+    // Round 1854: PRODID is internal product metadata that virtually no real
+    // calendar client displays. X-WR-CALNAME is the de-facto-standard
+    // property Google Calendar/Apple Calendar/Outlook all read to name the
+    // calendar this file imports into -- without it, an exported .ics
+    // showed up blank/untitled once opened in a real calendar app.
+    foldIcsLine(`X-WR-CALNAME:${icsEscapeText(entity.label ?? entity.name)}`),
   ];
   for (const record of records) {
     const raw = record[dateField.name];

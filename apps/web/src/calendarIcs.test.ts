@@ -34,6 +34,17 @@ test("buildCalendarIcs wraps output in a real VCALENDAR with VERSION/PRODID/CALS
   assert.match(ics, /END:VCALENDAR$/);
 });
 
+/**
+ * Round 1854: PRODID is internal product metadata that virtually no real
+ * calendar client displays. X-WR-CALNAME is the de-facto-standard property
+ * real calendar apps read to name the calendar this file imports into --
+ * without it, an exported .ics showed up blank/untitled once opened.
+ */
+test("buildCalendarIcs sets X-WR-CALNAME to the entity's own label, so an imported calendar isn't blank/untitled", () => {
+  const ics = buildCalendarIcs(entity, dateField, nameField, [], [], {});
+  assert.match(ics, /X-WR-CALNAME:תור\r\n/);
+});
+
 test("buildCalendarIcs emits one all-day VEVENT per record with correct DTSTART/DTEND (next-day exclusive end)", () => {
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", notes: null, courierId: null },

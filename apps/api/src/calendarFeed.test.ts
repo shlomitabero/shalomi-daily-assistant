@@ -83,6 +83,20 @@ test("buildCalendarFeedIcs's VALARM reminder text is in Hebrew for a Hebrew proj
 });
 
 /**
+ * Round 1854: PRODID is internal product metadata that virtually no real
+ * calendar client displays. X-WR-CALNAME is the de-facto-standard property
+ * Google Calendar/Apple Calendar/Outlook all read when "Subscribe by URL"
+ * is used, to give the resulting calendar a real name in the calendar
+ * list -- without it, every subscribed feed from this app showed up
+ * blank/untitled forever.
+ */
+test("buildCalendarFeedIcs sets X-WR-CALNAME to the entity's own label, so a subscribed calendar isn't blank/untitled", () => {
+  const records: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true }];
+  const ics = buildCalendarFeedIcs(entity, records, "proj1");
+  assert.match(ics!, /X-WR-CALNAME:תור\r\n/);
+});
+
+/**
  * Round 1022: the live preview's own identical computation (calendarIcs.ts,
  * the one-shot "Export ICS" button) used `??`, which only falls through on
  * null/undefined, never a genuinely blank string -- so a blank display
@@ -459,6 +473,25 @@ test("buildCombinedCalendarFeedIcs merges every date-bearing entity's records in
   assert.equal(events.length, 2, "one VEVENT per record across BOTH entities, merged into the same feed");
   assert.match(events[0], /SUMMARY:\[תור\] Dana Levi/, "the Appointment event's SUMMARY must be prefixed with its own entity's label");
   assert.match(events[1], /SUMMARY:\[השכרה\] Projector/, "the Rental event's SUMMARY must be prefixed with its own entity's label");
+});
+
+/**
+ * Round 1854: see buildCalendarFeedIcs's own X-WR-CALNAME test above --
+ * same gap, for the combined whole-project feed, plus its own `lang`
+ * localization (every other DESCRIPTION/SUMMARY in this feed already
+ * follows `lang`; the combined feed's calendar name should too).
+ */
+test("buildCombinedCalendarFeedIcs sets X-WR-CALNAME to a generic 'All Entities' label, so a subscribed combined calendar isn't blank/untitled", () => {
+  const appointmentRecords: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true }];
+  const ics = buildCombinedCalendarFeedIcs([entity], { Appointment: appointmentRecords }, "proj1");
+  assert.match(ics!, /X-WR-CALNAME:All Entities\r\n/);
+});
+
+test("buildCombinedCalendarFeedIcs's X-WR-CALNAME is in Hebrew for a Hebrew project, not the hardcoded English label", () => {
+  const appointmentRecords: EntityRecord[] = [{ id: 1, appointmentDate: "2026-03-15", customerName: "Dana Levi", confirmed: true }];
+  const ics = buildCombinedCalendarFeedIcs([entity], { Appointment: appointmentRecords }, "proj1", new Date(), [], {}, "he");
+  assert.match(ics!, /X-WR-CALNAME:כל הישויות\r\n/);
+  assert.doesNotMatch(ics!, /X-WR-CALNAME:All Entities/);
 });
 
 /**

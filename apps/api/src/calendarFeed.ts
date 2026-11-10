@@ -432,6 +432,14 @@ export function buildCalendarFeedIcs(
     "VERSION:2.0",
     foldIcsLine(`PRODID:-//Forge AI//${icsEscapeText(entity.label ?? entity.name)}//EN`),
     "CALSCALE:GREGORIAN",
+    // Round 1854: PRODID is internal product metadata that virtually no real
+    // calendar client displays. X-WR-CALNAME is the de-facto-standard
+    // property Google Calendar/Apple Calendar/Outlook all read when
+    // "Subscribe by URL" is used, to give the resulting calendar a real
+    // name in the calendar list -- without it, every subscribed feed from
+    // this app showed up blank/untitled forever, with no way to tell two
+    // different projects' or entities' feeds apart once several are added.
+    foldIcsLine(`X-WR-CALNAME:${icsEscapeText(entity.label ?? entity.name)}`),
     ...eventLines,
     "END:VCALENDAR",
   ];
@@ -511,6 +519,10 @@ export function buildCombinedCalendarFeedIcs(
     "VERSION:2.0",
     "PRODID:-//Forge AI//All Entities//EN",
     "CALSCALE:GREGORIAN",
+    // Round 1854: see buildCalendarFeedIcs's own doc comment above -- same
+    // "subscribed calendar shows up blank/untitled" gap, for the combined
+    // whole-project feed.
+    foldIcsLine(`X-WR-CALNAME:${icsEscapeText(lang === "he" ? "כל הישויות" : "All Entities")}`),
     ...eventLines,
     "END:VCALENDAR",
   ];
