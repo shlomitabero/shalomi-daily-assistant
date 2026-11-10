@@ -635,6 +635,74 @@ test("still recommends 'No payments' for a non-commercial photography club, conf
 });
 
 /**
+ * Round 1879: the exact same drift rounds 1819/1831/1841/1872 already fixed
+ * for salons/spas, pet care, medical/dental clinics, and photography/tattoo/
+ * catering, this time for law firms, bookkeeping/accounting, personal
+ * training, and insurance agencies. A law-firm description matches only
+ * Customer/Case; a bookkeeping-service description matches only Customer/
+ * Service; a personal-training-studio or insurance-agency description
+ * matches only Customer -- none of these are in BILLING_ENTITY_NAMES, and
+ * none of this file's existing PAYMENT_KEYWORDS phrases fired for them, so
+ * all four got recommended "No payments" despite being textbook paid
+ * small-business/professional-services verticals. Fixed by adding specific
+ * law-firm/bookkeeping/personal-training/insurance-agency phrases to
+ * PAYMENT_KEYWORDS, mirroring round 1819/1831/1841/1872's own fix shape.
+ */
+test("asks about payments (recommending Stripe) for a law firm, bookkeeping service, personal training studio, or insurance agency description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const lawFirm = await provider.generate("A law firm app for managing clients and legal cases.");
+  assert.ok(lawFirm.entities.some((e) => e.name === "Customer" || e.name === "Case"));
+  const lawFirmPaymentQuestion = lawFirm.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(lawFirmPaymentQuestion);
+  assert.equal(lawFirmPaymentQuestion!.recommendation, "Stripe");
+
+  const bookkeeping = await provider.generate("A bookkeeping service for small business clients.");
+  const bookkeepingPaymentQuestion = bookkeeping.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(bookkeepingPaymentQuestion);
+  assert.equal(bookkeepingPaymentQuestion!.recommendation, "Stripe");
+
+  const personalTraining = await provider.generate("A personal training studio managing clients and training sessions.");
+  const personalTrainingPaymentQuestion = personalTraining.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(personalTrainingPaymentQuestion);
+  assert.equal(personalTrainingPaymentQuestion!.recommendation, "Stripe");
+
+  const insurance = await provider.generate("An insurance agency app for managing clients and insurance policies.");
+  const insurancePaymentQuestion = insurance.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(insurancePaymentQuestion);
+  assert.equal(insurancePaymentQuestion!.recommendation, "Stripe");
+
+  const lawFirmHe = await provider.generate("משרד עורכי דין לניהול לקוחות ותיקים משפטיים.");
+  const lawFirmHePaymentQuestion = lawFirmHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(lawFirmHePaymentQuestion);
+  assert.equal(lawFirmHePaymentQuestion!.recommendation, "Stripe");
+
+  const personalTrainingHe = await provider.generate("סטודיו לאימונים אישיים לניהול לקוחות ואימונים.");
+  const personalTrainingHePaymentQuestion = personalTrainingHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(personalTrainingHePaymentQuestion);
+  assert.equal(personalTrainingHePaymentQuestion!.recommendation, "Stripe");
+});
+
+test("still recommends 'No payments' for a free legal aid clinic, a volunteer fitness program, and a public legal assistance hotline, confirming the round-1879 law-firm/personal-training fix doesn't regress non-commercial wording", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const legalAid = await provider.generate("A free legal aid clinic helping low-income clients with their cases.");
+  const legalAidPaymentQuestion = legalAid.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(legalAidPaymentQuestion);
+  assert.equal(legalAidPaymentQuestion!.recommendation, "No payments");
+
+  const volunteerFitness = await provider.generate("A volunteer-run community fitness program for seniors.");
+  const volunteerFitnessPaymentQuestion = volunteerFitness.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(volunteerFitnessPaymentQuestion);
+  assert.equal(volunteerFitnessPaymentQuestion!.recommendation, "No payments");
+
+  const hotline = await provider.generate("A public legal assistance hotline tracking cases for volunteers.");
+  const hotlinePaymentQuestion = hotline.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(hotlinePaymentQuestion);
+  assert.equal(hotlinePaymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/

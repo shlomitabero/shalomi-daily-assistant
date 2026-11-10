@@ -198,6 +198,38 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "סטודיו צילום", "צילום חתונות", "חבילת צילום",
   "סטודיו קעקועים",
   "חברת קייטרינג", "שירותי קייטרינג",
+  // Round 1879: the exact same drift rounds 1819/1831/1841/1872 already
+  // fixed for salons/spas, pet care, medical/dental clinics, and
+  // photography/tattoo/catering, this time for law firms, bookkeeping/
+  // accounting, personal training, and insurance agencies. A law-firm
+  // description matches only Customer/Case; a bookkeeping-service
+  // description matches only Customer/Service; a personal-training-studio
+  // or insurance-agency description matches only Customer -- none of
+  // these entities are in BILLING_ENTITY_NAMES below (Customer/Case/
+  // Service are excluded for the same bare-word ambiguity Service/
+  // Appointment/Pet/Patient were, see that Set's own comment), and none of
+  // this array's existing phrases fire for them, so all four got
+  // recommended "No payments" despite being textbook paid small-business/
+  // professional-services verticals. Confirmed live that each phrase fixes
+  // its own case, and that the non-commercial counter-examples ("a free
+  // legal aid clinic helping low-income clients with their cases", "a
+  // volunteer-run community fitness program", "a public legal assistance
+  // hotline tracking cases for volunteers") still correctly stay "No
+  // payments" -- none of them contain "law firm"/"personal training
+  // studio"/"bookkeeping service"/"insurance agency". Bare "lawyer"/
+  // "trainer"/"accountant"/"insurance" are deliberately excluded -- a
+  // public defender's office, a volunteer fitness coach, a non-profit's
+  // bookkeeper, or a government insurance program has zero commercial
+  // intent, the same reasoning this file already applies to bare
+  // "clinic"/"appointment"/"service".
+  "law firm", "legal services", "legal practice",
+  "personal training studio", "personal trainer", "personal training business",
+  "bookkeeping service", "bookkeeping business", "accounting firm",
+  "insurance agency", "insurance agent",
+  "משרד עורכי דין", "שירותים משפטיים",
+  "סטודיו לאימונים אישיים", "מאמן/ת אישי/ת",
+  "שירותי הנהלת חשבונות",
+  "סוכנות ביטוח",
 ];
 
 /**
