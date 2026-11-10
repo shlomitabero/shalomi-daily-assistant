@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from '../services/settings.js';
 import { createDigitalProduct, listOpportunities, getOpportunity, patchOpportunity, publishOpportunityRoute, rejectOpportunity, triggerAutonomousScan } from './opportunities.js';
-import { MAX_PENDING_DRAFTS } from '../services/opportunities.js';
+import { MAX_PENDING_DRAFTS, createDigitalProductOpportunityUnderCap } from '../services/opportunities.js';
 
 function withPaddleEnv(fn) {
   const vars = { PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
@@ -146,6 +146,42 @@ test('createDigitalProduct ignores demo drafts when counting toward the pending-
     await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
     assert.equal(res.statusCode, 201);
   });
+});
+
+test('createDigitalProduct responds 409 with a clean Hebrew message when another draft creation is already in progress', async () => {
+  // Exercises this route's own handling of the concurrent:true branch from
+  // createDigitalProductOpportunityUnderCap (services/opportunities.js) -
+  // the underlying lock itself already has dedicated tests there, and
+  // autonomousScan.js's own reaction to it is tested separately, but this
+  // route's own translation of that result into an HTTP response had no
+  // test of its own until now. Holds the lock open the same way as the
+  // equivalent autonomousScan.test.js case: starts a real call into the
+  // shared function and keeps its own AI call pending via a gate this test
+  // controls, so the route call below genuinely finds the lock held.
+  __resetForTests();
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  let releaseHeldCall;
+  const heldCallGate = new Promise((resolve) => { releaseHeldCall = resolve; });
+  globalThis.fetch = async () => {
+    await heldCallGate;
+    throw new Error('released only to let the held call finish cleanly, not to succeed');
+  };
+  const heldCallPromise = createDigitalProductOpportunityUnderCap({ topic: 'x', audience: 'y', createdBy: 'owner' });
+  try {
+    const res = makeRes();
+    await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: 'יזמים' } }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.error, 'יצירת טיוטה אחרת כבר רצה באותו רגע בדיוק — נסה שוב בעוד רגע');
+    assert.equal(db.opportunities.all().length, 0);
+  } finally {
+    releaseHeldCall();
+    await heldCallPromise.catch(() => {});
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.ANTHROPIC_API_KEY = original;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
 });
 
 test('triggerAutonomousScan runs the scan and returns its result as-is', async () => {
