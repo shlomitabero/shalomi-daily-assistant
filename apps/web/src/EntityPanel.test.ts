@@ -8339,7 +8339,7 @@ test("the print sheets and the badge color variables reset to light/white for @m
   assert.match(mediaPrint!, /body\s*\{\s*background:\s*#fff/, "@media print must reset body's own background to white, or dark mode's dark gradient background shows through around the print sheet");
   assert.match(
     mediaPrint!,
-    /:root,\s*:root\[data-theme="dark"\],\s*:root:not\(\[data-theme="light"\]\)\s*\{[^}]*--success:\s*#2e8b57[^}]*--danger:\s*#c0392b[^}]*--steel:\s*#4c5b6a/,
+    /:root,\s*:root\[data-theme="dark"\],\s*:root:not\(\[data-theme="light"\]\)\s*\{[^}]*--success:\s*#287a4d[^}]*--danger:\s*#c0392b[^}]*--steel:\s*#4c5b6a/,
     "@media print must reset --success/--danger/--steel (and their -soft pairs) to their light-mode values across every selector dark mode can set them under -- otherwise a status badge still prints in dark mode's light-on-dark colors",
   );
 });

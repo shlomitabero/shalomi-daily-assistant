@@ -31380,7 +31380,7 @@ test("the exported app's print sheet and badge color variables reset to light/wh
   assert.match(mediaPrint!, /body\s*\{\s*background:\s*#fff/, "@media print must reset body's own background to white, or dark mode's dark gradient background shows through around the print sheet");
   assert.match(
     mediaPrint!,
-    /:root, :root\[data-theme="dark"\], :root:not\(\[data-theme="light"\]\) \{[^}]*--success:\s*#2e8b57[^}]*--danger:\s*#c0392b[^}]*--steel:\s*#4c5b6a/,
+    /:root, :root\[data-theme="dark"\], :root:not\(\[data-theme="light"\]\) \{[^}]*--success:\s*#287a4d[^}]*--danger:\s*#c0392b[^}]*--steel:\s*#4c5b6a/,
     "@media print must reset --success/--danger/--steel (and their -soft pairs) to their light-mode values across every selector dark mode can set them under, or a status badge still prints in dark mode's light-on-dark colors",
   );
 });
@@ -32235,4 +32235,57 @@ test("the exported app's styles.css light-theme --muted clears WCAG AA's 4.5:1 c
   const vsSurface = contrastRatio(muted, surface);
   assert.ok(vsBg >= 4.5, `--muted vs --bg contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${vsBg.toFixed(2)}:1`);
   assert.ok(vsSurface >= 4.5, `--muted vs --surface contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${vsSurface.toFixed(2)}:1`);
+});
+
+/**
+ * Round 1866: see the live preview's own identical App.test.ts entry --
+ * renderStylesCss duplicates the same light-theme --accent/--success/
+ * --warning hex values, so every exported app shipped the identical
+ * WCAG AA contrast shortfalls on their own text usages (password
+ * strength label, today's calendar-day number, the badge/chip status
+ * colors, the "New" share badge).
+ */
+test("the exported app's styles.css light-theme --accent/--success/--warning text colors clear WCAG AA's 4.5:1 contrast floor against every background they're actually used as text against", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const lightRoot = stylesCss.match(/:root \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(lightRoot, "expected a :root {...} block defining the light theme's variables");
+
+  function hexOf(varName: string): [number, number, number] {
+    const match = lightRoot!.match(new RegExp(`--${varName}:\\s*#([0-9a-fA-F]{6})`));
+    assert.ok(match, `expected --${varName} to be defined in the light :root block`);
+    const hex = match![1];
+    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+  }
+
+  function relativeLuminance([r, g, b]: [number, number, number]): number {
+    const linearize = (c: number) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+  }
+  function contrastRatio(a: [number, number, number], b: [number, number, number]): number {
+    const [l1, l2] = [relativeLuminance(a), relativeLuminance(b)];
+    const [lighter, darker] = l1 >= l2 ? [l1, l2] : [l2, l1];
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  const accent = hexOf("accent");
+  const success = hexOf("success");
+  const warning = hexOf("warning");
+  const surface = hexOf("surface");
+  const successSoft = hexOf("success-soft");
+  const warningSoft = hexOf("warning-soft");
+
+  const checks: Array<[string, number]> = [
+    ["--accent vs --surface", contrastRatio(accent, surface)],
+    ["--success vs --success-soft", contrastRatio(success, successSoft)],
+    ["--success vs --surface", contrastRatio(success, surface)],
+    ["--warning vs --warning-soft", contrastRatio(warning, warningSoft)],
+  ];
+  for (const [label, ratio] of checks) {
+    assert.ok(ratio >= 4.5, `${label} contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${ratio.toFixed(2)}:1`);
+  }
 });

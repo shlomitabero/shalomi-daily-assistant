@@ -6899,3 +6899,70 @@ test("the light theme's --muted text color clears WCAG AA's 4.5:1 contrast floor
   assert.ok(vsBg >= 4.5, `--muted vs --bg contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${vsBg.toFixed(2)}:1`);
   assert.ok(vsSurface >= 4.5, `--muted vs --surface contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${vsSurface.toFixed(2)}:1`);
 });
+
+/**
+ * Round 1866: a follow-up WCAG-contrast audit (round 1865's own technique,
+ * one round later) found three more light-theme text colors short of the
+ * same 4.5:1 floor, each with a genuine normal/bold-but-still-small text
+ * call site (never large enough for WCAG's large-text exception, which
+ * needs >=24px normal or >=18.66px/14pt bold): `--accent` as
+ * `.password-strength-label`'s 12px "fair"-strength color and
+ * `.calendar-day-today .calendar-day-number`'s 12px/700 color (3.61:1 on
+ * `--surface`, the worse of the two backgrounds it's used against there);
+ * `--success` as `.badge-positive`'s 12.5px/600 color and
+ * `.automations-chip-enabled`'s 13.5px/500 color (3.66:1 on
+ * `--success-soft`, also only 4.18-4.25:1 on `--surface`/`--surface-
+ * raised` via `.password-strength-label`'s "strong" state -- short
+ * there too); `--warning` as `.chip-new`'s 13.5px/700 "New" share-badge
+ * color (3.95:1 on `--warning-soft`). Every dark-theme counterpart
+ * already clears 6.2:1+, so this was a one-sided gap in the light
+ * palette, not a design choice. Darkening each within its own hue
+ * (round 1865's own technique) clears all of the above: see styles.css's
+ * own doc comment on these three variables for the exact per-background
+ * numbers.
+ */
+test("the light theme's --accent/--success/--warning text colors clear WCAG AA's 4.5:1 contrast floor against every background they're actually used as text against", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const lightRoot = stylesCss.match(/:root \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(lightRoot, "expected a :root {...} block defining the light theme's variables");
+
+  function hexOf(varName: string): [number, number, number] {
+    const match = lightRoot!.match(new RegExp(`--${varName}:\\s*#([0-9a-fA-F]{6})`));
+    assert.ok(match, `expected --${varName} to be defined in the light :root block`);
+    const hex = match![1];
+    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+  }
+
+  function relativeLuminance([r, g, b]: [number, number, number]): number {
+    const linearize = (c: number) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+  }
+  function contrastRatio(a: [number, number, number], b: [number, number, number]): number {
+    const [l1, l2] = [relativeLuminance(a), relativeLuminance(b)];
+    const [lighter, darker] = l1 >= l2 ? [l1, l2] : [l2, l1];
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  const accent = hexOf("accent");
+  const success = hexOf("success");
+  const warning = hexOf("warning");
+  const surface = hexOf("surface");
+  const surfaceRaised = hexOf("surface-raised");
+  const successSoft = hexOf("success-soft");
+  const warningSoft = hexOf("warning-soft");
+
+  const checks: Array<[string, number]> = [
+    ["--accent vs --surface (.password-strength-label/.calendar-day-today .calendar-day-number)", contrastRatio(accent, surface)],
+    ["--accent vs --surface-raised", contrastRatio(accent, surfaceRaised)],
+    ["--success vs --success-soft (.badge-positive/.automations-chip-enabled)", contrastRatio(success, successSoft)],
+    ["--success vs --surface (.password-strength-label's \"strong\" state)", contrastRatio(success, surface)],
+    ["--warning vs --warning-soft (.chip-new)", contrastRatio(warning, warningSoft)],
+  ];
+  for (const [label, ratio] of checks) {
+    assert.ok(ratio >= 4.5, `${label} contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${ratio.toFixed(2)}:1`);
+  }
+});

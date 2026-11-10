@@ -10782,16 +10782,16 @@ function renderStylesCss(): string {
   --surface-subtle: #fdfbf7;
   --text: #241f19;
   --muted: #6b5f50;
-  --accent: #d9622b;
+  --accent: #bf5626;
   --accent-contrast: #ffffff;
   --accent-soft: #fbe4d4;
   --border: #e6ddcc;
   --border-soft: #efe8da;
   --danger: #c0392b;
   --danger-soft: #fbe6e2;
-  --success: #2e8b57;
+  --success: #287a4d;
   --success-soft: #e2f2e8;
-  --warning: #a66a06;
+  --warning: #996206;
   --warning-soft: #faf0d7;
   --steel: #4c5b6a;
   --steel-soft: #e9edf0;
@@ -11079,7 +11079,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .print-list-group-header-row td { background: #f1f1f1; font-weight: 600; }
 .print-list-group-totals-row td { background: #f1f1f1; font-weight: 600; border-bottom: 1px solid #999; }
 @media print {
-  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --success: #2e8b57; --success-soft: #e2f2e8; --danger: #c0392b; --danger-soft: #fbe6e2; --steel: #4c5b6a; --steel-soft: #e9edf0; }
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --success: #287a4d; --success-soft: #e2f2e8; --danger: #c0392b; --danger-soft: #fbe6e2; --steel: #4c5b6a; --steel-soft: #e9edf0; }
   body { background: #fff; }
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }
