@@ -93,6 +93,35 @@ test("generated package.json is valid JSON with express + react + vite, and star
   assert.equal(pkg.scripts.start, "vite build && node server.js");
 });
 
+/**
+ * Round 1869: discovered via live exploration -- the README's own
+ * documented dev workflow ("use `npm run dev` (Vite dev server) alongside
+ * `node server.js`") was completely broken, because vite.config.js had no
+ * `server.proxy` entry for `/api` at all, while web/src/api.js's own
+ * `API_BASE = "/api"` is a bare relative path with no other way to reach
+ * the real Express server. Vite's dev server returns its own index.html
+ * (HTTP 200) for any unmatched route rather than a 404, so every `/api/*`
+ * fetch under `npm run dev` got the SPA shell back instead of JSON, and
+ * `res.json()` threw on it -- every entity tab failed to load any data.
+ * Confirmed live: followed the README verbatim (`npm run dev` + `node
+ * server.js` side by side) and reproduced the exact failure twice.
+ */
+test("generated vite.config.js proxies /api to the Express server, so the README's own documented dev workflow (npm run dev + node server.js) actually works", () => {
+  const files = generateExportFiles(project);
+  const viteConfig = files.find((f) => f.path === "vite.config.js")!.content;
+  assert.match(viteConfig, /proxy:\s*\{\s*"\/api":\s*"http:\/\/localhost:3000"/, "vite.config.js must proxy /api to the Express server's default port");
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+  assert.match(serverJs, /const port = process\.env\.PORT \|\| 3000/, "the proxy target must match server.js's own default port");
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-test-"));
+  const filePath = path.join(dir, "vite.config.js");
+  writeFileSync(filePath, viteConfig);
+  try {
+    execFileSync(process.execPath, ["--check", filePath], { stdio: "pipe" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("generated server.js is syntactically valid JavaScript and serves dist/, not public/", () => {
   const files = generateExportFiles(project);
   const serverJs = files.find((f) => f.path === "server.js")!.content;

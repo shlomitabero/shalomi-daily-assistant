@@ -1778,12 +1778,31 @@ function renderRenderYaml(project: Project): string {
 }
 
 function renderViteConfig(): string {
+  // Round 1869: the README's own documented dev workflow ("use `npm run
+  // dev` (Vite dev server) alongside `node server.js`", line ~215 below)
+  // was completely broken out of the box -- web/src/api.js's own
+  // `API_BASE = "/api"` is a relative path with no proxy to reach it, so
+  // Vite's dev server (which returns its own index.html, HTTP 200, for any
+  // unmatched route instead of a 404) served its own SPA shell for every
+  // `/api/*` fetch instead of forwarding to the real Express server on
+  // :3000. The frontend's `res.json()` then threw on the HTML response
+  // ("Unexpected token '<'..."), so every entity tab failed to load any
+  // data under the one dev workflow this project's own docs recommend --
+  // confirmed live by following the README verbatim. `npm start` (the
+  // production path: `vite build && node server.js`, a single server
+  // serving both static files and `/api`) was never affected, since there
+  // dev-server routing doesn't exist at all.
   return `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   root: "web",
   plugins: [react()],
+  server: {
+    proxy: {
+      "/api": "http://localhost:3000",
+    },
+  },
   build: {
     outDir: "../dist",
     emptyOutDir: true,
