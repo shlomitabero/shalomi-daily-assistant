@@ -1303,6 +1303,29 @@ test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'gar
   );
 });
 
+// Round 1811: WorkOrder's design intent explicitly names "plumbers,
+// electricians, appliance/AC technicians, handymen" (see domainEntities.ts's
+// own comment on the entity), but its keyword list only ever got the Hebrew
+// nouns for these professions ("טכנאי"/"אינסטלטור"/"חשמלאי") -- the
+// identical business described in English matched no WorkOrder keyword at
+// all and fell through to the generic Item/Customer fallback, even though
+// the Hebrew phrasing already worked correctly.
+test("WorkOrder's English profession keywords (plumber/electrician/technician/HVAC/handyman) match, not just their Hebrew equivalents", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const plumber = await provider.generate("An app for a plumber to track customer jobs.");
+  assert.ok(plumber.entities.some((e) => e.name === "WorkOrder"), "'plumber' alone must match WorkOrder");
+
+  const electrician = await provider.generate("An app for an electrician business scheduling jobs.");
+  assert.ok(electrician.entities.some((e) => e.name === "WorkOrder"), "'electrician' alone must match WorkOrder");
+
+  const hvac = await provider.generate("An app for an HVAC repair company.");
+  assert.ok(hvac.entities.some((e) => e.name === "WorkOrder"), "'HVAC' alone must match WorkOrder");
+
+  const handyman = await provider.generate("An app for a handyman to manage jobs for clients.");
+  assert.ok(handyman.entities.some((e) => e.name === "WorkOrder"), "'handyman' alone must match WorkOrder");
+});
+
 test("Customer's 'lead' keyword doesn't spuriously match plain 'leaders'/'leadership' text", async () => {
   const provider = new HeuristicSpecProvider();
   const leadership = await provider.generate("An app for managing team leaders and their schedules.");

@@ -1705,6 +1705,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // for "עמותה", "פוליסת ביטוח", and "דירה למכירה"/"דירה להשכרה". A
       // plural-only phrasing matched no WorkOrder-specific keyword at all.
       "עבודות תחזוקה",
+      // Round 1811: the entity's own design intent (see the comment above)
+      // explicitly names "plumbers, electricians, appliance/AC technicians,
+      // handymen", but only their Hebrew nouns ("טכנאי"/"אינסטלטור"/
+      // "חשמלאי") were ever added -- the identical business described in
+      // English ("an app for a plumber to track jobs") matched no
+      // WorkOrder keyword at all and fell through to the generic Item/
+      // Customer fallback. \b-bounded with the same "(s)?" plural handling
+      // used throughout this file (e.g. /\bmechanic(s)?\b/ above).
+      /\bplumber(s)?\b/, /\belectrician(s)?\b/, /\btechnician(s)?\b/, /\bhandyman\b/, /\bhandymen\b/,
+      "hvac", "plumbing",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",
