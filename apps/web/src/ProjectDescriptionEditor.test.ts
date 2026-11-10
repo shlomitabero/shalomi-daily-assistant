@@ -357,6 +357,34 @@ test("the project description's CSS lets a long unbroken value wrap mid-word ins
 });
 
 /**
+ * Round 1822: `.project-description` is `role="button"` + `onClick`, the
+ * exact same click-to-edit contract as its sibling `.project-name`
+ * (ProjectNameEditor.tsx), but had no CSS of its own beyond the shared
+ * `overflow-wrap: anywhere` rule -- no `cursor: pointer`, no hover
+ * feedback, and its `.project-description-edit-icon` span rendered at
+ * full default emoji size instead of the dimmed, shrunk affordance icon
+ * its sibling `.project-name-edit-icon` already is. Confirmed via
+ * `grep -n "project-description" styles.css` before this round's fix
+ * returned only the single shared `overflow-wrap` rule.
+ */
+test("the clickable project description carries the same cursor/hover/edit-icon styling as its sibling project-name trigger", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const clickableRule = stylesCss.match(/\.project-description\s*\{[\s\S]*?\}/)?.[0];
+  assert.ok(clickableRule, "expected a standalone .project-description rule (beyond the shared overflow-wrap one) in styles.css");
+  assert.match(clickableRule!, /cursor:\s*pointer/, ".project-description must show a pointer cursor, like its sibling .project-name");
+
+  const hoverRule = stylesCss.match(/\.project-description:hover[\s\S]*?\{[\s\S]*?\}/)?.[0];
+  assert.ok(hoverRule, "expected a .project-description:hover rule in styles.css");
+  assert.match(hoverRule!, /background:\s*var\(--surface-raised\)/, ".project-description:hover must give the same hover feedback as .project-name:hover");
+
+  const editIconRule = stylesCss.match(/\.project-description-edit-icon[\s\S]*?\{[\s\S]*?\}/)?.[0];
+  assert.ok(editIconRule, "expected a .project-description-edit-icon rule in styles.css");
+  assert.match(editIconRule!, /font-size:\s*16px/, ".project-description-edit-icon must be shrunk like .project-name-edit-icon, not render at full emoji size");
+  assert.match(editIconRule!, /opacity:\s*0\.5/, ".project-description-edit-icon must be dimmed like .project-name-edit-icon, not render at full opacity");
+});
+
+/**
  * Round 1432: see ProjectNameEditor.test.ts's own comment on this exact
  * bug -- pressing Enter submits the form and calls save(), which sets busy
  * true and re-renders the still-focused textarea with disabled={true}. A

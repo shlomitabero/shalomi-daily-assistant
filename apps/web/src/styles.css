@@ -2457,11 +2457,21 @@ button.sort-header:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
-.project-name:hover {
+.project-description {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  margin: -4px -8px;
+  transition: background 0.12s ease;
+}
+
+.project-name:hover,
+.project-description:hover {
   background: var(--surface-raised);
 }
 
-.project-name-edit-icon {
+.project-name-edit-icon,
+.project-description-edit-icon {
   font-size: 16px;
   opacity: 0.5;
 }
