@@ -22,10 +22,21 @@
 //   removes a real, if narrow, downgrade opportunity. No includeSubDomains
 //   or preload: this app owns no other subdomain for the first to matter,
 //   and preload requires external registration the second doesn't have.
+// - Permissions-Policy turns off browser hardware/tracking features this
+//   app has no legitimate use for anywhere - the owner's own dashboard
+//   pages (settings, financial, activity log) and the public product page
+//   alike never need a camera, microphone, device location, or any of the
+//   other features listed, so a future XSS or a malicious ad slipped past
+//   some other hole gets nothing extra to abuse even if it tries. Deliberately
+//   NOT touching "payment": Paddle's own checkout overlay (ProductPage.jsx's
+//   real revenue path) may rely on the Payment Request API internally for
+//   Apple Pay/Google Pay, and disabling it here could silently break a real
+//   checkout with no error anywhere pointing back to this header.
 export function securityHeaders(req, res, next) {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()');
   next();
 }
