@@ -230,6 +230,29 @@ test('a malformed transaction amount is refused instead of poisoning the ledger 
   });
 });
 
+test('a transaction.completed with no opportunityId in custom_data is logged as blocked, not silently dropped', () => {
+  // ProductPage.jsx always sets custom_data.opportunityId on this app's
+  // own checkout - a transaction arriving without it is anomalous
+  // (a checkout-overlay bug, Paddle dropping the field, an unrelated
+  // transaction) and, before this fix, fell through both branches with
+  // zero trace: no ledger entry, no audit log row, and not even counted
+  // by countUnrecordedSales() - the metric generateDailyDigest() relies
+  // on to warn the owner a real payment went unrecorded. Same shape as
+  // the malformed-amount test above, which that metric already covers.
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const txn = completedTxn({ id: 'txn_1', totalCents: '900' });
+    const res = makeRes();
+    paddleWebhookHandler(makeReq(txn, 'whsec_real'), res);
+
+    assert.deepEqual(res.body, { received: true });
+    assert.equal(db.ledger.all().length, 0);
+    const logged = db.actions_log.where((a) => a.type === 'sale_confirmed')[0];
+    assert.ok(logged, 'expected a sale_confirmed entry to be logged');
+    assert.match(logged.result, /^blocked:/);
+  });
+});
+
 test('a malformed JSON body never crashes the handler', () => {
   __resetForTests();
   withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {

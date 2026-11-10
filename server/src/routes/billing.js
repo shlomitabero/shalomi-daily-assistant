@@ -43,7 +43,24 @@ export function paddleWebhookHandler(req, res) {
       const opportunityId = txn?.custom_data?.opportunityId;
       const alreadyRecorded = opportunityId && db.ledger.where((e) => e.externalId === txn.id).length > 0;
 
-      if (opportunityId && !alreadyRecorded) {
+      if (!opportunityId) {
+        // ProductPage.jsx always sets custom_data.opportunityId on this
+        // app's own checkout (the only way a real customer ever reaches
+        // Paddle here) - a transaction.completed arriving without it is
+        // anomalous: a checkout-overlay bug, Paddle dropping the field, or
+        // a transaction unrelated to this app's own product. Until now
+        // this fell straight through both branches below with absolutely
+        // no trace - no ledger entry, no audit log row, and (unlike the
+        // malformed-amount case right below) not even counted by
+        // countUnrecordedSales(), the one metric this app built
+        // specifically so a real payment can never go missing silently.
+        console.error('Paddle webhook: transaction.completed had no opportunityId in custom_data', txn?.id);
+        logAction({
+          type: 'sale_confirmed',
+          detail: { transactionId: txn?.id },
+          result: 'blocked: תשלום אמיתי התקבל אך לא ניתן לזהות לאיזו הזדמנות הוא משתייך — custom_data.opportunityId חסר בעסקה',
+        });
+      } else if (!alreadyRecorded) {
         // A sandbox transaction (PADDLE_ENV=sandbox — the README's own
         // documented default while testing) still signs and sends a real
         // webhook once its own sandbox secret is configured, indistinguishable
