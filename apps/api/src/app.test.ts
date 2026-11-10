@@ -8321,6 +8321,121 @@ test("POST /projects/:id/answers must not drop an entity manually added on the S
   });
 });
 
+/**
+ * Round 1876: /answers has the exact same merge call (mergeRefinedSpec)
+ * /refine and checkpoint-restore already surface a rename-shaped-duplicate
+ * warning for (round 1803/describeImpactHazards), but was left out on the
+ * reasoning that a duplicate here is "just a spec-review-screen
+ * inconvenience the user can still manually fix before ever building" --
+ * which doesn't hold: App.tsx's handleBuild calls /answers and, in the
+ * very same click, immediately moves to the real build with no
+ * intervening screen where the user would see the merged spec first.
+ *
+ * Reproduces the real shape a manual rename (delete the old entity, add a
+ * new one with the same fields -- this app's own actual rename workflow,
+ * since entity.name itself can't be edited in place) leaves behind: the
+ * original description's own keywords still regenerate the OLD entity
+ * name on every fresh /answers call, so it comes back as a brand "new"
+ * entity sitting right next to the manually-renamed one.
+ */
+test("POST /projects/:id/answers surfaces a renameWarning when a manually-renamed entity's old name resurfaces as a 'new' entity from the regenerated candidate", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "answers-rename-warning@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    assert.equal(createRes.status, 201);
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } };
+    };
+    const customer = project.spec.entities.find((e) => e.name === "Customer")!;
+    const customerFieldNames = customer.fields.map((f) => f.name);
+    assert.deepEqual(customerFieldNames.sort(), ["email", "name", "notes", "phone", "source", "status"]);
+
+    // The app's own rename workflow: delete the old entity, add a new one
+    // with the exact same fields -- entity.name itself is never editable
+    // in place (only its display label is).
+    const deleteRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Customer`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(deleteRes.status, 200);
+
+    const addEntityRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: "Client" }),
+    });
+    assert.equal(addEntityRes.status, 200);
+    const { project: withClient } = (await addEntityRes.json()) as { project: { spec: { entities: { name: string; fields: { name: string }[] }[] } } };
+    // A newly-added entity already comes with its own default "name"
+    // field (every curated template entity's own first field, by the
+    // same convention) -- adding a field whose derived name collides with
+    // an existing one gets deduped to "name2" by deriveFieldName, which
+    // would silently break the exact field-signature match this test
+    // depends on, so only the fields Client doesn't already have are
+    // added here.
+    const clientExistingFieldNames = new Set(withClient.spec.entities.find((e) => e.name === "Client")!.fields.map((f) => f.name));
+    for (const fieldLabel of customerFieldNames) {
+      if (clientExistingFieldNames.has(fieldLabel)) continue;
+      const addFieldRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/Client/fields`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ label: fieldLabel }),
+      });
+      assert.equal(addFieldRes.status, 200, `adding "${fieldLabel}" to Client must succeed`);
+    }
+
+    const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers: [], additionalRequest: "Keep everything as is." }),
+    });
+    assert.equal(answersRes.status, 200);
+    const answersBody = (await answersRes.json()) as {
+      project: { spec: { entities: { name: string }[] } };
+      renameWarning: string | null;
+    };
+    const afterNames = answersBody.project.spec.entities.map((e) => e.name);
+    assert.ok(afterNames.includes("Client"), "the manually-renamed Client entity must survive");
+    assert.ok(afterNames.includes("Customer"), "the regenerated candidate's own Customer entity is the real duplicate this warning is about");
+    assert.ok(answersBody.renameWarning, "a renameWarning must be present given this rename-shaped duplicate");
+    assert.match(answersBody.renameWarning!, /"Client" looks like it was meant to become "Customer"/);
+    assert.match(answersBody.renameWarning!, /both entities now exist side by side/);
+  });
+});
+
+/**
+ * The sibling negative case: round 1759's own "must not drop a manually
+ * added entity" scenario produces no rename-shaped diff at all (Payment is
+ * a genuinely new entity, not a stand-in for one the candidate drops), so
+ * renameWarning must come back null -- confirming this round's new field
+ * doesn't fire false positives on the most common /answers call shape.
+ */
+test("POST /projects/:id/answers returns renameWarning: null when no rename-shaped duplicate is actually produced", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "answers-no-rename-warning@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects/from-template`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ templateId: "crm", lang: "en" }),
+    });
+    assert.equal(createRes.status, 201);
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const answersRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ answers: [], additionalRequest: "Track which sales rep closed each deal." }),
+    });
+    assert.equal(answersRes.status, 200);
+    const answersBody = (await answersRes.json()) as { renameWarning: string | null };
+    assert.equal(answersBody.renameWarning, null);
+  });
+});
+
 test("POST /projects/from-template 404s on an unknown templateId", async () => {
   await withServer(async (baseUrl) => {
     const token = await signup(baseUrl, "templates-use3@example.com");

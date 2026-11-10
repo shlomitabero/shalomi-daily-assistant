@@ -2264,7 +2264,22 @@ function AppContent() {
       setBusy(true);
       setError(null);
       try {
-        const { project: updated, providerName } = await answerQuestions(project.id, answered, request || undefined);
+        const { project: updated, providerName, renameWarning } = await answerQuestions(project.id, answered, request || undefined);
+        // Round 1876: unlike /refine's own identical hazard (surfaced through
+        // BuildProgress's live SSE "Architect" step before anything is
+        // committed) and a checkpoint restore's (shown non-blockingly AFTER
+        // an already-reversible restore), this screen has no later chance to
+        // catch a rename-shaped duplicate entity/field -- setView("building")
+        // a few lines below immediately runs the real build, creating actual
+        // database tables for it. A plain confirm here is the only point
+        // left where backing out (to delete the duplicate first) is still
+        // free.
+        if (renameWarning && !window.confirm(t("spec.openQuestions.confirmBuildWithRenameWarning", { detail: renameWarning }))) {
+          setProject(updated);
+          if (providerName) setSpecProvider(providerName);
+          setBusy(false);
+          return;
+        }
         setProject(updated);
         if (providerName) setSpecProvider(providerName);
       } catch (err) {

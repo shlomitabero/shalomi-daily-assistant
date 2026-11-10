@@ -1117,6 +1117,110 @@ test("App's handleBuild overwrites specProvider with the /answers call's own pro
 });
 
 /**
+ * Round 1876: /answers can merge in a rename-shaped duplicate entity/field
+ * (mergeRefinedSpec never removes anything, so a manually-renamed entity's
+ * old name resurfacing from a fresh regeneration sits right next to the
+ * renamed one) with no later screen to catch it on -- handleBuild moves
+ * straight to setView("building") in the same click, which runs the real
+ * build. Confirms the fix: a non-null renameWarning must gate that
+ * transition behind a plain confirm, matching this codebase's own
+ * established window.confirm convention for other hard-to-reverse actions.
+ */
+test("App's handleBuild pauses for a confirm when /answers returns a renameWarning, proceeding to the build only if the user accepts", async () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {2}async function handleBuild\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleBuild in App.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  function run(
+    project: Project,
+    answerQuestionsFn: (
+      projectId: string,
+      answers: { question: string; answer: string }[],
+      additionalRequest?: string,
+    ) => Promise<{ project: Project; providerName?: string; renameWarning?: string | null }>,
+    confirmFn: (message: string) => boolean,
+  ) {
+    const state: { project: Project | null; view: string | null; busy: boolean; confirmMessages: string[] } = {
+      project,
+      view: null,
+      busy: false,
+      confirmMessages: [],
+    };
+    const fn = new Function(
+      "project",
+      "busy",
+      "selectedAnswers",
+      "additionalRequest",
+      "setBusy",
+      "setError",
+      "answerQuestions",
+      "setProject",
+      "setSpecProvider",
+      "setBuildWarning",
+      "setView",
+      "t",
+      "window",
+      `${code}\nreturn handleBuild;`,
+    )(
+      state.project,
+      state.busy,
+      { "0": "yes" },
+      "",
+      (v: boolean) => (state.busy = v),
+      () => {},
+      answerQuestionsFn,
+      (p: Project) => (state.project = p),
+      () => {},
+      () => {},
+      (v: string) => (state.view = v),
+      (_key: string, params?: Record<string, unknown>) => String(params?.detail ?? ""),
+      {
+        confirm: (message: string) => {
+          state.confirmMessages.push(message);
+          return confirmFn(message);
+        },
+      },
+    ) as () => Promise<void>;
+    return { fn, state };
+  }
+
+  const project = makeProject([makeEntity("Customer")]);
+  project.spec.openQuestions = [{ question: "Use Stripe?", options: ["Yes", "No"] }];
+  const mergedProject = makeProject([makeEntity("Client"), makeEntity("Customer")]);
+
+  const { fn: fnDeclined, state: stateDeclined } = run(
+    project,
+    async () => ({ project: mergedProject, renameWarning: '"Client" looks like it was meant to become "Customer"' }),
+    () => false,
+  );
+  await fnDeclined();
+  assert.deepEqual(stateDeclined.confirmMessages, ['"Client" looks like it was meant to become "Customer"'], "the confirm must be shown with the renameWarning's own text");
+  assert.equal(stateDeclined.view, null, "declining the confirm must never move to the building view");
+  assert.equal(stateDeclined.project, mergedProject, "the merged project must still be saved even when the user declines -- it's already what the server has, not something to roll back");
+  assert.equal(stateDeclined.busy, false, "declining must release the busy flag so the screen is usable again");
+
+  const { fn: fnAccepted, state: stateAccepted } = run(
+    project,
+    async () => ({ project: mergedProject, renameWarning: '"Client" looks like it was meant to become "Customer"' }),
+    () => true,
+  );
+  await fnAccepted();
+  assert.equal(stateAccepted.view, "building", "accepting the confirm must proceed to the real build, same as when there's no warning at all");
+
+  const { fn: fnNoWarning, state: stateNoWarning } = run(
+    project,
+    async () => ({ project: mergedProject, renameWarning: null }),
+    () => {
+      throw new Error("confirm must never be called when there's no renameWarning at all");
+    },
+  );
+  await fnNoWarning();
+  assert.equal(stateNoWarning.confirmMessages.length, 0, "no renameWarning means no confirm dialog at all");
+  assert.equal(stateNoWarning.view, "building");
+});
+
+/**
  * Round 1691: handleBuild had no reentrancy guard at all, unlike ~20 other
  * busy-gated handlers in this codebase (rounds 1117/1118/1260/1264/1363-1372/
  * 1522/1534/1555). A fast double-click on the "Build" button fired a second

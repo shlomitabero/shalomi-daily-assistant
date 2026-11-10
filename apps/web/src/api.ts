@@ -858,7 +858,7 @@ export function answerQuestions(
   projectId: string,
   answers: { question: string; answer: string }[],
   additionalRequest?: string,
-): Promise<{ project: Project; providerName?: string }> {
+): Promise<{ project: Project; providerName?: string; renameWarning?: string | null }> {
   return request(`/projects/${projectId}/answers`, {
     method: "POST",
     headers: { "x-idempotency-key": crypto.randomUUID() },

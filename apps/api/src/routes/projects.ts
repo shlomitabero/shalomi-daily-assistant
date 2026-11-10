@@ -3242,7 +3242,20 @@ export function createProjectsRouter(
             );
           }
           const updated = updateProjectSpec(db, project.id, nextSpec);
-          return { status: 200, body: { project: updated, providerName } };
+          // Round 1876: unlike /refine (which surfaces this same hazard via
+          // its own SSE "Architect" message) and the checkpoint-restore
+          // route (which surfaces it as a non-blocking migrationWarning
+          // alongside an already-applied restore), this response is read by
+          // App.tsx's handleBuild in the SAME click that immediately calls
+          // setView("building") -- there is no intervening spec-review step
+          // where the user would otherwise see a rename-shaped duplicate
+          // entity/field before the real build creates its tables. Since
+          // mergeRefinedSpec never removes anything, only the rename clauses
+          // of describeImpactHazards can ever actually fire here -- every
+          // other clause needs a removed/tightened/retyped/retargeted field,
+          // none of which a pure merge can produce.
+          const renameWarning = describeImpactHazards(project.spec, nextSpec, candidateSpec).trim();
+          return { status: 200, body: { project: updated, providerName, renameWarning: renameWarning.length > 0 ? renameWarning : null } };
         } finally {
           activePipelines.delete(project.id);
         }
