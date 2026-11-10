@@ -12,6 +12,14 @@ export function listWatchlist(req, res) {
   res.json({ watchlist: db.financial_watchlist.all(), connected: isMarketDataConnected() });
 }
 
+// Guards the gap between the alreadyTracked check below and the insert
+// landing afterward, below the await fetchQuote() call - two concurrent
+// requests for the same symbol (a double-click of "add", or two open
+// tabs) could otherwise both read "not yet tracked" before either had
+// inserted, creating exactly the duplicate row alreadyTracked itself
+// exists to prevent, just via a path that check alone doesn't close.
+const symbolsBeingAdded = new Set();
+
 export async function addToWatchlist(req, res) {
   const { symbol } = req.body ?? {};
   // A non-string symbol (an object, a number) would otherwise be stored
@@ -24,34 +32,42 @@ export async function addToWatchlist(req, res) {
   }
   const normalizedSymbol = symbol.trim().toUpperCase();
 
-  // The client already uppercases before sending, but the server must not
-  // rely on that — without this check, "AAPL" and "aapl" (or a second
-  // click of "add") would silently create two separate watchlist rows for
-  // the same real symbol, each refreshed independently by "refresh all".
-  const alreadyTracked = db.financial_watchlist.where((w) => w.symbol === normalizedSymbol).length > 0;
-  if (alreadyTracked) {
-    return res.status(409).json({ error: `${normalizedSymbol} כבר נמצא ברשימת המעקב` });
+  if (symbolsBeingAdded.has(normalizedSymbol)) {
+    return res.status(409).json({ error: `${normalizedSymbol} כבר בתהליך הוספה — נסה שוב בעוד רגע` });
   }
-
-  let quote = null;
-  if (isMarketDataConnected()) {
-    try {
-      quote = await fetchQuote(normalizedSymbol);
-    } catch (err) {
-      return res.status(502).json({ error: `לא ניתן היה לקבל מחיר: ${err.message}` });
+  symbolsBeingAdded.add(normalizedSymbol);
+  try {
+    // The client already uppercases before sending, but the server must not
+    // rely on that — without this check, "AAPL" and "aapl" (or a second
+    // click of "add") would silently create two separate watchlist rows for
+    // the same real symbol, each refreshed independently by "refresh all".
+    const alreadyTracked = db.financial_watchlist.where((w) => w.symbol === normalizedSymbol).length > 0;
+    if (alreadyTracked) {
+      return res.status(409).json({ error: `${normalizedSymbol} כבר נמצא ברשימת המעקב` });
     }
-  }
 
-  const entry = db.financial_watchlist.insert({
-    id: makeId('wl'),
-    symbol: normalizedSymbol,
-    dataSource: isMarketDataConnected() ? 'twelvedata' : null,
-    lastPrice: quote?.price ?? null,
-    lastUpdatedAt: quote?.fetchedAt ?? null,
-    connected: isMarketDataConnected(),
-    createdAt: new Date().toISOString(),
-  });
-  res.status(201).json({ entry });
+    let quote = null;
+    if (isMarketDataConnected()) {
+      try {
+        quote = await fetchQuote(normalizedSymbol);
+      } catch (err) {
+        return res.status(502).json({ error: `לא ניתן היה לקבל מחיר: ${err.message}` });
+      }
+    }
+
+    const entry = db.financial_watchlist.insert({
+      id: makeId('wl'),
+      symbol: normalizedSymbol,
+      dataSource: isMarketDataConnected() ? 'twelvedata' : null,
+      lastPrice: quote?.price ?? null,
+      lastUpdatedAt: quote?.fetchedAt ?? null,
+      connected: isMarketDataConnected(),
+      createdAt: new Date().toISOString(),
+    });
+    res.status(201).json({ entry });
+  } finally {
+    symbolsBeingAdded.delete(normalizedSymbol);
+  }
 }
 
 // Without this, a watchlist entry's price/connected status was frozen

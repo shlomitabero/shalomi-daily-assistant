@@ -137,6 +137,78 @@ test('addToWatchlist rejects a symbol already on the watchlist instead of creati
   }
 });
 
+test('two concurrent addToWatchlist calls for the same symbol never both insert - the alreadyTracked check alone has an async gap this closes', async () => {
+  // alreadyTracked is read BEFORE the await fetchQuote() call below it -
+  // without a lock held across that gap, two near-simultaneous requests
+  // for the same symbol (a double-click, two open tabs) could both read
+  // "not yet tracked" before either had inserted, exactly the duplicate
+  // row that check exists to prevent. Holding fetchQuote open via a gate
+  // this test controls proves both calls are genuinely in flight at once,
+  // not just run one after the other.
+  __resetForTests();
+  await withMarketDataKey(async () => {
+    let releaseFetch;
+    const fetchGate = new Promise((resolve) => { releaseFetch = resolve; });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      await fetchGate;
+      return { ok: true, status: 200, json: async () => ({ price: '192.53' }) };
+    };
+    try {
+      const res1 = makeRes();
+      const res2 = makeRes();
+      const firstPromise = addToWatchlist({ body: { symbol: 'AAPL' } }, res1);
+      const secondPromise = addToWatchlist({ body: { symbol: 'AAPL' } }, res2);
+      releaseFetch();
+      await Promise.all([firstPromise, secondPromise]);
+      const statuses = [res1.statusCode, res2.statusCode].sort();
+      assert.deepEqual(statuses, [201, 409]);
+      assert.equal(db.financial_watchlist.all().length, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('addToWatchlist for a DIFFERENT symbol is never blocked by a concurrent call for another one', async () => {
+  __resetForTests();
+  const original = process.env.MARKET_DATA_API_KEY;
+  delete process.env.MARKET_DATA_API_KEY;
+  try {
+    const res1 = makeRes();
+    const res2 = makeRes();
+    await Promise.all([
+      addToWatchlist({ body: { symbol: 'AAPL' } }, res1),
+      addToWatchlist({ body: { symbol: 'MSFT' } }, res2),
+    ]);
+    assert.equal(res1.statusCode, 201);
+    assert.equal(res2.statusCode, 201);
+    assert.equal(db.financial_watchlist.all().length, 2);
+  } finally {
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+  }
+});
+
+test('the lock releases after a failed quote fetch, so a retry for the same symbol is never permanently stuck', async () => {
+  __resetForTests();
+  await withMarketDataKey(async () => {
+    const restoreFail = stubFetchOnce({ ok: false, status: 429 });
+    const resFail = makeRes();
+    await addToWatchlist({ body: { symbol: 'AAPL' } }, resFail);
+    assert.equal(resFail.statusCode, 502);
+    restoreFail();
+
+    const restoreOk = stubFetchOnce({ body: { price: '192.53' } });
+    try {
+      const resOk = makeRes();
+      await addToWatchlist({ body: { symbol: 'AAPL' } }, resOk);
+      assert.equal(resOk.statusCode, 201);
+    } finally {
+      restoreOk();
+    }
+  });
+});
+
 test('refreshWatchlistEntry returns 404 for an entry that does not exist', async () => {
   __resetForTests();
   const res = makeRes();
