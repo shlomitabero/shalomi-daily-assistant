@@ -1746,6 +1746,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // used throughout this file (e.g. /\bmechanic(s)?\b/ above).
       /\bplumber(s)?\b/, /\belectrician(s)?\b/, /\btechnician(s)?\b/, /\bhandyman\b/, /\bhandymen\b/,
       "hvac", "plumbing",
+      // Round 1816: a tailoring/alterations shop is an equally common
+      // small-business vertical as the daycare/salon/spa ones rounds
+      // 1700-1800 already covered, but it had no WorkOrder keyword at all --
+      // "an app for a tailor to manage alterations" fell through to the
+      // generic Item fallback. WorkOrder's own shape (technician =
+      // tailor/seamstress, scheduledDate = pickup date) already fits.
+      // Deliberately NOT a bare "tailor": that collides with the common
+      // app-description idiom "tailor X to Y" ("lets admins tailor
+      // workflows to their team") and "tailor-made", confirmed live --
+      // the same verb-collision shape this file's Deal-entity comment
+      // documents for why bare "lead(s)" was never added. Phrase-only
+      // keywords avoid that false positive while still closing the
+      // realistic cases.
+      "tailor shop", "tailoring shop", "tailoring business", "alterations shop",
+      /\bclothing alterations?\b/, /\bgarment alterations?\b/, "seamstress", "dressmaker",
+      "חייט", "חייטת", "חייטים", "תיקוני בגדים",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",

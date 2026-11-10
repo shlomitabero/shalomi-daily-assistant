@@ -1346,6 +1346,40 @@ test("WorkOrder's English profession keywords (plumber/electrician/technician/HV
   assert.ok(handyman.entities.some((e) => e.name === "WorkOrder"), "'handyman' alone must match WorkOrder");
 });
 
+// Round 1816: a tailoring/alterations shop is the same small-business
+// vertical gap as round 1811's plumber/electrician/handyman fix -- no
+// WorkOrder keyword matched it at all, so it fell through to the generic
+// Item fallback. Also confirms the deliberate false-positive guard: a bare
+// "tailor" keyword was NOT added, because "tailor X to Y" and "tailor-made"
+// are common idioms in ordinary app descriptions that must not spuriously
+// match WorkOrder.
+test("WorkOrder's tailoring/alterations keywords match, and a bare 'tailor' idiom ('tailor X to Y') does not spuriously match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const tailorShop = await provider.generate("An app for a tailor shop to manage alterations.");
+  assert.ok(tailorShop.entities.some((e) => e.name === "WorkOrder"), "'tailor shop' alone must match WorkOrder");
+
+  const alterations = await provider.generate(
+    "A tailoring business tracking garment alterations for customers.",
+  );
+  assert.ok(
+    alterations.entities.some((e) => e.name === "WorkOrder"),
+    "'tailoring business'/'garment alterations' must match WorkOrder",
+  );
+
+  const seamstress = await provider.generate("An app for a seamstress to track client orders.");
+  assert.ok(seamstress.entities.some((e) => e.name === "WorkOrder"), "'seamstress' alone must match WorkOrder");
+
+  const tailorHe = await provider.generate("אפליקציה לחייט לניהול תיקוני בגדים.");
+  assert.ok(tailorHe.entities.some((e) => e.name === "WorkOrder"), "'חייט'/'תיקוני בגדים' must match WorkOrder");
+
+  const idiom = await provider.generate("An app that lets admins tailor workflows to their team.");
+  assert.ok(
+    !idiom.entities.some((e) => e.name === "WorkOrder"),
+    "the idiom 'tailor workflows to their team' must not spuriously match WorkOrder",
+  );
+});
+
 test("Customer's 'lead' keyword doesn't spuriously match plain 'leaders'/'leadership' text", async () => {
   const provider = new HeuristicSpecProvider();
   const leadership = await provider.generate("An app for managing team leaders and their schedules.");
