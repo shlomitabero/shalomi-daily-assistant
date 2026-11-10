@@ -2618,6 +2618,27 @@ test("HistoryPanel cross-gates checkpoint rename against Restore/Delete in both 
 });
 
 /**
+ * Round 1820: `.checkpoint-restore-btn` (added at round 135 purely as a test
+ * selector, see that round's own changelog) never got any CSS of its own,
+ * so it fell through to the app's global, unqualified `button {}` rule --
+ * the solid-orange, box-shadowed primary-CTA style -- rendering once per
+ * checkpoint row as a loud, competing call-to-action next to its sibling
+ * `.checkpoint-delete-btn`, which already has real de-emphasized icon-
+ * button CSS. Confirms the Restore button also carries the app's own
+ * established "secondary small" convention for repeated per-row list
+ * actions (the same classes AutomationsPanel's own rule-list row actions
+ * use), while still keeping `.checkpoint-restore-btn` itself for every
+ * existing test selector in this file.
+ */
+test("HistoryPanel's Restore button uses the app's de-emphasized 'secondary small' per-row-action style, not the bare primary-CTA button style", () => {
+  assert.match(
+    historyPanelSrc,
+    /className="secondary small checkpoint-restore-btn"/,
+    "the Restore button must carry the same 'secondary small' classes every other repeated per-row list action in this app uses, not just the bare test-selector class",
+  );
+});
+
+/**
  * Round 1568: GET .../checkpoints now returns a sibling lastRestore field
  * (packages/db's recordCheckpointRestore/getLastCheckpointRestore, wired in
  * routes/projects.ts) -- the restore-audit-trail counterpart to round

@@ -553,7 +553,7 @@ export function HistoryPanel({
                     <>
                       <button
                         type="button"
-                        className="checkpoint-restore-btn"
+                        className="secondary small checkpoint-restore-btn"
                         onClick={() => handleRestore(checkpoint)}
                         disabled={busyId !== null || deletingId !== null || renamingId !== null || isCurrent}
                       >
