@@ -3714,13 +3714,22 @@ test("the exported app's GET /api/:entityName route caps its response for a very
     // Seeds 5001 rows directly through a second real sqlite connection --
     // the table is only created once the server's own startup code runs,
     // so this must happen after the readiness check above, not before.
+    // Round 1845: must be wrapped in a transaction -- 5001 un-batched
+    // autocommit inserts took ~7.9s, longer than Node http.Server's
+    // default 5000ms keepAliveTimeout, so by the time the real fetch
+    // below fired the server had already torn down the idle keep-alive
+    // socket the readiness probe above opened, and undici's connection
+    // pool reused that now-dead socket and threw "other side closed".
+    // Batched, the whole insert takes ~10ms, well under the timeout.
     const { DatabaseSync } = await import("node:sqlite");
     const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
     const insertStmt = directDb.prepare(`INSERT INTO "Customer" (createdAt, name, status) VALUES (?, ?, ?)`);
     const createdAt = new Date().toISOString();
+    directDb.exec("BEGIN");
     for (let i = 0; i < 5001; i++) {
       insertStmt.run(createdAt, `Customer ${i}`, "New");
     }
+    directDb.exec("COMMIT");
     directDb.close();
 
     const listRes = await fetch(`http://localhost:${port}/api/Customer`);
@@ -3789,9 +3798,11 @@ test("the exported app's GET /api/:entityName/export route returns every record,
     const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
     const insertStmt = directDb.prepare(`INSERT INTO "Customer" (createdAt, name, status) VALUES (?, ?, ?)`);
     const createdAt = new Date().toISOString();
+    directDb.exec("BEGIN");
     for (let i = 0; i < 5001; i++) {
       insertStmt.run(createdAt, `Customer ${i}`, "New");
     }
+    directDb.exec("COMMIT");
     directDb.close();
 
     const exportRes = await fetch(`http://localhost:${port}/api/Customer/export`);
