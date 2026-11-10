@@ -150,6 +150,54 @@ test('createOneTimePrice propagates a real network failure as-is, not mislabeled
   }
 });
 
+test('createOneTimePrice throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when Paddle returns a 2xx with a non-JSON body for the product call', async () => {
+  // res.json() was unguarded for both the product and price responses -
+  // a 2xx with a malformed body (a gateway error page, a truncated
+  // response) threw its own raw English SyntaxError, reaching the owner
+  // verbatim via routes/opportunities.js's publish route
+  // (`הפרסום נכשל: ${err.message}`) - the one path that actually moves
+  // toward real money. Same leak class already fixed for marketData.js's
+  // fetchQuote.
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  globalThis.fetch = async () => ({ ok: true, status: 201, text: async () => '', json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } });
+  console.error = () => {};
+  try {
+    await withEnv({ PADDLE_API_KEY: 'key', PADDLE_ENV: 'sandbox' }, () =>
+      assert.rejects(
+        () => createOneTimePrice({ name: 'test', amountCents: 900 }),
+        /Paddle החזיר תגובה שאינה JSON תקין בעת יצירת מוצר/
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+  }
+});
+
+test('createOneTimePrice throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when Paddle returns a 2xx with a non-JSON body for the price call', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/products')) {
+      return new Response(JSON.stringify({ data: { id: 'pro_123' } }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    return { ok: true, status: 201, text: async () => '', json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } };
+  };
+  console.error = () => {};
+  try {
+    await withEnv({ PADDLE_API_KEY: 'key', PADDLE_ENV: 'sandbox' }, () =>
+      assert.rejects(
+        () => createOneTimePrice({ name: 'test', amountCents: 900 }),
+        /Paddle החזיר תגובה שאינה JSON תקין בעת יצירת מחיר/
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+  }
+});
+
 test('createOneTimePrice times out instead of hanging forever when Paddle never responds', async () => {
   // Without an explicit timeout, a hung connection to Paddle would leave
   // the owner's "פרסם מוצר" click pending indefinitely — worse than a

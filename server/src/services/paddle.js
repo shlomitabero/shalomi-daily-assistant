@@ -70,7 +70,7 @@ export async function createOneTimePrice({ name, amountCents, currencyCode = 'US
   // response body stays as-is (real third-party diagnostic content, not
   // ours to translate — same reasoning as the network-failure case above).
   if (!productRes.ok) throw new Error(`יצירת מוצר ב-Paddle נכשלה: ${await productRes.text()}`);
-  const { data: product } = await productRes.json();
+  const { data: product } = await parsePaddleJson(productRes, 'מוצר');
 
   const priceRes = await fetchWithTimeout(`${paddleApiBase()}/prices`, {
     method: 'POST',
@@ -82,6 +82,24 @@ export async function createOneTimePrice({ name, amountCents, currencyCode = 'US
     }),
   }, timeoutMs);
   if (!priceRes.ok) throw new Error(`יצירת מחיר ב-Paddle נכשלה: ${await priceRes.text()}`);
-  const { data: price } = await priceRes.json();
+  const { data: price } = await parsePaddleJson(priceRes, 'מחיר');
   return { productId: product.id, priceId: price.id };
+}
+
+// A 2xx response whose body isn't valid JSON (unexpected from Paddle, but
+// possible from a gateway/proxy error in front of it) threw a raw English
+// SyntaxError straight from res.json() - unlike the !res.ok branches above,
+// which deliberately keep Paddle's own raw diagnostic text as-is (this
+// file's own documented exception, since that's real third-party content
+// worth showing verbatim), a JSON-parsing artifact isn't "the real error
+// from Paddle" at all. It reached the owner verbatim via
+// routes/opportunities.js's publish route (`הפרסום נכשל: ${err.message}`) -
+// the one path in this app that actually moves toward real money.
+async function parsePaddleJson(res, labelHebrew) {
+  try {
+    return await res.json();
+  } catch (err) {
+    console.error(`createOneTimePrice: Paddle returned a non-JSON response for the ${labelHebrew} call`, err);
+    throw new Error(`Paddle החזיר תגובה שאינה JSON תקין בעת יצירת ${labelHebrew}`);
+  }
 }
