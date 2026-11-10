@@ -2139,6 +2139,38 @@ tbody tr:hover {
   box-shadow: none;
 }
 
+/* Round 1842: a live Playwright exploration pass found this button -- added
+   in round 1574 reusing the .record-pin/.record-pin-active class pair,
+   but never given a .calendar-record-pin rule like every sibling in this
+   row -- was falling back to the global default button style (padding:
+   11px 20px), rendering roughly 3x the size of .calendar-record-print and
+   friends and overflowing the compact day-cell row. Mirrors
+   .calendar-record-print's own layout exactly, like every other sibling
+   above; the active-state tint mirrors .my-project-pin-active's own
+   convention (color: var(--accent)). */
+.calendar-record-pin {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 10px;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+  transform: none;
+}
+
+.calendar-record-pin:hover {
+  background: var(--surface-raised);
+  transform: none;
+  box-shadow: none;
+}
+
+.calendar-record-pin-active {
+  color: var(--accent);
+}
+
 .calendar-record-chip:hover {
   background: var(--surface-raised);
   transform: none;

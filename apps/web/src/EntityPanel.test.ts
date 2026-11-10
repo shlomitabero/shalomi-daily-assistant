@@ -8264,6 +8264,31 @@ test("the print sheet resets its own text color so dark mode's near-white body t
 });
 
 /**
+ * Round 1842: a live Playwright exploration pass found CalendarView's
+ * per-record pin button (round 1574; `.calendar-record-pin`/
+ * `.calendar-record-pin-active`, wired up a few hundred lines above this
+ * test) rendering roughly 3x the size of its row siblings
+ * (.calendar-record-print/-duplicate/-delete/-move-earlier/-move-later),
+ * overflowing the compact day-cell row onto its own line -- because, unlike
+ * every one of those siblings, styles.css had no `.calendar-record-pin`
+ * rule at all, so it fell back to the global default button style
+ * (padding: 11px 20px). jsdom's getComputedStyle doesn't resolve CSS-file
+ * rules the way a real browser does (no layout/cascade engine against an
+ * actual stylesheet), so this reads styles.css's own source directly, the
+ * same discipline the two tests just above already use for this file.
+ */
+test("CalendarView's pin button has its own compact icon-button CSS, matching every sibling action button in its row (print/duplicate/delete/move-earlier/move-later)", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const calendarPin = stylesCss.match(/\.calendar-record-pin \{[\s\S]*?\}/)?.[0];
+  assert.ok(calendarPin, "expected a .calendar-record-pin rule in styles.css, mirroring .calendar-record-print/-duplicate/-delete/-move-earlier/-move-later's own compact layout");
+  assert.match(calendarPin!, /padding:\s*2px 4px/, ".calendar-record-pin must use the same compact padding as its row siblings, not the oversized global default button style");
+
+  const calendarPinActive = stylesCss.match(/\.calendar-record-pin-active \{[\s\S]*?\}/)?.[0];
+  assert.ok(calendarPinActive, "expected a .calendar-record-pin-active rule in styles.css for the pinned state, mirroring .my-project-pin-active's own color: var(--accent) convention");
+});
+
+/**
  * Round 1801: round 1375's own fix above reset the print sheets' TEXT color,
  * but never gave the sheets themselves a background, and never reset
  * body's own background either. In dark mode, body's dark background (set

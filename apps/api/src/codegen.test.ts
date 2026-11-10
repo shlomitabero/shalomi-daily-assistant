@@ -7564,6 +7564,23 @@ test("the exported EntityView's three per-record pin buttons (Table row, BoardCa
 });
 
 /**
+ * Round 1842: a live Playwright exploration pass found that CalendarView's
+ * pin button (added in round 1574, confirmed above by its own JSX test)
+ * never got a `.calendar-record-pin` rule like every other button in this
+ * compact row (.calendar-record-print, -duplicate, -delete,
+ * -move-earlier/-later) -- so it fell back to the generated app's own
+ * default button style and rendered roughly 3x the size of its siblings,
+ * overflowing the day cell. Confirms the generated styles.css actually
+ * defines the rule, not just that the JSX references the class name.
+ */
+test("the exported app's generated styles.css defines .calendar-record-pin, matching every sibling action button's own compact icon-button rule", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+  assert.match(stylesCss, /\.calendar-record-pin\s*\{/, "the generated app must style .calendar-record-pin as a compact icon button, not leave it to the default button fallback");
+  assert.match(stylesCss, /\.calendar-record-pin-active\s*\{/, "the generated app must also style the active/pinned state");
+});
+
+/**
  * Round 1385: mirrors the live preview's own round-1384 fix. The exported
  * CalendarView's chip offered reschedule only via native HTML5
  * drag-and-drop (draggable/onDragStart, wired to onReschedule via the day
