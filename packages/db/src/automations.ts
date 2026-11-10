@@ -382,6 +382,23 @@ export function ensureAutomationRunsTable(db: ForgeDatabase): void {
   if (!runColumns.includes("isTest")) {
     db.exec("ALTER TABLE automation_runs ADD COLUMN isTest INTEGER");
   }
+  // Round 1833: this table had no secondary index at all -- only `id` via
+  // its own PRIMARY KEY -- despite recordAutomationRun below running EIGHT
+  // separate `DELETE ... WHERE projectId = ? AND ruleId = ? ...` retention-
+  // prune statements (each with its own `WHERE ... ORDER BY triggeredAt`
+  // subquery, so sixteen full-table-scan evaluations in all) on every
+  // single automation firing anywhere in the app -- scanning every
+  // project's and every rule's entire run history each time, not just the
+  // firing rule's own rows. listAutomationRuns/getAutomationRun/
+  // deleteAutomationRunsForRule (below) filter and sort the exact same way.
+  // The same unindexed-hot-path-scan class round 1829 fixed for
+  // idempotency_keys.createdAt, but far hotter here: that prune runs once
+  // per idempotency-guarded HTTP request, this runs sixteen times per
+  // automation firing (every matching record create/update/delete, every
+  // scheduled tick, every manual retry/test). Purely additive -- doesn't
+  // change any query's result, just lets every one of those run in
+  // O(log n + k) instead of O(n).
+  db.exec(`CREATE INDEX IF NOT EXISTS automation_runs_projectId_ruleId_triggeredAt_idx ON automation_runs (projectId, ruleId, triggeredAt)`);
 }
 
 function rowToRun(row: Record<string, unknown>): AutomationRun {

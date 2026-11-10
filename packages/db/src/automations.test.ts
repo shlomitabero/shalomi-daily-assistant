@@ -492,6 +492,33 @@ test("ensureAutomationRunsTable adds isTest to a pre-existing automation_runs ta
   assert.equal(getAutomationRun(db, "proj1", "rule1", "old-run")!.isTest, false);
 });
 
+/**
+ * Round 1833: automation_runs had no secondary index at all -- only `id`
+ * via its own PRIMARY KEY -- despite recordAutomationRun running eight
+ * separate `WHERE projectId = ? AND ruleId = ? ...` retention-prune
+ * DELETEs (each with its own `WHERE ... ORDER BY triggeredAt` subquery)
+ * on every single automation firing anywhere in the app. Confirmed via
+ * SQLite's own `EXPLAIN QUERY PLAN`, the same technique round 1829 used
+ * to verify idempotency_keys' own index: before the fix this printed
+ * "SCAN automation_runs" twice (the DELETE's own WHERE and the subquery's
+ * WHERE); after it prints "SEARCH automation_runs USING INDEX
+ * automation_runs_projectId_ruleId_triggeredAt_idx" for both.
+ */
+test("recordAutomationRun's retention-prune DELETEs use an index on (projectId, ruleId, triggeredAt), not a full table scan", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRunsTable(db);
+  const plan = db
+    .prepare(
+      `EXPLAIN QUERY PLAN DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+        SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+      )`,
+    )
+    .all("proj1", "rule1", "proj1", "rule1", 20) as { detail: string }[];
+  const detail = plan.map((row) => row.detail).join("; ");
+  assert.doesNotMatch(detail, /SCAN automation_runs\b/, `expected index-backed searches, got a full table scan: ${detail}`);
+  assert.match(detail, /USING INDEX automation_runs_projectId_ruleId_triggeredAt_idx/, `expected the new index to be used: ${detail}`);
+});
+
 test("recordAutomationRun called with no actionType argument (every pre-round-948 call site) leaves lastActionType/the run's own actionType null, not throwing or defaulting to the rule's current one", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
