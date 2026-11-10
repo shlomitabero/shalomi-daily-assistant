@@ -29,12 +29,14 @@ test('getHealth reports every integration as not configured when no env vars are
   withEnv({
     ANTHROPIC_API_KEY: undefined, PADDLE_API_KEY: undefined, PADDLE_CLIENT_TOKEN: undefined,
     PADDLE_WEBHOOK_SECRET: undefined, MARKET_DATA_API_KEY: undefined, OWNER_PASSWORD: undefined,
+    JWT_SECRET: undefined,
   }, () => {
     const res = makeRes();
     getHealth({}, res);
     assert.deepEqual(res.body, {
       ok: true, name: 'PROFIT AI',
       aiConfigured: false, billingConfigured: false, marketDataConfigured: false, ownerPasswordConfigured: false,
+      jwtSecretConfigured: false,
     });
   });
 });
@@ -77,5 +79,10 @@ test('getHealth reports each independent integration as configured once its own 
     const res = makeRes();
     getHealth({}, res);
     assert.equal(res.body.ownerPasswordConfigured, true);
+  });
+  withEnv({ JWT_SECRET: 'a-stable-secret' }, () => {
+    const res = makeRes();
+    getHealth({}, res);
+    assert.equal(res.body.jwtSecretConfigured, true);
   });
 });

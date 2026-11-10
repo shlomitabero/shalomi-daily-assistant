@@ -26,6 +26,18 @@ export default function Dashboard() {
   // their own section below, so a failure in just one of those three
   // shouldn't take the whole dashboard down with it.
   const [sectionErrors, setSectionErrors] = useState({});
+  // Starts true (no warning) rather than false/null - this is an
+  // independent, non-critical health check, not part of the five calls
+  // above, so a slow or failed /health call must never flash a false
+  // "not configured" warning before the real answer comes back. If the
+  // call never resolves at all, staying silent is the safe default: the
+  // server's own console.warn (engine/auth.js) is still the authoritative
+  // signal, this banner is a bonus, not the only one.
+  const [jwtSecretConfigured, setJwtSecretConfigured] = useState(true);
+
+  useEffect(() => {
+    api.health().then((r) => setJwtSecretConfigured(r.jwtSecretConfigured)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     Promise.allSettled([
@@ -192,6 +204,16 @@ export default function Dashboard() {
             {' '}({Math.round(maxLossRatio * 100)}%). ברגע שההפסד יעבור את התקרה, כל פעולה בתשלום תיחסם אוטומטית.
           </p>
           <Link className="btn btn-primary" to="/settings">לעדכון התקרה</Link>
+        </div>
+      )}
+
+      {!jwtSecretConfigured && (
+        <div className="card" style={{ borderColor: 'var(--accent)', background: 'rgba(220, 38, 38, 0.08)' }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 700 }}>⚠️ JWT_SECRET לא מוגדר</p>
+          <p className="hint" style={{ margin: 0 }}>
+            ההתחברות מתבטלת בכל פריסה (deploy) מחדש של האפליקציה — מפתח ההצפנה להתחברות מוחלף אקראית בכל הפעלה
+            מחדש של השרת. הגדר JWT_SECRET כמשתנה סביבה קבוע ב-Railway כדי להישאר מחובר בין פריסות.
+          </p>
         </div>
       )}
 

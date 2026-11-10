@@ -19,6 +19,12 @@ export function getHealth(req, res) {
     billingConfigured: isPaddleConfigured(),
     marketDataConfigured: Boolean(process.env.MARKET_DATA_API_KEY),
     ownerPasswordConfigured: Boolean(process.env.OWNER_PASSWORD),
+    // engine/auth.js falls back to a random JWT secret per process when this
+    // is unset, which silently logs the owner out on every redeploy with no
+    // in-app explanation anywhere else - this is the one flag here that
+    // actually needs a UI surface, since its absence (unlike the others)
+    // produces no error message of its own.
+    jwtSecretConfigured: Boolean(process.env.JWT_SECRET),
   });
 }
 
