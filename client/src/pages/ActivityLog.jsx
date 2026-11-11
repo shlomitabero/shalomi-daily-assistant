@@ -71,6 +71,15 @@ export default function ActivityLog() {
             {a.type === 'paper_trade' && a.detail?.symbol && (
               <p className="hint log-reason">{a.detail.symbol} · {sideLabel(a.detail.side)} · רווח/הפסד מדומה: {formatMoney(a.detail.netPnl)}</p>
             )}
+            {/* routes/auth.js logs the source ip on every failed/blocked
+                login_attempt, but until now nothing here showed it - the
+                owner could see THAT a login attempt failed, with no way to
+                tell a single mistyped password apart from a sustained
+                attack from one source, or to know what IP to even look for
+                if they wanted to block it upstream. */}
+            {a.type === 'login_attempt' && a.detail?.ip && (
+              <p className="hint log-reason">מקור: {a.detail.ip}</p>
+            )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
           </div>
