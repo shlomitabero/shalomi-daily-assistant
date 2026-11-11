@@ -90,6 +90,20 @@ test('patchSettings does not mark budgetConfigured true for a budget of 0', () =
   assert.equal(res.body.settings.budgetConfigured, false);
 });
 
+test('patchSettings clears budgetConfigured back to false when a real budget is later reset to 0', () => {
+  // db.settings.update merges the patch - without always setting this
+  // field (not just conditionally to true), resetting budget to 0 after
+  // it was once real left budgetConfigured stuck at true forever, since
+  // the merge then just preserved whatever was already stored.
+  __resetForTests();
+  patchSettings({ body: { budget: 500 } }, makeRes());
+  const res = makeRes();
+  patchSettings({ body: { budget: 0 } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.settings.budget, 0);
+  assert.equal(res.body.settings.budgetConfigured, false);
+});
+
 test('patchSettings allows maxLoss to be explicitly cleared to null (no limit)', () => {
   __resetForTests();
   patchSettings({ body: { maxLoss: 200 } }, makeRes());

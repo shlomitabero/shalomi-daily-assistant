@@ -32,7 +32,19 @@ export function patchSettings(req, res) {
     // actually gave, and silently dismiss the dashboard's "set a budget"
     // nudge the first time they save anything at all. Only a genuinely
     // positive budget counts as a real decision.
-    if (patch.budget > 0) patch.budgetConfigured = true;
+    //
+    // Always set it (not just conditionally to true) - db.settings.update
+    // merges the patch, so leaving this field out whenever budget <= 0
+    // silently preserved whatever budgetConfigured already was. An owner
+    // who first set a real budget (budgetConfigured: true) and later
+    // reset it back to 0 to pause spending consideration kept
+    // budgetConfigured stuck at true forever - canSpend() still ends up
+    // blocking correctly either way (spentSoFar + amount > 0 is almost
+    // always true), but with the wrong, less honest reason ("יחרוג
+    // מהתקציב") instead of "עדיין לא הוגדר תקציב", and Dashboard.jsx's own
+    // "set a budget" nudge never comes back even though nothing is
+    // actually configured anymore.
+    patch.budgetConfigured = patch.budget > 0;
   }
   if ('maxLoss' in patch && patch.maxLoss !== null) {
     if (typeof patch.maxLoss !== 'number' || !Number.isFinite(patch.maxLoss) || patch.maxLoss < 0) {
