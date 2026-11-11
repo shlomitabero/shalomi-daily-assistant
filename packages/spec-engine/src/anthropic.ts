@@ -201,10 +201,34 @@ function screensFor(entities: ProductSpec["entities"]): ProductSpec["screens"] {
  * actually fixed either. The fence regex is not anchored to the whole
  * string, so a fenced block preceded/followed by prose (e.g. "Here's the
  * spec:\n```json\n{...}\n```") still gets unwrapped instead of being handed
- * to JSON.parse as-is. If there's no fenced block at all, falls back to
- * scanning each "{" in turn (not just the first) paired with the last "}",
- * so prose preceding the real JSON and containing its own brace (also round
- * 568) is skipped in favor of whichever "{" actually yields valid JSON.
+ * to JSON.parse as-is. If there's no fenced block at all, scans each "{" in
+ * turn (not just the first), so prose preceding the real JSON and containing
+ * its own brace (round 568) doesn't win by default.
+ *
+ * Round 1924: that round-568 fix still paired every candidate start with a
+ * single, fixed `lastIndexOf("}")` over the WHOLE text -- so any trailing
+ * remark after the real JSON object that itself contains a literal "}" (the
+ * model quoting its own schema, an aside like "...in a different shape
+ * {like this}") made every slice end at the wrong brace, every JSON.parse
+ * attempt fail, and the function silently return the entire untouched
+ * response (prose included) back to the caller, which then failed to parse
+ * it a second time -- a perfectly valid Claude-generated spec discarded in
+ * favor of the much weaker heuristic fallback, found by reproducing it
+ * directly against this function's exact prior body. Replaced the whole
+ * start/end pairing with a per-candidate brace-depth scan: for each "{",
+ * walk forward tracking nesting depth (skipping over string-literal content,
+ * including escaped quotes, so a brace inside a genuine JSON string value
+ * never miscounts) until depth returns to zero, which is that candidate's
+ * own TRUE matching "}" -- not a single global guess. Returning on the
+ * FIRST candidate that parses would itself regress the original round-568
+ * leading-prose test: prose containing a complete trivial object (e.g.
+ * "uses {} for objects") parses successfully all on its own, so the scan
+ * would stop there and never reach the real spec starting at the next "{".
+ * Instead every successfully-parsed candidate across every start is kept,
+ * and the LONGEST one wins -- the real intended spec is virtually always
+ * far larger than any incidental "{}"/aside also present in surrounding
+ * prose, so this closes the original leading-prose case, the trailing-prose
+ * case, and both occurring together, in one pass.
  */
 function extractJson(text: string): string {
   const trimmed = text.trim();
@@ -218,17 +242,38 @@ function extractJson(text: string): string {
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) return fenceMatch[1];
 
-  const end = trimmed.lastIndexOf("}");
-  if (end !== -1) {
-    for (let start = trimmed.indexOf("{"); start !== -1 && start < end; start = trimmed.indexOf("{", start + 1)) {
-      const candidate = trimmed.slice(start, end + 1);
-      try {
-        JSON.parse(candidate);
-        return candidate;
-      } catch {
-        // this "{" wasn't the real start; try the next one
+  let best: string | null = null;
+  for (let start = trimmed.indexOf("{"); start !== -1; start = trimmed.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const candidate = trimmed.slice(start, i + 1);
+          try {
+            JSON.parse(candidate);
+            if (!best || candidate.length > best.length) best = candidate;
+          } catch {
+            // this "{" wasn't the real start; try the next one
+          }
+          break;
+        }
       }
     }
   }
-  return trimmed;
+  return best ?? trimmed;
 }

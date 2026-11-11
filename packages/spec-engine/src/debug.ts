@@ -25,9 +25,16 @@ export interface RequestSpecFixOptions {
  * Strips markdown code fences and any surrounding prose if the model wrapped
  * or introduced its JSON despite instructions. First tries the whole
  * response as-is, skipping every heuristic below when it's already valid
- * JSON, and falls back to scanning each "{" in turn (not just the first)
- * paired with the last "}" (see the identical fix and its rationale in
- * anthropic.ts -- round 568).
+ * JSON, and falls back to scanning each "{" in turn (not just the first),
+ * walking a brace-depth counter from each one (skipping over string-literal
+ * content) to find its own true matching "}" instead of pairing every
+ * candidate with a single fixed `lastIndexOf("}")`. Every successfully-
+ * parsed candidate across every start is kept and the LONGEST one wins,
+ * rather than returning on the first match -- otherwise a small complete
+ * object sitting in surrounding prose (e.g. "uses {} for objects") would
+ * win by arriving first, before the scan ever reaches the real, far larger
+ * spec (see the identical fix and its full rationale in anthropic.ts --
+ * rounds 568 and 1924).
  */
 function extractJson(text: string): string {
   const trimmed = text.trim();
@@ -41,19 +48,40 @@ function extractJson(text: string): string {
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fenceMatch) return fenceMatch[1];
 
-  const end = trimmed.lastIndexOf("}");
-  if (end !== -1) {
-    for (let start = trimmed.indexOf("{"); start !== -1 && start < end; start = trimmed.indexOf("{", start + 1)) {
-      const candidate = trimmed.slice(start, end + 1);
-      try {
-        JSON.parse(candidate);
-        return candidate;
-      } catch {
-        // this "{" wasn't the real start; try the next one
+  let best: string | null = null;
+  for (let start = trimmed.indexOf("{"); start !== -1; start = trimmed.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const candidate = trimmed.slice(start, i + 1);
+          try {
+            JSON.parse(candidate);
+            if (!best || candidate.length > best.length) best = candidate;
+          } catch {
+            // this "{" wasn't the real start; try the next one
+          }
+          break;
+        }
       }
     }
   }
-  return trimmed;
+  return best ?? trimmed;
 }
 
 /**

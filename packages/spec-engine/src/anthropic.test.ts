@@ -117,6 +117,19 @@ test("generate() correctly parses JSON preceded by prose that itself contains a 
   assert.equal(spec.entities[0]!.name, "Customer");
 });
 
+test("generate() correctly parses JSON followed by trailing prose that itself contains a brace, instead of lastIndexOf grabbing the prose's own closing brace", async () => {
+  const withTrailingBracyProse =
+    JSON.stringify(VALID_SPEC) + " Let me know if you want the fields in a different shape {like this}.";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withTrailingBracyProse }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const spec = await provider.generate("a CRM for my business");
+  assert.equal(spec.entities[0]!.name, "Customer");
+});
+
 test("generate() throws a descriptive error when the response body isn't valid JSON, instead of an unwrapped SyntaxError", async () => {
   const fakeFetch = (async () => new Response("not json at all {", { status: 200 })) as unknown as typeof fetch;
   const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });

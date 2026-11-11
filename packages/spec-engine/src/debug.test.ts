@@ -104,6 +104,17 @@ test("requestSpecFix correctly parses JSON preceded by prose that itself contain
   assert.equal(result.entities[0].name, "Customer");
 });
 
+test("requestSpecFix correctly parses JSON followed by trailing prose that itself contains a brace, matching anthropic.ts's own round-1924 fix for the same bug", async () => {
+  const withTrailingBracyProse =
+    JSON.stringify(brokenSpec) + " Let me know if you want the fields in a different shape {like this}.";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withTrailingBracyProse }] }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  const result = await requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(result.entities[0].name, "Customer");
+});
+
 test("requestSpecFix throws a descriptive error when the response body isn't valid JSON, instead of an unwrapped SyntaxError", async () => {
   const fakeFetch = (async () => new Response("not json at all {", { status: 200 })) as unknown as typeof fetch;
   await assert.rejects(
