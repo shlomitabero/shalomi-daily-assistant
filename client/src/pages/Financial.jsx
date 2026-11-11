@@ -100,7 +100,16 @@ export default function Financial() {
 
   async function onPaperTrade(e) {
     e.preventDefault();
-    if (!trade.symbol.trim()) return;
+    // Same gap as the Opportunities page's manual-draft form (fixed
+    // earlier this hour): clicking "הרץ סימולציה" with an empty symbol
+    // did nothing at all, no error, no native browser validation either
+    // (the input has no `required`) - indistinguishable from the button
+    // being broken. Same Hebrew wording routes/financial.js's own
+    // createPaperTrade already uses for this exact case server-side.
+    if (!trade.symbol.trim()) {
+      setError('סימבול הוא שדה חובה');
+      return;
+    }
     setError('');
     setTradeBusy(true);
     try {
