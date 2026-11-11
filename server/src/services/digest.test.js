@@ -186,6 +186,34 @@ test('generateDailyDigest says nothing about JWT_SECRET when it is actually conf
   }
 });
 
+test('generateDailyDigest counts today\'s real login_attempt entries and warns in the digest text', () => {
+  // Must actually reach generateDailyDigest() via a real actions_log scan
+  // of entries routes/auth.js itself would log (a wrong password, a
+  // rate-limit block), not just a hand-fed count in digest.test.js
+  // (engine/), which only proves the warning text itself is correct once
+  // the count is already known.
+  __resetForTests();
+  const now = new Date().toISOString();
+  db.actions_log.insert({ id: makeId('act'), type: 'login_attempt', detail: { ip: '1.2.3.4' }, result: 'failed', createdAt: now });
+  db.actions_log.insert({ id: makeId('act'), type: 'login_attempt', detail: { ip: '1.2.3.4' }, result: 'blocked: יותר מדי ניסיונות התחברות שגויים', createdAt: now });
+  db.actions_log.insert({ id: makeId('act'), type: 'autonomous_scan', detail: {}, result: 'failed', createdAt: now }); // a different action type must not be counted here
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /2 ניסיונות התחברות כושלים היום/);
+});
+
+test('generateDailyDigest says nothing about login attempts when there were none today', () => {
+  __resetForTests();
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /ניסיונות התחברות/);
+});
+
+test('generateDailyDigest ignores a login_attempt entry from a previous day when counting today\'s', () => {
+  __resetForTests();
+  db.actions_log.insert({ id: makeId('act'), type: 'login_attempt', detail: { ip: '1.2.3.4' }, result: 'failed', createdAt: '2020-01-01T00:00:00.000Z' });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /ניסיונות התחברות/);
+});
+
 test('generateDailyDigest reflects research mode (the default) in the text', () => {
   __resetForTests();
   const digest = generateDailyDigest();

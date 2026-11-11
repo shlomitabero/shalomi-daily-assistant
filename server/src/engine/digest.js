@@ -9,6 +9,7 @@ export function buildDailyDigest({
   // test that doesn't care about it) must never see a false "not
   // configured" warning just because the field was left out.
   jwtSecretConfigured = true,
+  failedLoginAttemptsToday = 0,
 }) {
   // Dashboard.jsx warns the owner in the app itself once spentSoFar/
   // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
@@ -66,6 +67,16 @@ export function buildDailyDigest({
     // silently invalidated on each redeploy (engine/auth.js) - this app's
     // own hourly upgrade routine makes that routine, not rare.
     ...(!jwtSecretConfigured ? ['⚠️ JWT_SECRET לא מוגדר — ההתחברות מתבטלת בכל פריסה (deploy) מחדש של האפליקציה. הגדר אותו כמשתנה סביבה קבוע ב-Railway כדי להישאר מחובר.'] : []),
+    // routes/auth.js now logs every failed/blocked login attempt to the
+    // activity log - but, same reasoning as every other warning above, an
+    // owner who only reads the digest would never see it there otherwise.
+    // This is a personal console with a single password, reachable on the
+    // open internet, so even a handful of wrong guesses in one day is a
+    // real signal worth a daily mention, not just a row buried in a log
+    // the owner has no particular reason to open on an ordinary day.
+    ...(failedLoginAttemptsToday > 0
+      ? [`🔒 ${failedLoginAttemptsToday} ניסיונות התחברות כושלים היום — אם זה לא אתה, זה סימן שמישהו מנסה לנחש את הסיסמה.`]
+      : []),
     // Answers "is the scanner even running" directly, every single day,
     // without the owner having to open the activity log and count entries
     // themselves - the one question that actually prompted this app's

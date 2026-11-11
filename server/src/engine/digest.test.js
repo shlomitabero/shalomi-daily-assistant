@@ -187,3 +187,21 @@ test('says nothing about JWT_SECRET when it is configured, or when the caller ne
   const digestOmitted = buildDailyDigest({ ledgerSummary });
   assert.doesNotMatch(digestOmitted.text, /JWT_SECRET/);
 });
+
+test('warns about failed login attempts today, since a brute-force attempt is exactly the kind of thing an owner who only reads the digest should learn about', () => {
+  // routes/auth.js logs a 'login_attempt' entry on a wrong password or a
+  // rate-limit block - this is a personal console with a single
+  // password, reachable on the open internet, so even a handful of
+  // attempts in one day is a real signal worth a daily mention, same
+  // reasoning already applied to every other warning above.
+  const digest = buildDailyDigest({ ledgerSummary, failedLoginAttemptsToday: 3 });
+  assert.match(digest.text, /3 ניסיונות התחברות כושלים היום/);
+});
+
+test('says nothing about login attempts when there were none, or when the caller never passes the field at all', () => {
+  const digestZero = buildDailyDigest({ ledgerSummary, failedLoginAttemptsToday: 0 });
+  assert.doesNotMatch(digestZero.text, /ניסיונות התחברות/);
+
+  const digestOmitted = buildDailyDigest({ ledgerSummary });
+  assert.doesNotMatch(digestOmitted.text, /ניסיונות התחברות/);
+});

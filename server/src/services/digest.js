@@ -76,6 +76,16 @@ export function generateDailyDigest(now = new Date()) {
   // counted in exactly one place.
   const unrecordedSales = ledgerSummary.unrecordedSales;
 
+  // routes/auth.js logs a 'login_attempt' entry on every wrong password
+  // and every rate-limit block, never on success - counting both result
+  // shapes here (not just 'failed') is what actually answers "did
+  // anyone try to break in today", since a sustained attack mostly shows
+  // up as a string of 'blocked:' entries once the rate limiter kicks in,
+  // not more 'failed' ones.
+  const failedLoginAttemptsToday = db.actions_log.where(
+    (a) => todayKey(new Date(a.createdAt)) === today && a.type === 'login_attempt'
+  ).length;
+
   const settings = getSettings();
   const digest = buildDailyDigest({
     ledgerSummary, actionsToday, failuresToday, topOpportunity,
@@ -87,6 +97,7 @@ export function generateDailyDigest(now = new Date()) {
     // directly here rather than importing from a route file keeps the
     // existing services->routes dependency direction intact.
     jwtSecretConfigured: Boolean(process.env.JWT_SECRET),
+    failedLoginAttemptsToday,
   });
 
   // The owner can click "generate now" on the Digests page any number of
