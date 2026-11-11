@@ -186,6 +186,7 @@ export interface BaileysIncomingMessage {
     groupStatusMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessageV2?: { message?: BaileysIncomingMessage["message"] };
     callLogMesssage?: { isVideo?: boolean; callOutcome?: number; durationSecs?: number };
+    questionResponseMessage?: { text?: string };
   };
 }
 
@@ -867,6 +868,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     if (callOutcome === ACCEPTED_ELSEWHERE) return `[${label} answered on another device]`;
     if (callOutcome === ONGOING) return `[${label} in progress]`;
     return null;
+  }
+  // Round 1883: WhatsApp's "Status Q&A sticker" feature -- a contact
+  // answering a public question-box sticker on this business's own
+  // Status/Story delivers their answer as a normal DM carrying a
+  // questionResponseMessage, confirmed against the installed Baileys
+  // protobuf (WAProto/index.d.ts: IQuestionResponseMessage is just `key` +
+  // a plaintext `text` string, no decryption needed, same bar every prior
+  // round in this message-type family used). Previously fell through to
+  // the final `return null` below and vanished with zero trace -- the
+  // business never saw the customer's actual answer anywhere.
+  if (message.questionResponseMessage) {
+    const text = message.questionResponseMessage.text;
+    return text ? `[Status Q&A reply] ${text}` : "[Status Q&A reply]";
   }
   return null;
 }

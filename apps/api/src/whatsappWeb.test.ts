@@ -3030,6 +3030,43 @@ test("an incoming WhatsApp call-log message for a call that was missed/rejected/
 });
 
 /**
+ * Round 1883: questionResponseMessage is WhatsApp's "Status Q&A sticker"
+ * feature -- a contact answering a public question-box sticker on this
+ * business's own Status/Story delivers their answer as a normal DM
+ * carrying this field. Confirmed directly against the installed Baileys
+ * protobuf (WAProto/index.d.ts: IQuestionResponseMessage{key, text} --
+ * just a plaintext `text` string, no decryption needed, same "detect
+ * presence / decode a small field" bar every prior round in this
+ * message-type family used).
+ */
+test("an incoming WhatsApp Status Q&A sticker reply (questionResponseMessage) is logged with the customer's actual answer text, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { questionResponseMessage: { text: "Yes, I'll be there!" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { questionResponseMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: qaMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(qaMessages.length, 2);
+  assert.equal(qaMessages[0].body, "[Status Q&A reply]");
+  assert.equal(qaMessages[1].body, "[Status Q&A reply] Yes, I'll be there!");
+  for (const m of qaMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1600: encReactionMessage is the separate, genuinely-encrypted
  * sibling of reactionMessage (round 1088) this file's own doc comment
  * already named but never actually handled. Confirmed directly against
