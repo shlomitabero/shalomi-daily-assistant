@@ -242,6 +242,25 @@ export default function OpportunityDetail() {
       ) : (
         <div className="card">
           <h3>פרסום</h3>
+          {/* publishOpportunity (services/publishing.js) refuses a demo
+              draft (no ANTHROPIC_API_KEY when it was drafted) outright -
+              it can never actually be published for real money, in any
+              mode, with or without approval. Until now neither button
+              below knew that: "אשר פרסום" would happily mark it approved,
+              and the publish button itself rendered full gold btn-primary
+              and genuinely clickable in auto_limited mode (or once
+              "approved") - the exact same false-affordance bug already
+              fixed for research mode and for ProductPage.jsx's own
+              checkout button, just for this one remaining condition that
+              makes the action permanently inert rather than temporarily
+              disabled. Clicking it did already show a clean server error,
+              but the button's own look and feel promised otherwise. */}
+          {opp.productDraft?.demo && (
+            <p className="hint">
+              זהו תוכן דמו (נוצר בלי ANTHROPIC_API_KEY מחובר) — אי אפשר לפרסם אותו ולגבות עליו תשלום אמיתי, בשום מצב פעולה.
+              חבר ANTHROPIC_API_KEY ליצירת תוכן אמיתי שניתן לפרסם.
+            </p>
+          )}
           {/* While settings is still null (either not loaded yet - opp,
               settings and approvals are three independent calls with no
               guaranteed order, so opp can easily resolve first - or genuinely
@@ -257,7 +276,7 @@ export default function OpportunityDetail() {
               surrounding comments, meant to be clickable on data this page
               hadn't actually confirmed yet. */}
           <p className="hint">מצב נוכחי: {!settings ? 'טוען…' : settings.mode === 'research' ? 'מחקר בלבד — לא יפרסם' : settings.mode === 'approve' ? 'דורש אישור' : 'אוטומטי מוגבל'}</p>
-          {settings?.mode === 'approve' && (
+          {settings?.mode === 'approve' && !opp.productDraft?.demo && (
             hasPublishApproval ? (
               // Before this, clicking "אשר פרסום" gave no feedback at all -
               // the button just stayed there, identical to before the
@@ -284,11 +303,13 @@ export default function OpportunityDetail() {
               looking at this page rendered in a browser, not from reading
               the code alone. */}
           <button
-            className={`btn ${!settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval) ? 'btn-ghost' : 'btn-primary'}`}
+            className={`btn ${opp.productDraft?.demo || !settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval) ? 'btn-ghost' : 'btn-primary'}`}
             onClick={onPublish}
-            disabled={busy || !settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval)}
+            disabled={busy || opp.productDraft?.demo || !settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval)}
             title={
-              !settings
+              opp.productDraft?.demo
+                ? 'תוכן דמו — אי אפשר לפרסם אותו בשום מצב פעולה'
+                : !settings
                 ? 'טוען מצב פעולה…'
                 : settings.mode === 'research'
                   ? 'מצב מחקר בלבד — שום פעולה לא מתבצעת אוטומטית'
