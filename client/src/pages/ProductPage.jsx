@@ -209,7 +209,17 @@ export default function ProductPage() {
           </button>
         </>
       ) : (
-        <button className="btn btn-primary btn-lg" onClick={onBuy} disabled={!paddleReady}>קנה עכשיו</button>
+        // Gold (btn-primary) while still loading too - that's the same brief,
+        // transient wait every other busy/loading state in this app already
+        // shows in its normal "ready" color, not a muted one. paddleFailed
+        // and paddleNotConfigured are a different, long-lived kind of
+        // disabled (an ad-blocker, or Paddle simply never configured for
+        // this product) - this is the one checkout a real paying customer
+        // actually uses, found the same way as the equivalent fix on
+        // OpportunityDetail.jsx's own publish button: by actually looking
+        // at this page rendered in a browser, not from reading the code
+        // alone.
+        <button className={`btn ${paddleFailed || paddleNotConfigured ? 'btn-ghost' : 'btn-primary'} btn-lg`} onClick={onBuy} disabled={!paddleReady}>קנה עכשיו</button>
       )}
       {paddleFailed && (
         <p className="form-error">
