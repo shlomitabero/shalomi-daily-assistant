@@ -26,9 +26,28 @@ export function generateDailyDigest(now = new Date()) {
   // layer for a.type at all, so it surfaced as raw, repeated English -
   // "login_attempt: failed; login_attempt: failed" - right next to that
   // same information already shown correctly in Hebrew.
+  // Mirrors client/src/labels.js's own ACTION_TYPE_LABEL, kept separate
+  // since this text is generated once on the server and sent as a plain
+  // string - the digest has no client-side rendering step to translate it
+  // later. Until now every type reaching this list (publish_product on a
+  // real Paddle failure, autonomous_scan on a real AI-call failure,
+  // paper_trade in principle) showed its own raw snake_case code as the
+  // sentence's leading word - "publish_product: ..." - English dropped
+  // into the one Hebrew line ("בעיות: ...") an owner who only reads the
+  // digest relies on to know something real actually broke.
+  const ACTION_TYPE_LABEL_HE = {
+    draft_product: 'יצירת טיוטת מוצר',
+    autonomous_scan: 'סריקה אוטונומית',
+    publish_product: 'פרסום מוצר',
+    paper_trade: 'עסקה מדומה',
+    client_error: 'תקלה במסך',
+    approve: 'אישור פעולה',
+    reject: 'ביטול אישור',
+    reject_opportunity: 'דחיית הזדמנות',
+  };
   const failuresToday = db.actions_log
     .where((a) => todayKey(new Date(a.createdAt)) === today && String(a.result).startsWith('failed') && a.type !== 'login_attempt')
-    .map((a) => ({ summary: `${a.type}: ${a.detail?.error ?? a.result}` }));
+    .map((a) => ({ summary: `${ACTION_TYPE_LABEL_HE[a.type] ?? a.type}: ${a.detail?.error ?? a.result}` }));
 
   const openOpportunities = db.opportunities.all()
     // A demo draft (no ANTHROPIC_API_KEY set when it was drafted) can never

@@ -52,7 +52,11 @@ test('generateDailyDigest surfaces a real failed action in the real digest text'
     createdAt: new Date().toISOString(),
   });
   const digest = generateDailyDigest();
-  assert.match(digest.text, /בעיות: draft_product: ANTHROPIC_API_KEY invalid/);
+  // The type itself is now translated ("יצירת טיוטת מוצר", not the raw
+  // "draft_product") - detail.error stays as-is either way, same
+  // reasoning as resultLabel()'s own partial translation on the client.
+  assert.match(digest.text, /בעיות: יצירת טיוטת מוצר: ANTHROPIC_API_KEY invalid/);
+  assert.doesNotMatch(digest.text, /draft_product/);
 });
 
 test('generateDailyDigest falls back to the raw result string when a real failed action has no detail.error', () => {
@@ -67,8 +71,41 @@ test('generateDailyDigest falls back to the raw result string when a real failed
     result: 'failed', createdAt: new Date().toISOString(),
   });
   const digest = generateDailyDigest();
-  assert.match(digest.text, /בעיות: client_error: failed/);
+  assert.match(digest.text, /בעיות: תקלה במסך: failed/);
   assert.doesNotMatch(digest.text, /undefined/);
+  assert.doesNotMatch(digest.text, /client_error/);
+});
+
+test('generateDailyDigest translates a real failed publish_product/autonomous_scan entry\'s type too, not just draft_product/client_error', () => {
+  // publish_product fails for real whenever executeGatedAction's own
+  // perform() throws (e.g. Paddle unreachable - services/execution.js);
+  // autonomous_scan fails for real on a genuine AI-call error
+  // (services/autonomousScan.js) - both are real, reachable production
+  // paths, not hypothetical ones like the draft_product case above.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'publish_product', detail: { error: 'Paddle API unreachable' },
+    result: 'failed', createdAt: new Date().toISOString(),
+  });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'autonomous_scan', detail: { error: 'timeout' },
+    result: 'failed', createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /בעיות: .*פרסום מוצר: Paddle API unreachable/);
+  assert.match(digest.text, /בעיות: .*סריקה אוטונומית: timeout/);
+  assert.doesNotMatch(digest.text, /publish_product/);
+  assert.doesNotMatch(digest.text, /autonomous_scan: timeout/); // the raw type, not the translated label, must never appear
+});
+
+test('generateDailyDigest shows the raw type code for an unrecognized failed action, rather than fabricating a translation', () => {
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'some_future_action', detail: { error: 'broke' },
+    result: 'failed', createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /בעיות: some_future_action: broke/);
 });
 
 test('generateDailyDigest warns in the real digest text when real spend is close to the configured budget', () => {
