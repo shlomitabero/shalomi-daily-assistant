@@ -58,6 +58,42 @@ test('createApproval inserts a new approved approval for a real opportunity', ()
   assert.equal(logged[0].detail.opportunityId, opp.id);
 });
 
+test('createApproval refuses to approve publish_product for a demo draft, which can never actually be published', () => {
+  // services/publishing.js already refuses to publish a demo draft for
+  // real money in every mode - this closes the same gap at the one other
+  // place an approval for it could still be created (OpportunityDetail.jsx
+  // no longer even renders the button, but that's client-side only).
+  __resetForTests();
+  const opp = insertOpportunity({ productDraft: { demo: true } });
+  const res = makeRes();
+  createApproval({ body: { opportunityId: opp.id, actionType: 'publish_product' } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.match(res.body.error, /תוכן דמו/);
+  assert.equal(db.approvals.all().length, 0);
+});
+
+test('createApproval still allows approving a non-publish_product action for a demo draft', () => {
+  // The block is specific to the one action that's actually blocked for
+  // demo content (publishing for real money) - a future, unrelated
+  // actionType must not be swept into the same restriction just because
+  // the opportunity happens to be a demo draft.
+  __resetForTests();
+  const opp = insertOpportunity({ productDraft: { demo: true } });
+  const res = makeRes();
+  createApproval({ body: { opportunityId: opp.id, actionType: 'some_other_action' } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(db.approvals.all().length, 1);
+});
+
+test('createApproval still allows approving publish_product for a real (non-demo) draft', () => {
+  __resetForTests();
+  const opp = insertOpportunity({ productDraft: { demo: false } });
+  const res = makeRes();
+  createApproval({ body: { opportunityId: opp.id, actionType: 'publish_product' } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(db.approvals.all().length, 1);
+});
+
 test('createApproval reuses the existing row for the same opportunity+actionType instead of duplicating it', () => {
   // This is what lets an owner re-approve after a reject without the
   // approvals list silently accumulating duplicate rows for the same action.

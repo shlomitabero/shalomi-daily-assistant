@@ -12,7 +12,23 @@ export function listApprovals(req, res) {
 export function createApproval(req, res) {
   const { opportunityId, actionType } = req.body ?? {};
   if (!opportunityId || !actionType) return res.status(400).json({ error: 'opportunityId ו-actionType הם שדות חובה' });
-  if (!db.opportunities.get(opportunityId)) return res.status(404).json({ error: 'ההזדמנות לא נמצאה' });
+  const opportunity = db.opportunities.get(opportunityId);
+  if (!opportunity) return res.status(404).json({ error: 'ההזדמנות לא נמצאה' });
+  // services/publishing.js already refuses to actually publish a demo
+  // draft (no ANTHROPIC_API_KEY when it was drafted) for real money, in
+  // every mode - but until now nothing stopped this route itself from
+  // marking one "approved" anyway. OpportunityDetail.jsx no longer even
+  // renders the "אשר פרסום" button for a demo draft, but that's a
+  // client-side convenience only, same as every other field this app
+  // validates server-side regardless of what the client already checks
+  // (patchOpportunity, createDigitalProduct, addToWatchlist...) - a
+  // stale page, a direct API call, or a future UI bug could otherwise
+  // still create an approval that can never lead anywhere, inflating
+  // Dashboard.jsx's/the daily digest's own "approved, one click from
+  // real money" counts with something that structurally never can be.
+  if (actionType === 'publish_product' && opportunity.productDraft?.demo) {
+    return res.status(409).json({ error: 'אי אפשר לאשר פרסום לתוכן דמו (ללא AI אמיתי מחובר) — הפרסום יידחה בכל מקרה' });
+  }
 
   const existing = db.approvals.where((a) => a.opportunityId === opportunityId && a.actionType === actionType)[0];
   const approval = existing
