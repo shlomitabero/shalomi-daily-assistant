@@ -344,15 +344,34 @@ function normalizeBodyValues(
         // no indication anything was ambiguous. Mirrors CSV import's own
         // precedent for this exact shape (entityFormatting.ts's
         // buildImportRecords, round 1162's doc comment there): resolve only
-        // on an unambiguous single match; on zero OR multiple matches,
-        // leave the raw label in place so coerceValue's existing relation
-        // branch (packages/db/src/repository.ts) rejects it with its own
+        // on an unambiguous single match; on zero matches, leave the raw
+        // label in place so coerceValue's existing relation branch
+        // (packages/db/src/repository.ts) rejects it with its own
         // ValidationError, exactly as a genuinely unmatched label already
         // does today -- never guess.
         const matches = recordsByTargetEntity
           .get(targetEntity.name)!
           .filter((r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase());
-        if (matches.length === 1) normalized[field.name] = String(matches[0].id);
+        if (matches.length === 1) {
+          normalized[field.name] = String(matches[0].id);
+        } else if (matches.length > 1) {
+          // Round 1926: this branch used to fall through with the raw label
+          // left in place, same as the zero-match case above, relying on
+          // coerceValue's Number(raw) call to incidentally reject it the
+          // same way an unmatched label gets rejected. That assumption is
+          // false whenever the ambiguous label text is itself a plain
+          // digit string (e.g. two Customer records both named "100"):
+          // coerceValue's relation branch has no ambiguity concept at all,
+          // it just does Number("100") = 100, and if some OTHER record in
+          // the target entity happens to have internal row id 100 (a
+          // realistic coincidence in any table with more than a handful of
+          // rows), the write silently succeeds with a real but WRONG
+          // foreign key -- pointing at neither of the two ambiguously-named
+          // records, with no FOREIGN KEY failure (the id genuinely exists)
+          // and no error anywhere. Explicit rejection here closes that gap
+          // without weakening the zero-match fallback above.
+          throw new HttpError(400, `Field "${field.name}" matches more than one record's display label; this value is ambiguous`, "AMBIGUOUS_RELATION_VALUE");
+        }
       }
     } else if (field.type === "date") {
       normalized[field.name] = value;

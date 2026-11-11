@@ -24724,6 +24724,67 @@ test("POST /public/webhook-in/:projectId/:entityName rejects a relation value th
   });
 });
 
+// Round 1926: the ambiguous-match branch above used to leave the raw label
+// in place and rely on coerceValue's own Number(raw) call to incidentally
+// reject it, the same way a genuinely unmatched label gets rejected. That
+// assumption breaks when the ambiguous label text is itself a plain digit
+// string that also happens to equal some OTHER record's real internal row
+// id: coerceValue has no ambiguity concept at all, so Number("1") = 1
+// silently succeeds as a literal foreign key the moment a record with id 1
+// genuinely exists -- pointing the new record at neither of the two
+// ambiguously-named records, with no FOREIGN KEY failure (the id is real)
+// and no error anywhere.
+test("POST /public/webhook-in/:projectId/:entityName rejects an ambiguous relation value even when the ambiguous label text happens to equal a DIFFERENT record's real internal id, instead of silently linking to that unrelated record", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-ambiguous-numeric-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const unrelated = insertRecord(db, projectId, spec.entities[0], { name: "Acme Co" });
+    const ambiguousFirst = insertRecord(db, projectId, spec.entities[0], { name: "1" });
+    insertRecord(db, projectId, spec.entities[0], { name: "1" });
+    assert.equal(String(unrelated.id), "1", "test setup: the unrelated record must land on internal id 1, the same text as the ambiguous label below");
+    assert.ok(ambiguousFirst.id, "sanity: the first ambiguously-labeled customer record was actually created");
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: "1" }),
+    });
+    assert.equal(
+      webhookRes.status,
+      400,
+      "an ambiguous numeric-looking relation label must be rejected, not silently resolved to whichever unrelated record happens to have that number as its internal id",
+    );
+    const records = listRecords(db, projectId, spec.entities[1]);
+    assert.equal(records.length, 0, "the ambiguous webhook call must not have created an Order silently linked to the unrelated record");
+  });
+});
+
 // Round 1644: the relation branch used to skip the label lookup entirely
 // whenever the raw value parsed as a finite number, treating it as this
 // app's own internal record id instead -- the exact ambiguity CSV import's
