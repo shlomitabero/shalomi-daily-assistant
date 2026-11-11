@@ -30,7 +30,14 @@ export default function Opportunities() {
 
   async function onCreate(e) {
     e.preventDefault();
-    if (!topic.trim() || !audience.trim()) return;
+    // Neither input has a `required` attribute, so clicking "צור טיוטת
+    // מוצר" with one or both fields empty used to just silently do
+    // nothing - no error, no native browser validation message either -
+    // indistinguishable from the button being broken.
+    if (!topic.trim() || !audience.trim()) {
+      setError('יש למלא גם נושא וגם קהל מטרה');
+      return;
+    }
     setError('');
     // These two cards' own result states live side by side on this same
     // page but were never cleared by each other's action - a scan
