@@ -2099,6 +2099,41 @@ test("an incoming WhatsApp message wrapped in associatedChildMessage, groupStatu
 });
 
 /**
+ * Round 1888: `pollCreationMessageV4` is a direct sibling of
+ * pollCreationMessage/V2/V3/V5 (same WAProto field family, number 93), but
+ * typed `IFutureProofMessage` (`{ message?: IMessage }`) instead of the
+ * plain `{ name?: string }` the other four share -- the exact same wrapper
+ * shape as associatedChildMessage/groupStatusMessage/groupStatusMessageV2
+ * just above. It had neither a `??`-chain entry nor a recursive unwrap, so
+ * a poll created from a WhatsApp client version that sends this field
+ * silently vanished with zero trace.
+ */
+test("an incoming WhatsApp poll wrapped in pollCreationMessageV4 is logged with its question text instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      {
+        key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false },
+        message: { pollCreationMessageV4: { message: { pollCreationMessageV2: { name: "V4-wrapped poll" } } } },
+      },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "[Poll] V4-wrapped poll", "pollCreationMessageV4 must recursively unwrap to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1121: a live-location share (WhatsApp's continuous-sharing mode,
  * started from the attachment picker) is a distinct field from the
  * already-handled locationMessage (a single pinned location, round 1035)

@@ -134,6 +134,7 @@ export interface BaileysIncomingMessage {
     pollCreationMessage?: { name?: string };
     pollCreationMessageV2?: { name?: string };
     pollCreationMessageV3?: { name?: string };
+    pollCreationMessageV4?: { message?: BaileysIncomingMessage["message"] };
     pollCreationMessageV5?: { name?: string };
     pollUpdateMessage?: Record<string, never>;
     pollResultSnapshotMessage?: { name?: string };
@@ -452,6 +453,17 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.associatedChildMessage?.message) return describeIncomingMessage(message.associatedChildMessage.message);
   if (message.groupStatusMessage?.message) return describeIncomingMessage(message.groupStatusMessage.message);
   if (message.groupStatusMessageV2?.message) return describeIncomingMessage(message.groupStatusMessageV2.message);
+  // Round 1888: `pollCreationMessageV4` -- unlike its pollCreationMessage/V2/
+  // V3/V5 siblings below (plain `{ name?: string }` objects handled via `??`
+  // chaining), this field is typed `IFutureProofMessage` (`{ message?:
+  // IMessage }`) in Baileys' own shipped protobuf schema (WAProto.proto,
+  // field 93), the exact same wrapper shape as `ephemeralMessage`/
+  // `documentWithCaptionMessage`/`associatedChildMessage`/`groupStatusMessage`
+  // just above. The existing `??` chain could never catch it even if added
+  // there, so it needs this plain recursive unwrap instead -- it had
+  // neither treatment and fell through to the final `return null` with zero
+  // trace.
+  if (message.pollCreationMessageV4?.message) return describeIncomingMessage(message.pollCreationMessageV4.message);
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";
