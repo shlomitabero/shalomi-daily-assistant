@@ -6275,7 +6275,7 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   // The record chip itself must be a real drag source, not just visually styled.
   assert.match(
     entityViewJsx,
-    /className=\{record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"\}\s*draggable=\{!bulkActionBusy\}\s*onDragStart=\{\(e\) => \{/,
+    /className=\{`calendar-record-chip\$\{record\.id === moveErrorId \? " calendar-record-chip-move-error" : ""\}.*`\}\s*title=\{urgencyLabel \|\| undefined\}\s*aria-label=\{urgencyLabel \? `.*` : undefined\}\s*draggable=\{!bulkActionBusy\}\s*onDragStart=\{\(e\) => \{/,
   );
   assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", `\$\{record\.id\}\|\$\{dayKey\}`\);\s*e\.dataTransfer\.effectAllowed = "move";/);
   // The day cell itself must be a real drop target, highlighted only while actually dragged over --
@@ -30600,6 +30600,105 @@ test("the exported EntityView does not flag a record with a terminal status as o
 
       assert.ok(openRow.querySelector(".date-overdue"), "a Todo record with a 5-day-past dueDate must still be flagged overdue");
       assert.equal(closedRow.querySelector(".date-overdue"), null, "a Done record with the identical past dueDate must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1946: ports the live preview's own round-1945 fix (EntityPanel.tsx)
+ * to codegen.ts's exported app -- CalendarView is its own bespoke chip
+ * renderer (never routes through Cell the way BoardCard/the print sheet
+ * do), and it never called isDeadlineFieldName/getDateUrgency/
+ * isRecordClosedStatus at all, so an overdue record's chip rendered
+ * identically to one due next month, even though the Table view's Cell
+ * (confirmed by the test just above) already flags the exact same record.
+ * Same Task fixture/closed-status shape as that test, switched into
+ * Calendar view instead of reading the table.
+ */
+test("the exported EntityView's Calendar view flags an overdue/due-soon record's chip the same way Table view's date cell already does, but not a closed-status record", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Todo", "Done"] },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Overdue task", status: "Todo", dueDate: isoDateOffset(-2) },
+    { id: 2, title: "Due soon task", status: "Todo", dueDate: isoDateOffset(1) },
+    { id: 3, title: "Done task", status: "Done", dueDate: isoDateOffset(-2) },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      // Task has both a status enum (Board view) and a date field (Calendar
+      // view), so the toggle order is table/board/calendar -- index 2, not
+      // 1, mirroring the identical index mistake caught and fixed in round
+      // 1945's own apps/web test for the exact same reason.
+      const calendarToggle = container.querySelectorAll(".view-toggle-btn")[2] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".calendar-record-chip").length === 3) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const chips = Array.from(container.querySelectorAll(".calendar-record-chip"));
+      const overdueChip = chips.find((c) => /Overdue task/.test(c.textContent ?? ""))!;
+      const dueSoonChip = chips.find((c) => /Due soon task/.test(c.textContent ?? ""))!;
+      const doneChip = chips.find((c) => /Done task/.test(c.textContent ?? ""))!;
+
+      assert.ok(overdueChip.classList.contains("calendar-record-chip-overdue"), "an outstanding record's past dueDate chip must be flagged overdue");
+      assert.ok(dueSoonChip.classList.contains("calendar-record-chip-due-soon"), "an outstanding record's dueDate tomorrow must be flagged due-soon");
+      assert.equal(
+        doneChip.classList.contains("calendar-record-chip-overdue"),
+        false,
+        "a record whose own status is already 'Done' must not be flagged overdue even with an identical past dueDate",
+      );
     });
   } finally {
     globalThis.fetch = originalFetch;

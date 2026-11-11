@@ -5221,11 +5221,28 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
               </button>
             )}
             <div className="calendar-day-records">
-              {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
+              {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => {
+                // Round 1946: mirrors the live preview's own round-1945 fix
+                // (EntityPanel.tsx) -- Cell's date branch above already
+                // flags an overdue/due-soon deadline field red/amber, and
+                // BoardCard/the print sheet already inherit that for free
+                // through Cell, but this CalendarView chip is its own
+                // bespoke renderer and never called isDeadlineFieldName/
+                // getDateUrgency/isRecordClosedStatus at all, so an overdue
+                // record's chip rendered identically to one due next month.
+                const urgency =
+                  isDeadlineFieldName(dateField.name) && !isRecordClosedStatus(record, entity.fields)
+                    ? getDateUrgency(String(record[dateField.name] || ""))
+                    : null;
+                const chipLabel = calendarLabelValue(labelField, record);
+                const urgencyLabel = urgency ? (urgency === "overdue" ? "Overdue" : "Due soon") : null;
+                return (
                 <div className="calendar-record-row" key={record.id}>
                   <button
                     type="button"
-                    className={record.id === moveErrorId ? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"}
+                    className={\`calendar-record-chip\${record.id === moveErrorId ? " calendar-record-chip-move-error" : ""}\${urgency === "overdue" ? " calendar-record-chip-overdue" : urgency === "dueSoon" ? " calendar-record-chip-due-soon" : ""}\`}
+                    title={urgencyLabel || undefined}
+                    aria-label={urgencyLabel ? \`\${chipLabel} — \${urgencyLabel}\` : undefined}
                     draggable={!bulkActionBusy}
                     onDragStart={(e) => {
                       if (bulkActionBusy) return;
@@ -5239,7 +5256,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                       onEdit(record);
                     }}
                   >
-                    {calendarLabelValue(labelField, record)}
+                    {chipLabel}
                   </button>
                   <button
                     type="button"
@@ -5317,7 +5334,8 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                     {pinnedIds.has(record.id) ? "⭐" : "☆"}
                   </button>
                 </div>
-              ))}
+                );
+              })}
               {day.records.length > 3 && (
                 <button
                   type="button"
@@ -11198,6 +11216,8 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .calendar-record-chip:hover { background: var(--bg); }
 .calendar-record-chip:active { cursor: grabbing; }
 .calendar-record-chip-move-error { background: var(--danger-soft); border-color: var(--danger); }
+.calendar-record-chip-overdue { background: var(--danger-soft); border-color: var(--danger); }
+.calendar-record-chip-due-soon { background: var(--warning-soft); border-color: var(--warning); }
 .calendar-record-move-earlier, .calendar-record-move-later { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
 .calendar-record-move-earlier:hover:not(:disabled), .calendar-record-move-later:hover:not(:disabled) { background: var(--bg); }
 .calendar-record-print { flex-shrink: 0; padding: 2px 4px; font-size: 10px; line-height: 1; background: none; border: 1px solid var(--border-soft); border-radius: 4px; cursor: pointer; color: var(--text); font: inherit; }
