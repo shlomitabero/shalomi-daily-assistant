@@ -76,6 +76,51 @@ export async function generateSpec(
 }
 
 /**
+ * Round 1911: a handful of curated templates (templates.ts) give their own
+ * built-in "person who works for/with the business" entity a different name
+ * than the heuristic engine's own generic "Employee" domain-entity rule
+ * (domainEntities.ts) would produce for the identical concept -- "TeamMember"
+ * (Project & Team Tracker template) and "Staff" (Appointments & Clients
+ * template). Both templates' own short stored descriptions ("...tasks and
+ * team members.", "Clients, staff, services...") contain one of Employee's
+ * own keywords ("team member", /\bstaff\b/) -- entirely reasonably, since a
+ * freeform description that mentions "team members" genuinely should produce
+ * an Employee entity on a FIRST build. But /refine's own combinedDescription
+ * (routes/projects.ts) re-appends the project's permanently-stored
+ * description on every single future refine, so this same keyword match
+ * re-fires every time, regardless of what the new instruction actually asked
+ * for. Because mergeRefinedSpec (and detectLikelyEntityRenames below) match
+ * entities by exact name, "Employee" never matches the existing "TeamMember"/
+ * "Staff" entity, so a brand-new, redundant person-tracking entity (with its
+ * own SQL table and screens) got silently added on every refine of either
+ * template -- confirmed live: refining a fresh "Project & Team Tracker"
+ * project with an unrelated instruction ("Add a Notes field to Milestone")
+ * added a whole new "Employee" entity alongside the pre-existing "Team
+ * Member" one, with no warning anywhere.
+ *
+ * This maps each known alias back to a shared canonical key so both
+ * functions below treat them as the SAME entity for matching purposes --
+ * mergeRefinedSpec folds the candidate's fields into the existing aliased
+ * entity (exactly like it already does for an exact name match) instead of
+ * adding a duplicate, and detectLikelyEntityRenames correctly stays silent
+ * rather than misreporting a non-existent "rename". Deliberately a short,
+ * explicit list of verified aliases rather than a general name-similarity
+ * heuristic (e.g. field-overlap scoring): two genuinely unrelated entities
+ * can easily share common field names (name/email/phone), which is exactly
+ * why detectLikelyEntityRenames's own doc comment requires an exact
+ * field-signature match rather than a looser one.
+ */
+const ENTITY_ALIAS_GROUPS: string[][] = [["employee", "teammember", "staff"]];
+const ENTITY_ALIAS_KEY = new Map<string, string>();
+for (const group of ENTITY_ALIAS_GROUPS) {
+  for (const name of group) ENTITY_ALIAS_KEY.set(name, group[0]);
+}
+function entityMergeKey(name: string): string {
+  const lower = name.toLowerCase();
+  return ENTITY_ALIAS_KEY.get(lower) ?? lower;
+}
+
+/**
  * Round 1714: /projects/:id/refine (apps/api/src/routes/projects.ts) calls
  * generateSpec with the project's own description plus the new instruction
  * appended -- but SpecProvider.generate (both HeuristicSpecProvider and
@@ -103,13 +148,13 @@ export async function generateSpec(
  */
 export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): ProductSpec {
   const mergedEntities: Entity[] = current.entities.map((entity) => ({ ...entity, fields: [...entity.fields] }));
-  const entityByLowerName = new Map(mergedEntities.map((entity) => [entity.name.toLowerCase(), entity]));
+  const entityByLowerName = new Map(mergedEntities.map((entity) => [entityMergeKey(entity.name), entity]));
   for (const candidateEntity of candidate.entities) {
-    const existingEntity = entityByLowerName.get(candidateEntity.name.toLowerCase());
+    const existingEntity = entityByLowerName.get(entityMergeKey(candidateEntity.name));
     if (!existingEntity) {
       const addedEntity = { ...candidateEntity, fields: [...candidateEntity.fields] };
       mergedEntities.push(addedEntity);
-      entityByLowerName.set(addedEntity.name.toLowerCase(), addedEntity);
+      entityByLowerName.set(entityMergeKey(addedEntity.name), addedEntity);
       continue;
     }
     const fieldNameSet = new Set(existingEntity.fields.map((field) => field.name.toLowerCase()));
@@ -201,12 +246,20 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
  * acting on it by auto-merging would risk the exact silent-data-loss
  * failure mode mergeRefinedSpec itself exists to prevent, so this only
  * ever informs, never merges.
+ *
+ * Round 1911: uses the same entityMergeKey as mergeRefinedSpec above for
+ * its own "does the candidate/current already have this entity" checks --
+ * without this, a known alias pair (e.g. "TeamMember" vs "Employee", now
+ * silently merged rather than duplicated) would still land in both
+ * droppedEntities and addedEntities here, producing a misleading "X looks
+ * like it was meant to become Y" warning for an entity that was never
+ * actually dropped.
  */
 export function detectLikelyEntityRenames(current: ProductSpec, candidate: ProductSpec): { from: string; to: string }[] {
-  const candidateNames = new Set(candidate.entities.map((entity) => entity.name.toLowerCase()));
-  const currentNames = new Set(current.entities.map((entity) => entity.name.toLowerCase()));
-  const droppedEntities = current.entities.filter((entity) => !candidateNames.has(entity.name.toLowerCase()));
-  const addedEntities = candidate.entities.filter((entity) => !currentNames.has(entity.name.toLowerCase()));
+  const candidateNames = new Set(candidate.entities.map((entity) => entityMergeKey(entity.name)));
+  const currentNames = new Set(current.entities.map((entity) => entityMergeKey(entity.name)));
+  const droppedEntities = current.entities.filter((entity) => !candidateNames.has(entityMergeKey(entity.name)));
+  const addedEntities = candidate.entities.filter((entity) => !currentNames.has(entityMergeKey(entity.name)));
   const fieldSignature = (entity: Entity) =>
     [...new Set(entity.fields.map((field) => field.name.toLowerCase()))].sort().join(",");
   const renames: { from: string; to: string }[] = [];

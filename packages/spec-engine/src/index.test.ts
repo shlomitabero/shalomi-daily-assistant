@@ -415,6 +415,85 @@ test("mergeRefinedSpec keeps BOTH entities when a refine renames one -- it is no
   );
 });
 
+/**
+ * Round 1911: a live-tested repro found that refining ANY project built
+ * from the "Project & Team Tracker" template silently creates a duplicate
+ * "Employee" entity alongside the template's own "TeamMember" entity, no
+ * matter what the refine instruction actually says -- because the
+ * template's own permanently-stored description ("...tasks and team
+ * members.") contains the Employee domain-entity rule's own "team member"
+ * keyword, and /refine's combinedDescription re-feeds that stored
+ * description into generateSpec on every single refine. Since the two
+ * entities have different names, the ordinary exact-name merge below
+ * treats the regenerated "Employee" as unrelated and adds it as a second,
+ * SQL-table-backed person entity -- confirmed live via Playwright. The
+ * "Staff" entity in the Appointments & Clients template has the identical
+ * exposure (its own stored description contains "staff"). This pins that
+ * mergeRefinedSpec now recognizes both as already satisfying the Employee
+ * concept and folds the candidate's fields into the EXISTING entity
+ * instead of duplicating it -- exactly like it already does for an exact
+ * name match.
+ */
+test("mergeRefinedSpec folds a regenerated Employee entity into an existing TeamMember entity instead of duplicating it", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "TeamMember", label: "Team Member", fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }, { name: "phone", type: "text", required: false }, { name: "jobTitle", type: "text", required: false }] },
+    ],
+  });
+  // The candidate is what the heuristic engine regenerates purely from the
+  // template's own stored description re-matching the Employee keyword --
+  // it has no idea TeamMember already exists under a different name.
+  const candidate = baseSpec({
+    entities: [
+      { name: "Employee", label: "Employee", fields: [{ name: "name", type: "text", required: true }, { name: "role", type: "text", required: false }, { name: "email", type: "text", required: false }, { name: "phone", type: "text", required: false }, { name: "active", type: "boolean", required: false }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["TeamMember"],
+    "must NOT add a second, duplicate person-tracking entity -- the candidate's Employee concept already exists as TeamMember",
+  );
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["active", "email", "jobTitle", "name", "phone", "role"],
+    "TeamMember's own fields must survive, with the candidate's genuinely new fields (role, active) folded in, same as an exact-name merge already does",
+  );
+});
+
+test("mergeRefinedSpec folds a regenerated Employee entity into an existing Staff entity instead of duplicating it (Appointments & Clients template's own alias)", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Staff", label: "Staff", fields: [{ name: "name", type: "text", required: true }, { name: "specialty", type: "text", required: false }, { name: "phone", type: "text", required: false }, { name: "email", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Employee", label: "Employee", fields: [{ name: "name", type: "text", required: true }, { name: "role", type: "text", required: false }, { name: "email", type: "text", required: false }, { name: "phone", type: "text", required: false }, { name: "active", type: "boolean", required: false }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(merged.entities.map((e) => e.name), ["Staff"]);
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["active", "email", "name", "phone", "role", "specialty"],
+  );
+});
+
+test("detectLikelyEntityRenames stays silent for the TeamMember/Employee alias pair, instead of misreporting it as a rename", () => {
+  const current = baseSpec({
+    entities: [{ name: "TeamMember", fields: [{ name: "name", type: "text", required: true }, { name: "jobTitle", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [{ name: "Employee", fields: [{ name: "name", type: "text", required: true }, { name: "role", type: "text", required: false }] }],
+  });
+  assert.deepEqual(
+    detectLikelyEntityRenames(current, candidate),
+    [],
+    "TeamMember isn't dropped and Employee isn't new -- mergeRefinedSpec now folds them together, so there is nothing here to warn about",
+  );
+});
+
 test("detectLikelyEntityRenames flags an entity the candidate dropped paired with a brand-new one sharing the exact same field names", () => {
   const current = baseSpec({
     entities: [
