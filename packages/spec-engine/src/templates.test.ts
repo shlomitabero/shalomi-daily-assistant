@@ -656,6 +656,37 @@ test("the Restaurant and Appointments templates' Customer entities have a status
 });
 
 /**
+ * Round 1899: the same bug class as round 1304/1898's own Customer fixes,
+ * found this time on the CRM template's Deal entity -- its field set
+ * (title/customer/stage/value/closeDeadline) has no `owner` field, unlike
+ * domainEntities.ts's own matching Deal domain rule (title/value/stage/
+ * owner, `owner` a plain optional text field, fieldLabelsHe.owner =
+ * "אחראי/ת"). The CRM template's own Hebrew summary text contains "עסקאות"
+ * (one of the Deal rule's own matched keywords), so any refine instruction
+ * that re-triggers this rule (e.g. one mentioning "deal"/"עסקה"/
+ * "negotiation"/"opportunity") silently bolts an unrequested `owner` field
+ * onto every Deal record via mergeRefinedSpec's "add any field the
+ * regenerated generic entity has that the current one lacks" merge logic
+ * -- regardless of what the refine instruction actually asked to change.
+ */
+test("the CRM template's Deal entity has an owner field, matching domainEntities.ts's own Deal domain rule", () => {
+  const crmTemplate = TEMPLATES.find((t) => t.id === "crm");
+  assert.ok(crmTemplate, "expected a \"crm\" template to exist");
+
+  const deal = crmTemplate!.spec.entities.find((e) => e.name === "Deal");
+  assert.ok(deal, "expected the CRM template to have a Deal entity");
+  const owner = deal!.fields.find((f) => f.name === "owner");
+  assert.ok(owner, "expected the Deal entity to have an owner field");
+  assert.equal(owner!.type, "text");
+
+  const dealEn = crmTemplate!.specEn.entities.find((e) => e.name === "Deal");
+  assert.ok(dealEn, "expected the CRM specEn to have a Deal entity");
+  const ownerEn = dealEn!.fields.find((f) => f.name === "owner");
+  assert.ok(ownerEn, "expected the CRM specEn Deal entity to have an owner field");
+  assert.equal(ownerEn!.type, "text");
+});
+
+/**
  * Round 1305: the Project Tracker template's own Project entity (name/
  * description/status/deadline/budget/owner) is missing a `client` field,
  * unlike domainEntities.ts's matching Project domain rule -- whose own

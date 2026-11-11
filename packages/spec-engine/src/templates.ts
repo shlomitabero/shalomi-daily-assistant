@@ -405,6 +405,7 @@ const CRM_ENTITIES: EntitySpec[] = [
       },
       { name: "value", label: "שווי", type: "number" },
       { name: "closeDeadline", label: "תאריך סגירה משוער", type: "date" },
+      { name: "owner", label: "אחראי/ת", type: "text" },
     ],
   },
   {
@@ -476,6 +477,7 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
       },
       { name: "value", label: "Value", type: "number" },
       { name: "closeDeadline", label: "Expected Close Date", type: "date" },
+      { name: "owner", label: "Owner", type: "text" },
     ],
   },
   {
