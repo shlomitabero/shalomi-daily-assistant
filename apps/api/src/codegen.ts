@@ -3290,8 +3290,14 @@ function isRecordClosedStatus(record, fields) {
     const value = record[statusField.name];
     if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
   }
+  // Round 1889: widened to also recognize "cancelled"/"canceled" (and their
+  // "is"-prefixed forms), mirroring the live app's own matching widening.
   const doneField = fields.find(
-    (f) => f.type === "boolean" && ["done", "completed", "isdone", "iscomplete"].includes(f.name.toLowerCase()),
+    (f) =>
+      f.type === "boolean" &&
+      ["done", "completed", "isdone", "iscomplete", "cancelled", "canceled", "iscancelled", "iscanceled"].includes(
+        f.name.toLowerCase(),
+      ),
   );
   if (doneField && record[doneField.name] === true) return true;
   return false;

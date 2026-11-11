@@ -4711,3 +4711,38 @@ test("isRecordClosedStatus also recognizes a sibling BOOLEAN completion field (r
     "an unrelated boolean field like 'active' must never be mistaken for a completion flag",
   );
 });
+
+/**
+ * Round 1889: the boolean-completion check above recognized "done"/
+ * "completed"/"isdone"/"iscomplete", but not "cancelled"/"isCancelled" --
+ * even though CLOSED_STATUS_VALUES (the sibling ENUM check just above it in
+ * this same function) already treats "cancelled"/"canceled" as terminal. An
+ * AI-generated spec can easily model cancellation as a plain boolean (e.g.
+ * a Booking/Order entity with a `cancelled` field instead of a `status`
+ * enum), and such a record's red "overdue" styling never cleared.
+ */
+test("isRecordClosedStatus also recognizes a sibling BOOLEAN 'cancelled' field (round 1889), mirroring the enum-side cancelled/canceled synonym pair", () => {
+  const bookingFields: Field[] = [
+    { name: "appointmentDate", type: "date", required: false },
+    { name: "cancelled", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, appointmentDate: "2020-01-01", cancelled: true }, bookingFields),
+    true,
+    "a cancelled booking is resolved even though it has no status/stage enum at all",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, appointmentDate: "2020-01-01", cancelled: false }, bookingFields),
+    false,
+    "a not-cancelled booking leaves the date-only overdue classification untouched",
+  );
+  const isCanceledFields: Field[] = [
+    { name: "appointmentDate", type: "date", required: false },
+    { name: "isCanceled", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, appointmentDate: "2020-01-01", isCanceled: true }, isCanceledFields),
+    true,
+    "the American-spelling 'is'-prefixed form (isCanceled) must also be recognized, case-insensitively",
+  );
+});

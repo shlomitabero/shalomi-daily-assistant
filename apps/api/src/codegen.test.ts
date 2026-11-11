@@ -30598,6 +30598,79 @@ test("the exported EntityView does not flag a record with a true boolean complet
 });
 
 /**
+ * Round 1889: isRecordClosedStatus's exported-app copy recognized "done"/
+ * "completed"/"isdone"/"iscomplete" as boolean-completion field names, but
+ * not "cancelled" -- even though the sibling ENUM check (CLOSED_STATUS_VALUES,
+ * just above in the same function) already treats "cancelled"/"canceled" as
+ * terminal. Same shape as the "done" boolean test above, but with a
+ * `cancelled` field on a Booking-shaped entity (no status/stage enum at all).
+ */
+test("the exported EntityView does not flag a record with a true boolean 'cancelled' completion field as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const bookingEntity = {
+    name: "Booking",
+    label: "Booking",
+    fields: [
+      { name: "customer", label: "Customer", type: "text", required: true },
+      { name: "dueDate", label: "Due date", type: "date", required: false },
+      { name: "cancelled", label: "Cancelled", type: "boolean", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, customer: "Still booked", dueDate: isoDateOffset(-5), cancelled: false },
+    { id: 2, customer: "Cancelled booking", dueDate: isoDateOffset(-5), cancelled: true },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Booking") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: bookingEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Still booked/.test(r.textContent ?? ""))!;
+      const cancelledRow = rows.find((r) => /Cancelled booking/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "a cancelled:false record with a 5-day-past dueDate must still be flagged overdue");
+      assert.equal(cancelledRow.querySelector(".date-overdue"), null, "a cancelled:true record with the identical past dueDate must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1323: ports the live preview's own new findFilterableFields fix
  * (a deadline-named date field's overdue/due-soon classification, already
  * used for the table cell's own red/amber styling right above, is now

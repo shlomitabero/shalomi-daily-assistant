@@ -2111,6 +2111,45 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the done milestone must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1889: isRecordClosedStatus's boolean-completion check recognized
+ * "done"/"completed"/"isdone"/"iscomplete", but not "cancelled" -- even
+ * though its own sibling ENUM check (CLOSED_STATUS_VALUES, just above in
+ * the same function) already treats "cancelled"/"canceled" as terminal.
+ * An entity modeling cancellation as a plain boolean (e.g. a Booking with
+ * a `cancelled` field instead of a `status` enum) got no such exclusion.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own boolean completion field is a cancelled flag (round 1889)", () => {
+  const bookingProject: Project = {
+    ...project,
+    description: "Appointment bookings",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Booking",
+          label: "Bookings",
+          fields: [
+            { name: "customer", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+            { name: "cancelled", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, bookingProject.id, bookingProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, bookingProject.id, bookingProject.spec.entities[0], { customer: "Dana", dueDate: "2026-01-01", cancelled: false }); // genuinely overdue
+  insertRecord(db, bookingProject.id, bookingProject.spec.entities[0], { customer: "Omer", dueDate: "2026-01-01", cancelled: true }); // already resolved
+
+  const twin = computeBusinessTwin(db, bookingProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the cancelled booking must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

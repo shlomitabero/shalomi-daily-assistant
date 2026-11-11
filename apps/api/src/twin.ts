@@ -814,8 +814,19 @@ function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): b
     const value = record[statusField.name];
     if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
   }
+  // Round 1889: widened to also recognize "cancelled"/"canceled" (and their
+  // "is"-prefixed forms), mirroring CLOSED_STATUS_VALUES's own synonym
+  // pairing for the enum case above and entityFormatting.ts's own matching
+  // widening -- a boolean `cancelled`/`isCancelled` field set to true was
+  // not recognized at all, so a cancelled record still counted as
+  // overdue/dueSoon in computeOverdueObservations/computeDueSoonObservations
+  // below.
   const doneField = fields.find(
-    (f) => f.type === "boolean" && ["done", "completed", "isdone", "iscomplete"].includes(f.name.toLowerCase()),
+    (f) =>
+      f.type === "boolean" &&
+      ["done", "completed", "isdone", "iscomplete", "cancelled", "canceled", "iscancelled", "iscanceled"].includes(
+        f.name.toLowerCase(),
+      ),
   );
   if (doneField && record[doneField.name] === true) return true;
   return false;
