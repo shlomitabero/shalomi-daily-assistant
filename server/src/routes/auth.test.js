@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { login } from './auth.js';
 import { verifyOwnerToken } from '../engine/auth.js';
-import { db, __resetForTests } from '../db/store.js';
+import { db, makeId, __resetForTests } from '../db/store.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -121,6 +121,55 @@ test('login rejects a request with no body at all instead of throwing', () => {
     const res = makeRes();
     login({ ip: uniqueIp() }, res);
     assert.equal(res.statusCode, 401);
+  });
+});
+
+test('login_attempt entries are pruned once they exceed the retention cap, oldest first', () => {
+  // A sustained brute-force attack now writes a real, permanent
+  // actions_log row per attempt (routes/auth.js's logLoginAttempt) -
+  // without pruning, that row count grows unbounded, and db/store.js's
+  // persist() rewrites the ENTIRE db.json file on every single write (to
+  // every table, not just this one), so that growth would progressively
+  // slow down every future write in the whole app. Pre-seeds directly at
+  // the real 500-entry cap (not via 500 real login() calls, which would
+  // just be a much slower way to set up the exact same starting state)
+  // with increasing timestamps, so the oldest one is unambiguous.
+  __resetForTests();
+  withOwnerPassword('the-real-password', () => {
+    const base = Date.parse('2020-01-01T00:00:00.000Z');
+    for (let i = 0; i < 500; i += 1) {
+      db.actions_log.insert({
+        id: makeId('act'), type: 'login_attempt', detail: { ip: `seed-${i}` },
+        result: 'failed', createdAt: new Date(base + i * 1000).toISOString(),
+      });
+    }
+    assert.equal(db.actions_log.where((a) => a.type === 'login_attempt').length, 500);
+
+    login({ ip: uniqueIp(), body: { password: 'wrong' } }, makeRes());
+
+    const logged = db.actions_log.where((a) => a.type === 'login_attempt');
+    assert.equal(logged.length, 500); // stayed at the cap, not 501
+    assert.equal(logged.some((a) => a.detail?.ip === 'seed-0'), false); // the oldest was pruned
+    assert.equal(logged.some((a) => a.detail?.ip === 'seed-499'), true); // a newer seed entry survives
+  });
+});
+
+test('login_attempt pruning never touches a different action type\'s entries', () => {
+  __resetForTests();
+  withOwnerPassword('the-real-password', () => {
+    const base = Date.parse('2020-01-01T00:00:00.000Z');
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: {}, result: 'success',
+      createdAt: new Date(base).toISOString(),
+    });
+    for (let i = 0; i < 500; i += 1) {
+      db.actions_log.insert({
+        id: makeId('act'), type: 'login_attempt', detail: { ip: `seed-${i}` },
+        result: 'failed', createdAt: new Date(base + i * 1000).toISOString(),
+      });
+    }
+    login({ ip: uniqueIp(), body: { password: 'wrong' } }, makeRes());
+    assert.equal(db.actions_log.where((a) => a.type === 'draft_product').length, 1);
   });
 });
 
