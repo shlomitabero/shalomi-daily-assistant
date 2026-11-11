@@ -139,6 +139,24 @@ test("clicking the field's rename button enters edit mode, and saving a real cha
 });
 
 /**
+ * Round 1944: confirmed live via Playwright keyboard-only tabbing through
+ * a real record add/edit form -- this button renders BEFORE the field's
+ * own input in every field-row (EntityPanel.tsx), and with no tabIndex
+ * override it was a real, unskippable Tab stop ahead of every single
+ * field on every record form, forcing a keyboard-only user to Tab twice
+ * per field and risking a reflexive Enter/Space here (expecting to be on
+ * the field itself) silently opening this rename editor instead.
+ */
+test("the rename button is excluded from the default Tab sequence (tabIndex=-1), so it doesn't sit ahead of every field's own input", async () => {
+  await withJsdom(async () => {
+    renderEditor(() => {});
+    const editButton = document.querySelector(".field-label-edit-btn") as HTMLElement;
+    assert.ok(editButton, "expected the rename button");
+    assert.equal(editButton.tabIndex, -1, "the rename button must not be a default Tab stop, so it never sits ahead of this field's own input in keyboard-only navigation");
+  });
+});
+
+/**
  * Same narrower (but real) Escape contract EntityLabelEditor.test.ts's
  * identical test documents -- doesn't exercise the `cancelling` ref guard
  * itself (jsdom doesn't fire a real "blur" on unmount the way real

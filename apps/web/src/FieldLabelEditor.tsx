@@ -133,6 +133,23 @@ export function FieldLabelEditor({
             onClick={startEditing}
             title={t("entity.renameFieldLabel")}
             aria-label={t("entity.renameFieldLabel")}
+            // Round 1944: confirmed live via Playwright keyboard-only
+            // tabbing through a record add/edit form -- with no tabIndex
+            // override, this button is a real, unskippable tab stop that
+            // lands BEFORE every field's own input (see EntityPanel.tsx's
+            // field-row: this editor renders first, then FieldInput), so
+            // a keyboard-only user had to Tab twice per field instead of
+            // once, and landing here on a reflexive Enter/Space (expecting
+            // to be on the field itself) silently opened this rename
+            // editor instead of doing anything related to data entry.
+            // This is a rare, secondary customization action, not part of
+            // the primary record-entry flow every other field-row control
+            // belongs to -- tabIndex={-1} keeps it reachable by click
+            // (its own doc comment above explains why it's a dedicated
+            // button rather than EntityLabelEditor's click-the-text-itself
+            // pattern) without forcing every Tab-only user through it on
+            // every single field, on every record form, in the app.
+            tabIndex={-1}
           >
             ✏️
           </button>
