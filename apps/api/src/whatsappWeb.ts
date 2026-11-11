@@ -195,6 +195,7 @@ export interface BaileysIncomingMessage {
     statusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
     lottieStickerMessage?: { message?: BaileysIncomingMessage["message"] };
     groupMentionedMessage?: { message?: BaileysIncomingMessage["message"] };
+    statusAddYours?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -538,6 +539,21 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // fell straight through to the final `return null` and vanished with
   // zero trace.
   if (message.groupMentionedMessage?.message) return describeIncomingMessage(message.groupMentionedMessage.message);
+  // Round 1953: `statusAddYours` (field 95) is confirmed against the
+  // installed Baileys protobuf (WAProto.proto) to be `optional
+  // FutureProofMessage statusAddYours`, the exact same wrapper shape as
+  // ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+  // groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+  // pollCreationMessageV4/commentMessage/statusMentionMessage/
+  // lottieStickerMessage/groupMentionedMessage just above (round 1888's same
+  // precedent applies: Baileys' own getFutureProofMessage helper doesn't
+  // list this field either, but the protobuf shape is the decisive signal,
+  // not that helper's own list). `statusAddYours` is WhatsApp's "Add Yours"
+  // Status sticker-chain reply -- ordinary consumer usage, the same tier as
+  // statusMentionMessage/groupMentionedMessage. Without this branch, it fell
+  // straight through to the final `return null` and vanished with zero
+  // trace.
+  if (message.statusAddYours?.message) return describeIncomingMessage(message.statusAddYours.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own

@@ -3556,3 +3556,41 @@ test("an incoming WhatsApp group-mention notification (groupMentionedMessage) is
   assert.equal(messages[0].body, "הזכירו אותך בקבוצה", "groupMentionedMessage must unwrap transparently to its inner message, not fall through to a silent drop");
   assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1953: `statusAddYours` (field 95) -- confirmed against the installed
+ * Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * statusAddYours = 95;`, the exact same wrapper shape as
+ * ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+ * groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+ * pollCreationMessageV4/commentMessage/statusMentionMessage/
+ * lottieStickerMessage/groupMentionedMessage (rounds
+ * 1142/1152/1445/1888/1901/1930/1933/1950/1952). Baileys' own
+ * getFutureProofMessage helper doesn't list this field either, but round
+ * 1888 already established that the protobuf shape is the decisive signal,
+ * not that helper's own list. `statusAddYours` is WhatsApp's "Add Yours"
+ * Status sticker-chain reply -- ordinary consumer usage. Without this
+ * branch, it fell straight through to the final `return null` and vanished
+ * with zero trace.
+ */
+test("an incoming WhatsApp 'Add Yours' status-sticker reply (statusAddYours) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { statusAddYours: { message: { conversation: "הצטרפתי לסטטוס שלך" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "הצטרפתי לסטטוס שלך", "statusAddYours must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
