@@ -2634,6 +2634,64 @@ test("computeImpact never appends a false disambiguation suffix to a field's lab
 });
 
 /**
+ * Round 1942: a live, reproducible refine against a template-built project
+ * ("Sales CRM", roles ["Sales Rep", "Manager"] -- a curated list bypassing
+ * heuristic.ts's matchRoles entirely) showed that an ordinary, role-
+ * unrelated refine instruction ("Add a priority field to Task") silently
+ * added "Admin"/"Member" to the project's roles (and matching personas),
+ * while the build stream's own Improvement History reported "No
+ * structural change" -- computeImpact only ever compared entities/fields,
+ * never roles/personas, so it had no way to notice or report this.
+ */
+test("computeImpact reports roles/personas that a refine's regenerated candidate spec added but the project didn't already have", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: ["Sales Rep user", "Manager user"],
+    roles: ["Sales Rep", "Manager"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  // Simulates generateSpec's own matchRoles filler landing on the refine's
+  // regenerated candidate -- "Sales Rep"/"Manager" survive (mergeRefinedSpec
+  // never drops an existing role), but "Admin"/"Member" are newly present.
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    personas: ["Sales Rep user", "Manager user", "Admin user", "Member user"],
+    roles: ["Sales Rep", "Manager", "Admin", "Member"],
+  };
+
+  const impact = computeImpact(previousSpec, nextSpec);
+  assert.deepEqual(impact.newRoleNames, ["Admin", "Member"], "the two roles absent from the project before this refine must be reported");
+  assert.deepEqual(impact.newPersonaNames, ["Admin user", "Member user"], "the two personas absent from the project before this refine must be reported");
+});
+
+test("computeImpact reports no new roles/personas when a refine's candidate only re-affirms roles/personas the project already has (case-insensitively)", () => {
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: ["Admin user"],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  // Same roles/personas, just re-cased by the fresh regeneration -- not a
+  // real addition, mirroring this function's own established
+  // case-insensitive convention for entities/fields (rounds 1065/1066).
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    personas: ["admin user"],
+    roles: ["admin"],
+  };
+
+  const impact = computeImpact(previousSpec, nextSpec);
+  assert.deepEqual(impact.newRoleNames, [], "a role that already existed (case-insensitively) must not be reported as new");
+  assert.deepEqual(impact.newPersonaNames, [], "a persona that already existed (case-insensitively) must not be reported as new");
+});
+
+/**
  * Round 915's finding: SpecProvider.generate (both HeuristicSpecProvider
  * and AnthropicSpecProvider) has no previousSpec parameter at all, so a
  * freshly regenerated nextSpec never carries a user's post-build

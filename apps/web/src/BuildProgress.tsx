@@ -156,6 +156,8 @@ interface ImpactDetail {
     retargetedFieldNames?: string[];
   }[];
   removedEntities?: { name: string; label: string }[];
+  newRoleNames?: string[];
+  newPersonaNames?: string[];
 }
 
 interface MigrationChangeDetail {
@@ -180,12 +182,30 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
   const { t } = useTranslation();
 
   if (agent === "Architect" && detail) {
-    const { newEntities, changedEntities, removedEntities } = detail as ImpactDetail;
-    if (newEntities.length === 0 && changedEntities.length === 0 && (removedEntities ?? []).length === 0) {
+    const { newEntities, changedEntities, removedEntities, newRoleNames, newPersonaNames } = detail as ImpactDetail;
+    if (
+      newEntities.length === 0 &&
+      changedEntities.length === 0 &&
+      (removedEntities ?? []).length === 0 &&
+      (newRoleNames ?? []).length === 0 &&
+      (newPersonaNames ?? []).length === 0
+    ) {
       return <p className="muted small">{t("build.detail.architect.noChange")}</p>;
     }
     return (
       <ul className="detail-list">
+        {(newRoleNames ?? []).length > 0 && (
+          <li>
+            {t("build.detail.architect.newRoles")}
+            {(newRoleNames ?? []).join(", ")}
+          </li>
+        )}
+        {(newPersonaNames ?? []).length > 0 && (
+          <li>
+            {t("build.detail.architect.newPersonas")}
+            {(newPersonaNames ?? []).join(", ")}
+          </li>
+        )}
         {newEntities.map((e) => (
           <li key={e.name}>
             {t("build.detail.architect.newScreen")}

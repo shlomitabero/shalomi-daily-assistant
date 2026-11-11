@@ -208,6 +208,8 @@ interface ArchitectImpactDetail {
     retargetedFieldNames?: string[];
   }[];
   removedEntities?: { name: string; label: string }[];
+  newRoleNames?: string[];
+  newPersonaNames?: string[];
 }
 
 /**
@@ -356,6 +358,12 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
   const detail = architectEvent?.detail as ArchitectImpactDetail | undefined;
   if (!detail) return t("preview.refineHistory.noSummary");
   const parts: string[] = [];
+  if ((detail.newRoleNames ?? []).length > 0) {
+    parts.push(`${t("build.detail.architect.newRoles")}${(detail.newRoleNames ?? []).join(", ")}`);
+  }
+  if ((detail.newPersonaNames ?? []).length > 0) {
+    parts.push(`${t("build.detail.architect.newPersonas")}${(detail.newPersonaNames ?? []).join(", ")}`);
+  }
   for (const e of detail.newEntities) {
     parts.push(`${t("build.detail.architect.newScreen")}${e.label}`);
   }

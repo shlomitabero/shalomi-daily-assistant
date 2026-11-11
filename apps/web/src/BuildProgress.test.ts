@@ -376,6 +376,43 @@ test("BuildProgress's Architect detail panel reports an entity the refine droppe
 });
 
 /**
+ * Round 1942: a live repro showed a refine that silently added "Admin"/
+ * "Member" to a project's roles/personas (heuristic.ts's matchRoles filler
+ * landing on a refine's regenerated candidate) still rendered this panel's
+ * "No structural change — everything already exists." message, since
+ * newEntities/changedEntities/removedEntities were all genuinely empty --
+ * this panel's own "any change at all" check never looked at roles/
+ * personas, the exact same blind spot round 377's own entity-removal fix
+ * above closed for removedEntities.
+ */
+test("BuildProgress's Architect detail panel reports new roles/personas instead of falsely claiming no structural change, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "…",
+        detail: { newEntities: [], changedEntities: [], newRoleNames: ["Admin", "Member"], newPersonaNames: ["Admin user"] },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = architectStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded, not the 'No structural change' message");
+    assert.match(detailList!.textContent ?? "", /Admin, Member/);
+    assert.match(detailList!.textContent ?? "", /Admin user/);
+  });
+});
+
+/**
  * Round 1467: the detail-toggle button never reported its own expand/collapse
  * state via aria-expanded, unlike EntityPanel.tsx's own columns-menu/collapse
  * toggles, which already use this convention for the identical disclosure-

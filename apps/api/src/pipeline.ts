@@ -113,6 +113,8 @@ interface ImpactSummary {
   }[];
   removedEntityNames: string[];
   removedEntities: { name: string; label: string }[];
+  newRoleNames: string[];
+  newPersonaNames: string[];
 }
 
 /**
@@ -411,12 +413,35 @@ export function computeImpact(previousSpec: ProductSpec | undefined, nextSpec: P
     .filter((e) => !nextEntityNames.has(e.name) && !nextEntityNamesLower.has(e.name.toLowerCase()))
     .map((e) => ({ name: e.name, label: entityDisplayLabel(e, entityLabels) }));
 
+  // Round 1942: every one of this function's checks above is scoped to
+  // entities/fields -- roles and personas (RoleChip/PersonaItem's own
+  // plain string lists, just as user-facing and user-editable post-build
+  // as any entity/field) silently fell through every single one of them.
+  // This isn't just a blind spot in the reporting: heuristic.ts's own
+  // matchRoles() unconditionally injects a generic "Admin" role (and
+  // "Member" whenever nothing else matched) into EVERY generateSpec()
+  // call, refines included -- so a template-built project (whose initial
+  // roles come from templates.ts's own curated list, never through
+  // matchRoles at all) gets these generic roles silently glued onto its
+  // spec by mergeRefinedSpec on its very first refine, whatever the
+  // refine instruction was actually about. Without this, that visible,
+  // permanent change to "WHO WILL USE THE APP" had summarizeRefineImpact
+  // (App.tsx) and AgentDetail's Architect branch (BuildProgress.tsx) both
+  // reporting "No structural change" -- a message flatly contradicted by
+  // what the user sees on screen the moment they scroll up.
+  const previousRolesLower = new Set((previousSpec?.roles ?? []).map((r) => r.toLowerCase()));
+  const newRoleNames = nextSpec.roles.filter((r) => !previousRolesLower.has(r.toLowerCase()));
+  const previousPersonasLower = new Set((previousSpec?.personas ?? []).map((p) => p.toLowerCase()));
+  const newPersonaNames = nextSpec.personas.filter((p) => !previousPersonasLower.has(p.toLowerCase()));
+
   return {
     newEntityNames: newEntities.map((e) => e.name),
     newEntities,
     changedEntities,
     removedEntityNames: removedEntities.map((e) => e.name),
     removedEntities,
+    newRoleNames,
+    newPersonaNames,
   };
 }
 

@@ -55,6 +55,34 @@ test("summarizeRefineImpact returns the no-summary key when no successful Archit
 });
 
 /**
+ * Round 1942: a live repro showed a refine that silently added "Admin"/
+ * "Member" to a project's roles/personas (heuristic.ts's matchRoles filler
+ * landing on a template-built project's first refine) had its Improvement
+ * History entry read "No structural change" -- summarizeRefineImpact only
+ * ever read detail.newEntities/changedEntities/removedEntities, never the
+ * roles/personas pipeline.ts's computeImpact now also reports.
+ */
+test("summarizeRefineImpact reports new roles/personas instead of falsely claiming no structural change", () => {
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [],
+        newRoleNames: ["Admin", "Member"],
+        newPersonaNames: ["Admin user", "Member user"],
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /Admin, Member/);
+  assert.match(summary, /Admin user, Member user/);
+  assert.doesNotMatch(summary, /noChange/);
+});
+
+/**
  * Regression test for a real gap found by round 377's Explore survey:
  * pipeline.ts's computeImpact now reports entities the refine dropped
  * from the spec (see pipeline.test.ts), but that detail is useless if
