@@ -190,6 +190,7 @@ export interface BaileysIncomingMessage {
     questionResponseMessage?: { text?: string };
     statusQuestionAnswerMessage?: { text?: string };
     commentMessage?: { message?: BaileysIncomingMessage["message"] };
+    encCommentMessage?: Record<string, never>;
   };
 }
 
@@ -480,6 +481,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // fell straight through to the final `return null` and vanished with
   // zero trace.
   if (message.commentMessage?.message) return describeIncomingMessage(message.commentMessage.message);
+  // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
+  // commentMessage just above (round 1901), the same relationship
+  // encReactionMessage/encEventResponseMessage already have with their own
+  // plaintext siblings reactionMessage/eventResponseMessage. Confirmed
+  // against the installed Baileys protobuf (WAProto.proto): EncCommentMessage
+  // is `{ targetMessageKey, encPayload, encIv }`, byte-for-byte the same
+  // shape as EncReactionMessage/EncEventResponseMessage. Its content can't be
+  // decrypted here, but detecting that a Channel/Status comment arrived at
+  // all needs no decryption, the same "detect presence only" bar those two
+  // siblings already clear below. Without this, a comment delivered this way
+  // fell straight through to the final `return null` and vanished with zero
+  // trace, even though the plaintext form was already visible (round 1901).
+  if (message.encCommentMessage) return "[Comment]";
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";

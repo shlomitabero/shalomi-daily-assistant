@@ -3176,6 +3176,37 @@ test("an incoming WhatsApp Channel/Status comment (commentMessage) is logged wit
 });
 
 /**
+ * Round 1922: encCommentMessage is the genuinely-encrypted sibling of
+ * commentMessage just above (round 1901), the same relationship
+ * encReactionMessage/encEventResponseMessage already have with their own
+ * plaintext siblings. Confirmed against the installed Baileys protobuf
+ * (WAProto.proto): EncCommentMessage is `{ targetMessageKey, encPayload,
+ * encIv }`, byte-for-byte the same shape as EncReactionMessage/
+ * EncEventResponseMessage. Its content can't be decrypted here, but
+ * detecting that a Channel/Status comment arrived at all needs no
+ * decryption, the same bar those two siblings already met.
+ */
+test("an incoming WhatsApp encrypted Channel/Status comment (encCommentMessage) is logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { encCommentMessage: {} } }],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "[Comment]");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1600: encReactionMessage is the separate, genuinely-encrypted
  * sibling of reactionMessage (round 1088) this file's own doc comment
  * already named but never actually handled. Confirmed directly against
