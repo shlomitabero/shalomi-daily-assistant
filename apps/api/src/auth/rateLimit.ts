@@ -83,12 +83,32 @@ export function createRateLimiter(opts: {
 
     const key = opts.keyGenerator(req);
     const existing = buckets.get(key);
+    // Round 1903: delete an already-tracked key before any (re-)set below,
+    // so its position always moves to the END of Map iteration order --
+    // matching the eviction block above's own assumption that "earliest in
+    // iteration order" means "least recently touched". Without this,
+    // Map.prototype.set() on an already-present key updates the value in
+    // place without changing its iteration position (verified against real
+    // Map semantics), so a key's position stayed pinned at wherever it was
+    // FIRST ever inserted, no matter how recently it was actually touched.
+    // That let an attacker evict any specific, already-blocked bucket on
+    // demand: flood this same limiter with enough brand-new throwaway keys
+    // to push the map past MAX_TRACKED_KEYS, and the eviction loop above
+    // would delete the victim's stale-positioned (but actively reused)
+    // bucket before touching any of the flood's own newer entries --
+    // resetting the victim's count to 0 and bypassing the limit it had
+    // just correctly enforced. Exploitable today via forgotPasswordRateLimiter/
+    // calendarFeedRateLimiter/webhookInRateLimiter, the three limiters
+    // MAX_TRACKED_KEYS's own comment already names as keyed by a free-form,
+    // pre-validation value an attacker can vary for free.
+    if (existing) buckets.delete(key);
     if (!existing || now - existing.windowStart > opts.windowMs) {
       buckets.set(key, { count: 1, windowStart: now });
       next();
       return;
     }
     existing.count++;
+    buckets.set(key, existing);
     if (existing.count > opts.max) {
       next(new HttpError(429, opts.message, "RATE_LIMITED"));
       return;

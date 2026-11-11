@@ -75,6 +75,66 @@ test("createRateLimiter evicts the oldest-inserted bucket once a flood of brand-
   assert.equal(runMiddleware(limiter, oldest).blocked, false, "oldest-key's bucket must have been evicted once the flood pushed the map past the cap, granting it a fresh allowance instead of staying blocked forever");
 });
 
+/**
+ * Round 1903: the overflow-eviction block (round 1880) assumes Map
+ * iteration order is a recency proxy -- "the oldest-inserted buckets ...
+ * are evicted first" -- but Map.prototype.set() on an ALREADY-EXISTING key
+ * updates the value in place without moving its iteration position
+ * (verified directly against real Map semantics). Since every repeat hit
+ * on the same key went through that no-op-position path (either
+ * `existing.count++` with no re-set at all, or `.set()` on a now-expired
+ * existing key), an actively-reused bucket kept the insertion position
+ * from the very FIRST time it was ever created -- while every brand-new
+ * throwaway key from an ongoing flood was always appended at the end, so
+ * it was always the LAST thing evicted. This let an attacker evict a
+ * specific, already-blocked victim bucket on demand by flooding the same
+ * limiter with enough distinct junk keys, resetting the victim's count to
+ * 0 and bypassing the limit it had just correctly enforced -- exactly the
+ * exploit path open on forgotPasswordRateLimiter (keyed by req.body.email,
+ * pre-validation) today.
+ */
+test("createRateLimiter evicts the truly least-recently-touched bucket, not just whichever bucket happens to have been inserted first", () => {
+  const limiter = createRateLimiter({ windowMs: 60 * 60_000, max: 3, keyGenerator: (req) => req.ip ?? "unknown", message: "too many" });
+
+  // victim is inserted FIRST and hits its own limit (blocked).
+  const victim = fakeRequest("victim-key");
+  for (let i = 0; i < 3; i++) {
+    assert.equal(runMiddleware(limiter, victim).blocked, false, `victim's request ${i + 1} of 3 must not be blocked`);
+  }
+  assert.equal(runMiddleware(limiter, victim).blocked, true, "victim's 4th request, exceeding max=3, must be blocked");
+
+  // another-key is inserted SECOND, touched once, and then never again --
+  // it is genuinely the least-recently-touched bucket from this point on.
+  const another = fakeRequest("another-key");
+  assert.equal(runMiddleware(limiter, another).blocked, false);
+
+  // victim is touched AGAIN -- still blocked, but this is the critical
+  // recency signal: victim is now MORE recently touched than another-key,
+  // even though victim was inserted first. A correct "least-recently-
+  // touched" eviction policy must now treat another-key, not victim, as
+  // the one closest to eviction.
+  assert.equal(runMiddleware(limiter, victim).blocked, true);
+
+  // Flood with just enough brand-new, never-expiring keys that the map
+  // sits at exactly MAX_TRACKED_KEYS + 1 (one over the cap) going into the
+  // very next request -- so that request's eviction check evicts EXACTLY
+  // one bucket, isolating which of victim/another-key it picks.
+  for (let i = 0; i < MAX_TRACKED_KEYS - 1; i++) {
+    runMiddleware(limiter, fakeRequest(`flood-key-${i}`));
+  }
+
+  assert.equal(
+    runMiddleware(limiter, victim).blocked,
+    true,
+    "victim -- the more RECENTLY touched key -- must still be blocked: without the round-1903 fix, victim's position never moved off its original (first-ever) insertion slot despite being touched again after another-key, so it was evicted ahead of the genuinely stale another-key",
+  );
+  assert.equal(
+    runMiddleware(limiter, another).blocked,
+    false,
+    "another-key -- the genuinely least-recently-touched key -- must be the one evicted, granting it a fresh allowance",
+  );
+});
+
 test("createRateLimiter resets a key's count once its window has fully elapsed", () => {
   const realNow = Date.now;
   let mockedNow = 1_000_000;
