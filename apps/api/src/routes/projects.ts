@@ -830,11 +830,27 @@ export function deriveFieldName(label: string, existingNames: string[]): string 
 export function deriveScreensForNewEntity(newEntityName: string, existingEntities: Entity[], screens: Screen[]): Screen[] {
   for (let i = existingEntities.length - 1; i >= 0; i -= 1) {
     const templateName = existingEntities[i].name;
-    const templateScreens = screens.filter((s) => s.entity === templateName);
+    // Round 1906: case-insensitive, the same gap round 1905 fixed on this
+    // route's DELETE-entity screens filter -- mergeRefinedSpec keeps an
+    // existing entity's ORIGINAL-cased name but takes the candidate's own
+    // (possibly differently-cased) screens verbatim, so `screens` here can
+    // carry an entity string that differs in case from `existingEntities`'
+    // own declared name for that same logical entity. An exact-case filter
+    // wrongly treated that entity as having no tagged screens, silently
+    // falling through to an earlier (less representative) template or the
+    // generic List+Form-only fallback below. Splitting on `s.entity` (the
+    // screen's own actual casing, guaranteed present by the filter above)
+    // rather than `templateName` matters too: a screen generated alongside
+    // a differently-cased entity has its own `name` built with THAT same
+    // casing (e.g. "customer List"), so splitting on the canonical
+    // `templateName` ("Customer") would silently fail to find the
+    // substring and leave the old entity's name in place instead of the
+    // new one.
+    const templateScreens = screens.filter((s) => s.entity?.toLowerCase() === templateName.toLowerCase());
     if (templateScreens.length === 0) continue;
     return templateScreens.map((s) => ({
       ...s,
-      name: s.name.split(templateName).join(newEntityName),
+      name: s.name.split(s.entity ?? templateName).join(newEntityName),
       entity: newEntityName,
     }));
   }

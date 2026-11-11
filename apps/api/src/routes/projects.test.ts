@@ -122,6 +122,47 @@ test("deriveScreensForNewEntity mirrors a List-only shape (templates.ts's shape)
 });
 
 /**
+ * Round 1906: mergeRefinedSpec (packages/spec-engine/src/index.ts) keeps an
+ * existing entity's ORIGINAL-cased name on a case-insensitive match, but
+ * takes the candidate's own (possibly differently-cased) screens array
+ * verbatim -- the same mechanism round 1905 already fixed for the
+ * DELETE-entity route's screens-removal filter. This left the live
+ * `entities`/`screens` inputs to this function free to disagree in case for
+ * the same logical entity, and the exact-case filter below treated that
+ * entity as having no tagged screens at all, silently falling through to
+ * an earlier, less representative template. Splitting on `s.entity` (the
+ * screen's own actual casing) rather than `templateName` (the entities
+ * array's own casing) also matters: a screen generated alongside a
+ * differently-cased entity has its own `name` built with THAT casing, so
+ * splitting on the canonical `templateName` would silently fail to find
+ * the substring and leave the old entity's name baked into the new one's
+ * screen names.
+ */
+test("deriveScreensForNewEntity still mirrors the LAST entity's own screens when spec.screens carries a different letter-case spelling of that entity's name than spec.entities does", () => {
+  const entities = [
+    { name: "Customer", label: "Customer", fields: [] },
+    { name: "Deal", label: "Deal", fields: [] },
+  ];
+  const screens = [
+    { name: "Dashboard", type: "dashboard" as const },
+    // Customer's own shape is deliberately DIFFERENT (List-only) from
+    // Deal's (List+Form) below, so that silently falling through to this
+    // earlier entity -- the exact-case bug's own failure mode -- produces
+    // a VISIBLY WRONG shape, not just a coincidentally-identical one.
+    { name: "Customer", type: "list" as const, entity: "Customer" },
+    // "deal" here intentionally does not match entities' own "Deal" --
+    // the exact entities/screens casing mismatch mergeRefinedSpec's own
+    // verbatim-candidate-screens behavior can produce.
+    { name: "deal List", type: "list" as const, entity: "deal" },
+    { name: "deal Form", type: "form" as const, entity: "deal" },
+  ];
+  assert.deepEqual(deriveScreensForNewEntity("Invoice", entities, screens), [
+    { name: "Invoice List", type: "list", entity: "Invoice" },
+    { name: "Invoice Form", type: "form", entity: "Invoice" },
+  ]);
+});
+
+/**
  * Round 1031: this fallback used to emit a single plain List screen --
  * templates.ts's own pre-round-1028 minimal shape. Now that every real
  * generator (heuristic.ts, templates.ts, and anthropic.ts as of this same
