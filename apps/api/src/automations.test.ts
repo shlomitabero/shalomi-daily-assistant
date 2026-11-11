@@ -1062,6 +1062,69 @@ test("runAutomationsForRecordChange still fires a field_equals rule and interpol
 });
 
 /**
+ * Round 1895: round 1188's own fix above (resolveStoredFieldName) assumes
+ * `record` is always keyed by the entity's CURRENT field casing -- true for
+ * every real trigger, since repository.ts's rowToRecord always produces
+ * that shape fresh. But routes/projects.ts's manual retry route
+ * (POST .../runs/:runId/retry) replays a FROZEN recordSnapshot -- captured
+ * at the ORIGINAL failed fire's own then-current casing -- straight into
+ * fireRule, completely bypassing rowToRecord. If a case-only rename (which
+ * migrate.ts deliberately never disables a referencing rule for) happens
+ * between that original failure and the retry, resolveStoredFieldName
+ * resolves the rule's own old-cased toField/{{placeholder}} reference to
+ * the entity's NEW casing, then looks that new-cased key up on a record
+ * object that still only has the OLD-cased key -- a lookup miss. For
+ * toField this misreports a perfectly good phone number as "no value in
+ * the configured phone-number field"; for a template placeholder it's
+ * worse, since interpolateTemplate fails open and leaves the literal,
+ * unresolved "{{fieldName}}" text sitting in a real outbound WhatsApp
+ * message -- the exact user-facing failure mode round 961's own
+ * disableAutomationRulesForField fix was built to catch, just reintroduced
+ * through this one retry-specific path that fix never anticipated.
+ */
+test("fireRule resolves a toField destination and template placeholders against a STALE recordSnapshot whose keys predate a later case-only field rename", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_deleted",
+    actionType: "send_whatsapp",
+    toMode: "field",
+    toField: "customerPhone", // authored against the OLD casing
+    messageTemplate: "Hi {{customerName}}, your {{status}} order is ready!", // {{status}} also OLD casing
+  });
+  // The entity has SINCE been case-renamed: "status" -> "Status",
+  // "customerPhone" -> "CustomerPhone" -- same fields, same types, just a
+  // later live refine's recasing (migrate.ts's own prevFieldByLowerName
+  // leniency never disables the rule above for this).
+  const renamedEntity: Entity = {
+    ...orderEntity,
+    fields: orderEntity.fields.map((f) =>
+      f.name === "status" ? { ...f, name: "Status" } : f.name === "customerPhone" ? { ...f, name: "CustomerPhone" } : f,
+    ),
+  };
+  // A STALE recordSnapshot, frozen at the ORIGINAL failed fire -- BEFORE
+  // the rename -- so its own keys still use the old casing, exactly what
+  // the manual retry route replays via JSON.parse(run.recordSnapshot).
+  const staleRecord = { id: 1, customerName: "Dana", customerPhone: "972501234567", status: "Delivered" };
+  const { manager, sendCalls } = createFakeWhatsApp({ connected: true });
+
+  await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, renamedEntity, rule, staleRecord, UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+
+  assert.equal(
+    sendCalls.length,
+    1,
+    "the destination phone must still resolve from the stale snapshot's old-cased key, not fail as 'no value in the configured phone-number field'",
+  );
+  assert.equal(sendCalls[0]!.to, "972501234567");
+  assert.equal(
+    sendCalls[0]!.body,
+    "Hi Dana, your Delivered order is ready!",
+    "the template's {{status}} placeholder must resolve to the stale snapshot's real value, not leak the literal unresolved placeholder text",
+  );
+});
+
+/**
  * Round 786: before this round, a message template referencing a `file`
  * field (e.g. "{{invoice}}") only ever sent the bare filename as plain
  * text -- a customer never actually received the file itself, even though

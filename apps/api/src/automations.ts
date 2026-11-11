@@ -158,6 +158,30 @@ function resolveStoredFieldName(entity: Entity, fieldName: string): string {
 }
 
 /**
+ * Round 1895: resolveStoredFieldName above resolves a rule's own stored
+ * field reference to the entity's CURRENT casing -- correct for every real
+ * trigger, since repository.ts's rowToRecord always keys `record` by that
+ * same current casing fresh on every call. But routes/projects.ts's manual
+ * retry route replays a FROZEN recordSnapshot (JSON.parse(run.
+ * recordSnapshot)) straight into fireRule, completely bypassing
+ * rowToRecord -- if a case-only rename happens between the original failed
+ * fire and the retry (migrate.ts deliberately never disables a
+ * referencing rule for one), that snapshot's own keys still carry the OLD
+ * casing current at the time it was captured, so a plain
+ * `record[resolvedCurrentCasingName]` lookup misses even though the real
+ * value is sitting right there under the old key. Falls back to a
+ * case-insensitive scan of record's own keys before giving up -- a no-op
+ * for every live, current-cased record (the exact-match branch above
+ * already succeeds there), so this only ever changes behavior for the
+ * stale-snapshot case it exists for.
+ */
+function readRecordField(record: EntityRecord, fieldName: string): unknown {
+  if (fieldName in record) return record[fieldName];
+  const key = Object.keys(record).find((k) => k.toLowerCase() === fieldName.toLowerCase());
+  return key === undefined ? undefined : record[key];
+}
+
+/**
  * Mirrors routes/projects.ts's own deleteUploadedFile -- the only other
  * place that ever turns a file field's stored `{url, name, size,
  * mimeType}` descriptor back into a real path on disk (uploadsDir/
@@ -221,7 +245,7 @@ export function findTemplateFileAttachment(
     const fieldName = resolveStoredFieldName(entity, match[1]);
     const field = entity.fields.find((f) => f.name === fieldName && f.type === "file");
     if (!field) continue;
-    const rawValue = record[fieldName];
+    const rawValue = readRecordField(record, fieldName);
     if (typeof rawValue !== "string" || rawValue === "") continue;
     let parsed: { url?: unknown; name?: unknown; mimeType?: unknown };
     try {
@@ -273,7 +297,7 @@ export function findAllTemplateFileAttachments(
     const field = entity.fields.find((f) => f.name === fieldName && f.type === "file");
     if (!field) continue;
     seenFieldNames.add(fieldName);
-    const rawValue = record[fieldName];
+    const rawValue = readRecordField(record, fieldName);
     if (typeof rawValue !== "string" || rawValue === "") continue;
     let parsed: { url?: unknown; name?: unknown; mimeType?: unknown };
     try {
@@ -356,7 +380,7 @@ const PHONE_FIELD_NAME_HINTS = ["phone", "mobile", "phonenumber", "mobilenumber"
 export function interpolateTemplate(template: string, entity: Entity, record: EntityRecord, lang: Lang): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, rawFieldName: string) => {
     const fieldName = resolveStoredFieldName(entity, rawFieldName);
-    const value = record[fieldName];
+    const value = readRecordField(record, fieldName);
     if (value === null || value === undefined) return match;
     const field = entity.fields.find((f) => f.name === fieldName);
     if (field?.type === "boolean") return value ? "TRUE" : "FALSE";
@@ -1158,7 +1182,7 @@ async function fireEmailAction(
   // can't be resolved either and the existing `record ?` guard below
   // already yields null regardless.
   const resolvedToField = entity && rule.toField ? resolveStoredFieldName(entity, rule.toField) : rule.toField;
-  const to = rule.toMode === "static" ? rule.toEmail : resolvedToField && record ? record[resolvedToField] : null;
+  const to = rule.toMode === "static" ? rule.toEmail : resolvedToField && record ? readRecordField(record, resolvedToField) : null;
   if (!to || typeof to !== "string" || !to.trim()) {
     // Round 1422: mirrors fireRule's own WhatsApp branch, which already
     // distinguishes these two cases with separate messages/i18n codes
@@ -1402,7 +1426,7 @@ export async function fireRule(
   // Round 1188: resolve against the entity's current field casing -- see
   // resolveStoredFieldName's own doc comment.
   const resolvedToField = rule.toField ? resolveStoredFieldName(entity, rule.toField) : null;
-  const rawTo = rule.toMode === "static" ? rule.toNumber : resolvedToField ? record[resolvedToField] : null;
+  const rawTo = rule.toMode === "static" ? rule.toNumber : resolvedToField ? readRecordField(record, resolvedToField) : null;
   // Round 1321: a phone-like-named field can end up typed "number" (the AI
   // spec generator has no way to know "phone" should be text, and a phone
   // number "looks numeric"), in which case repository.ts stores and
