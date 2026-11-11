@@ -1806,6 +1806,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       "work order", "field service", "service call", "repair job", "maintenance request",
       "קריאת שירות", "קריאות שירות", "עבודת תחזוקה", "טכנאי", "אינסטלטור", "חשמלאי",
+      // Round 1931: a locksmith is the exact same kind of licensed
+      // field-service trade this block's own round-1811 doc comment already
+      // names ("plumbers, electricians, appliance/AC technicians,
+      // handymen"), but was never added -- "a locksmith business tracking
+      // jobs and customers" matched no WorkOrder keyword at all and fell
+      // through to the generic Customer fallback. "locksmith"/"מנעולן" have
+      // no other common meaning (unlike "gym"/"clinic"/"service"), so this
+      // is not the bare-ambiguous-word pitfall this file's header warns
+      // against.
+      "מנעולן", "מנעולנים",
       // "עבודת תחזוקה" (maintenance job) had no plural entry (round 581).
       // Its plural "עבודות תחזוקה" swaps the word-final ה for ות mid-word,
       // the same construct-state gap shape rounds 576-580 already found
@@ -1821,6 +1831,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // Customer fallback. \b-bounded with the same "(s)?" plural handling
       // used throughout this file (e.g. /\bmechanic(s)?\b/ above).
       /\bplumber(s)?\b/, /\belectrician(s)?\b/, /\btechnician(s)?\b/, /\bhandyman\b/, /\bhandymen\b/,
+      /\blocksmith(s)?\b/,
       "hvac", "plumbing",
       // Round 1816: a tailoring/alterations shop is an equally common
       // small-business vertical as the daycare/salon/spa ones rounds

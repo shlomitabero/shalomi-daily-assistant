@@ -1695,6 +1695,25 @@ test("WorkOrder's English profession keywords (plumber/electrician/technician/HV
   assert.ok(handyman.entities.some((e) => e.name === "WorkOrder"), "'handyman' alone must match WorkOrder");
 });
 
+// Round 1931: a locksmith is the exact same kind of licensed field-service
+// trade this block's own round-1811 doc comment already names ("plumbers,
+// electricians, appliance/AC technicians, handymen"), but "locksmith"/
+// "מנעולן" were never added -- "a locksmith business tracking jobs and
+// customers" matched no WorkOrder keyword at all, fell through to the
+// generic Customer fallback, and got recommended "No payments" despite
+// being a textbook paid trade business (WorkOrder is in BILLING_ENTITY_NAMES).
+test("WorkOrder's locksmith keyword (English + Hebrew) matches and flips the payment recommendation to Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const locksmith = await provider.generate("A locksmith business tracking jobs and customers.");
+  assert.ok(locksmith.entities.some((e) => e.name === "WorkOrder"), "'locksmith' alone must match WorkOrder");
+  assert.equal(locksmith.openQuestions[0].recommendation, "Stripe", "a locksmith business must be recommended Stripe, not 'No payments'");
+
+  const locksmithHe = await provider.generate("עסק של מנעולן למעקב אחרי עבודות ולקוחות.");
+  assert.ok(locksmithHe.entities.some((e) => e.name === "WorkOrder"), "'מנעולן' alone must match WorkOrder");
+  assert.equal(locksmithHe.openQuestions[0].recommendation, "Stripe", "a Hebrew locksmith business must be recommended Stripe, not 'בלי תשלומים'");
+});
+
 // Round 1816: a tailoring/alterations shop is the same small-business
 // vertical gap as round 1811's plumber/electrician/handyman fix -- no
 // WorkOrder keyword matched it at all, so it fell through to the generic
