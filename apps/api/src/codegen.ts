@@ -6902,7 +6902,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // surfaces the real error instead.
   async function commitPendingDelete(pending) {
     const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(entity.name, e.id, e.record)));
-    const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
+    // Round 1891: see the live preview's own commitPendingDelete comment --
+    // a NOT_FOUND rejection means another tab/collaborator already deleted
+    // this exact record first, so it's treated as a success (pinned-record
+    // cleanup included, never restored, never folded into the error
+    // banner) instead of the stuck, endlessly-repeatable restore+error.
+    const notFound = new Set(
+      pending.entries.filter((_, i) => {
+        const r = results[i];
+        return r.status === "rejected" && r.reason.code === "NOT_FOUND";
+      }),
+    );
+    const failed = pending.entries.filter((e, i) => results[i].status === "rejected" && !notFound.has(e));
     // Round 1595: see the live preview's own commitPendingDelete comment --
     // a pinned record's id must be forgotten once its delete actually
     // succeeded, not left in storage forever.
@@ -6911,7 +6922,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
     if (failed.length === 0) return;
     setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
-    const firstFailure = results.find((r) => r.status === "rejected");
+    const firstFailure = results.find((r, i) => r.status === "rejected" && !notFound.has(pending.entries[i]));
     setError(
       failed.length === pending.entries.length
         ? firstFailure.reason.message

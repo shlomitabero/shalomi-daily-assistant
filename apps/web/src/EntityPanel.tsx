@@ -4148,7 +4148,22 @@ export function EntityPanel({
     // here already falls into this function's own existing restore/error
     // path below, same as any other delete failure.
     const results = await Promise.allSettled(pending.entries.map((e) => deleteRecord(projectId, entity.name, e.id, e.record)));
-    const failed = pending.entries.filter((_, i) => results[i].status === "rejected");
+    // Round 1891: a NOT_FOUND rejection means another tab/collaborator
+    // already deleted this exact record during this tab's own deferred
+    // UNDO_WINDOW_MS -- the outcome this click wanted (the record gone)
+    // already happened, so it's treated the same as a genuine success
+    // below (pinned-record cleanup included, never restored, never
+    // folded into the error banner), mirroring round 1864/1873/1874's
+    // own NOT_FOUND handling for this identical "ghost row" race on
+    // handleSubmit/commitInlineEdit/handleBulkUpdate -- just never swept
+    // into this older, more fundamental delete flow until now.
+    const notFound = new Set(
+      pending.entries.filter((_, i) => {
+        const r = results[i];
+        return r.status === "rejected" && (r.reason as Error & { code?: string }).code === "NOT_FOUND";
+      }),
+    );
+    const failed = pending.entries.filter((e, i) => results[i].status === "rejected" && !notFound.has(e));
     // Round 1595: a pinned record's id never got removed from its own
     // store once the real delete actually succeeded -- see
     // removePinnedRecord's own doc comment (pinnedRecordsPreference.ts)
@@ -4160,7 +4175,9 @@ export function EntityPanel({
     }
     if (failed.length === 0) return;
     setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
-    const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+    const firstFailure = results.find(
+      (r, i): r is PromiseRejectedResult => r.status === "rejected" && !notFound.has(pending.entries[i]),
+    )!;
     setError(
       failed.length === pending.entries.length
         ? (firstFailure.reason as Error).message

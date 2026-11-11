@@ -1611,6 +1611,77 @@ test("EntityPanel restores only the records whose real delete actually failed on
 });
 
 /**
+ * Round 1891: the bulk counterpart of the sibling single-delete NOT_FOUND
+ * test below -- one selected record (id 1) was already deleted by another
+ * tab/collaborator before this tab's own deferred bulk DELETE reached the
+ * server (404 NOT_FOUND), while a second (id 2) genuinely fails for a real
+ * reason (RECORD_HAS_DEPENDENT_RECORDS). Confirms the two are NOT treated
+ * alike: id 1 stays gone (dropped, not restored) exactly like the record
+ * that actually succeeded, while id 2 is restored -- and the partial-
+ * failure count only names the one genuine failure ("1 of 2", not "2 of
+ * 2"), so a NOT_FOUND ghost-row never inflates the reported failure count.
+ */
+test("EntityPanel's bulk delete treats a NOT_FOUND entry (already deleted elsewhere) as succeeded, restoring only the entry that genuinely failed", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/1") {
+        return new Response(JSON.stringify({ error: "Record 1 not found in Deal", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/2") {
+        return new Response(
+          JSON.stringify({ error: "another record still refers to it", code: "RECORD_HAS_DEPENDENT_RECORDS" }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const remainingRow = document.querySelector("table tbody tr");
+      assert.match(remainingRow!.textContent ?? "", /Globex/, "only the genuinely-failed record must be restored -- the NOT_FOUND record must stay gone, not come back as a ghost row");
+      assert.match(
+        document.querySelector(".error")?.textContent ?? "",
+        /1 of 2 records could not be deleted/,
+        "the failure count must name only the real failure -- a NOT_FOUND (already deleted elsewhere) must not inflate it to 2 of 2",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: once rows are selected, the only ways to leave
  * selection mode were to actually commit a bulk delete/duplicate/update
  * (mutating data just to escape the mode) or manually uncheck every row
@@ -10276,6 +10347,73 @@ test("EntityPanel restores the row and shows an error when the deferred real del
         document.querySelector(".error")?.textContent ?? "",
         /another record still refers to it/,
         "the real failure must be surfaced as a visible error, not silently swallowed",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 1891: a genuinely new DELETE-vs-DELETE instance of the "ghost row"
+ * race already fixed on the UPDATE side (handleSubmit/commitInlineEdit/
+ * handleBulkUpdate, rounds 1864/1873/1874) -- a second tab/collaborator can
+ * independently delete this exact record during THIS tab's own deferred
+ * UNDO_WINDOW_MS, so this tab's own later real DELETE 404s with a plain
+ * NOT_FOUND (not RECORD_HAS_DEPENDENT_RECORDS/RECORD_MODIFIED_SINCE_DELETE
+ * -- traced end to end: deleteRecord in packages/db/src/repository.ts
+ * throws a bare NotFoundError, the route's own catch only special-cases
+ * the FK-constraint message, and app.ts's central handler converts
+ * NotFoundError to {code: "NOT_FOUND"}). The outcome this click wanted
+ * (the record gone) already happened, so this confirms the row stays
+ * gone with no stuck/repeatable error, and pinned-record cleanup still
+ * runs exactly as it would for a real success -- mirroring the sibling
+ * test just above this one for a genuine delete failure.
+ */
+test("EntityPanel's deferred delete silently succeeds (no error, pinned-id cleanup still runs) when the real DELETE 404s NOT_FOUND because another tab/collaborator already deleted it first", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/1") {
+        return new Response(JSON.stringify({ error: "Record 1 not found in Deal", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const pinButton = document.querySelector(".record-pin") as HTMLButtonElement;
+      fireEvent.click(pinButton);
+      await waitForCondition(() => pinButton.className === "record-pin record-pin-active");
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".danger") as HTMLButtonElement);
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must disappear from view immediately, as before");
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(document.querySelectorAll("table tbody tr").length, 0, "the row must stay gone -- a 404 NOT_FOUND here means someone else already deleted it, not that this delete failed");
+      assert.equal(document.querySelector(".error"), null, "no error banner must be shown -- the outcome this click wanted (the record gone) already happened");
+      assert.deepEqual(
+        getPinnedRecordIds("proj1", "Deal", "user1"),
+        new Set(),
+        "the deleted record's own pinned id must still be forgotten, exactly as it would be for a genuine success",
       );
     } finally {
       globalThis.fetch = originalFetch;

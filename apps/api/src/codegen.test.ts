@@ -3899,6 +3899,77 @@ test("the exported EntityView's commitPendingDelete restores the row and surface
 });
 
 /**
+ * Round 1891: parity port of the identical live-preview fix -- a NOT_FOUND
+ * rejection means another tab/collaborator already deleted this exact
+ * record first (traced end to end: deleteRecord in server.js's own
+ * repository layer throws a bare NotFoundError for a missing row, and the
+ * DELETE route's central error handler converts that to {code:
+ * "NOT_FOUND"}, distinct from the RECORD_HAS_DEPENDENT_RECORDS code the
+ * sibling test above covers). The outcome this click wanted (the record
+ * gone) already happened, so this confirms a NOT_FOUND entry is dropped
+ * silently (pinned-id cleanup still runs, same as a real success) while a
+ * genuinely-failing sibling entry in the same batch is still restored
+ * with its real error shown.
+ */
+test("the exported EntityView's commitPendingDelete treats a NOT_FOUND entry as succeeded (dropped, pinned-id cleanup runs), restoring only an entry that genuinely failed", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const commitPendingDeleteSrc = entityViewJsx.match(/async function commitPendingDelete\(pending\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(commitPendingDeleteSrc, "expected to find an async commitPendingDelete in generated output");
+
+  let capturedRecords: unknown;
+  let capturedError: string | undefined;
+  const removedPinnedIds: number[] = [];
+  const fn = new Function(
+    "entity",
+    "restoreRecordAt",
+    "setRecords",
+    "setError",
+    "deleteRecord",
+    "removePinnedRecord",
+    `${commitPendingDeleteSrc}\nreturn commitPendingDelete;`,
+  )(
+    { name: "Courier" },
+    (records: unknown[], record: unknown, index: number) => {
+      const copy = records.slice();
+      copy.splice(index, 0, record);
+      return copy;
+    },
+    (updater: (prev: unknown[]) => unknown[]) => {
+      capturedRecords = updater(["A", "C"]);
+    },
+    (msg: string) => {
+      capturedError = msg;
+    },
+    async (_entityName: string, id: number) => {
+      if (id === 7) throw Object.assign(new Error("Record 7 not found in Courier"), { code: "NOT_FOUND" });
+      throw new Error("Cannot delete this record -- another record still references it through a relation field");
+    },
+    (_entityName: string, id: number) => {
+      removedPinnedIds.push(id);
+    },
+  );
+
+  await fn({
+    entries: [
+      { id: 7, record: "B", index: 1 },
+      { id: 9, record: "D", index: 1 },
+    ],
+  });
+
+  assert.deepEqual(
+    capturedRecords,
+    ["A", "D", "C"],
+    "the NOT_FOUND entry (id 7) must stay dropped, not restored; only the genuinely-failed entry (id 9) is restored",
+  );
+  assert.equal(
+    capturedError,
+    "1 of 2 records could not be deleted.",
+    "the partial-failure count must name only the real failure (1), not inflate it to 2 because the NOT_FOUND entry also rejected",
+  );
+  assert.deepEqual(removedPinnedIds, [7], "the NOT_FOUND entry's own pinned id must still be forgotten, exactly as it would be for a genuine success");
+});
+
+/**
  * Round 1529: parity port of round 1527's live-backend fix, which never
  * made it into this generated server.js -- deferred by round 1527's own
  * roadmap note, closed here. The exported app's own delete-undo-window
