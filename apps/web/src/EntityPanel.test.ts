@@ -5691,6 +5691,77 @@ test("EntityPanel marks the specific calendar chip with a move-error indicator w
 });
 
 /**
+ * Round 1945: the Table/Board view's overdue/due-soon urgency styling
+ * (isDeadlineFieldName + getDateUrgency + isRecordClosedStatus, all three
+ * already imported into this file) was never wired up to CalendarView's
+ * own bespoke chip renderer -- a record whose deadline-named date field was
+ * overdue rendered identically to one due next month. Confirms the chip
+ * now carries "calendar-record-chip-overdue"/"calendar-record-chip-due-
+ * soon" for a genuinely outstanding record's dueDate, and that a record
+ * whose own status is already a terminal value ("done") gets neither class
+ * even with an identical past dueDate -- mirroring the exact
+ * isRecordClosedStatus suppression Cell's own date branch already applies.
+ */
+test("CalendarView flags an overdue/due-soon record's chip the same way the Table/Board view's date cell already does, but not a closed-status record", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+        { name: "status", label: "Status", type: "enum", required: false, enumValues: ["todo", "done"] },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue task", dueDate: isoDateOffset(-2), status: "todo" },
+      { id: 2, title: "Due soon task", dueDate: isoDateOffset(1), status: "todo" },
+      { id: 3, title: "Done task", dueDate: isoDateOffset(-2), status: "done" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      // Index 2, not 1: the "status" enum field above makes this entity's
+      // Board view toggle appear too (table/board/calendar), unlike the
+      // single-date-field entities other calendar tests in this file use.
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[2] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 3);
+
+      const chips = Array.from(document.querySelectorAll(".calendar-record-chip"));
+      const overdueChip = chips.find((c) => /Overdue task/.test(c.textContent ?? ""))!;
+      const dueSoonChip = chips.find((c) => /Due soon task/.test(c.textContent ?? ""))!;
+      const doneChip = chips.find((c) => /Done task/.test(c.textContent ?? ""))!;
+
+      assert.ok(overdueChip.classList.contains("calendar-record-chip-overdue"), "an outstanding record's past dueDate chip must be flagged overdue");
+      assert.ok(dueSoonChip.classList.contains("calendar-record-chip-due-soon"), "an outstanding record's dueDate tomorrow must be flagged due-soon");
+      assert.equal(
+        doneChip.classList.contains("calendar-record-chip-overdue"),
+        false,
+        "a record whose own status is already 'done' must not be flagged overdue even with an identical past dueDate",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the calendar view's new "Today" button: before this
  * round there was no quick way back to the current month once you'd
  * navigated away with prev/next -- you had to click "prev" or "next"

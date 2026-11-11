@@ -1092,15 +1092,32 @@ function CalendarView({
               </button>
             )}
             <div className="calendar-day-records">
-              {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => (
+              {(expandedDays.has(dayKey) ? day.records : day.records.slice(0, 3)).map((record) => {
+                // Round 1945: mirrors Cell's own date branch (the Table/
+                // Board view's overdue/due-soon red/amber styling) --
+                // CalendarView is the one place that already imports all
+                // three of these helpers (see the entity-tabs/filter code
+                // elsewhere in this file) yet never called them for its own
+                // chip rendering, so a record whose dateField is overdue
+                // rendered identically to one due next month. Scoped to
+                // `dateField` specifically -- the field this calendar is
+                // grouped by -- matching how Cell/BoardCard gate on a
+                // record's own deadline-named field.
+                const urgency =
+                  isDeadlineFieldName(dateField.name) && !isRecordClosedStatus(record, orderedFields)
+                    ? getDateUrgency(String(record[dateField.name] ?? ""))
+                    : null;
+                const chipLabel = calendarChipLabelValue(labelField, record, lang);
+                const urgencyLabel = urgency ? t(urgency === "overdue" ? "entity.dateOverdue" : "entity.dateDueSoon") : null;
+                return (
                 <div className="calendar-record-row" key={record.id as number}>
                   <button
                     type="button"
-                    className={
-                      record.id === moveErrorId
-                        ? "calendar-record-chip calendar-record-chip-move-error"
-                        : "calendar-record-chip"
-                    }
+                    className={`calendar-record-chip${
+                      record.id === moveErrorId ? " calendar-record-chip-move-error" : ""
+                    }${urgency === "overdue" ? " calendar-record-chip-overdue" : urgency === "dueSoon" ? " calendar-record-chip-due-soon" : ""}`}
+                    title={urgencyLabel ?? undefined}
+                    aria-label={urgencyLabel ? `${chipLabel} — ${urgencyLabel}` : undefined}
                     draggable={!readOnly && !bulkActionBusy}
                     disabled={readOnly}
                     onDragStart={(e) => {
@@ -1132,7 +1149,7 @@ function CalendarView({
                       onEdit(record);
                     }}
                   >
-                    {calendarChipLabelValue(labelField, record, lang)}
+                    {chipLabel}
                   </button>
                   {!readOnly && (
                     // Round 1384: a live Playwright session found that the chip's
@@ -1268,7 +1285,8 @@ function CalendarView({
                     {pinnedIds.has(record.id as number) ? "⭐" : "☆"}
                   </button>
                 </div>
-              ))}
+                );
+              })}
               {day.records.length > 3 && (
                 <button
                   type="button"

@@ -2244,6 +2244,21 @@ tbody tr:hover {
   border-color: var(--danger);
 }
 
+/* Round 1945: mirrors .date-overdue/.date-due-soon's color choice (Table/
+   Board view), applied as a chip background/border instead of a text
+   color -- this chip's own label text already uses a fixed color, so a
+   text-color-only treatment like Cell's would be far less visible against
+   this chip's own background. */
+.calendar-record-chip-overdue {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.calendar-record-chip-due-soon {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+}
+
 .calendar-record-more {
   font-size: 11px;
   color: var(--muted);
