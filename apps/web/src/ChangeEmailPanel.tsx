@@ -86,11 +86,13 @@ export function ChangeEmailPanel({ currentEmail, onClose, onChanged }: { current
     e.preventDefault();
     // Round 1367: busy already disabled the submit button, but
     // handleSubmit itself never checked it -- the same own-click
-    // reentrancy gap rounds 1363-1366 closed elsewhere. Worse here than
-    // most of those: changeEmail (api.ts) sends no x-idempotency-key at
-    // all (unlike changePassword/resetPassword/deleteAccount), so a fast
-    // double-click firing two independent PATCH requests isn't even
-    // idempotency-protected server-side.
+    // reentrancy gap rounds 1363-1366 closed elsewhere. (Round 1610 later
+    // added x-idempotency-key protection to changeEmail/PATCH /auth/email
+    // itself, closing the server-side gap this comment used to describe
+    // here -- this guard is still needed independently, since busy only
+    // disables the button visually and a second Enter-key submit before
+    // re-render would otherwise still fire a second, now-idempotency-
+    // deduped but still wasted request.)
     if (busy) return;
     setError(null);
     const invalid = findFirstInvalidField(e.currentTarget as HTMLFormElement);
