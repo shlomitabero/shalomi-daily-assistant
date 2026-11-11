@@ -378,6 +378,19 @@ export function CollaboratorsPanel({
       const { collaborators } = await updateCollaboratorRole(projectId, userId, role, lang);
       setCollaborators(collaborators);
     } catch (err) {
+      // Round 1884: mirrors EntityPanel.tsx's handleSubmit/commitInlineEdit/
+      // handleMoveFields/handleBulkUpdate (rounds 1864/1873/1874) and
+      // AutomationsPanel.tsx's handleSubmit/handleToggle (round 1875) --
+      // another tab/collaborator can fully remove this person between this
+      // tab rendering their row and this PATCH reaching the server
+      // (routes/projects.ts's role route throws COLLABORATOR_NOT_FOUND for
+      // exactly this). Silently reloading the real list drops their now-
+      // stale row instead of leaving it stuck, repeating the same 404 on
+      // every further role pick.
+      if ((err as Error & { code?: string }).code === "COLLABORATOR_NOT_FOUND") {
+        loadCollaborators();
+        return;
+      }
       setError((err as Error).message);
     } finally {
       setUpdatingRoleUserId(null);
@@ -434,6 +447,16 @@ export function CollaboratorsPanel({
       const selfEntry = currentUserId ? collaborators.find((c) => c.userId === currentUserId) : undefined;
       onOwnerTransferred(project, selfEntry?.addedAt);
     } catch (err) {
+      // Round 1884: same cross-tab-delete-race gap as handleRoleChange just
+      // above -- the target collaborator can be fully removed by another
+      // tab/collaborator between this tab rendering their row and this
+      // POST reaching the server (routes/projects.ts's transfer-ownership
+      // route throws the identical COLLABORATOR_NOT_FOUND for an unknown
+      // target). Reload instead of leaving the row stuck on a repeating 404.
+      if ((err as Error & { code?: string }).code === "COLLABORATOR_NOT_FOUND") {
+        loadCollaborators();
+        return;
+      }
       setError((err as Error).message);
     } finally {
       setTransferringUserId(null);

@@ -2240,6 +2240,124 @@ test("CollaboratorsPanel's transfer-ownership button, when declined, leaves the 
   });
 });
 
+/**
+ * Round 1884: mirrors EntityPanel.tsx's handleSubmit/commitInlineEdit/
+ * handleMoveFields/handleBulkUpdate (rounds 1864/1873/1874) and
+ * AutomationsPanel.tsx's handleSubmit/handleToggle (round 1875) -- another
+ * tab/collaborator can fully remove a collaborator between this tab
+ * rendering their row and this tab's own role-change PATCH reaching the
+ * server, which throws COLLABORATOR_NOT_FOUND for exactly that (routes/
+ * projects.ts's role route). Before this round, handleRoleChange's catch
+ * block only ever did setError(...), leaving the now-gone collaborator's
+ * row stuck with a working-looking select that just repeats the same 404
+ * forever. Confirms the row is silently dropped via a real reload instead.
+ */
+test("CollaboratorsPanel's role select silently drops a collaborator's row, instead of showing an error, when they were already removed elsewhere", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const yossi = makeCollaborator("u2", "yossi@example.com", "editor");
+    let getCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        getCalls += 1;
+        // The second GET is this round's own loadCollaborators() reload,
+        // modeling that dana has genuinely been removed server-side by now.
+        const collaborators = getCalls === 1 ? [dana, yossi] : [yossi];
+        return new Response(JSON.stringify({ collaborators }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/collaborators/u1/role") {
+        return new Response(JSON.stringify({ error: "Collaborator not found", code: "COLLABORATOR_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const danaRow = Array.from(document.querySelectorAll(".collab-list li")).find((li) => li.textContent?.includes("dana@example.com"))!;
+      const danaSelect = danaRow.querySelector("select") as HTMLSelectElement;
+      fireEvent.change(danaSelect, { target: { value: "viewer" } });
+
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+      assert.match(document.body.textContent ?? "", /yossi@example\.com/, "the still-real collaborator must still be listed");
+      assert.doesNotMatch(document.body.textContent ?? "", /dana@example\.com/, "the now-gone collaborator's row must be dropped, not left stuck");
+      assert.equal(document.querySelector("p.error"), null, "no raw 'Collaborator not found' error banner must be shown for this race");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1884: the identical gap one function up, for handleTransferOwnership
+ * -- the target collaborator can be fully removed by another tab/
+ * collaborator between this tab rendering their row and this tab's own
+ * transfer-ownership POST reaching the server (routes/projects.ts's
+ * transfer-ownership route throws the same COLLABORATOR_NOT_FOUND for an
+ * unknown target).
+ */
+test("CollaboratorsPanel's transfer-ownership button silently drops a collaborator's row, instead of showing an error, when they were already removed elsewhere", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const yossi = makeCollaborator("u2", "yossi@example.com", "editor");
+    let getCalls = 0;
+    let onOwnerTransferredCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        getCalls += 1;
+        const collaborators = getCalls === 1 ? [dana, yossi] : [yossi];
+        return new Response(JSON.stringify({ collaborators, owner: { userId: "owner1", email: "amit@example.com" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/transfer-ownership") {
+        return new Response(JSON.stringify({ error: "Collaborator not found", code: "COLLABORATOR_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel(true, "owner1", () => {}, "Test Project", () => {
+        onOwnerTransferredCalls += 1;
+      });
+      // 3 li's: the owner's own row plus dana's and yossi's.
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 3);
+
+      const danaRow = Array.from(document.querySelectorAll(".collab-list li")).find((li) => li.textContent?.includes("dana@example.com"))!;
+      const transferBtn = Array.from(danaRow.querySelectorAll("button")).find((b) => b.textContent?.includes("Transfer ownership"))!;
+      fireEvent.click(transferBtn);
+
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+      assert.match(document.body.textContent ?? "", /yossi@example\.com/, "the still-real collaborator must still be listed");
+      assert.doesNotMatch(document.body.textContent ?? "", /dana@example\.com/, "the now-gone collaborator's row must be dropped, not left stuck");
+      assert.equal(document.querySelector("p.error"), null, "no raw 'Collaborator not found' error banner must be shown for this race");
+      assert.equal(onOwnerTransferredCalls, 0, "a failed transfer must never report success to the caller");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
 test("CollaboratorsPanel shows Copy/Download buttons only once loaded, and Copy writes the real formatted report to the clipboard", async (t) => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
