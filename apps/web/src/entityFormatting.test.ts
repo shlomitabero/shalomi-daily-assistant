@@ -2723,6 +2723,28 @@ test("buildImportRecords accepts Yen/Rupee/Won currency formatting for a number 
 });
 
 /**
+ * Round 1887: a percent-rate column (discount/tax/commission -- all
+ * realistic for this app's small-business templates) formatted as "15%"
+ * got the whole row rejected on import, even though the identical "real
+ * value, wrong shape" case for "$1,234.56" was already leniently accepted.
+ * Shared by buildImportRecordsFromJson too, since both import paths use
+ * this same module-level constant.
+ */
+test("buildImportRecords accepts a percent sign for a number cell, not just currency formatting", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "discountRate", label: "Discount Rate", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "discountRate"],
+    ["Acme Corp", "15%"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ client: "Acme Corp", discountRate: 15 }]);
+  assert.equal(result.errors.length, 0);
+});
+
+/**
  * Regression test (round 1633): mirrors webhookIn.ts's own
  * WEBHOOK_PARENTHESIZED_NEGATIVE leniency. An accounting-style export
  * (QuickBooks/Xero) wraps a negative amount in parentheses instead of a

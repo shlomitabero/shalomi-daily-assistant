@@ -24175,6 +24175,53 @@ test("POST /public/webhook-in/:projectId/:entityName accepts Yen/Rupee/Won curre
 });
 
 /**
+ * Round 1887: a percent-rate field (discount/tax/commission -- all
+ * realistic for this app's small-business templates) sent as "15%" got
+ * the whole record hard-rejected as an invalid number, even though the
+ * identical "real value, wrong shape" case for "$1,234.56" was already
+ * leniently accepted. No round ever discussed or deliberately declined
+ * extending WEBHOOK_NUMBER_FORMATTING's character class to "%" -- it was
+ * simply never proposed when the currency symbols were added.
+ */
+test("POST /public/webhook-in/:projectId/:entityName accepts a percent sign for a number field, not just currency formatting", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-number-formatting-percent-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "discountRate", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", discountRate: "15%" }),
+    });
+    assert.equal(webhookRes.status, 201, "a number value sent with a trailing percent sign must not be rejected as an invalid number, matching the existing currency-symbol leniency");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; discountRate: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.discountRate, 15, "the stored value must be the cleaned numeric rate, with the percent sign stripped");
+  });
+});
+
+/**
  * Round 1627: extends the currency/thousands-separator leniency above to
  * accounting-style parenthesized negatives (e.g. "($1,234.56)" for
  * -1234.56) -- the shape QuickBooks/Xero/many payment-provider exports use

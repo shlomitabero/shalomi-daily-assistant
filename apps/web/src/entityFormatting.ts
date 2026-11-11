@@ -2061,7 +2061,11 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
  * round-trip through this exact function still works -- see that
  * function's own comment), so this cannot mask a genuine round-trip bug.
  */
-const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩\s]/g;
+// Round 1887: same leniency extension as webhookIn.ts's own
+// WEBHOOK_NUMBER_FORMATTING -- a percent-rate cell ("15%") was hard-
+// rejected as an invalid number, even though the identical "real value,
+// wrong shape" case for "$1,234.56" was already accepted.
+const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩%\s]/g;
 
 /**
  * Round 1633: mirrors webhookIn.ts's own WEBHOOK_PARENTHESIZED_NEGATIVE --

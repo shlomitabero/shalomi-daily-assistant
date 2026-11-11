@@ -14609,6 +14609,29 @@ test("the exported EntityView's own generated buildImportRecordsFromJson accepts
   assert.deepEqual(result.records, [{ amount: 1234 }, { amount: 1234.5 }, { amount: 15000 }]);
 });
 
+/**
+ * Round 1887: mirrors the live preview's own round-1887 fix -- this
+ * generated function's own CSV_NUMBER_FORMATTING copy had no "%" in its
+ * character class, so a percent-rate field (e.g. "15%") got rejected as
+ * an invalid number, even though the identical leniency already accepted
+ * "$1,234.56" above.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson accepts a percent sign for a number field, not just currency formatting", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "discountRate", label: "Discount Rate", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ discountRate: "15%" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ discountRate: 15 }]);
+});
+
 test("the exported EntityView's own generated buildImportRecordsFromJson still rejects a boolean/array/object value for a number field, instead of silently coercing it the way a bare Number(raw) would (e.g. Number(true) === 1)", () => {
   const files = generateExportFiles(project);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
@@ -16255,6 +16278,58 @@ test("the exported EntityView's CSV import accepts Yen/Rupee/Won currency format
     { client: "Beta LLC", amount: 1234.5 },
     { client: "Gamma Inc", amount: 15000 },
   ]);
+  assert.equal(errors.length, 0);
+});
+
+/**
+ * Round 1887: mirrors the live preview's own round-1887 fix -- this
+ * generated function's own CSV_NUMBER_FORMATTING copy had no "%" in its
+ * character class, so a percent-rate column (e.g. "15%") got the whole
+ * row rejected, even though the identical leniency already accepts
+ * "$1,234.56" above.
+ */
+test("the exported EntityView's CSV import accepts a percent sign for a number cell, not just currency formatting", () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "discountRate", label: "Discount Rate", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = invoiceProject.spec.entities[0].fields;
+  const rows = [
+    ["Client", "Discount Rate"],
+    ["Acme Corp", "15%"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [{ client: "Acme Corp", discountRate: 15 }]);
   assert.equal(errors.length, 0);
 });
 
