@@ -2863,12 +2863,48 @@ async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
       enumerable: true,
     });
   }
+  // Round 1893: a test's own try/finally restores globalThis.fetch to the
+  // REAL fetch the instant its own waitForCondition/assertions are
+  // satisfied -- but a handler this file exercises can still have a
+  // trailing continuation in flight at that exact moment (e.g.
+  // EntityPanel.tsx's handleBulkUpdate: `await Promise.allSettled(...)`
+  // resolves, satisfying a test's own `waitForCondition` on the PATCH
+  // bodies it collected, several microtask hops before handleBulkUpdate's
+  // own next line, `await refresh()`, actually reaches the point of
+  // calling fetchApi -- confirmed via async_hooks stack traces pointing
+  // at this exact refresh() call, still holding an unresolved, unmocked
+  // fetchApi timer). The extra tick below exists precisely to flush that
+  // kind of pending continuation (and cleanup()'s own unmount-flush
+  // effects) before this function returns -- but by the time either
+  // fires, the test's own finally already swapped fetch back to the
+  // real one. A genuine network call in this sandboxed test environment
+  // can only ever fail, and wakeRetry.ts's cold-start retry logic doesn't
+  // give up on a thrown (network-level) failure until api.ts's own
+  // 280-second REQUEST_TIMEOUT_MS abort fires -- indistinguishable from a
+  // permanent hang at any human-scale test timeout, and exactly what
+  // kept this file's whole-suite run from ever exiting. A resolved
+  // Response, by contrast, is returned immediately with no retry at all
+  // (see fetchWithWakeRetry's own comment: only a thrown/network failure
+  // retries, not a received HTTP response) -- so swapping in a stub that
+  // resolves instead of throwing for this whole flush window (the extra
+  // tick AND cleanup()) makes any such stray request fail fast instead
+  // of retrying for minutes, without having to touch any of this file's
+  // ~337 individual tests or guess which one is responsible.
+  const originalFetch = globalThis.fetch;
+  const safeFlushStub = (async () =>
+    new Response(JSON.stringify({ error: "withJsdom flush: no network in tests", code: "NOT_FOUND" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
   try {
     const result = await fn();
+    globalThis.fetch = safeFlushStub;
     await new Promise((resolve) => setTimeout(resolve, 0));
     return result;
   } finally {
+    globalThis.fetch = safeFlushStub;
     cleanup();
+    globalThis.fetch = originalFetch;
     for (const key of Object.keys(replacements)) {
       const original = originalDescriptors[key];
       if (original) Object.defineProperty(globalThis, key, original);
