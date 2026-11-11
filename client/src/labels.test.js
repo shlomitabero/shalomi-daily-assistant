@@ -4,6 +4,7 @@ import {
   formatMoney, actionTypeLabel, resultLabel, riskLevelLabel, sideLabel,
   opportunityStatusLabel, sourceLabel, missingFieldLabel, reasonLabel,
   autonomousScanSummary, saleConfirmedSummary, refreshAllFailuresSummary,
+  latestSourceCheckTimestamp,
 } from './labels.js';
 
 // This is the client's one module with zero React/DOM dependency - pure
@@ -202,4 +203,27 @@ test('refreshAllFailuresSummary lists every failed symbol, not just the last one
     { symbol: 'AAPL', message: 'timeout' },
   ]);
   assert.equal(summary, '3 סימבולים לא התרעננו: MSFT, GOOG, AAPL');
+});
+
+test('latestSourceCheckTimestamp returns null for an empty list', () => {
+  assert.equal(latestSourceCheckTimestamp([]), null);
+});
+
+test('latestSourceCheckTimestamp returns the one timestamp when there is only one source', () => {
+  assert.equal(
+    latestSourceCheckTimestamp([{ lastCheckedAt: '2026-01-01T00:00:00.000Z' }]),
+    '2026-01-01T00:00:00.000Z'
+  );
+});
+
+test('latestSourceCheckTimestamp picks the most recent timestamp regardless of list order', () => {
+  // syncSources() stamps every source together on the same call in
+  // practice, so these are normally identical - but this makes no such
+  // assumption, and the order sources come back in is never guaranteed.
+  const sources = [
+    { lastCheckedAt: '2026-01-01T00:00:00.000Z' },
+    { lastCheckedAt: '2026-03-01T00:00:00.000Z' },
+    { lastCheckedAt: '2026-02-01T00:00:00.000Z' },
+  ];
+  assert.equal(latestSourceCheckTimestamp(sources), '2026-03-01T00:00:00.000Z');
 });

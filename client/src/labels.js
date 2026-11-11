@@ -194,6 +194,19 @@ export function refreshAllFailuresSummary(failures) {
   return `${failures.length} סימבולים לא התרעננו: ${failures.map((f) => f.symbol).join(', ')}`;
 }
 
+// Sources.jsx's own syncSources() call stamps lastCheckedAt on every
+// source together, on every load AND on "בדוק שוב" - this finds the most
+// recent one across the whole list (rather than assuming they're all
+// identical, which they are in practice but this makes no such
+// assumption) so the page can show ONE "נבדק לאחרונה" line that actually
+// moves when the owner clicks the button, instead of giving no lasting
+// confirmation anything happened.
+export function latestSourceCheckTimestamp(sources) {
+  return sources.reduce((latest, s) => (
+    !latest || new Date(s.lastCheckedAt) > new Date(latest) ? s.lastCheckedAt : latest
+  ), null);
+}
+
 export function missingFieldLabel(field) {
   if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
   if (field.startsWith('cost:')) {

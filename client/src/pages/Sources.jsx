@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { latestSourceCheckTimestamp } from '../labels.js';
 
 export default function Sources() {
   const [sources, setSources] = useState([]);
@@ -32,9 +33,7 @@ export default function Sources() {
   // confirmation anything actually happened: the button briefly said
   // "בודק…" and then just went back to "בדוק שוב", identical to before
   // the click whenever nothing's connected status happened to change.
-  const lastCheckedAt = sources.reduce((latest, s) => (
-    !latest || new Date(s.lastCheckedAt) > new Date(latest) ? s.lastCheckedAt : latest
-  ), null);
+  const lastCheckedAt = latestSourceCheckTimestamp(sources);
 
   return (
     <div className="page">
