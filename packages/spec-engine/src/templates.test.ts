@@ -614,6 +614,48 @@ test("the CRM template's Customer entity has a status enum and a source field, m
 });
 
 /**
+ * Round 1898: the same gap round 1304 found and fixed for the CRM
+ * template's Customer entity, independently re-confirmed for two more
+ * templates round 1304 never touched -- Restaurant and Appointments.
+ * Both templates' own Customer entities (pre-fix: name/phone/email/notes
+ * only) are missing the same status/source fields domainEntities.ts's
+ * generic Customer domain rule has, and both templates' own built-in
+ * descriptions mention "customers" -- so refining either template (via
+ * generateSpec's own domain-rule matching, apps/api/src/routes/
+ * projects.ts's /refine route) re-merges the generic rule's full field set
+ * into the curated Customer entity on virtually any refine at all,
+ * regardless of what the refine instruction actually asked for, exactly
+ * as round 1304's own writeup describes for CRM.
+ */
+test("the Restaurant and Appointments templates' Customer entities have a status enum and a source field, matching domainEntities.ts's own Customer domain rule", () => {
+  for (const templateId of ["restaurant", "appointments"]) {
+    const template = TEMPLATES.find((t) => t.id === templateId);
+    assert.ok(template, `expected a "${templateId}" template to exist`);
+
+    const customer = template!.spec.entities.find((e) => e.name === "Customer");
+    assert.ok(customer, `expected the ${templateId} template to have a Customer entity`);
+    const status = customer!.fields.find((f) => f.name === "status");
+    assert.ok(status, `expected the ${templateId} Customer entity to have a status field`);
+    assert.equal(status!.type, "enum");
+    assert.equal(status!.required, true);
+    assert.ok(status!.enumValues && status!.enumValues.length >= 2, "expected the status field to have at least 2 enum values");
+    const source = customer!.fields.find((f) => f.name === "source");
+    assert.ok(source, `expected the ${templateId} Customer entity to have a source field`);
+    assert.equal(source!.type, "text");
+
+    const customerEn = template!.specEn.entities.find((e) => e.name === "Customer");
+    assert.ok(customerEn, `expected the ${templateId} specEn to have a Customer entity`);
+    const statusEn = customerEn!.fields.find((f) => f.name === "status");
+    assert.ok(statusEn, `expected the ${templateId} specEn Customer entity to have a status field`);
+    assert.equal(statusEn!.type, "enum");
+    assert.equal(statusEn!.required, true);
+    const sourceEn = customerEn!.fields.find((f) => f.name === "source");
+    assert.ok(sourceEn, `expected the ${templateId} specEn Customer entity to have a source field`);
+    assert.equal(sourceEn!.type, "text");
+  }
+});
+
+/**
  * Round 1305: the Project Tracker template's own Project entity (name/
  * description/status/deadline/budget/owner) is missing a `client` field,
  * unlike domainEntities.ts's matching Project domain rule -- whose own
