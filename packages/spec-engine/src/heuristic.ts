@@ -230,6 +230,33 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "סטודיו לאימונים אישיים", "מאמן/ת אישי/ת",
   "שירותי הנהלת חשבונות",
   "סוכנות ביטוח",
+  // Round 1928: the exact same drift rounds 1819/1831/1841/1872/1879
+  // already fixed for salons/spas, pet care, medical/dental clinics,
+  // photography/tattoo/catering, and law/bookkeeping/personal-training/
+  // insurance, this time for climbing gyms, trampoline parks, and pilates
+  // studios. A description like "A climbing gym managing day passes and
+  // member bookings." matches only Appointment, and "A pilates studio for
+  // scheduling classes and clients." matches only Customer/Course -- none
+  // of which are in BILLING_ENTITY_NAMES below (same bare-word ambiguity
+  // documented there for Service/Appointment/Pet/Patient/Customer/Case/
+  // Course), and none of this array's existing phrases fire for them, so
+  // both got recommended "No payments" despite being textbook paid small-
+  // business/entertainment verticals. Unlike those three phrases, bare
+  // "gym" and "fitness center"/"fitness centre" are deliberately NOT added
+  // here: a YMCA, corporate wellness room, hotel gym, or apartment-complex
+  // fitness amenity is a genuinely common free/non-commercial case (the
+  // same ambiguity this file already excludes bare "clinic"/"service" for)
+  // -- "A gym managing member check-ins and class schedules" stays "No
+  // payments" by this same discipline, same as bare "appointment"/"clinic"
+  // do. "climbing gym", "trampoline park", and "pilates studio" are
+  // themselves specific enough that a free/non-commercial counterpart
+  // realistically never uses that exact phrasing. Confirmed live that
+  // round 1879's own "A volunteer-run community fitness program for
+  // seniors" non-regression fixture, and a new "A free community gym for
+  // seniors run by the city" check, both still correctly stay "No
+  // payments" -- neither contains any of these three new phrases.
+  "climbing gym", "trampoline park", "pilates studio",
+  "קיר טיפוס", "פארק טרמפולינות", "סטודיו פילאטיס",
 ];
 
 /**

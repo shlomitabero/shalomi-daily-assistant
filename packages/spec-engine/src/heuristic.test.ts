@@ -703,6 +703,62 @@ test("still recommends 'No payments' for a free legal aid clinic, a volunteer fi
 });
 
 /**
+ * Round 1928: the exact same drift rounds 1819/1831/1841/1872/1879 already
+ * fixed for salons/spas, pet care, medical/dental clinics, photography/
+ * tattoo/catering, and law/bookkeeping/personal-training/insurance, this
+ * time for climbing gyms, trampoline parks, and pilates studios. Each of
+ * these matches only Appointment/Customer/Course (none of which are in
+ * BILLING_ENTITY_NAMES), and hit none of this file's existing
+ * PAYMENT_KEYWORDS phrases, so all three got recommended "No payments"
+ * despite being textbook paid small-business/entertainment verticals.
+ * Fixed by adding "climbing gym", "trampoline park", and "pilates studio"
+ * to PAYMENT_KEYWORDS, mirroring round 1819/1831/1841/1872/1879's own fix
+ * shape.
+ */
+test("asks about payments (recommending Stripe) for a climbing gym, trampoline park, or pilates studio description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const climbingGym = await provider.generate("A climbing gym managing day passes and member bookings.");
+  const climbingGymPaymentQuestion = climbingGym.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(climbingGymPaymentQuestion);
+  assert.equal(climbingGymPaymentQuestion!.recommendation, "Stripe");
+
+  const trampolinePark = await provider.generate("A trampoline park managing bookings and admission passes.");
+  const trampolineParkPaymentQuestion = trampolinePark.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(trampolineParkPaymentQuestion);
+  assert.equal(trampolineParkPaymentQuestion!.recommendation, "Stripe");
+
+  const pilatesStudio = await provider.generate("A pilates studio for scheduling classes and clients.");
+  const pilatesStudioPaymentQuestion = pilatesStudio.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(pilatesStudioPaymentQuestion);
+  assert.equal(pilatesStudioPaymentQuestion!.recommendation, "Stripe");
+
+  const climbingGymHe = await provider.generate("קיר טיפוס לניהול כניסות ומנויים.");
+  const climbingGymHePaymentQuestion = climbingGymHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(climbingGymHePaymentQuestion);
+  assert.equal(climbingGymHePaymentQuestion!.recommendation, "Stripe");
+
+  const pilatesStudioHe = await provider.generate("סטודיו פילאטיס לניהול שיעורים ולקוחות.");
+  const pilatesStudioHePaymentQuestion = pilatesStudioHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(pilatesStudioHePaymentQuestion);
+  assert.equal(pilatesStudioHePaymentQuestion!.recommendation, "Stripe");
+});
+
+test("still recommends 'No payments' for a bare gym/fitness-center description with no specific commercial phrase, confirming the round-1928 climbing-gym/trampoline-park/pilates-studio fix doesn't regress bare 'gym' ambiguity", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const gym = await provider.generate("A gym managing member check-ins and class schedules.");
+  const gymPaymentQuestion = gym.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(gymPaymentQuestion);
+  assert.equal(gymPaymentQuestion!.recommendation, "No payments");
+
+  const freeCommunityGym = await provider.generate("A free community gym for seniors run by the city.");
+  const freeCommunityGymPaymentQuestion = freeCommunityGym.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeCommunityGymPaymentQuestion);
+  assert.equal(freeCommunityGymPaymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/
