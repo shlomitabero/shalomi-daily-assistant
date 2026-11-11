@@ -227,6 +227,71 @@ test('runAutonomousScan backs off cleanly, without creating a second opportunity
   }
 });
 
+test('runAutonomousScan backs off on the cap, not the lock, when another draft lands between its own early check and createDigitalProductOpportunityUnderCap\'s internal re-check', async () => {
+  // The fast pendingDraftCount() read at the top of this file (an
+  // optimization only, skipping the AI call outright in the common case)
+  // and createDigitalProductOpportunityUnderCap's own internal re-check
+  // (services/opportunities.js, taken right after it acquires its lock)
+  // are two separate reads, with a real AI call (generateTopicIdea) in
+  // between them - a draft landing from elsewhere in exactly that gap
+  // means the scan is still the one creating (no concurrent lock holder),
+  // but the owner's own backlog is now at the cap by the time the second
+  // read actually runs. This is the one outcome shape
+  // (result.ok === false, result.concurrent === false, straight from
+  // createDigitalProductOpportunityUnderCap rather than the fast
+  // pre-check above) the existing tests never actually exercised - one
+  // test already covers a real concurrent lock holder (the "mid-request"
+  // test above), another covers the fast pre-check catching an
+  // already-full backlog outright (below), but neither reaches this
+  // third, narrower branch.
+  __resetForTests();
+  const envVars = { ANTHROPIC_API_KEY: 'test-key', PADDLE_API_KEY: 'fake', PADDLE_CLIENT_TOKEN: 'fake', PADDLE_WEBHOOK_SECRET: 'fake' };
+  const originalEnv = {};
+  for (const key of Object.keys(envVars)) {
+    originalEnv[key] = process.env[key];
+    process.env[key] = envVars[key];
+  }
+  for (let i = 0; i < 4; i += 1) {
+    db.opportunities.insert({ id: makeId('opp'), title: `existing draft ${i}`, status: 'draft' });
+  }
+  let releaseTopicCall;
+  const topicCallGate = new Promise((resolve) => { releaseTopicCall = resolve; });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    // Only generateTopicIdea's own call is ever expected to reach fetch
+    // here - once it sees pendingDrafts at the cap, createDigitalProductOpportunityUnderCap
+    // returns before ever calling draftProduct's own AI step.
+    await topicCallGate;
+    return new Response(JSON.stringify({
+      id: 'msg_topic', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5',
+      content: [{ type: 'text', text: JSON.stringify({ topic: 'נושא', audience: 'קהל' }) }],
+      stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const scanPromise = runAutonomousScan(); // not awaited - held open at the AI call below
+    await new Promise((resolve) => setTimeout(resolve, 10)); // let it reach fetch() before the 5th draft lands
+    // Simulates a second draft completing in full (through its own real
+    // lock acquire-and-release, not shown here for brevity) while this
+    // scan's own topic call is still in flight - the exact gap described
+    // above.
+    db.opportunities.insert({ id: makeId('opp'), title: 'existing draft 4', status: 'draft' });
+    releaseTopicCall();
+    const result = await scanPromise;
+    assert.equal(result.ran, false);
+    assert.equal(result.reason, '5 הזדמנויות כבר ממתינות לסקירה שלך');
+    assert.equal(db.opportunities.all().length, 5); // the scan itself created nothing
+    const logged = db.actions_log.where((a) => a.type === 'autonomous_scan')[0];
+    assert.equal(logged.result, 'skipped: 5 drafts already awaiting review');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+  }
+});
+
 test('runAutonomousScan backs off once too many drafts are already awaiting review, without calling the AI', async () => {
   // This must short-circuit BEFORE any AI call — piling up a 6th draft on
   // top of 5 unreviewed ones wastes a real API call for no reason the
