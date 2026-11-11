@@ -764,6 +764,142 @@ test("diffAndMigrate reports no relation_target_changed when relationTo oscillat
 });
 
 /**
+ * Round 1908: round 1198's own physicallyUnchanged fix (just above/below)
+ * suppresses type_changed when a field round-trips within the same SQL-type
+ * bucket -- for "relation", that check was only "does the column have *some*
+ * FK at all" (shape.fkTable !== undefined), never whether that FK's real
+ * target still matches field.relationTo. So a relation field that goes
+ * relation(Courier) -> boolean -> relation(Driver) across two refines
+ * (Courier and Driver both real, distinct entities) landed on hop 2 with
+ * shape.fkTable still bound to Courier's table (SQLite can never retarget an
+ * existing FK, the same additive-only fact relation_target_changed already
+ * relies on) -- physicallyUnchanged wrongly stayed true just because *some*
+ * FK was present, suppressing type_changed. Unlike the relation_target_changed
+ * test above (a direct Customer -> Vendor retarget, no boolean hop), this
+ * hop never reaches the dedicated relation<->relation branch at all (prevField
+ * is "boolean" here, not "relation"), so neither relation_target_changed nor
+ * relation_missing_fk fires either -- diffAndMigrate returned zero changes,
+ * with the live spec claiming Driver while the database FK silently kept
+ * enforcing Courier.
+ */
+test("diffAndMigrate reports a type_changed entry when a relation field round-trips through boolean to a DIFFERENT real relationTo than the column's stale FK still targets", () => {
+  const db = openDatabase(":memory:");
+  const courierAddedSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Driver", fields: [{ name: "name", type: "text", required: true }] },
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "assigneeId", type: "relation", required: false, relationTo: "Courier" }] },
+    ],
+  };
+  applyMigrations(db, "proj1", courierAddedSpec);
+
+  // Hop 1: assigneeId relation(Courier) -> boolean. Already correctly
+  // reported before this round's fix -- pinned here as the test's own
+  // baseline, not the regression itself.
+  const boolHopSpec: ProductSpec = {
+    ...courierAddedSpec,
+    entities: [
+      courierAddedSpec.entities[0],
+      courierAddedSpec.entities[1],
+      courierAddedSpec.entities[2],
+      { ...courierAddedSpec.entities[3], fields: [courierAddedSpec.entities[3].fields[0], { name: "assigneeId", type: "boolean", required: false }] },
+    ],
+  };
+  const firstHopChanges = diffAndMigrate(db, "proj1", courierAddedSpec, boolHopSpec);
+  assert.deepEqual(firstHopChanges, [
+    { type: "type_changed", table: "entity_proj1_Order", column: "assigneeId", entityName: "Order", fromType: "relation", toType: "boolean" },
+  ]);
+
+  // Hop 2: assigneeId boolean -> relation(Driver) -- a different, real
+  // entity than the column's stale FK (still Courier's table).
+  const relationAgainSpec: ProductSpec = {
+    ...boolHopSpec,
+    entities: [
+      boolHopSpec.entities[0],
+      boolHopSpec.entities[1],
+      boolHopSpec.entities[2],
+      { ...boolHopSpec.entities[3], fields: [boolHopSpec.entities[3].fields[0], { name: "assigneeId", type: "relation", required: false, relationTo: "Driver" }] },
+    ],
+  };
+  const secondHopChanges = diffAndMigrate(db, "proj1", boolHopSpec, relationAgainSpec);
+  assert.deepEqual(
+    secondHopChanges,
+    [{ type: "type_changed", table: "entity_proj1_Order", column: "assigneeId", entityName: "Order", fromType: "boolean", toType: "relation" }],
+    "hop 2 must be reported -- the column's real FK is still bound to Courier, not Driver, so this is not actually 'physically unchanged'",
+  );
+
+  // The real proof: the FK is still bound to Courier, so a genuinely valid
+  // Driver record is wrongly rejected...
+  const driverEntity = relationAgainSpec.entities[2];
+  const orderEntity = relationAgainSpec.entities[3];
+  const driver = insertRecord(db, "proj1", driverEntity, { name: "Dana" });
+  assert.throws(
+    () => insertRecord(db, "proj1", orderEntity, { total: 50, assigneeId: driver.id }),
+    /FOREIGN KEY constraint failed/,
+    "a real Driver record must not be silently rejected by a stale FK still watching Courier -- but it is, since the FK was never repointed",
+  );
+
+  // ...while an id that happens to coincide with the STALE (Courier) table's
+  // rows is silently accepted, even though the current spec says this field
+  // now points at Driver.
+  const courierEntity = relationAgainSpec.entities[1];
+  const courier = insertRecord(db, "proj1", courierEntity, { name: "Chris" });
+  const order = insertRecord(db, "proj1", orderEntity, { total: 75, assigneeId: courier.id });
+  assert.equal(order.assigneeId, courier.id);
+
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Courier"], "SQLite can't retroactively repoint an existing column's FK -- it must still be bound to Courier, never silently moved to Driver");
+});
+
+/**
+ * Round 1908's companion safety test: proves the fix above doesn't
+ * over-report. A relation field that round-trips relation(Courier) ->
+ * boolean -> relation(Courier), returning to the SAME target the column's
+ * FK has pointed at the whole time, must stay silent on hop 2 -- exactly
+ * the legitimate oscillation-suppression round 1198 already covers for
+ * "type_changed", just exercised here through the relation branch
+ * specifically (round 1198's own comment names "boolean <-> relation" as
+ * one of the two buckets this suppression is meant to cover).
+ */
+test("diffAndMigrate reports no type_changed when a relation field round-trips through boolean back to the SAME relationTo the column's FK has pointed at the whole time", () => {
+  const db = openDatabase(":memory:");
+  const courierAddedSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      spec.entities[0],
+      { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+      { ...spec.entities[1], fields: [spec.entities[1].fields[0], { name: "assigneeId", type: "relation", required: false, relationTo: "Courier" }] },
+    ],
+  };
+  applyMigrations(db, "proj1", courierAddedSpec);
+
+  const boolHopSpec: ProductSpec = {
+    ...courierAddedSpec,
+    entities: [
+      courierAddedSpec.entities[0],
+      courierAddedSpec.entities[1],
+      { ...courierAddedSpec.entities[2], fields: [courierAddedSpec.entities[2].fields[0], { name: "assigneeId", type: "boolean", required: false }] },
+    ],
+  };
+  diffAndMigrate(db, "proj1", courierAddedSpec, boolHopSpec);
+
+  // Hop 2: boolean -> relation(Courier) again -- the SAME entity the FK has
+  // pointed at the whole time (never actually removed, just hidden behind
+  // the boolean hop).
+  const secondHopChanges = diffAndMigrate(db, "proj1", boolHopSpec, courierAddedSpec);
+  assert.deepEqual(
+    secondHopChanges,
+    [],
+    "assigneeId returned to relation(Courier), exactly matching the FK's real, never-moved target -- nothing should be reported",
+  );
+
+  const fkList = db.prepare('PRAGMA foreign_key_list("entity_proj1_Order")').all() as { table: string }[];
+  assert.deepEqual(fkList.map((fk) => fk.table), ["entity_proj1_Courier"]);
+});
+
+/**
  * Round 1198: the non-relation twin of the oscillation test just above.
  * `type_changed` (the prevField branch, migrate.ts line ~475) only ever
  * compared `prevField.type` against `field.type` -- the IMMEDIATELY

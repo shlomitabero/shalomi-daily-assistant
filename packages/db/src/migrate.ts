@@ -537,11 +537,43 @@ export function diffAndMigrate(
           // before this round.
           const shape = physicalShapeByColumn.get(columnName);
           const expectedSqlType = sqlTypeFor(field);
+          // Round 1908: for a relation field, "physically unchanged" must
+          // also mean the FK's REAL target still matches field.relationTo,
+          // not just "some FK exists" -- shape.fkTable !== undefined alone
+          // can't distinguish a correctly-targeted FK from a stale one left
+          // over from an earlier hop. Without this, a field that oscillates
+          // relation(A) -> boolean -> relation(B) (A and B both real,
+          // distinct entities) lands here on hop 2 with shape.fkTable still
+          // pointing at A's table (SQLite can never retarget an existing
+          // FK, same additive-only constraint the relation_target_changed
+          // branch below already relies on) -- physicallyUnchanged wrongly
+          // stayed true just because *some* FK was present, suppressing not
+          // only type_changed but also relation_target_changed/
+          // relation_missing_fk (neither fires for this hop, since
+          // prevField.type !== field.type keeps it out of the dedicated
+          // relation<->relation branch a few lines below), leaving the live
+          // spec claiming B while the database FK silently keeps enforcing
+          // A with zero diagnostic anywhere. Resolving relationTo the same
+          // way that branch does and requiring the physical FK to match it
+          // closes the gap: an unresolvable or genuinely different target
+          // now correctly falls through to the type_changed report below,
+          // which also disables any automation relying on this field.
+          const relationTargetForUnchangedCheck =
+            field.type === "relation" ? resolveRelationTarget(field.relationTo, entityNamesByLowerName) : undefined;
+          const expectedFkTableForUnchangedCheck = relationTargetForUnchangedCheck
+            ? tableNameFor(projectId, relationTargetForUnchangedCheck)
+            : undefined;
           const physicallyUnchanged =
             expectedSqlType !== "TEXT" &&
             shape !== undefined &&
             shape.sqlType === expectedSqlType &&
-            (field.type === "relation" ? shape.fkTable !== undefined : field.type === "boolean" ? shape.fkTable === undefined : true);
+            (field.type === "relation"
+              ? shape.fkTable !== undefined &&
+                expectedFkTableForUnchangedCheck !== undefined &&
+                shape.fkTable === expectedFkTableForUnchangedCheck
+              : field.type === "boolean"
+                ? shape.fkTable === undefined
+                : true);
           if (!physicallyUnchanged) {
             changes.push({
               type: "type_changed",
