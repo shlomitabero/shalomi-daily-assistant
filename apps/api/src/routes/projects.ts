@@ -5475,10 +5475,26 @@ export function createProjectsRouter(
               "ENTITY_HAS_DEPENDENT_RELATIONS",
             );
           }
+          // Round 1905: case-insensitive, the same gap this route's own
+          // existence check and dependent-relation guard were already
+          // fixed for (round 1186/1180) but this screens-removal filter
+          // was missed despite round 1186's own doc comment above
+          // claiming "the existence check AND removal filters" were both
+          // covered. mergeRefinedSpec (index.ts) keeps an existing
+          // entity's ORIGINAL-cased name on refine, but takes the
+          // candidate's own screens array verbatim -- so a later AI
+          // recasing of the same entity (e.g. "Customer" -> "customer")
+          // can leave spec.entities with "Customer" while spec.screens
+          // carries "customer" for the same logical entity. Deleting that
+          // entity resolved the exact-case screens filter below to a
+          // false "not equal", permanently orphaning the entity's own
+          // List/Form screens in Time Machine/History display metadata
+          // (screens have no effect on the generated app/DB itself, per
+          // round 1028).
           const nextSpec = {
             ...project.spec,
             entities: project.spec.entities.filter((e) => e.name !== entity.name),
-            screens: project.spec.screens.filter((s) => s.entity !== entity.name),
+            screens: project.spec.screens.filter((s) => s.entity?.toLowerCase() !== entity.name.toLowerCase()),
           };
           const updated = updateProjectSpec(db, project.id, nextSpec);
           // Round 1099: same pre-build gap as the field-removal route's

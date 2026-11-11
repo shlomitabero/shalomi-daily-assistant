@@ -10857,6 +10857,66 @@ test("removing an entity still succeeds, and cleans up its own screens and autom
 });
 
 /**
+ * Round 1905: round 1186's own test above (and this route's own existence
+ * check/dependent-relation guard) only ever varies the URL path segment's
+ * casing against the entity's real name -- in that test, spec.entities[]
+ * and spec.screens[] already agree on casing ("Deal" both places), so it
+ * never exercises the actual gap: mergeRefinedSpec (packages/spec-engine/
+ * src/index.ts) keeps an existing entity's ORIGINAL-cased name across a
+ * refine, but takes the candidate's own screens array verbatim, so a
+ * later AI-generated recasing of the same entity can leave spec.entities
+ * with one casing ("Deal") while spec.screens carries a DIFFERENT casing
+ * ("deal") for that same logical entity -- a real, reachable state this
+ * test constructs directly rather than via a live refine call. Before
+ * this round, the route's own screens-removal filter compared exact-case
+ * against the resolved (correctly-cased) entity name, so the
+ * differently-cased orphaned screen was silently kept forever.
+ */
+test("removing an entity also removes its own screens even when spec.screens itself (not just the request URL) carries a different letter-case spelling of that entity's name than spec.entities does", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `entity-remove-screens-casing-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "fullName", type: "text", required: true }] },
+        { name: "Deal", fields: [{ name: "title", type: "text", required: true }] },
+      ],
+      screens: [
+        // "deal" here intentionally does not match spec.entities' own
+        // "Deal" -- the exact entities/screens casing mismatch
+        // mergeRefinedSpec's own verbatim-candidate-screens behavior can
+        // produce after an AI-generated spec recases an entity.
+        { name: "Deal List", type: "list", entity: "deal" },
+        { name: "Customer List", type: "list", entity: "Customer" },
+      ],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string }[]; screens: { name: string; entity?: string }[] } };
+    };
+    assert.deepEqual(updated.spec.entities.map((e) => e.name), ["Customer"], "the real Deal entity must have been removed");
+    assert.ok(
+      !updated.spec.screens.some((s) => s.entity?.toLowerCase() === "deal"),
+      "Deal's own screen must be cleaned up even though it was spelled with different casing than spec.entities' own 'Deal', instead of being permanently orphaned",
+    );
+    assert.ok(updated.spec.screens.some((s) => s.entity === "Customer"), "the surviving entity's own screen must be untouched");
+  });
+});
+
+/**
  * Round 1187: findField (unlike findEntity, fixed round 1162) never got its
  * own case-insensitive fallback, so every field-level route resolving
  * :fieldName through it -- PATCH label/required/type, the upload routes,
