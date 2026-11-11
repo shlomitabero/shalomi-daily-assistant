@@ -1816,6 +1816,38 @@ test("bare 'painter'/'carpenter' in a portfolio/art-showcase context must not sp
   );
 });
 
+// Round 1949: the WorkOrder entity's own design-intent comment names
+// "plumbers, electricians, appliance/AC technicians, handymen" as its
+// target verticals, but "appliance" itself was never added as a keyword --
+// "an app for an appliance repair business" fell through to the generic
+// Customer fallback (confirmed live). Also confirms the deliberate
+// false-positive guard: bare "appliance(s)" was NOT added, because
+// "virtual appliance"/"network appliance" (common IT infrastructure
+// jargon) and a "kitchen appliance store" (a retail business) must not
+// spuriously match WorkOrder.
+test("WorkOrder's appliance-repair keywords match, and bare 'appliance' in an IT/retail context does not spuriously match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const repairBusiness = await provider.generate("An app for an appliance repair business to manage customers and jobs.");
+  assert.ok(repairBusiness.entities.some((e) => e.name === "WorkOrder"), "'appliance repair business' must match WorkOrder");
+  assert.equal(repairBusiness.openQuestions[0].recommendation, "Stripe", "an appliance repair business must be recommended Stripe, not 'No payments'");
+
+  const repairShop = await provider.generate("A CRM for an appliance repair shop.");
+  assert.ok(repairShop.entities.some((e) => e.name === "WorkOrder"), "'appliance repair shop' must match WorkOrder");
+
+  const virtualAppliance = await provider.generate("A dashboard for managing virtual appliances in our cloud infrastructure.");
+  assert.ok(
+    !virtualAppliance.entities.some((e) => e.name === "WorkOrder"),
+    "an IT 'virtual appliance' dashboard must not spuriously match WorkOrder via bare 'appliance'",
+  );
+
+  const kitchenApplianceStore = await provider.generate("A catalog site for a kitchen appliance store.");
+  assert.ok(
+    !kitchenApplianceStore.entities.some((e) => e.name === "WorkOrder"),
+    "a retail 'kitchen appliance store' catalog must not spuriously match WorkOrder via bare 'appliance'",
+  );
+});
+
 // Round 1816: a tailoring/alterations shop is the same small-business
 // vertical gap as round 1811's plumber/electrician/handyman fix -- no
 // WorkOrder keyword matched it at all, so it fell through to the generic

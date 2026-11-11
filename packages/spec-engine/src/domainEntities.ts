@@ -1915,6 +1915,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "painting contractor", "painting company", "house painting", "house painter", "house painters",
       "carpentry business", "carpentry shop", "carpenter shop", "carpentry company",
       "קבלן גגות", "איטום גגות", "חברת צביעה", "צבעי בתים", "נגריה",
+      // Round 1949: the entity's own design intent (see the comment above)
+      // explicitly names "plumbers, electricians, appliance/AC technicians,
+      // handymen" alongside the trades round 1811 already added keywords
+      // for, but "appliance" itself was never added -- "an app for an
+      // appliance repair business to manage customers and jobs" matched no
+      // WorkOrder keyword at all and fell through to the generic Customer
+      // fallback. Deliberately NOT bare "appliance(s)": confirmed live it
+      // collides with "virtual appliance"/"network appliance" (common IT
+      // infrastructure jargon) and a "kitchen appliance store" (a retail
+      // business, not a repair job tracker) -- the same bare-noun-collision
+      // caution round 1816's own comment documents for "tailor". Phrase-
+      // only keywords avoid that false positive while still closing the
+      // realistic cases; bare /\btechnician(s)?\b/ above already covers
+      // "appliance technician(s)" phrasing on its own.
+      "appliance repair", "appliance repair shop", "appliance repair company",
+      "appliance repair business", "appliance repair service", "appliance repair services",
+      "תיקון מכשירי חשמל", "תיקון מוצרי חשמל", "טכנאי מוצרי חשמל",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",
