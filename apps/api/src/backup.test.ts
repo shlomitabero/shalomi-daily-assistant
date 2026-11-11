@@ -579,6 +579,91 @@ test("generateBackupZipEntries disambiguates an uploaded-file directory prefix t
 });
 
 /**
+ * Round 1936: round 1434's own dedup above only re-checks an EXACT
+ * flat-path match against a bumped candidate -- it never re-checks
+ * whether that candidate is already in use as a DIRECTORY PREFIX by an
+ * earlier entity's own file entries in this same loop. A third entity
+ * literally named "Report.csv (2)" computes that exact string unbumped
+ * (nothing in `entries` flat-matches it; the earlier entity's files sit
+ * at "Report.csv (2)/files/...", not at the bare string), so its own
+ * files would silently land in the identical directory round 1434's own
+ * bump already placed a completely different, unrelated entity's files
+ * into.
+ */
+test("generateBackupZipEntries disambiguates a third entity's directory prefix that collides with a SECOND entity's own already-bumped directory prefix", () => {
+  const tripleCollisionProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Report", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Report.csv",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+        {
+          name: "Report.csv (2)",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(tripleCollisionProject);
+  const reportCsvEntity = tripleCollisionProject.spec.entities[1];
+  const reportCsv2Entity = tripleCollisionProject.spec.entities[2];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filenameB = `${randomUUID()}.pdf`;
+    mkdirSync(path.join(uploadsDir, tripleCollisionProject.id, "Report.csv"), { recursive: true });
+    const bytesB = Buffer.from("%PDF-entity-B-bytes");
+    writeFileSync(path.join(uploadsDir, tripleCollisionProject.id, "Report.csv", filenameB), bytesB);
+    const { id: idB } = insertRecord(db, tripleCollisionProject.id, reportCsvEntity, {
+      name: "Row B",
+      attachment: JSON.stringify({ url: `/api/uploads/${tripleCollisionProject.id}/Report.csv/${filenameB}`, name: "scan-b.pdf", size: bytesB.length, mimeType: "application/pdf" }),
+    });
+
+    const filenameC = `${randomUUID()}.pdf`;
+    mkdirSync(path.join(uploadsDir, tripleCollisionProject.id, "Report.csv (2)"), { recursive: true });
+    const bytesC = Buffer.from("%PDF-entity-C-bytes");
+    writeFileSync(path.join(uploadsDir, tripleCollisionProject.id, "Report.csv (2)", filenameC), bytesC);
+    const { id: idC } = insertRecord(db, tripleCollisionProject.id, reportCsv2Entity, {
+      name: "Row C",
+      attachment: JSON.stringify({ url: `/api/uploads/${tripleCollisionProject.id}/Report.csv (2)/${filenameC}`, name: "scan-c.pdf", size: bytesC.length, mimeType: "application/pdf" }),
+    });
+
+    const entries = generateBackupZipEntries(db, tripleCollisionProject, {}, uploadsDir);
+
+    // Entity "Report.csv"'s own file lands in its round-1434 bumped slot.
+    const entryB = entries.find((e) => e.path === `Report.csv (2)/files/${idB}-attachment-scan-b.pdf`);
+    assert.ok(entryB, "expected entity \"Report.csv\"'s own uploaded file under its round-1434 disambiguated directory prefix");
+    assert.deepEqual(entryB!.content, bytesB);
+
+    // Entity "Report.csv (2)"'s own file must NOT land in that same slot --
+    // it must be bumped again, to its own distinct directory prefix.
+    assert.equal(
+      entries.some((e) => e.path === `Report.csv (2)/files/${idC}-attachment-scan-c.pdf`),
+      false,
+      "entity \"Report.csv (2)\"'s own uploaded file must never share a directory prefix with a different entity's already-bumped files",
+    );
+    const entryC = entries.find((e) => e.path === `Report.csv (2) (2)/files/${idC}-attachment-scan-c.pdf`);
+    assert.ok(entryC, "expected entity \"Report.csv (2)\"'s own uploaded file under a further-disambiguated directory prefix instead");
+    assert.deepEqual(entryC!.content, bytesC);
+
+    // Entity "Report.csv (2)"'s own flat CSV (its own row data) is unaffected
+    // -- only the uploaded-file directory prefix needed disambiguating.
+    assert.ok(entries.some((e) => e.path === "Report.csv (2).csv"), "expected entity \"Report.csv (2)\"'s own flat CSV entry, unaffected by the directory-prefix bump");
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1270: migrate.ts's own case-insensitive rename detection treats a
  * case-only entity rename (e.g. "applicant" -> "Applicant") as a true
  * no-op at the db layer -- but createUploadMiddleware wrote this file's

@@ -479,10 +479,26 @@ function addUploadedFileEntries(
   // either), so the two can coexist in the same spec and collide here --
   // the same existingPaths-based numeric-suffix dedup uniqueWhatsAppLogPath
   // already applies for its own, differently-shaped collision above.
+  //
+  // Round 1936: round 1434's own dedup (just below) only re-checked an
+  // EXACT flat-path match against the bumped candidate itself -- it never
+  // re-checked whether that candidate was already in use as a DIRECTORY
+  // PREFIX by an earlier entity's own file entries in this same loop. A
+  // third entity literally named e.g. "Report.csv (2)" (findSanitized-
+  // IdentifierCollisions' broader collapse never catches this either --
+  // "report_csv" vs "report_csv_2_" are different keys) computes that
+  // exact string unbumped, since nothing in `entries` flat-matches it
+  // (the earlier entity's files sit at "Report.csv (2)/files/...", not at
+  // the bare string), so its own files silently land in the identical
+  // directory an earlier, unrelated entity's files were already
+  // disambiguated into -- confirmed live via generateBackupZipEntries.
+  // `collides` now checks both shapes with the same `entries.some` dedup
+  // pattern already used throughout this function.
+  const collides = (dir: string) => entries.some((e) => e.path === dir || e.path.startsWith(`${dir}/`));
   let entityDir = sanitizeZipEntryName(entity.name);
-  if (entries.some((e) => e.path === entityDir)) {
+  if (collides(entityDir)) {
     let suffix = 2;
-    while (entries.some((e) => e.path === `${entityDir} (${suffix})`)) suffix += 1;
+    while (collides(`${entityDir} (${suffix})`)) suffix += 1;
     entityDir = `${entityDir} (${suffix})`;
   }
   for (const record of records) {
