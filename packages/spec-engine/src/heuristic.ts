@@ -257,6 +257,25 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // payments" -- neither contains any of these three new phrases.
   "climbing gym", "trampoline park", "pilates studio",
   "קיר טיפוס", "פארק טרמפולינות", "סטודיו פילאטיס",
+  // Round 1934: the exact same drift rounds 1819/1831/1841/1872/1879/1928
+  // already fixed for salons/spas, pet care, medical/dental clinics,
+  // photography/tattoo/catering, law/bookkeeping/personal-training/
+  // insurance, and climbing-gym/trampoline/pilates, this time for dry
+  // cleaners, car washes, laundromats, notaries, auto detailers, and
+  // driving schools. None of these match a WorkOrder keyword either (they
+  // aren't "scheduled technician visits a customer's property" trades),
+  // so each matches only the generic Customer entity (driving school also
+  // matches Student/Course) -- none of which are in BILLING_ENTITY_NAMES
+  // below -- and hits none of this array's existing phrases, so all six
+  // got recommended "No payments" despite being textbook paid small-
+  // business verticals with no common free/non-commercial counterpart
+  // (unlike "clinic"/"service"/"appointment", which this file deliberately
+  // keeps out of BILLING_ENTITY_NAMES for exactly that reason). Confirmed
+  // live via the real HeuristicSpecProvider that all six phrasings below
+  // reproduce "No payments" before this fix and "Stripe" after.
+  "dry cleaning", "dry cleaner", "dry cleaners", "car wash", "laundromat",
+  "notary public", "auto detailing", "driving school",
+  "ניקוי יבש", "מכבסה אוטומטית", "נוטריון", "בית ספר לנהיגה",
 ];
 
 /**

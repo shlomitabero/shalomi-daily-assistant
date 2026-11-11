@@ -759,6 +759,62 @@ test("still recommends 'No payments' for a bare gym/fitness-center description w
 });
 
 /**
+ * Round 1934: the exact same drift rounds 1819/1831/1841/1872/1879/1928
+ * already fixed for salons/spas, pet care, medical/dental clinics,
+ * photography/tattoo/catering, law/bookkeeping/personal-training/
+ * insurance, and climbing-gym/trampoline/pilates, this time for dry
+ * cleaners, car washes, laundromats, notaries, auto detailers, and driving
+ * schools. Each of these matches only Customer (driving school also
+ * matches Student/Course), none of which are in BILLING_ENTITY_NAMES, and
+ * hit none of this file's existing PAYMENT_KEYWORDS phrases, so all six
+ * got recommended "No payments" despite being textbook paid small-business
+ * verticals with no common free/non-commercial counterpart.
+ */
+test("asks about payments (recommending Stripe) for a dry cleaner, car wash, laundromat, notary, auto detailer, or driving school description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dryCleaner = await provider.generate("A dry cleaning shop tracking customer drop-offs and pickups.");
+  const dryCleanerPaymentQuestion = dryCleaner.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(dryCleanerPaymentQuestion);
+  assert.equal(dryCleanerPaymentQuestion!.recommendation, "Stripe");
+
+  const carWash = await provider.generate("A car wash business tracking customers and wash packages.");
+  const carWashPaymentQuestion = carWash.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(carWashPaymentQuestion);
+  assert.equal(carWashPaymentQuestion!.recommendation, "Stripe");
+
+  const laundromat = await provider.generate("A laundromat tracking customers and machine usage.");
+  const laundromatPaymentQuestion = laundromat.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(laundromatPaymentQuestion);
+  assert.equal(laundromatPaymentQuestion!.recommendation, "Stripe");
+
+  const notary = await provider.generate("A notary public tracking client document signings.");
+  const notaryPaymentQuestion = notary.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(notaryPaymentQuestion);
+  assert.equal(notaryPaymentQuestion!.recommendation, "Stripe");
+
+  const autoDetailing = await provider.generate("An auto detailing business tracking customers and detailing jobs.");
+  const autoDetailingPaymentQuestion = autoDetailing.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(autoDetailingPaymentQuestion);
+  assert.equal(autoDetailingPaymentQuestion!.recommendation, "Stripe");
+
+  const drivingSchool = await provider.generate("A driving school tracking students and lesson schedules.");
+  const drivingSchoolPaymentQuestion = drivingSchool.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(drivingSchoolPaymentQuestion);
+  assert.equal(drivingSchoolPaymentQuestion!.recommendation, "Stripe");
+
+  const dryCleanerHe = await provider.generate("מכבסה לניקוי יבש למעקב אחרי לקוחות ובגדים.");
+  const dryCleanerHePaymentQuestion = dryCleanerHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(dryCleanerHePaymentQuestion);
+  assert.equal(dryCleanerHePaymentQuestion!.recommendation, "Stripe");
+
+  const notaryHe = await provider.generate("נוטריון למעקב אחרי לקוחות ומסמכים.");
+  const notaryHePaymentQuestion = notaryHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(notaryHePaymentQuestion);
+  assert.equal(notaryHePaymentQuestion!.recommendation, "Stripe");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/
