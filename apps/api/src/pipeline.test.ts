@@ -1861,6 +1861,64 @@ test("Security scan's 'token' hint doesn't spuriously flag 'tokenizer'/'detokeni
 });
 
 /**
+ * Regression test for round 1913: the "secret"/"token"/"ssn" regexes just
+ * above all reject the hint word when immediately followed by ANY lowercase
+ * letter -- correctly ruling out "secretary"/"tokenizer"/"businessName", but
+ * as a side effect also ruling out the plain ENGLISH PLURAL of the very word
+ * each hint exists to catch, since the plural's own trailing "s" is itself a
+ * lowercase letter right after the match. Live-reproduced against the real
+ * runSecurityScan before this round's fix: an "Integration" entity with
+ * "apiTokens"/"clientSecrets"/"userSSNs" fields scored a perfect 100/100
+ * with zero warning -- exactly the class of field (stored API
+ * credentials/tokens) this whole check exists to protect.
+ */
+test("Security scan's 'secret'/'token'/'ssn' hints still catch the plain plural form of the sensitive word, not just the singular", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Integration",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "secrets", type: "text", required: false },
+          { name: "clientSecrets", type: "text", required: false },
+          { name: "tokens", type: "text", required: false },
+          { name: "apiTokens", type: "text", required: false },
+          { name: "ssns", type: "text", required: false },
+          { name: "userSSNs", type: "text", required: false },
+          // Still must not spuriously re-flag the already-settled false
+          // positives above now that a trailing "s" is accepted.
+          { name: "secretary", type: "text", required: false },
+          { name: "tokenizer", type: "text", required: false },
+          { name: "businessName", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  for (const field of ["secrets", "clientSecrets", "tokens", "apiTokens", "ssns", "userSSNs"]) {
+    assert.ok(
+      security.warnings.some((w) => w.includes(`"Integration.${field}"`)),
+      `'${field}' must be flagged -- it's the plain plural of a genuinely sensitive field name`,
+    );
+  }
+  for (const field of ["secretary", "tokenizer", "businessName"]) {
+    assert.ok(
+      !security.warnings.some((w) => w.includes(`"Integration.${field}"`)),
+      `an ordinary '${field}' field must still not be flagged, even with the plural form now accepted`,
+    );
+  }
+  assert.equal(security.warnings.length, 6, "exactly the 6 genuinely sensitive-sounding (plural) fields should be flagged");
+});
+
+/**
  * Regression test for round 1322: SENSITIVE_FIELD_HINTS's own hints
  * ("ssn", "creditcard", "apikey", etc.) are entirely plausible names for a
  * field the spec generator typed "number" instead of "text" (an SSN or

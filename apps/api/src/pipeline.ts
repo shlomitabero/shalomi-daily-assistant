@@ -43,7 +43,22 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   // ("secret", "secret_key", "api_secret") -- and either form is rejected
   // when immediately followed by a lowercase letter, which is exactly what
   // rules out "secretary"/"secretive".
-  /(?:(?<![a-zA-Z])secret|Secret)(?![a-z])/,
+  //
+  // Round 1913: that same "rejected when followed by any lowercase letter"
+  // rule has a side effect its own tests never exercised -- it also rejects
+  // the ORDINARY ENGLISH PLURAL of the very word this hint exists to catch
+  // ("secrets", "clientSecrets", "apiSecrets"), since the plural's own "s"
+  // is itself a lowercase letter immediately after the match. Live-reproduced
+  // against the real runSecurityScan: an "Integration" entity with an
+  // "apiSecrets" field scored a perfect 100/100 with zero warning -- exactly
+  // the class of field (API credentials/tokens) this whole check exists for.
+  // The optional `s?` immediately before the lookahead accepts exactly one
+  // trailing lowercase "s" (the plural, or a compound continuing in
+  // uppercase like "secretsManager") while still rejecting any OTHER
+  // lowercase continuation ("secretary", "secretive") exactly as before --
+  // "secretary"'s own next character after "secret" is "a", not "s", so it
+  // never reaches the optional "s" at all.
+  /(?:(?<![a-zA-Z])secret|Secret)s?(?![a-z])/,
   "apikey",
   "api_key",
   // Plain "token" would also match "tokenizer"/"detokenize"/"retokenize" as
@@ -57,7 +72,13 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   // ("authToken", "apiToken"), and either form is rejected when
   // immediately followed by a lowercase letter, which rules out
   // "tokenizer"/"detokenize"/"retokenize".
-  /(?:(?<![a-zA-Z])token|Token)(?![a-z])/,
+  //
+  // Round 1913: same plural-form gap as "secret" above -- "tokens",
+  // "authTokens", "apiTokens", "refreshTokens" all silently escaped this
+  // hint before, for the identical reason (the plural's own "s" tripped the
+  // "no lowercase letter after" rejection). Same fix: an optional trailing
+  // "s" before the lookahead.
+  /(?:(?<![a-zA-Z])token|Token)s?(?![a-z])/,
   // Plain "ssn" would also match "businessName"/"className" as a plain
   // substring (lowercased: "busine**ssn**ame", "cla**ssn**ame") -- same
   // collision class as "secret"/"secretary" just above. "ssn" is normally
@@ -67,7 +88,13 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   // at a word start or the acronym "SSN" anywhere, each not immediately
   // followed by a lowercase letter -- which is exactly what rules out the
   // mixed-case "ssN" inside "businessName"/"className".
-  /(?:(?<![a-zA-Z])ssn|SSN)(?![a-z])/,
+  //
+  // Round 1913: same plural-form gap as "secret"/"token" above -- "ssns",
+  // "userSSNs" silently escaped this hint before. Same fix: an optional
+  // trailing "s" before the lookahead. "businessName"/"className" are
+  // unaffected -- neither contains "ssn"/"SSN" immediately followed by "s"
+  // in the first place (their own next character is "a", not "s").
+  /(?:(?<![a-zA-Z])ssn|SSN)s?(?![a-z])/,
   "creditcard",
 ];
 
