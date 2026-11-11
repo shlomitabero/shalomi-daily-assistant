@@ -2099,6 +2099,41 @@ test("an incoming WhatsApp message wrapped in associatedChildMessage, groupStatu
 });
 
 /**
+ * Round 1950: `deviceSentMessage` is WhatsApp's multi-device-sync wrapper
+ * (confirmed against the installed Baileys protobuf: IDeviceSentMessage
+ * is `{ destinationJid?, message?, phash? }`) -- the identical
+ * `{ message?: IMessage }` unwrap shape as associatedChildMessage/
+ * groupStatusMessage above, delivered when a message is sent from one of
+ * the business account's OTHER linked devices. Unlike those three, it
+ * isn't one of Baileys' "future proof" wrapper fields -- it's one of the
+ * oldest, most basic fields in the WAProto schema -- yet had simply never
+ * been added to this file through every prior message-type-coverage
+ * round. Previously fell through every branch and was silently dropped
+ * with zero trace.
+ */
+test("an incoming WhatsApp message wrapped in deviceSentMessage is logged instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { deviceSentMessage: { destinationJid: "972501234567@s.whatsapp.net", message: { conversation: "נשלח ממכשיר אחר" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "נשלח ממכשיר אחר", "deviceSentMessage must unwrap transparently, with no added placeholder prefix");
+  assert.equal(messages[0].direction, "in", "the unwrapped row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1888: `pollCreationMessageV4` is a direct sibling of
  * pollCreationMessage/V2/V3/V5 (same WAProto field family, number 93), but
  * typed `IFutureProofMessage` (`{ message?: IMessage }`) instead of the

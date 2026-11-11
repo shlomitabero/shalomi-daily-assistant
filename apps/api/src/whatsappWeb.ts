@@ -186,6 +186,7 @@ export interface BaileysIncomingMessage {
     associatedChildMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMessageV2?: { message?: BaileysIncomingMessage["message"] };
+    deviceSentMessage?: { message?: BaileysIncomingMessage["message"]; destinationJid?: string };
     callLogMesssage?: { isVideo?: boolean; callOutcome?: number; durationSecs?: number };
     questionResponseMessage?: { text?: string };
     statusQuestionAnswerMessage?: { text?: string };
@@ -450,6 +451,19 @@ const CONNECTION_LOST_MESSAGE = "The WhatsApp connection was lost. Click Connect
  * (WAProto/index.d.ts), identical to `ephemeralMessage`'s `{ message?:
  * IMessage }` shape, so they get the same plain recursive unwrap with no
  * added placeholder.
+ *
+ * Round 1950: `deviceSentMessage` -- WhatsApp's multi-device-sync wrapper
+ * (confirmed against the installed Baileys protobuf: IDeviceSentMessage
+ * is `{ destinationJid?, message?, phash? }`), delivered when a message
+ * is sent from one of the business account's OTHER linked devices (e.g.
+ * the owner replies from their phone while this app's own Baileys/Web
+ * session is connected). It has the identical `{ message?: IMessage }`
+ * unwrap shape as ephemeralMessage/associatedChildMessage/groupStatus-
+ * Message above, yet unlike those was never one of the "future proof"
+ * wrapper fields -- it's one of the oldest, most basic fields in the
+ * WAProto schema -- and had simply never been added to this file through
+ * every prior message-type-coverage round. Previously fell through to
+ * the final `return null` below and vanished with zero trace.
  */
 function describeIncomingMessage(message: BaileysIncomingMessage["message"]): string | null {
   if (!message) return null;
@@ -458,6 +472,7 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.associatedChildMessage?.message) return describeIncomingMessage(message.associatedChildMessage.message);
   if (message.groupStatusMessage?.message) return describeIncomingMessage(message.groupStatusMessage.message);
   if (message.groupStatusMessageV2?.message) return describeIncomingMessage(message.groupStatusMessageV2.message);
+  if (message.deviceSentMessage?.message) return describeIncomingMessage(message.deviceSentMessage.message);
   // Round 1888: `pollCreationMessageV4` -- unlike its pollCreationMessage/V2/
   // V3/V5 siblings below (plain `{ name?: string }` objects handled via `??`
   // chaining), this field is typed `IFutureProofMessage` (`{ message?:
