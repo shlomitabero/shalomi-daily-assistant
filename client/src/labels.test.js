@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   formatMoney, actionTypeLabel, resultLabel, riskLevelLabel, sideLabel,
   opportunityStatusLabel, sourceLabel, missingFieldLabel, reasonLabel,
-  autonomousScanSummary, saleConfirmedSummary,
+  autonomousScanSummary, saleConfirmedSummary, refreshAllFailuresSummary,
 } from './labels.js';
 
 // This is the client's one module with zero React/DOM dependency - pure
@@ -178,4 +178,28 @@ test('saleConfirmedSummary gives a clean Hebrew message for a blocked sale, not 
 
 test('saleConfirmedSummary falls back to resultLabel for any other result', () => {
   assert.equal(saleConfirmedSummary({ result: 'failed' }), 'נכשל');
+});
+
+test('refreshAllFailuresSummary returns null when nothing failed, so the caller skips setError() entirely', () => {
+  assert.equal(refreshAllFailuresSummary([]), null);
+});
+
+test('refreshAllFailuresSummary names the one symbol and its own real error when exactly one failed', () => {
+  assert.equal(
+    refreshAllFailuresSummary([{ symbol: 'AAPL', message: 'הבקשה למקור נתוני השוק לא קיבלה מענה בזמן' }]),
+    'AAPL: הבקשה למקור נתוני השוק לא קיבלה מענה בזמן'
+  );
+});
+
+test('refreshAllFailuresSummary lists every failed symbol, not just the last one, when several fail in the same run', () => {
+  // This is the actual bug this function fixes - Financial.jsx's old
+  // inline setError() call inside the loop overwrote earlier failures
+  // with each new one, so only AAPL's message (the last of three) ever
+  // reached the owner, as if MSFT and GOOG had refreshed successfully.
+  const summary = refreshAllFailuresSummary([
+    { symbol: 'MSFT', message: 'timeout' },
+    { symbol: 'GOOG', message: 'status 502' },
+    { symbol: 'AAPL', message: 'timeout' },
+  ]);
+  assert.equal(summary, '3 סימבולים לא התרעננו: MSFT, GOOG, AAPL');
 });

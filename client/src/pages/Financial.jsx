@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { sideLabel, formatMoney } from '../labels.js';
+import { sideLabel, formatMoney, refreshAllFailuresSummary } from '../labels.js';
 
 export default function Financial() {
   const [watchlist, setWatchlist] = useState([]);
@@ -58,18 +58,27 @@ export default function Financial() {
   async function onRefreshAll() {
     setError('');
     setRefreshingAll(true);
+    // Each symbol's own failure used to call setError() directly inside
+    // the loop - a second or third failing symbol silently overwrote the
+    // first's message, so only the LAST one of possibly several real
+    // failures in the same run ever reached the owner, as if the others
+    // had succeeded. refreshAllFailuresSummary (labels.js) builds one
+    // combined message instead.
+    const failedSymbols = [];
     try {
       for (const w of watchlist) {
         try {
           await api.refreshWatchlistEntry(w.id);
         } catch (err) {
-          setError(err.data?.error || err.message);
+          failedSymbols.push({ symbol: w.symbol, message: err.data?.error || err.message });
         }
       }
       refresh();
     } finally {
       setRefreshingAll(false);
     }
+    const summary = refreshAllFailuresSummary(failedSymbols);
+    if (summary) setError(summary);
   }
 
   async function onRemoveSymbol(id) {

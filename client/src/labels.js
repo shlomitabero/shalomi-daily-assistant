@@ -181,6 +181,19 @@ export function saleConfirmedSummary(action) {
   return resultLabel(result);
 }
 
+// Financial.jsx's "רענן הכל" refreshes every watchlist symbol one at a
+// time, each in its own try/catch - without this, calling setError()
+// directly inside that loop on every failure meant a second or third
+// failing symbol silently overwrote the first's message, so only the LAST
+// of possibly several real failures in the same run ever reached the
+// owner, as if the others had succeeded. Returns null when there's
+// nothing to report, so the caller can skip setError() entirely.
+export function refreshAllFailuresSummary(failures) {
+  if (failures.length === 0) return null;
+  if (failures.length === 1) return `${failures[0].symbol}: ${failures[0].message}`;
+  return `${failures.length} סימבולים לא התרעננו: ${failures.map((f) => f.symbol).join(', ')}`;
+}
+
 export function missingFieldLabel(field) {
   if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
   if (field.startsWith('cost:')) {
