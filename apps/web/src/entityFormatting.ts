@@ -2076,7 +2076,46 @@ const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 // WEBHOOK_NUMBER_FORMATTING -- a percent-rate cell ("15%") was hard-
 // rejected as an invalid number, even though the identical "real value,
 // wrong shape" case for "$1,234.56" was already accepted.
-const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩%\s]/g;
+// Round 1925: "," no longer sits in this class -- see
+// normalizeDecimalSeparator below for why a comma can't be unconditionally
+// deleted the way currency symbols/whitespace/"%" always can.
+const CSV_NUMBER_FORMATTING = /[$€£₪¥₹₩%\s]/g;
+
+/**
+ * Round 1925: this leniency's own round-1630 doc comment above names
+ * "€99,90" by name as a real-world shape it's meant to tolerate -- but
+ * before this fix, CSV_NUMBER_FORMATTING included "," and unconditionally
+ * deleted it as a thousands separator, so "€99,90" became "9990": a
+ * DIFFERENT, 100x-too-large number, and (critically) a finite one, so it
+ * was silently ACCEPTED rather than rejected -- strictly worse than a
+ * clear row error. Many non-US locales (Excel/Sheets set to a European
+ * locale, among others) write the decimal point as a comma instead of a
+ * dot. Mirrors the heuristic real spreadsheet/accounting-format parsers
+ * use: when both "," and "." appear, whichever comes LAST is the decimal
+ * point and the other is a thousands-grouping separator (possibly
+ * repeated) to strip outright, e.g. "1.234,56" -> "1234.56". When only ","
+ * appears, it's the decimal point only for the classic European decimal
+ * shape -- exactly one comma followed by 1-2 digits (e.g. "99,90",
+ * "€99,9"); any other shape (3 trailing digits, or more than one comma,
+ * e.g. "1,234" or "1,234,567") is the ordinary thousands-separator case
+ * this leniency already handled correctly and still does. Takes the
+ * string AFTER CSV_NUMBER_FORMATTING has already stripped every currency
+ * symbol/"%"/whitespace, so `trailingDigits` below counts real digits
+ * only, never a trailing symbol character.
+ */
+function normalizeDecimalSeparator(s: string): string {
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  if (hasComma && hasDot) {
+    return s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  }
+  if (hasComma) {
+    const trailingDigits = s.length - s.lastIndexOf(",") - 1;
+    const commaCount = s.split(",").length - 1;
+    return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  return s;
+}
 
 /**
  * Round 1633: mirrors webhookIn.ts's own WEBHOOK_PARENTHESIZED_NEGATIVE --
@@ -2336,7 +2375,7 @@ export function buildImportRecords(
         if (!Number.isFinite(n)) {
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
-          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
           // Guard against a cell that's nothing but currency
           // symbols/whitespace (e.g. a bare "$") -- Number("") is 0, not
           // NaN, which would otherwise silently import as a real zero. The
@@ -2618,7 +2657,7 @@ export function buildImportRecordsFromJson(
         if (!Number.isFinite(n) && typeof raw === "string") {
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
-          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
           if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {

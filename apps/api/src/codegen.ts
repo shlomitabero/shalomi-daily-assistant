@@ -4040,7 +4040,36 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   // Round 1887: added "%" so a percent-rate cell ("15%") is no longer
   // hard-rejected, mirroring the identical webhookIn.ts/entityFormatting.ts
   // extension (no escaping needed -- "%" has no regex meaning in a class).
-  const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩%\\s]/g;
+  // Round 1925: "," no longer sits in this class -- see
+  // normalizeDecimalSeparator below for why a comma can't be unconditionally
+  // deleted the way currency symbols/whitespace/"%" always can.
+  const CSV_NUMBER_FORMATTING = /[$€£₪¥₹₩%\\s]/g;
+
+  // Round 1925: mirrors entityFormatting.ts's own round-1925 fix -- this
+  // leniency silently mangled a European decimal-comma value ("€99,90",
+  // meaning 99.90) into a different, 100x-too-large number ("9990")
+  // instead of parsing it correctly, since "," was unconditionally
+  // stripped as a thousands separator. Takes the string AFTER
+  // CSV_NUMBER_FORMATTING has already stripped currency symbols/"%"/
+  // whitespace. When both "," and "." appear, whichever comes LAST is the
+  // decimal point and the other is a thousands-grouping separator to
+  // strip outright. When only "," appears, it's the decimal point only
+  // for the classic European shape -- exactly one comma followed by 1-2
+  // digits; any other shape (3 trailing digits, multiple commas) is the
+  // ordinary thousands-separator case this leniency already handled.
+  const normalizeDecimalSeparator = (s) => {
+    const hasComma = s.includes(",");
+    const hasDot = s.includes(".");
+    if (hasComma && hasDot) {
+      return s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\\./g, "").replace(",", ".") : s.replace(/,/g, "");
+    }
+    if (hasComma) {
+      const trailingDigits = s.length - s.lastIndexOf(",") - 1;
+      const commaCount = s.split(",").length - 1;
+      return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+    }
+    return s;
+  };
 
   // Round 1633: mirrors the identical leniency round 1627 added to the
   // inbound-webhook route for the same "accounting export" shape -- a
@@ -4223,7 +4252,7 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
         if (!Number.isFinite(n)) {
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
-          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
           if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {
@@ -4427,14 +4456,35 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         // e.g. Number(true) === 1) is still rejected outright.
         // Round 1887: added "%" so a percent-rate cell is no longer
         // hard-rejected, mirroring the CSV_NUMBER_FORMATTING copy above.
-        const CSV_NUMBER_FORMATTING = /[,$€£₪¥₹₩%\\s]/g;
+        // Round 1925: "," no longer sits in this class -- see
+        // normalizeDecimalSeparator below for why a comma can't be
+        // unconditionally deleted the way currency symbols/"%" always can.
+        const CSV_NUMBER_FORMATTING = /[$€£₪¥₹₩%\\s]/g;
         const CSV_PARENTHESIZED_NEGATIVE = /^\\((.*)\\)$/;
+        // Round 1925: mirrors the identical fix in buildImportRecords
+        // above -- "€99,90" was silently mangled into "9990" (100x too
+        // large) instead of 99.90, since "," was unconditionally deleted
+        // as a thousands separator. See that copy's own comment for the
+        // full heuristic.
+        const normalizeDecimalSeparator = (s) => {
+          const hasComma = s.includes(",");
+          const hasDot = s.includes(".");
+          if (hasComma && hasDot) {
+            return s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\\./g, "").replace(",", ".") : s.replace(/,/g, "");
+          }
+          if (hasComma) {
+            const trailingDigits = s.length - s.lastIndexOf(",") - 1;
+            const commaCount = s.split(",").length - 1;
+            return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+          }
+          return s;
+        };
         const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
         let n = numberIsCoercible ? Number(raw) : NaN;
         if (!Number.isFinite(n) && typeof raw === "string") {
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
-          const cleaned = unwrapped.replace(CSV_NUMBER_FORMATTING, "");
+          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
           if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {

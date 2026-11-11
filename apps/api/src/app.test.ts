@@ -24158,6 +24158,44 @@ test("POST /public/webhook-in/:projectId/:entityName accepts currency/thousands-
   });
 });
 
+test("POST /public/webhook-in/:projectId/:entityName treats a European decimal-comma amount as the decimal point, not a thousands separator", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-decimal-comma-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", amount: "€99,90" }),
+    });
+    assert.equal(webhookRes.status, 201, "a European-formatted amount using a comma as the decimal point must not be rejected as an invalid number");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; amount: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.amount, 99.9, "the comma must be read as a decimal point (99.9), not stripped as a thousands separator (9990)");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName still rejects a genuinely invalid number value for a number field, not just any string with currency-like characters", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-number-invalid-${randomUUID()}@example.com`;

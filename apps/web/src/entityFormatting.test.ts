@@ -2694,6 +2694,42 @@ test("buildImportRecords accepts a currency/thousands-separator-formatted number
 });
 
 /**
+ * Regression test (round 1925): the leniency above handled "$1,234.56" and
+ * "1,234" correctly by always treating "," as a thousands separator to
+ * delete -- but many non-US locales (Excel/Sheets set to a European
+ * locale, among others) write the DECIMAL point as a comma instead of a
+ * dot. Before this fix, "€99,90" (99.90) was unconditionally stripped of
+ * its comma and became "9990": a finite, silently-ACCEPTED number that is
+ * 100x too large, not a rejected row. "1.234,56" (the European dot-
+ * thousands/comma-decimal combination) must also resolve to 1234.56, and
+ * the ordinary US-style thousands cases ("1,234" with no decimal part,
+ * "1,234,567") must keep working exactly as before.
+ */
+test("buildImportRecords treats a comma as the decimal point for a European-locale number cell, not a thousands separator to delete", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "€99,90"],
+    ["Beta LLC", "99,90"],
+    ["Gamma Inc", "1.234,56"],
+    ["Delta Inc", "1,234"],
+    ["Epsilon Inc", "1,234,567"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { client: "Acme Corp", amount: 99.9 },
+    { client: "Beta LLC", amount: 99.9 },
+    { client: "Gamma Inc", amount: 1234.56 },
+    { client: "Delta Inc", amount: 1234 },
+    { client: "Epsilon Inc", amount: 1234567 },
+  ]);
+  assert.equal(result.errors.length, 0);
+});
+
+/**
  * Round 1808: CSV_NUMBER_FORMATTING's character class only ever covered
  * USD/EUR/GBP/ILS ($€£₪), so a spreadsheet column formatted with Yen,
  * Rupee, or Won currency symbols (e.g. "¥1,234") got the whole row

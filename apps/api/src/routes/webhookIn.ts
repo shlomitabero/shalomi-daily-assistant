@@ -215,7 +215,40 @@ const WEBHOOK_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
 // case for "$1,234.56" was already leniently accepted. No round ever
 // discussed or deliberately declined extending this character class to "%"
 // -- it was simply never proposed when the currency symbols were added.
-const WEBHOOK_NUMBER_FORMATTING = /[,$€£₪¥₹₩%\s]/g;
+// Round 1925: "," no longer sits in this class -- see
+// normalizeDecimalSeparator below for why a comma can't be unconditionally
+// deleted the way currency symbols/whitespace/"%" always can.
+const WEBHOOK_NUMBER_FORMATTING = /[$€£₪¥₹₩%\s]/g;
+/**
+ * Round 1925: this leniency silently mangled a European decimal-comma value
+ * into a different, 100x-too-large number instead of parsing it correctly
+ * or rejecting it -- e.g. "€99,90" (99.90) was unconditionally stripped of
+ * its comma and became "9990". Many non-US locales write the decimal point
+ * as a comma, not a dot. Mirrors the heuristic real spreadsheet/accounting
+ * parsers use: when both "," and "." appear, whichever comes LAST is the
+ * decimal point and the other is a thousands-grouping separator (possibly
+ * repeated) to strip outright, e.g. "1.234,56" -> "1234.56". When only ","
+ * appears, it's the decimal point only for the classic European decimal
+ * shape -- exactly one comma followed by 1-2 digits (e.g. "99,90"); any
+ * other shape (3 trailing digits, or more than one comma, e.g. "1,234" or
+ * "1,234,567") is the ordinary thousands-separator case this leniency
+ * already handled correctly and still does. Takes the string AFTER
+ * WEBHOOK_NUMBER_FORMATTING has already stripped every currency symbol/
+ * "%"/whitespace, so `trailingDigits` below counts real digits only.
+ */
+function normalizeDecimalSeparator(s: string): string {
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  if (hasComma && hasDot) {
+    return s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  }
+  if (hasComma) {
+    const trailingDigits = s.length - s.lastIndexOf(",") - 1;
+    const commaCount = s.split(",").length - 1;
+    return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  return s;
+}
 // Round 1627: accounting-style negatives wrap the whole number in
 // parentheses instead of a leading "-" (e.g. "($1,234.56)" for -1234.56) --
 // the shape QuickBooks/Xero/many payment-provider exports use for a refund
@@ -332,7 +365,7 @@ function normalizeBodyValues(
       if (!Number.isFinite(Number(value))) {
         const parenMatch = WEBHOOK_PARENTHESIZED_NEGATIVE.exec(value);
         const unwrapped = parenMatch ? `-${parenMatch[1]}` : value;
-        const cleaned = unwrapped.replace(WEBHOOK_NUMBER_FORMATTING, "");
+        const cleaned = normalizeDecimalSeparator(unwrapped.replace(WEBHOOK_NUMBER_FORMATTING, ""));
         if (cleaned !== "" && cleaned !== "-" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
       }
     } else if (field.type === "enum" && field.enumValues) {

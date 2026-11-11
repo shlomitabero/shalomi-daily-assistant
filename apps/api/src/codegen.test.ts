@@ -14658,6 +14658,27 @@ test("the exported EntityView's own generated buildImportRecordsFromJson accepts
 });
 
 /**
+ * Round 1925: mirrors the live preview's own round-1925 fix -- a European
+ * decimal-comma amount (e.g. "€99,90") was stripped of its comma as if it
+ * were a thousands separator, producing 9990 instead of 99.9.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson treats a European decimal-comma numeral string's comma as the decimal point, not a thousands separator", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: "€99,90" }, { amount: "1.234,56" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 99.9 }, { amount: 1234.56 }]);
+});
+
+/**
  * Round 1808: mirrors the live preview's own round-1808 fix -- this
  * generated function's own CSV_NUMBER_FORMATTING copy only ever covered
  * USD/EUR/GBP/ILS ($€£₪), so a Yen/Rupee/Won-formatted numeral string
@@ -16292,6 +16313,61 @@ test("the exported EntityView's CSV import accepts a currency/thousands-separato
   ]);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Row 4.*Amount/);
+});
+
+/**
+ * Round 1925: mirrors the live preview's own round-1925 fix -- a CSV cell
+ * using the European decimal-comma convention (e.g. "€99,90") had its
+ * comma stripped as if it were a thousands separator, producing 9990
+ * instead of 99.9.
+ */
+test("the exported EntityView's CSV import treats a European decimal-comma numeral cell's comma as the decimal point, not a thousands separator", () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = invoiceProject.spec.entities[0].fields;
+  const rows = [
+    ["Client", "Amount"],
+    ["Acme Corp", "€99,90"],
+    ["Beta LLC", "1.234,56"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [
+    { client: "Acme Corp", amount: 99.9 },
+    { client: "Beta LLC", amount: 1234.56 },
+  ]);
+  assert.equal(errors.length, 0);
 });
 
 /**
