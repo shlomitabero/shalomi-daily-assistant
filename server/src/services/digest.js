@@ -18,8 +18,16 @@ export function generateDailyDigest(now = new Date()) {
   // conversion, so reusing it on each entry's own createdAt keeps both
   // sides of the comparison speaking the same calendar.
   const actionsToday = db.actions_log.where((a) => todayKey(new Date(a.createdAt)) === today && a.result === 'success');
+  // A wrong password or a rate-limit block logs result: 'failed'/'blocked:
+  // ...' under type 'login_attempt' - without excluding it here, it was
+  // ALSO being swept into this generic list, duplicating the dedicated,
+  // properly-translated warning line below in the ugliest possible way:
+  // this list's own summary format (`${a.type}: ...`) has no translation
+  // layer for a.type at all, so it surfaced as raw, repeated English -
+  // "login_attempt: failed; login_attempt: failed" - right next to that
+  // same information already shown correctly in Hebrew.
   const failuresToday = db.actions_log
-    .where((a) => todayKey(new Date(a.createdAt)) === today && String(a.result).startsWith('failed'))
+    .where((a) => todayKey(new Date(a.createdAt)) === today && String(a.result).startsWith('failed') && a.type !== 'login_attempt')
     .map((a) => ({ summary: `${a.type}: ${a.detail?.error ?? a.result}` }));
 
   const openOpportunities = db.opportunities.all()

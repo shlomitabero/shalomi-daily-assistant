@@ -201,6 +201,20 @@ test('generateDailyDigest counts today\'s real login_attempt entries and warns i
   assert.match(digest.text, /2 ניסיונות התחברות כושלים היום/);
 });
 
+test('generateDailyDigest never doubles up a login_attempt entry into the generic "בעיות" line too', () => {
+  // failuresToday's own summary format (`${a.type}: ...`) has no
+  // translation layer for a.type at all - without excluding login_attempt
+  // here, this showed up as raw, repeated English ("login_attempt:
+  // failed") right next to the same information already shown correctly
+  // in the dedicated warning line above it.
+  __resetForTests();
+  db.actions_log.insert({ id: makeId('act'), type: 'login_attempt', detail: { ip: '1.2.3.4' }, result: 'failed', createdAt: new Date().toISOString() });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /1 ניסיונות התחברות כושלים היום/);
+  assert.doesNotMatch(digest.text, /login_attempt/);
+  assert.match(digest.text, /בעיות: אין/);
+});
+
 test('generateDailyDigest says nothing about login attempts when there were none today', () => {
   __resetForTests();
   const digest = generateDailyDigest();
