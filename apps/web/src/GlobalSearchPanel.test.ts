@@ -62,6 +62,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -89,6 +90,7 @@ test("GlobalSearchPanel's runSearch shows results from every entity that succeed
     { current: 0 },
     { current: {} },
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -155,6 +157,7 @@ test("GlobalSearchPanel's runSearch collects every truncated entity's name, even
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -183,6 +186,7 @@ test("GlobalSearchPanel's runSearch collects every truncated entity's name, even
     { current: 0 },
     { current: {} },
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -244,6 +248,7 @@ test("GlobalSearchPanel's runSearch names a truncated entity by its own display 
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -266,6 +271,7 @@ test("GlobalSearchPanel's runSearch names a truncated entity by its own display 
     { current: 0 },
     { current: {} },
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -308,6 +314,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -332,6 +339,7 @@ test("GlobalSearchPanel's runSearch still surfaces the raw error message when ev
     { current: 0 },
     { current: {} },
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -389,6 +397,7 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -411,6 +420,7 @@ test("GlobalSearchPanel's runSearch orders entity groups by totalMatches descend
     { current: 0 },
     { current: {} },
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -480,6 +490,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -509,6 +520,7 @@ test("GlobalSearchPanel's runSearch ignores a stale, still-in-flight search's re
     searchRequestId,
     { current: {} },
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -660,6 +672,7 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -682,6 +695,7 @@ test("GlobalSearchPanel's handleShowAll still runs when its entity was only reca
     "en",
     () => {},
     { current: null },
+    { current: new Map() },
     () => {},
     entityLabelOccurrences,
     entityDisplayLabel,
@@ -741,6 +755,7 @@ test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight 
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "entityLabelOccurrences",
     "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
@@ -761,6 +776,7 @@ test("GlobalSearchPanel's handleShowAll never surfaces a stale, still-in-flight 
       errorCalls.push(message);
     },
     { current: null },
+    { current: new Map() },
     entityLabelOccurrences,
     entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
@@ -828,6 +844,7 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "setResults",
     "results",
     "selectedIndex",
@@ -849,6 +866,7 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "en",
     () => {},
     { current: null },
+    { current: new Map() },
     // Round 1033: the success branch below now calls setResults with a
     // plain array value (not an updater function) -- see its own doc
     // comment on why -- while the sibling zero-matches branch still uses
@@ -934,6 +952,7 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "setResults",
     "results",
     "selectedIndex",
@@ -955,6 +974,7 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     "en",
     () => {},
     { current: null },
+    { current: new Map() },
     // Round 1033: the success branch below now calls setResults with a
     // plain array value (not an updater function) -- see its own doc
     // comment on why -- while the sibling zero-matches branch still uses
@@ -1049,6 +1069,7 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "setResults",
     "results",
     "selectedIndex",
@@ -1077,6 +1098,7 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     "en",
     () => {},
     { current: null },
+    { current: new Map() },
     (next: typeof results | ((prev: typeof results) => typeof results)) => {
       results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
     },
@@ -1144,6 +1166,7 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "entityLabelOccurrences",
     "entityDisplayLabel",
     `${code}\nreturn handleShowAll;`,
@@ -1166,6 +1189,7 @@ test("GlobalSearchPanel's handleShowAll surfaces a failed fetch via setError, in
       capturedError = msg;
     },
     { current: null },
+    { current: new Map() },
     entityLabelOccurrences,
     entityDisplayLabel,
   ) as (entityName: string) => Promise<void>;
@@ -1216,6 +1240,7 @@ test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "setResults",
     "results",
     "selectedIndex",
@@ -1237,6 +1262,7 @@ test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set
     "en",
     () => {},
     { current: null },
+    { current: new Map() },
     () => {},
     [],
     null,
@@ -2739,6 +2765,7 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's successful ret
     "lang",
     "setError",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "setResults",
     "results",
     "selectedIndex",
@@ -2766,6 +2793,7 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's successful ret
       error = msg;
     },
     errorFromShowAllEntityRef,
+    { current: new Map() },
     (next: typeof results | ((prev: typeof results) => typeof results)) => {
       results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
     },
@@ -2801,6 +2829,141 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's successful ret
     "Order",
     "the ref must still record Order as the entity whose failure is showing, not be cleared by Customer's unrelated success",
   );
+});
+
+/**
+ * Round 1929: round 1798's own fix (the test just above) only guards the "a
+ * different entity's SUCCESS must not dismiss this one's still-showing
+ * failure" direction -- it never guarded the opposite direction, where a
+ * DIFFERENT entity's own FAILURE arrives while this entity's failure is
+ * still showing. Without failedShowAllEntitiesRef (a per-entity Map, added
+ * this round), the catch block unconditionally overwrote both `error` and
+ * errorFromShowAllEntityRef to the newer failure's own values with no
+ * check, silently discarding the earlier failure with zero trace -- and if
+ * the newer one then resolved on a retry, the success-path check matched
+ * it and cleared the banner entirely, even though the earlier failure was
+ * never actually retried.
+ */
+test("GlobalSearchPanel's handleShowAll must not let one entity's own NEW failure silently erase a different entity's still-unresolved 'Show all' failure, and must restore it once the newer one resolves", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entityOrder = { name: "Order", label: "Order", fields: [] };
+  const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let results: { entityName: string; entityLabel: string; totalMatches: number; sample: unknown[] }[] = [
+    { entityName: "Order", entityLabel: "Order", totalMatches: 5, sample: [] },
+    { entityName: "Customer", entityLabel: "Customer", totalMatches: 5, sample: [] },
+  ];
+  const searchRequestId = { current: 0 };
+  const errorFromShowAllEntityRef: { current: string | null } = { current: null };
+  const failedShowAllEntitiesRef: { current: Map<string, string> } = { current: new Map() };
+  let error: string | null = null;
+
+  const orderRejection = new Error("Order's own Show all failed");
+  const customerRejection = new Error("Customer's own Show all failed");
+  let shouldOrderFail = true;
+  let shouldCustomerFail = true;
+
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
+    "setResults",
+    "results",
+    "selectedIndex",
+    "setSelectedIndex",
+    "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityOrder, entityCustomer],
+    "proj1",
+    async (_projectId: string, entityName: string) => {
+      if (entityName === "Order") {
+        if (shouldOrderFail) throw orderRejection;
+        return { records: [{ id: 1, name: "Order-1" }] };
+      }
+      if (shouldCustomerFail) throw customerRejection;
+      return { records: [{ id: 1, name: "Customer-1" }] };
+    },
+    fakeSearchEntityRecords,
+    "smith",
+    { current: {} },
+    () => {},
+    () => {},
+    searchRequestId,
+    "en",
+    (msg: string) => {
+      error = msg;
+    },
+    errorFromShowAllEntityRef,
+    failedShowAllEntitiesRef,
+    (next: typeof results | ((prev: typeof results) => typeof results)) => {
+      results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
+    },
+    results,
+    null,
+    () => {},
+    () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
+  ) as (entityName: string) => Promise<void>;
+
+  // Order's "Show all" fails first.
+  await fn("Order");
+  assert.equal(error, orderRejection.message, "sanity check: Order's failed Show all must set the error");
+  assert.equal(errorFromShowAllEntityRef.current, "Order");
+
+  // Customer's own, completely unrelated "Show all" ALSO fails shortly after.
+  await fn("Customer");
+  assert.equal(
+    error,
+    customerRejection.message,
+    "the banner has room for only one message, so Customer's newer failure is shown -- but Order's own failure must not vanish without a trace",
+  );
+  assert.equal(errorFromShowAllEntityRef.current, "Customer");
+  assert.equal(
+    failedShowAllEntitiesRef.current.get("Order"),
+    orderRejection.message,
+    "Order's own still-unresolved failure must still be tracked, even though Customer's is the one currently shown",
+  );
+
+  // Customer's own "Show all" is retried and succeeds.
+  shouldCustomerFail = false;
+  await fn("Customer");
+  assert.equal(
+    error,
+    orderRejection.message,
+    "Customer's own successful retry must restore Order's own still-unresolved failure, not clear the banner to null -- Order's own 'Show all' was never actually retried",
+  );
+  assert.equal(errorFromShowAllEntityRef.current, "Order");
+
+  // Order's own "Show all" is finally retried and succeeds too.
+  shouldOrderFail = false;
+  await fn("Order");
+  assert.equal(error, null, "once every entity's own failure has actually resolved, the banner must finally clear");
+  assert.equal(errorFromShowAllEntityRef.current, null);
 });
 
 /**
@@ -3627,6 +3790,7 @@ test("GlobalSearchPanel's runSearch finds a relation-field match even when the f
     "searchRequestId",
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
     "lang",
     "entityLabelOccurrences",
     "entityDisplayLabel",
@@ -3650,6 +3814,7 @@ test("GlobalSearchPanel's runSearch finds a relation-field match even when the f
     { current: 0 },
     lastRecordsByEntityRef,
     { current: null },
+    { current: new Map() },
     "en",
     entityLabelOccurrences,
     entityDisplayLabel,

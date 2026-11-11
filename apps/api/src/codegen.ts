@@ -9678,6 +9678,23 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
   // Scoping this to the entity name that actually failed fixes it: only a
   // retry of that SAME entity's own "Show all" can clear it.
   const errorFromShowAllEntityRef = useRef(null);
+  // Round 1929 (mirrors the live preview's own GlobalSearchPanel.tsx fix):
+  // round 1798's own fix above only guards "a different entity's success
+  // must not dismiss this one's still-showing failure" -- not the
+  // opposite direction. Two different entities' "Show all" buttons can be
+  // clicked independently of each other, so if entity A's "Show all"
+  // fails first and entity B's own, unrelated "Show all" ALSO fails
+  // shortly after, the catch block below used to overwrite both error and
+  // errorFromShowAllEntityRef straight to B's own values with no check,
+  // silently discarding A's still-unresolved failure -- and if B then
+  // succeeds on a retry, the success-path check matched "B" and cleared
+  // the banner entirely, even though A's "Show all" was never retried.
+  // This Map tracks every entity with a currently-unresolved "Show all"
+  // failure, so a later failure or success only ever touches its own
+  // entry: the banner is cleared only once this Map is truly empty, and
+  // restored to whichever OTHER entity's failure is still pending
+  // otherwise.
+  const failedShowAllEntitiesRef = useRef(new Map());
   const dialogRef = useRef(null);
   // Captured during render, not inside the effect below: an effect runs
   // after React has already committed this render's DOM, which includes
@@ -9786,6 +9803,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
     setLoading(true);
     setError(null);
     errorFromShowAllEntityRef.current = null;
+    failedShowAllEntitiesRef.current = new Map();
     const { results: succeeded, failures, recordsByEntity, truncatedNames } = await searchAllEntities(entities, q);
     if (searchRequestId.current !== requestId) return;
     lastRecordsByEntityRef.current = recordsByEntity;
@@ -9925,9 +9943,22 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // successful "Show all" must never silently dismiss. Round 1798:
       // nor must a DIFFERENT entity's own still-showing "Show all" error,
       // so this checks against this entity's own name, not a bare boolean.
+      // Round 1929: remove this entity's entry regardless of whether it's
+      // the one currently displayed -- a success always resolves THIS
+      // entity's own failure.
+      failedShowAllEntitiesRef.current.delete(entityName);
       if (errorFromShowAllEntityRef.current === entityName) {
-        setError(null);
-        errorFromShowAllEntityRef.current = null;
+        const stillFailing = failedShowAllEntitiesRef.current.entries().next();
+        if (stillFailing.done) {
+          setError(null);
+          errorFromShowAllEntityRef.current = null;
+        } else {
+          // Round 1929: a DIFFERENT entity's "Show all" is still failing --
+          // restore its own message instead of clearing the banner.
+          const [nextEntity, nextMessage] = stillFailing.value;
+          setError(nextMessage);
+          errorFromShowAllEntityRef.current = nextEntity;
+        }
       }
     } catch (err) {
       // Round 923: the success path above already discards a stale
@@ -9937,6 +9968,9 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
       // moved on to a new search used to surface its own unrelated error
       // over the new search's current results.
       if (searchRequestId.current !== requestId) return;
+      // Round 1929: recorded in the Map so a later, different entity's
+      // own success can tell this failure is still unresolved.
+      failedShowAllEntitiesRef.current.set(entityName, err.message);
       setError(err.message);
       errorFromShowAllEntityRef.current = entityName;
     } finally {

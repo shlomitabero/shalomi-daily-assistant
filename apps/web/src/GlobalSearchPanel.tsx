@@ -211,6 +211,29 @@ export function GlobalSearchPanel({
   // entity's success can no longer dismiss it; only a retry of the SAME
   // entity's own "Show all" can.
   const errorFromShowAllEntityRef = useRef<string | null>(null);
+  // Round 1929: round 1798's own fix above only guards the "a different
+  // entity's SUCCESS must not dismiss this one's still-showing failure"
+  // direction -- it never guarded the opposite direction. Two different
+  // entities' "Show all" buttons are independently clickable at the same
+  // time (showAllLoading, round 1083, only disables the one actually
+  // clicked), so if entity A's "Show all" fails first and entity B's own,
+  // unrelated "Show all" ALSO fails shortly after, the catch block below
+  // used to overwrite BOTH `error` and errorFromShowAllEntityRef straight
+  // to B's own values with no check at all -- silently discarding A's
+  // still-unresolved failure with zero trace. Worse: if the user then only
+  // notices/retries B's error and it succeeds, the success-path check
+  // right below matches "B" and clears the error banner entirely, even
+  // though A's "Show all" was never actually retried -- a false "all
+  // clear" while A's extra records are still missing. This Map tracks
+  // every entity with a currently-unresolved "Show all" failure (keyed by
+  // entity name, mirroring showAllLoading's own Set<string> pattern just
+  // above), so a later failure or success only ever touches its own entry:
+  // the single `error` banner still shows only one message at a time (the
+  // UI has room for exactly one), but it's cleared only once this Map is
+  // truly empty, and restored to whichever OTHER entity's failure is still
+  // pending otherwise -- never clobbered to null while a real failure
+  // remains.
+  const failedShowAllEntitiesRef = useRef<Map<string, string>>(new Map());
 
   // Promise.allSettled rather than Promise.all: a single entity whose
   // records fail to load (a transient network blip, a cold-starting
@@ -231,6 +254,7 @@ export function GlobalSearchPanel({
     setLoading(true);
     setError(null);
     errorFromShowAllEntityRef.current = null;
+    failedShowAllEntitiesRef.current = new Map();
     const settled = await Promise.allSettled(
       entities.map(async (entity) => {
         const { records, truncated } = await listRecords(projectId, entity.name);
@@ -506,9 +530,24 @@ export function GlobalSearchPanel({
       // sources apart. Round 1798: this must also never dismiss a
       // DIFFERENT entity's own still-showing "Show all" error, so the
       // check is against this entity's own name, not a bare boolean.
+      // Round 1929: remove this entity's own entry regardless of whether
+      // it's the one currently displayed -- a success always resolves
+      // THIS entity's failure, and leaving a stale entry in the Map would
+      // make a later check think this entity is still broken.
+      failedShowAllEntitiesRef.current.delete(entityName);
       if (errorFromShowAllEntityRef.current === entityName) {
-        setError(null);
-        errorFromShowAllEntityRef.current = null;
+        const stillFailing = failedShowAllEntitiesRef.current.entries().next();
+        if (stillFailing.done) {
+          setError(null);
+          errorFromShowAllEntityRef.current = null;
+        } else {
+          // Round 1929: a DIFFERENT entity's "Show all" is still failing --
+          // restore its own message instead of clearing the banner, so
+          // that still-real failure stays visible.
+          const [nextEntity, nextMessage] = stillFailing.value;
+          setError(nextMessage);
+          errorFromShowAllEntityRef.current = nextEntity;
+        }
       }
     } catch (err) {
       // Round 923: the success path above already discards a stale
@@ -519,6 +558,11 @@ export function GlobalSearchPanel({
       // search used to surface its own unrelated error over the new
       // search's current results.
       if (searchRequestId.current !== requestId) return;
+      // Round 1929: recorded in the Map (not just the single shared
+      // ref/error pair) so a later, different entity's own success can
+      // tell this failure is still unresolved and restore it instead of
+      // clearing the banner outright.
+      failedShowAllEntitiesRef.current.set(entityName, (err as Error).message);
       setError((err as Error).message);
       errorFromShowAllEntityRef.current = entityName;
     } finally {
