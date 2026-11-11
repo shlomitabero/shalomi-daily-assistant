@@ -191,6 +191,7 @@ export interface BaileysIncomingMessage {
     statusQuestionAnswerMessage?: { text?: string };
     commentMessage?: { message?: BaileysIncomingMessage["message"] };
     encCommentMessage?: Record<string, never>;
+    statusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -481,6 +482,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // fell straight through to the final `return null` and vanished with
   // zero trace.
   if (message.commentMessage?.message) return describeIncomingMessage(message.commentMessage.message);
+  // Round 1930: `statusMentionMessage` is WhatsApp's "you were mentioned in
+  // a Status update" notification -- confirmed against the installed
+  // Baileys protobuf (WAProto/index.d.ts): statusMentionMessage is typed
+  // `IFutureProofMessage` (`{ message?: IMessage }`), the exact same
+  // wrapper shape as ephemeralMessage/documentWithCaptionMessage/
+  // associatedChildMessage/groupStatusMessage/groupStatusMessageV2/
+  // pollCreationMessageV4/commentMessage just above (round 1888's same
+  // precedent applies: Baileys' own getFutureProofMessage helper doesn't
+  // list this field either, but the protobuf shape is the decisive
+  // signal, not that helper's own list). Without this branch, the
+  // notification fell straight through to the final `return null` and
+  // vanished with zero trace.
+  if (message.statusMentionMessage?.message) return describeIncomingMessage(message.statusMentionMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
