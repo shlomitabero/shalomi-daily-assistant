@@ -610,7 +610,15 @@ export function WhatsAppPanel({
           const versionBeforeFetch = messagesVersionRef.current;
           listWhatsAppMessages(projectId)
             .then(({ messages, hasMore, nextCursor }) => {
-              if (messagesVersionRef.current !== versionBeforeFetch) return;
+              // Round 1920: this inner .then was the one continuation in
+              // the whole file that never checked mountedRef (every other
+              // one does -- see this function's own two checks above, plus
+              // lines 722/765/899) -- it only ever guarded against
+              // messagesVersionRef going stale (round 541), not against the
+              // panel having unmounted entirely while this fetch was still
+              // in flight (e.g. open an already-connected panel, then close
+              // it before this resolves). Same convention applied here too.
+              if (!mountedRef.current || messagesVersionRef.current !== versionBeforeFetch) return;
               setMessages(messages);
               setHasMoreMessages(hasMore);
               nextCursorRef.current = nextCursor;

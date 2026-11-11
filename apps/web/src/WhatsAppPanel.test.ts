@@ -717,6 +717,161 @@ test("WhatsAppPanel's loadInitialStatus discards a listWhatsAppMessages page fet
 });
 
 /**
+ * Regression test for round 1920's finding: loadInitialStatus's own
+ * "already connected when the panel mounts" branch's listWhatsAppMessages
+ * `.then` (round 541's own messagesVersionRef guard, test above) was the
+ * one continuation in the whole file that never also checked
+ * mountedRef.current -- every other one does (this same function's outer
+ * .then on both its success and catch paths, handleDisconnect's catch,
+ * startPolling's/startConnectedPolling's own ticks). If the panel is
+ * closed (unmounted) while this exact fetch is still in flight -- an
+ * entirely ordinary case, since the panel mounts already-connected and
+ * this fetch can simply take a moment -- the old code would still call
+ * setMessages/setHasMoreMessages and write nextCursorRef.current on an
+ * already-gone component instance once it resolved.
+ */
+test("WhatsAppPanel's loadInitialStatus discards a listWhatsAppMessages page fetched while already connected if the panel was closed before that fetch resolved", async () => {
+  const loadMatch = whatsAppPanelSrc.match(/ {2}function loadInitialStatus\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(loadMatch, "expected to find loadInitialStatus in WhatsAppPanel.tsx");
+  const { code } = transformSync(loadMatch![0], { loader: "ts" });
+
+  const mountedRef = { current: true };
+  const messagesVersionRef = { current: 0 };
+  const nextCursorRef = { current: null as string | null };
+  let setMessagesCalls = 0;
+  let setHasMoreMessagesCalls = 0;
+  let startConnectedPollingCalls = 0;
+
+  let resolveFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => {
+    resolveFetchStarted = resolve;
+  });
+  let releaseListMessages!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseListMessages = resolve;
+  });
+
+  const { loadInitialStatus } = new Function(
+    "mountedRef",
+    "messagesVersionRef",
+    "setInitialLoadError",
+    "getWhatsAppStatus",
+    "setStatus",
+    "startPolling",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setHasMoreMessages",
+    "nextCursorRef",
+    "startConnectedPolling",
+    "projectId",
+    `${code}\nreturn { loadInitialStatus };`,
+  )(
+    mountedRef,
+    messagesVersionRef,
+    () => {},
+    async () => ({ status: "connected" }),
+    () => {},
+    () => {},
+    async () => {
+      resolveFetchStarted();
+      await held;
+      return { messages: [{ id: "m1" }], hasMore: true, nextCursor: "cursor-1" };
+    },
+    () => {
+      setMessagesCalls += 1;
+    },
+    () => {
+      setHasMoreMessagesCalls += 1;
+    },
+    nextCursorRef,
+    () => {
+      startConnectedPollingCalls += 1;
+    },
+    "proj1",
+  ) as { loadInitialStatus: () => void };
+
+  loadInitialStatus();
+
+  // Wait for the mount-time fetch to actually reach its own
+  // listWhatsAppMessages call before simulating the panel closing -- a real
+  // network fetch would take real time, exactly like this held-open promise.
+  await fetchStarted;
+  mountedRef.current = false;
+  releaseListMessages();
+  await held;
+  // Let the held promise's own resolution propagate through the fetch's
+  // .then chain before asserting.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(setMessagesCalls, 0, "an unmount mid-mount-fetch must discard this fetch's message page");
+  assert.equal(setHasMoreMessagesCalls, 0, "an unmount mid-mount-fetch must discard this fetch's hasMore flag");
+  assert.equal(nextCursorRef.current, null, "an unmount mid-mount-fetch must not write a pagination cursor for a component instance that's already gone");
+  assert.equal(
+    startConnectedPollingCalls,
+    1,
+    "startConnectedPolling fires synchronously from the outer .then, before this inner fetch resolves, so it is unaffected by this guard",
+  );
+});
+
+/**
+ * Companion to the test above: confirms the new mountedRef check doesn't
+ * overreach -- while the panel stays mounted throughout, the exact same
+ * fetch must still apply its result normally.
+ */
+test("WhatsAppPanel's loadInitialStatus still applies a listWhatsAppMessages page fetched while already connected if the panel stays mounted", async () => {
+  const loadMatch = whatsAppPanelSrc.match(/ {2}function loadInitialStatus\(\) \{[\s\S]*?\n {2}\}\n/);
+  const { code } = transformSync(loadMatch![0], { loader: "ts" });
+
+  const mountedRef = { current: true };
+  const messagesVersionRef = { current: 0 };
+  const nextCursorRef = { current: null as string | null };
+  let capturedMessages: unknown;
+  let capturedHasMore: unknown;
+
+  const { loadInitialStatus } = new Function(
+    "mountedRef",
+    "messagesVersionRef",
+    "setInitialLoadError",
+    "getWhatsAppStatus",
+    "setStatus",
+    "startPolling",
+    "listWhatsAppMessages",
+    "setMessages",
+    "setHasMoreMessages",
+    "nextCursorRef",
+    "startConnectedPolling",
+    "projectId",
+    `${code}\nreturn { loadInitialStatus };`,
+  )(
+    mountedRef,
+    messagesVersionRef,
+    () => {},
+    async () => ({ status: "connected" }),
+    () => {},
+    () => {},
+    async () => ({ messages: [{ id: "m1" }], hasMore: true, nextCursor: "cursor-1" }),
+    (m: unknown) => {
+      capturedMessages = m;
+    },
+    (h: unknown) => {
+      capturedHasMore = h;
+    },
+    nextCursorRef,
+    () => {},
+    "proj1",
+  ) as { loadInitialStatus: () => void };
+
+  loadInitialStatus();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(capturedMessages, [{ id: "m1" }], "a mounted panel must still receive the fetched message page");
+  assert.equal(capturedHasMore, true, "a mounted panel must still receive the fetched hasMore flag");
+  assert.equal(nextCursorRef.current, "cursor-1", "a mounted panel must still receive the fetched pagination cursor");
+});
+
+/**
  * Regression test for a real gap found by round 288's Explore survey: while
  * the panel was open and connected, startConnectedPolling only re-checked
  * whether the WhatsApp link itself was still alive -- it never re-fetched
