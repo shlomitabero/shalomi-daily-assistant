@@ -26,6 +26,15 @@ export default function Sources() {
 
   const connected = sources.filter((s) => s.connected);
   const notConnected = sources.filter((s) => !s.connected);
+  // syncSources() (server/src/services/sources.js) re-checks and stamps
+  // lastCheckedAt on every source on every load AND on "בדוק שוב" - but
+  // nothing here ever showed it, so clicking "בדוק שוב" gave no lasting
+  // confirmation anything actually happened: the button briefly said
+  // "בודק…" and then just went back to "בדוק שוב", identical to before
+  // the click whenever nothing's connected status happened to change.
+  const lastCheckedAt = sources.reduce((latest, s) => (
+    !latest || new Date(s.lastCheckedAt) > new Date(latest) ? s.lastCheckedAt : latest
+  ), null);
 
   return (
     <div className="page">
@@ -55,6 +64,9 @@ export default function Sources() {
           <h2>לא מחוברים ({notConnected.length})</h2>
           <button className="btn btn-ghost" onClick={onRescan} disabled={busy}>{busy ? 'בודק…' : 'בדוק שוב'}</button>
         </div>
+        {lastCheckedAt && (
+          <p className="hint" style={{ marginTop: -6 }}>נבדק לאחרונה: {new Date(lastCheckedAt).toLocaleString('he-IL')}</p>
+        )}
         {notConnected.map((s) => (
           <div key={s.id} className="card">
             <div className="source-row" style={{ border: 'none', padding: 0, marginBottom: 6 }}>
