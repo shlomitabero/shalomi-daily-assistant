@@ -194,6 +194,7 @@ export interface BaileysIncomingMessage {
     encCommentMessage?: Record<string, never>;
     statusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
     lottieStickerMessage?: { message?: BaileysIncomingMessage["message"] };
+    groupMentionedMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -524,6 +525,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // animated sticker fell straight through to the final `return null` and
   // vanished with zero trace.
   if (message.lottieStickerMessage?.message) return describeIncomingMessage(message.lottieStickerMessage.message);
+  // Round 1952: `groupMentionedMessage` (field 62) is confirmed against the
+  // installed Baileys protobuf (WAProto.proto) to be `optional
+  // FutureProofMessage groupMentionedMessage`, the exact same wrapper shape
+  // as ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+  // groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+  // pollCreationMessageV4/commentMessage/statusMentionMessage/
+  // lottieStickerMessage just above (round 1888's same precedent applies:
+  // Baileys' own getFutureProofMessage helper doesn't list this field
+  // either, but the protobuf shape is the decisive signal, not that
+  // helper's own list). Without this branch, a group-mention notification
+  // fell straight through to the final `return null` and vanished with
+  // zero trace.
+  if (message.groupMentionedMessage?.message) return describeIncomingMessage(message.groupMentionedMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
