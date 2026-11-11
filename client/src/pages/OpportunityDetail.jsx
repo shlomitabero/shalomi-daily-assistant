@@ -274,8 +274,17 @@ export default function OpportunityDetail() {
               <button className="btn btn-primary" onClick={onApprove} disabled={busy}>אשר פרסום</button>
             )
           )}
+          {/* This className used to only switch to ghost for the !settings
+              and approve-without-approval cases, leaving research mode as
+              the one disabled state that still rendered in full gold
+              btn-primary - the one real-money action in this app looking
+              fully "ready to click" while actually inert (disabled below
+              does still block the click itself; this is purely about not
+              drawing the eye to it as if it were). Found by actually
+              looking at this page rendered in a browser, not from reading
+              the code alone. */}
           <button
-            className={`btn ${!settings || (settings.mode === 'approve' && !hasPublishApproval) ? 'btn-ghost' : 'btn-primary'}`}
+            className={`btn ${!settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval) ? 'btn-ghost' : 'btn-primary'}`}
             onClick={onPublish}
             disabled={busy || !settings || settings.mode === 'research' || (settings.mode === 'approve' && !hasPublishApproval)}
             title={
