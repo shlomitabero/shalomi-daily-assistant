@@ -156,6 +156,20 @@ export function AutomationsPanel({
   const [toNumber, setToNumber] = useState("");
   const [messageTemplate, setMessageTemplate] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
+  // Round 1927: lets handleSubmit's own post-await success-path resets tell
+  // whether the form has since moved on to a different editing session (a
+  // fresh resetToCreateMode via Escape/Cancel/the delete-rule cleanup
+  // effect) before unconditionally wiping it -- mirrors EntityPanel.tsx's
+  // own formInstanceKeyRef (rounds 832-833), added there for the identical
+  // "slow save resolves after the user has already moved on" hazard, but
+  // never ported to this file despite round 831 being where this bug
+  // family started (its own fix only ever disabled the rule-list's row
+  // buttons, never guarded this form's own Escape key or handleSubmit's
+  // own resets). A plain React state value can't answer this inside
+  // handleSubmit's own closure (it's frozen at whatever it was when that
+  // specific submit began), so this needs its own ref, same reasoning
+  // EntityPanel.tsx's own doc comment gives for its sibling.
+  const formInstanceKeyRef = useRef(0);
   // Non-null while the form below is editing an existing rule instead of
   // creating a new one -- the same form/fields are reused for both (the
   // server's own UpdateAutomationRuleSchema accepts every field
@@ -556,6 +570,7 @@ export function AutomationsPanel({
   // entityName, which is still the stale value at the moment this runs, so
   // reading them here would seed fieldName/toField from the wrong entity.
   function resetToCreateMode() {
+    formInstanceKeyRef.current += 1;
     const firstEntity = entities[0];
     const firstEntityPhoneFields = firstEntity?.fields.filter((f) => f.type === "text" || f.type === "longtext") ?? [];
     const firstPhoneField = findPhoneField(firstEntityPhoneFields) ?? firstEntityPhoneFields[0];
@@ -810,6 +825,13 @@ export function AutomationsPanel({
       return;
     }
     setCreateBusy(true);
+    // Round 1927: captured before either `await` below, so this specific
+    // submit's own success/NOT_FOUND-catch paths can tell -- once that
+    // await finally resolves -- whether the form has since moved on to a
+    // different editing session (Escape, Cancel, or the delete-rule
+    // cleanup effect all route through resetToCreateMode, which bumps this
+    // ref) before unconditionally resetting it back to blank.
+    const formInstanceAtSubmitTime = formInstanceKeyRef.current;
     const everyDay = scheduleDays.length === 7;
     try {
       if (editingRuleId) {
@@ -840,7 +862,13 @@ export function AutomationsPanel({
           messageTemplate: messageTemplate.trim(),
         });
         setRules((prev) => (prev ?? []).map((r) => (r.id === rule.id ? rule : r)));
-        resetToCreateMode();
+        // Round 1927: unconditional before this round -- Escape (no
+        // createBusy guard at all) or Cancel on the SAME form, while this
+        // PATCH was still in flight, silently got overwritten the instant
+        // it resolved, discarding whatever the user had already moved on
+        // to. Only resets the form when nothing has moved it on since this
+        // submit began.
+        if (formInstanceKeyRef.current === formInstanceAtSubmitTime) resetToCreateMode();
       } else {
         const { rule } = await createAutomationRule(projectId, selectedEntity.name, {
           trigger,
@@ -861,13 +889,19 @@ export function AutomationsPanel({
           messageTemplate: messageTemplate.trim(),
         });
         setRules((prev) => [...(prev ?? []), rule]);
-        setFieldValue("");
-        setToNumber("");
-        setWebhookUrl("");
-        setWebhookSecret("");
-        setToEmail("");
-        setEmailSubject("");
-        setMessageTemplate("");
+        // Round 1927: same staleness guard as the edit-success path above --
+        // this partial reset used to run unconditionally too, discarding a
+        // field the user had already started correcting on the same
+        // still-open form while this POST was in flight.
+        if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+          setFieldValue("");
+          setToNumber("");
+          setWebhookUrl("");
+          setWebhookSecret("");
+          setToEmail("");
+          setEmailSubject("");
+          setMessageTemplate("");
+        }
       }
     } catch (err) {
       // Round 1875: mirrors EntityPanel.tsx's own NOT_FOUND handling
@@ -881,7 +915,12 @@ export function AutomationsPanel({
       const error = err as Error & { code?: string };
       if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
         loadRules();
-        if (editingRuleId) resetToCreateMode();
+        // Round 1927: same staleness guard as the success paths above --
+        // without it, discovering mid-save that the rule was deleted
+        // elsewhere would wipe a draft the user had already started typing
+        // after an Escape reset this form back to "New rule" while the
+        // now-404ing PATCH was still in flight.
+        if (editingRuleId && formInstanceKeyRef.current === formInstanceAtSubmitTime) resetToCreateMode();
         return;
       }
       setError(error.message);
@@ -1637,7 +1676,16 @@ export function AutomationsPanel({
           noValidate
           data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
           onKeyDown={(e) => {
-            if (e.key === "Escape" && hasUnsavedDraft) resetToCreateMode();
+            // Round 1927: the adjacent Cancel button already disables
+            // itself while createBusy (`disabled={createBusy}`), since
+            // resetToCreateMode() mid-save is exactly what this round's
+            // formInstanceKeyRef guard exists to make safe -- but nothing
+            // previously stopped the identical call firing via Escape,
+            // which has no disabled state to gate it. The ref guard above
+            // makes a mid-save reset harmless either way, but skipping it
+            // here too keeps Escape and Cancel behaving identically while
+            // a save is in flight, rather than relying solely on the ref.
+            if (e.key === "Escape" && hasUnsavedDraft && !createBusy) resetToCreateMode();
           }}
         >
           <label>

@@ -870,6 +870,63 @@ test("AutomationsPanel's create-form Escape clears an in-progress draft instead 
 });
 
 /**
+ * Round 1927: the Escape handler round 1056 added (just above) calls the
+ * same resetToCreateMode() the Cancel button next to Save calls -- but
+ * unlike Cancel (`disabled={createBusy}`), Escape had no createBusy guard
+ * at all. While a Save for rule1 was still in flight, nothing stopped
+ * Escape from immediately wiping editingRuleId and every field back to
+ * blank "new rule" defaults -- the exact action sitting right next to Save
+ * is, at that same instant, explicitly prevented from doing. Confirms
+ * Escape now stays a no-op (same as the disabled Cancel button) for the
+ * whole window a Save is in flight, and only takes effect once it resolves.
+ */
+test("AutomationsPanel's Escape key, like the adjacent Cancel button, is a no-op while a Save is still in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolvePatch!: (value: Response) => void;
+    const patchHeld = new Promise<Response>((resolve) => {
+      resolvePatch = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule({ id: "rule1" })] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        return patchHeld; // the Save stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement);
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/, "expected to actually be editing rule1 before saving");
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "rule1's edited message" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let the PATCH call actually start before pressing Escape
+
+      fireEvent.keyDown(messageField, { key: "Escape" });
+      assert.match(
+        document.querySelector(".automations-new-heading")!.textContent ?? "",
+        /Edit rule/,
+        "Escape must not reset the form to 'New rule' while rule1's own Save is still in flight -- same as the disabled Cancel button right next to it",
+      );
+      assert.equal(messageField.value, "rule1's edited message", "the in-progress edit must survive Escape while the Save is still in flight");
+
+      resolvePatch(new Response(JSON.stringify({ rule: makeRule({ id: "rule1", messageTemplate: "rule1's edited message" }) }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => /New rule/.test(document.querySelector(".automations-new-heading")!.textContent ?? ""));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * The server (apps/api/src/routes/projects.ts's validateAutomationToField)
  * rejects any toField that isn't "text" or "longtext" -- a round 666
  * regression test: the "send to a field" dropdown used to list every field
