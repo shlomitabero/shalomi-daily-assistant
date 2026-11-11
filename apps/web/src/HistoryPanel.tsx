@@ -191,7 +191,18 @@ export function HistoryPanel({
         })
         .catch(() => {});
     } catch (err) {
-      setError((err as Error).message);
+      // Round 1890: another tab/collaborator can have already deleted this
+      // exact checkpoint (it's independent, not an own-click race) -- the
+      // stale list this click fired from still showed it. CHECKPOINT_NOT_FOUND
+      // means Restore can never succeed for this id again, so mirror
+      // EntityPanel.tsx/CollaboratorsPanel.tsx's own established convention:
+      // drop the ghost row instead of leaving a stuck, endlessly-repeatable
+      // error for something that no longer exists.
+      if ((err as Error & { code?: string }).code === "CHECKPOINT_NOT_FOUND") {
+        setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setBusyId(null);
     }
@@ -222,7 +233,20 @@ export function HistoryPanel({
       await deleteCheckpoint(projectId, checkpoint.id);
       setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
     } catch (err) {
-      setDeleteError((err as Error).message);
+      // Round 1890: deleteCheckpoint throws a generic NotFoundError (code
+      // "NOT_FOUND", not "CHECKPOINT_NOT_FOUND" -- that's the restore
+      // route's own distinct HttpError code; this one is packages/db's
+      // checkpoints.ts throwing straight) when another tab/collaborator
+      // already deleted this exact checkpoint. From this click's own point
+      // of view that's not a failure -- the outcome it wanted (this
+      // checkpoint gone) already happened -- so this drops the row the
+      // same way the success branch above does, instead of leaving a
+      // "failed to delete" banner next to a row that's already gone.
+      if ((err as Error & { code?: string }).code === "NOT_FOUND") {
+        setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
+      } else {
+        setDeleteError((err as Error).message);
+      }
     } finally {
       setDeletingId(null);
     }
@@ -438,6 +462,7 @@ export function HistoryPanel({
                       checkpoint={checkpoint}
                       projectId={projectId}
                       onRenamed={handleCheckpointRenamed}
+                      onGone={() => setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id))}
                       onEditStart={handleCheckpointEditStart}
                       onBusyChange={(busy) => setRenamingId(busy ? checkpoint.id : null)}
                       disabled={busyId !== null || deletingId !== null}

@@ -463,6 +463,79 @@ test("HistoryPanel's restore button asks for confirmation naming the checkpoint,
 });
 
 /**
+ * Round 1890: another tab or collaborator can delete this exact checkpoint
+ * between the time this list loaded and this click -- the restore route
+ * throws its own distinct HttpError code "CHECKPOINT_NOT_FOUND" (unlike
+ * the rename/delete routes below, which surface the db layer's generic
+ * NotFoundError as "NOT_FOUND" instead) once the id no longer exists.
+ * Restore can never succeed again for a gone checkpoint, so this confirms
+ * the ghost row is dropped instead of leaving a stuck error that would
+ * just repeat the identical 404 on every retry.
+ */
+test("HistoryPanel's restore button drops the row (no stuck error) when the checkpoint was already deleted by another tab/collaborator (404 CHECKPOINT_NOT_FOUND)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/checkpoints/cp2/restore") {
+        return new Response(JSON.stringify({ error: 'Checkpoint "cp2" not found', code: "CHECKPOINT_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const restoreButtons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
+      fireEvent.click(restoreButtons[1]); // cp2's own button, already gone server-side
+
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.match(
+        document.querySelector(".checkpoint-list li")!.textContent ?? "",
+        /Initial build/,
+        "the OTHER checkpoint must still be listed, untouched",
+      );
+      assert.equal(document.querySelector("p.error"), null, "a 404 CHECKPOINT_NOT_FOUND must drop the ghost row silently, not leave a stuck, endlessly-repeatable restore error");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: a "What would change?" toggle per checkpoint, showing
  * what restoring it would remove from the CURRENT spec -- restoring itself
  * never deletes data (migrations are additive-only), but it does hide
@@ -1514,6 +1587,78 @@ test("HistoryPanel's delete button asks for confirmation naming the checkpoint, 
   });
 });
 
+/**
+ * Round 1890: another tab or collaborator can delete a checkpoint between
+ * the time this list loaded and this click -- deleteCheckpoint (db layer)
+ * throws a generic NotFoundError (code "NOT_FOUND") once the row is
+ * already gone. From this click's own point of view that's not a failure
+ * at all (the outcome it wanted -- this checkpoint gone -- already
+ * happened), so this confirms the row is silently dropped exactly like a
+ * real successful delete, with no "failed to delete" banner left over.
+ */
+test("HistoryPanel's delete button drops the row with no error when the checkpoint was already deleted by another tab/collaborator (404 NOT_FOUND)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/checkpoints/cp2") {
+        return new Response(JSON.stringify({ error: "Checkpoint cp2 not found in project proj1", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      fireEvent.click(deleteButtons[1]); // cp2's own button, already gone server-side
+
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.match(
+        document.querySelector(".checkpoint-list li")!.textContent ?? "",
+        /Initial build/,
+        "the OTHER checkpoint must still be listed, untouched",
+      );
+      assert.equal(document.querySelector("p.error"), null, "a 404 NOT_FOUND for an already-deleted checkpoint must be treated as success, not shown as a failed-delete error");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
 /** Mirrors the identical decline test already established for restore above -- declining must leave both the list and the server untouched. */
 test("HistoryPanel's delete button does nothing when the confirm is declined", async () => {
   await withJsdom(async () => {
@@ -1882,6 +2027,76 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
       await waitForCondition(() => /before the pricing overhaul/.test((document.querySelector(".checkpoint-label") as HTMLElement)?.textContent ?? ""));
       assert.equal(renameCalls, 1, "expected exactly one real PATCH request");
       assert.equal(document.querySelectorAll(".checkpoint-list li").length, 1, "renaming must not add or remove any checkpoint from the real list");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1890: renameCheckpoint (db layer) throws a generic NotFoundError
+ * (code "NOT_FOUND") once another tab/collaborator has already deleted
+ * this exact checkpoint -- a rename against a gone checkpoint can never
+ * succeed, so unlike every other save() failure, CheckpointLabelEditor
+ * must close the editor and tell HistoryPanel to drop the row (via its
+ * new onGone callback) instead of leaving the form open for a retry that
+ * would just repeat the identical 404 forever.
+ */
+test("HistoryPanel's rename drops the ghost row (and closes the editor) when the checkpoint was already deleted by another tab/collaborator (404 NOT_FOUND)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/checkpoints/cp2") {
+        return new Response(JSON.stringify({ error: "Checkpoint cp2 not found in project proj1", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const labels = Array.from(document.querySelectorAll(".checkpoint-label")) as HTMLElement[];
+      fireEvent.click(labels[1]); // cp2's own label, already gone server-side
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "renamed after it was deleted elsewhere" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.equal(document.querySelector(".checkpoint-label-edit input"), null, "the rename editor must close rather than stay open for a retry that can only ever repeat the same 404");
+      assert.match(
+        document.querySelector(".checkpoint-list li")!.textContent ?? "",
+        /Initial build/,
+        "the OTHER checkpoint must still be listed, untouched",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

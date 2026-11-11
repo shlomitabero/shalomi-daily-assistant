@@ -17,6 +17,7 @@ export function CheckpointLabelEditor({
   checkpoint,
   projectId,
   onRenamed,
+  onGone,
   onEditStart,
   onBusyChange,
   disabled = false,
@@ -25,6 +26,20 @@ export function CheckpointLabelEditor({
   checkpoint: Checkpoint;
   projectId: string;
   onRenamed: (checkpoint: Checkpoint) => void;
+  /**
+   * Round 1890: renameCheckpoint throws NotFoundError (code "NOT_FOUND")
+   * once another tab/collaborator has already deleted this exact
+   * checkpoint -- an independent race, not an own-click one, since
+   * HistoryPanel's disabled prop only ever blocks THIS tab's own
+   * concurrent actions. A retry against a gone checkpoint can never
+   * succeed, so this editor has no way to recover on its own; it tells
+   * HistoryPanel to drop the row from its list (mirroring handleDelete's
+   * own NOT_FOUND handling just above it), the same "stop offering an
+   * action that can only ever fail" outcome, instead of leaving this
+   * editor open for a retry that would just repeat the identical 404
+   * forever.
+   */
+  onGone?: () => void;
   /**
    * Round 933: HistoryPanel's own error/restoreWarning/deleteError (from
    * handleRestore/handleDelete) render unconditionally at the top of the
@@ -129,6 +144,18 @@ export function CheckpointLabelEditor({
       setEditing(false);
       onBusyChange?.(false);
     } catch (err) {
+      // Round 1890: see onGone's own doc comment above -- a gone checkpoint
+      // can never be renamed no matter how many times this retries, so
+      // unlike every other failure here, this one closes the editor (there
+      // is nothing left to retry against) and tells HistoryPanel to drop
+      // the row, instead of leaving the form open showing an error for a
+      // retry that can only ever repeat the same 404.
+      if ((err as Error & { code?: string }).code === "NOT_FOUND") {
+        setEditing(false);
+        onBusyChange?.(false);
+        onGone?.();
+        return;
+      }
       // Round 1175: deliberately does NOT call onBusyChange?.(false) here --
       // editing stays true (the form re-renders with the error below, open
       // for a retry), so this checkpoint must keep reporting busy to
