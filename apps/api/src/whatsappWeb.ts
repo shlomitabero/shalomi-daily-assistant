@@ -188,6 +188,8 @@ export interface BaileysIncomingMessage {
     groupStatusMessageV2?: { message?: BaileysIncomingMessage["message"] };
     callLogMesssage?: { isVideo?: boolean; callOutcome?: number; durationSecs?: number };
     questionResponseMessage?: { text?: string };
+    statusQuestionAnswerMessage?: { text?: string };
+    commentMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -464,6 +466,20 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // neither treatment and fell through to the final `return null` with zero
   // trace.
   if (message.pollCreationMessageV4?.message) return describeIncomingMessage(message.pollCreationMessageV4.message);
+  // Round 1901: `commentMessage` is WhatsApp's "comment on a Channel/Status
+  // post" feature -- confirmed against the installed Baileys protobuf
+  // (WAProto/index.d.ts: ICommentMessage is `{ message?: IMessage;
+  // targetMessageKey?: IMessageKey }`), the exact same wrapper shape as
+  // ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+  // groupStatusMessage/groupStatusMessageV2/pollCreationMessageV4 just
+  // above (round 1888's same precedent applies: Baileys' own
+  // getFutureProofMessage helper doesn't list this field either, but the
+  // protobuf shape is the decisive signal, not that helper's own list).
+  // The inner message (text/media/etc.) is fully recoverable the same way
+  // those six wrappers' content already is; without this branch a comment
+  // fell straight through to the final `return null` and vanished with
+  // zero trace.
+  if (message.commentMessage?.message) return describeIncomingMessage(message.commentMessage.message);
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
   if (message.imageMessage) return message.imageMessage.caption ? `[Photo] ${message.imageMessage.caption}` : "[Photo]";
@@ -892,6 +908,20 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // business never saw the customer's actual answer anywhere.
   if (message.questionResponseMessage) {
     const text = message.questionResponseMessage.text;
+    return text ? `[Status Q&A reply] ${text}` : "[Status Q&A reply]";
+  }
+  // Round 1901: `statusQuestionAnswerMessage` is a distinct WAProto field
+  // (index.d.ts: IStatusQuestionAnswerMessage, field 105) from
+  // `questionResponseMessage` (field 107) just above, but confirmed
+  // against the installed Baileys protobuf to have the exact same
+  // plaintext `{ key?, text? }` shape -- no decryption needed, same bar
+  // every prior round in this message-type family used. Round 1883's own
+  // write-up explicitly ruled out questionMessage/questionReplyMessage as
+  // out of scope but never addressed this field; it had no handling
+  // anywhere and fell through to the final `return null`, vanishing with
+  // zero trace.
+  if (message.statusQuestionAnswerMessage) {
+    const text = message.statusQuestionAnswerMessage.text;
     return text ? `[Status Q&A reply] ${text}` : "[Status Q&A reply]";
   }
   return null;

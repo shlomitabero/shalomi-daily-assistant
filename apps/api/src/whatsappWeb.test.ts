@@ -3102,6 +3102,80 @@ test("an incoming WhatsApp Status Q&A sticker reply (questionResponseMessage) is
 });
 
 /**
+ * Round 1901: `statusQuestionAnswerMessage` is a distinct WAProto field
+ * (index.d.ts: IStatusQuestionAnswerMessage, field 105) from
+ * `questionResponseMessage` (field 107) above, but confirmed directly
+ * against the installed Baileys protobuf to have the exact same plaintext
+ * `{ key?, text? }` shape -- no decryption needed, same bar every prior
+ * round in this message-type family used. Round 1883's own write-up
+ * explicitly ruled out questionMessage/questionReplyMessage as out of
+ * scope but never addressed this field; it had no handling anywhere and
+ * fell through to the final `return null`, vanishing with zero trace.
+ */
+test("an incoming WhatsApp Status Q&A sticker reply delivered as statusQuestionAnswerMessage is logged with the customer's actual answer text, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { statusQuestionAnswerMessage: { text: "Definitely!" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { statusQuestionAnswerMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: qaMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(qaMessages.length, 2);
+  assert.equal(qaMessages[0].body, "[Status Q&A reply]");
+  assert.equal(qaMessages[1].body, "[Status Q&A reply] Definitely!");
+  for (const m of qaMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
+ * Round 1901: `commentMessage` is WhatsApp's "comment on a Channel/Status
+ * post" feature -- confirmed against the installed Baileys protobuf
+ * (WAProto/index.d.ts: ICommentMessage is `{ message?: IMessage;
+ * targetMessageKey?: IMessageKey }`), the exact same wrapper shape as
+ * ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+ * groupStatusMessage/groupStatusMessageV2/pollCreationMessageV4 (rounds
+ * 1142/1152/1445/1888). Baileys' own getFutureProofMessage helper doesn't
+ * list this field either, but round 1888 already established that the
+ * protobuf shape is the decisive signal, not that helper's own list. The
+ * inner message is fully recoverable the same way those wrappers' content
+ * already is; without this branch a comment fell straight through to the
+ * final `return null` and vanished with zero trace.
+ */
+test("an incoming WhatsApp Channel/Status comment (commentMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { commentMessage: { message: { conversation: "תגובה לפוסט" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "תגובה לפוסט", "commentMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1600: encReactionMessage is the separate, genuinely-encrypted
  * sibling of reactionMessage (round 1088) this file's own doc comment
  * already named but never actually handled. Confirmed directly against
