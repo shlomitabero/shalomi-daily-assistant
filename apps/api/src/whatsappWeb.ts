@@ -192,6 +192,7 @@ export interface BaileysIncomingMessage {
     commentMessage?: { message?: BaileysIncomingMessage["message"] };
     encCommentMessage?: Record<string, never>;
     statusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
+    lottieStickerMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -495,6 +496,19 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // notification fell straight through to the final `return null` and
   // vanished with zero trace.
   if (message.statusMentionMessage?.message) return describeIncomingMessage(message.statusMentionMessage.message);
+  // Round 1933: `lottieStickerMessage` is WhatsApp's animated/vector Lottie
+  // sticker format, distinct from the already-handled static `stickerMessage`
+  // -- confirmed against the installed Baileys protobuf (WAProto/index.d.ts):
+  // lottieStickerMessage is typed `IFutureProofMessage` (`{ message?: IMessage }`),
+  // the exact same wrapper shape as ephemeralMessage/documentWithCaptionMessage/
+  // associatedChildMessage/groupStatusMessage/groupStatusMessageV2/
+  // pollCreationMessageV4/commentMessage/statusMentionMessage just above
+  // (round 1888's same precedent applies: Baileys' own getFutureProofMessage
+  // helper doesn't list this field either, but the protobuf shape is the
+  // decisive signal, not that helper's own list). Without this branch, an
+  // animated sticker fell straight through to the final `return null` and
+  // vanished with zero trace.
+  if (message.lottieStickerMessage?.message) return describeIncomingMessage(message.lottieStickerMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own

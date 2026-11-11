@@ -3416,3 +3416,41 @@ test("an incoming WhatsApp Status-mention notification (statusMentionMessage) is
   assert.equal(messages[0].body, "הזכרת אותי בסטטוס", "statusMentionMessage must unwrap transparently to its inner message, not fall through to a silent drop");
   assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1933: `lottieStickerMessage` is WhatsApp's animated/vector Lottie
+ * sticker format, distinct from the already-handled static `stickerMessage`
+ * -- confirmed against the installed Baileys protobuf (WAProto/index.d.ts):
+ * lottieStickerMessage is typed `IFutureProofMessage` (`{ message?: IMessage }`),
+ * the exact same wrapper shape as ephemeralMessage/documentWithCaptionMessage/
+ * associatedChildMessage/groupStatusMessage/groupStatusMessageV2/
+ * pollCreationMessageV4/commentMessage/statusMentionMessage (rounds
+ * 1142/1152/1445/1888/1901/1930). Baileys' own getFutureProofMessage helper
+ * doesn't list this field either, but round 1888 already established that
+ * the protobuf shape is the decisive signal, not that helper's own list.
+ * The inner message is fully recoverable the same way those wrappers'
+ * content already is; without this branch an animated sticker fell
+ * straight through to the final `return null` and vanished with zero
+ * trace.
+ */
+test("an incoming animated/Lottie WhatsApp sticker (lottieStickerMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { lottieStickerMessage: { message: { conversation: "סטיקר מצחיק" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "סטיקר מצחיק", "lottieStickerMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
