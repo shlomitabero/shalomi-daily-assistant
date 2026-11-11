@@ -1417,6 +1417,103 @@ test("WhatsAppPanel shows a 'waiting for owner/editor' message instead of a QR i
   });
 });
 
+/**
+ * Round 1939: the same empty-box-for-viewer gap round 976 fixed for the
+ * "qr" branch was never extended to the far more common "disconnected"
+ * branch -- a viewer on a project where WhatsApp was never connected saw
+ * status.phoneNumber and status.error both unset and the Connect button
+ * hidden by !readOnly, so .whatsapp-connect-box rendered completely empty.
+ */
+test("WhatsAppPanel shows an explanatory message instead of an empty box when readOnly and WhatsApp has never been connected", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(JSON.stringify({ status: "disconnected", qrDataUrl: null, phoneNumber: null, error: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              readOnly: true,
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => /WhatsApp isn't connected to this project yet/.test(document.body.textContent ?? ""));
+      assert.equal(document.querySelector(".whatsapp-connect-box button"), null, "a viewer must not see a Connect button");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1939 non-regression: when the project WAS previously connected,
+ * status.phoneNumber is set, so the box already shows the "previously
+ * connected as ..." message -- the new disconnectedHiddenForViewer message
+ * must not also render in that case (it would be redundant/confusing).
+ */
+test("WhatsAppPanel does not show the never-connected viewer message when a phone was previously connected", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "disconnected", qrDataUrl: null, phoneNumber: "972501234567", error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1", userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              readOnly: true,
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => /972501234567/.test(document.body.textContent ?? ""));
+      assert.equal(/isn't connected to this project yet/.test(document.body.textContent ?? ""), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecutive failures, instead of leaving the user stuck with a stale QR code", async (t) => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;

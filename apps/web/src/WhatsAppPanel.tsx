@@ -1337,6 +1337,16 @@ export function WhatsAppPanel({
                 {connecting ? t("whatsapp.connect.connecting") : t("whatsapp.connect.button")}
               </button>
             )}
+            {/* Round 1939: the same empty-box-for-viewer gap round 976 fixed
+                for the "qr" branch below, but left here -- a viewer whose
+                project never had WhatsApp connected sees status.phoneNumber
+                and status.error both unset and the Connect button hidden by
+                !readOnly, so the whole box rendered with nothing inside it
+                (no :empty{display:none} guard on .whatsapp-connect-box in
+                styles.css). This is actually the more common case than the
+                "qr" one: it's every project's default state until someone
+                first scans a QR code. */}
+            {readOnly && !status?.phoneNumber && <p className="muted small">{t("whatsapp.connect.disconnectedHiddenForViewer")}</p>}
             {status?.error && (
               <p className="error" role="status">
                 {status.error}
