@@ -2822,22 +2822,40 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
  * CheckpointLabelEditor's own save() can fire a real renameCheckpoint PATCH
  * concurrently with a restoreCheckpoint/deleteCheckpoint request on a
  * DIFFERENT checkpoint with nothing stopping it. Confirms the real
- * generated source (not reimplemented): HistoryPanel threads its own
- * renamingId into both buttons' disabled conditions, and wires
+ * generated source (not reimplemented): HistoryPanel threads a rename-in-
+ * flight signal into both buttons' disabled conditions, and wires
  * CheckpointLabelEditor's onBusyChange/disabled props to update and read
- * that exact piece of state -- the actual wiring CheckpointLabelEditor.
- * test.ts's own extraction tests prove the editor side of in isolation.
+ * that signal -- the actual wiring CheckpointLabelEditor.test.ts's own
+ * extraction tests prove the editor side of in isolation.
+ *
+ * Round 1916: the original fix (round 1120) used a single shared
+ * `renamingId: string | null` scalar. That is only safe for busyId/
+ * deletingId above because clicking Restore/Delete is ITSELF disabled
+ * once one of those is set, so at most one can ever be in flight -- but
+ * nothing stops opening a SECOND checkpoint's rename editor while a
+ * first one is still open elsewhere, and the shared scalar could only
+ * ever remember ONE checkpoint id at a time. Replaced with a
+ * `renamingMap: Record<string, true>` keyed by checkpoint id (the same
+ * pattern as App.tsx's own entityBusyMap/roleBusyMap/personaBusyMap/
+ * assumptionBusyMap), so clearing one checkpoint's own key can never
+ * erase a different one's. See the DOM test just below this one for the
+ * actual clobbering behavior this closes.
  */
-test("HistoryPanel cross-gates checkpoint rename against Restore/Delete in both directions via renamingId", () => {
+test("HistoryPanel cross-gates checkpoint rename against Restore/Delete in both directions via a per-checkpoint renaming map", () => {
   assert.match(
     historyPanelSrc,
-    /const \[renamingId, setRenamingId\] = useState<string \| null>\(null\);/,
-    "expected a renamingId state, mirroring busyId/deletingId's own shape",
+    /const \[renamingMap, setRenamingMap\] = useState<Record<string, true>>\(\{\}\);/,
+    "expected a renamingMap state keyed by checkpoint id, mirroring App.tsx's own entityBusyMap shape",
   );
   assert.match(
     historyPanelSrc,
-    /onBusyChange=\{\(busy\) => setRenamingId\(busy \? checkpoint\.id : null\)\}/,
-    "the <CheckpointLabelEditor> call site must update renamingId from the editor's own real busy signal",
+    /const anyRenaming = Object\.keys\(renamingMap\)\.length > 0;/,
+    "expected a derived anyRenaming flag from the map",
+  );
+  assert.match(
+    historyPanelSrc,
+    /onBusyChange=\{\(busy\) =>\s*\n\s*setRenamingMap\(\(prev\) => \{/,
+    "the <CheckpointLabelEditor> call site must update renamingMap by checkpoint id from the editor's own real busy signal",
   );
   assert.match(
     historyPanelSrc,
@@ -2846,14 +2864,123 @@ test("HistoryPanel cross-gates checkpoint rename against Restore/Delete in both 
   );
   assert.match(
     historyPanelSrc,
-    /disabled=\{busyId !== null \|\| deletingId !== null \|\| renamingId !== null \|\| isCurrent\}/,
-    "the Restore button must also be disabled while a rename is in flight",
+    /disabled=\{busyId !== null \|\| deletingId !== null \|\| anyRenaming \|\| isCurrent\}/,
+    "the Restore button must also be disabled while ANY checkpoint's rename is in flight",
   );
   assert.match(
     historyPanelSrc,
-    /disabled=\{busyId !== null \|\| deletingId !== null \|\| renamingId !== null\}\s*\n\s*>\s*\n\s*\{deletingId === checkpoint\.id/,
-    "the Delete button must also be disabled while a rename is in flight",
+    /disabled=\{busyId !== null \|\| deletingId !== null \|\| anyRenaming\}\s*\n\s*>\s*\n\s*\{deletingId === checkpoint\.id/,
+    "the Delete button must also be disabled while ANY checkpoint's rename is in flight",
   );
+  // The round-1916 explanatory comment above renamingMap's own declaration
+  // deliberately still narrates the OLD buggy variable by name for
+  // historical accuracy -- so this only rules out renamingId surviving as
+  // an actual, still-referenced identifier (a declaration or a live
+  // expression), not every prose mention of the old name.
+  assert.doesNotMatch(historyPanelSrc, /\[renamingId,|renamingId !== null|renamingId\s*\?|setRenamingId/, "the old single-scalar renamingId must be fully replaced as a live identifier, not left dangling in any code path");
+});
+
+/**
+ * Round 1916: live-reproduces the exact clobbering bug the map-based fix
+ * above closes. With the old single `renamingId: string | null` scalar,
+ * opening checkpoint A's rename editor set renamingId to A's id (via
+ * CheckpointLabelEditor's startEditing -> onBusyChange(true), round 1175).
+ * Clicking a DIFFERENT checkpoint B's own label both blurs A's still-open
+ * input (CheckpointLabelEditor's own onBlur={save}) -- which, with an
+ * unsaved, changed draft, fires a real save() whose request this test
+ * holds pending -- AND opens B's editor in the very same click (nothing
+ * in CheckpointLabelEditor's own `disabled` prop ever looked at
+ * renamingId, only busyId/deletingId), overwriting the single shared
+ * value to B's id while A's own save is still genuinely in flight.
+ * Resolving A's pending request then calls A's own onBusyChange(false),
+ * which unconditionally nulled the single shared value -- even though
+ * checkpoint B's editor was still open with its own unsaved draft. That
+ * wrongly re-enabled Restore/Delete for every row, including B's, while
+ * B's rename was still genuinely in flight/open -- clicking Delete on B
+ * at that point would have ripped its open, unsaved `<input>` straight
+ * out of the DOM with no warning and deleted the checkpoint out from
+ * under it. Confirms every row's Restore/Delete buttons stay disabled
+ * throughout, since the per-checkpoint map can only ever drop A's own key.
+ */
+test("HistoryPanel keeps Restore/Delete disabled for every row while one checkpoint's rename resolves but a DIFFERENT checkpoint's rename editor is still open", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    const cp2 = makeCheckpoint("cp2", "Refine: add invoices");
+    let resolveRenameA!: (value: Response) => void;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1, cp2] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/checkpoints/cp1") {
+        return new Promise<Response>((resolve) => {
+          resolveRenameA = resolve;
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: { ...cp1.spec, entities: [] },
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const labels = Array.from(document.querySelectorAll(".checkpoint-label")) as HTMLElement[];
+      fireEvent.click(labels[0]); // cp1's own label -- checkpoint A
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-label-edit input").length === 1);
+      const inputA = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(inputA, { target: { value: "A's rename" } });
+
+      // Clicking B's own label blurs A's input (firing its real, now-pending
+      // save) AND opens B's editor in this same click -- the exact
+      // real-world sequence this bug needs, not two separate clicks.
+      fireEvent.click(labels[1]); // cp2's own label -- checkpoint B
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-label-edit input").length === 2);
+
+      const inputB = document.querySelectorAll(".checkpoint-label-edit input")[1] as HTMLInputElement;
+      fireEvent.change(inputB, { target: { value: "B's unsaved draft, still open" } });
+
+      const restoreButtons = Array.from(document.querySelectorAll(".checkpoint-restore-btn")) as HTMLButtonElement[];
+      const deleteButtons = Array.from(document.querySelectorAll(".checkpoint-delete-btn")) as HTMLButtonElement[];
+      await waitForCondition(() => deleteButtons[0].disabled && deleteButtons[1].disabled);
+
+      resolveRenameA(new Response(JSON.stringify({ checkpoint: { ...cp1, label: "A's rename" } }), { status: 200, headers: { "content-type": "application/json" } }));
+      await waitForCondition(() => /A's rename/.test(document.body.textContent ?? ""));
+
+      // B's editor must still be open with its draft intact, and every
+      // row's Restore/Delete must STILL be disabled -- A's own resolution
+      // must never clear B's still-in-flight rename.
+      assert.equal(document.querySelectorAll(".checkpoint-label-edit input").length, 1, "B's rename editor must still be open after A's unrelated rename resolves");
+      assert.equal((document.querySelector(".checkpoint-label-edit input") as HTMLInputElement).value, "B's unsaved draft, still open", "B's unsaved draft must survive A's unrelated rename resolving");
+      assert.equal(restoreButtons[0].disabled, true, "restore must stay disabled for every row while B's rename is still open");
+      assert.equal(restoreButtons[1].disabled, true, "restore must stay disabled for every row while B's rename is still open");
+      assert.equal(deleteButtons[0].disabled, true, "delete must stay disabled for every row while B's rename is still open");
+      assert.equal(deleteButtons[1].disabled, true, "delete must stay disabled for every row while B's rename is still open");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 /**

@@ -73,7 +73,31 @@ export function HistoryPanel({
   // convention -- see CheckpointLabelEditor's own onBusyChange/disabled
   // doc comments for why a rename must cross-gate against restore/delete
   // in both directions.
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  //
+  // Round 1916: a single `string | null` scalar (as this originally was)
+  // is only safe for busyId/deletingId above because clicking Restore/
+  // Delete is ITSELF disabled once one is set, so at most one can ever be
+  // in flight at a time -- but nothing stops opening a SECOND checkpoint's
+  // rename editor while a first one is still open/in-flight elsewhere
+  // (CheckpointLabelEditor's own `disabled` prop below never looked at
+  // renamingId, only busyId/deletingId -- a deliberate, separate design
+  // choice this round leaves untouched). With a shared scalar, the second
+  // editor's own onBusyChange(true) overwrote the first's id, and when
+  // EITHER editor later reports onBusyChange(false) (a successful save, or
+  // Escape), the old code unconditionally nulled the single shared value
+  // -- live-reproduced: checkpoint A's rename resolves while checkpoint
+  // B's editor is still open with an unsaved draft, which wrongly cleared
+  // renamingId to null, re-enabling Restore/Delete for every row
+  // (including B) while B's rename was still genuinely in flight/open.
+  // Clicking Delete on B then ripped its open, unsaved `<input>` straight
+  // out of the DOM with no warning and deleted the checkpoint -- exactly
+  // the "delete racing a rename of the same checkpoint" scenario this very
+  // round's own comment says must be prevented. Keyed by checkpoint id,
+  // mirroring App.tsx's own entityBusyMap/roleBusyMap/personaBusyMap/
+  // assumptionBusyMap pattern exactly, so clearing one checkpoint's own key
+  // can never erase a different one's.
+  const [renamingMap, setRenamingMap] = useState<Record<string, true>>({});
+  const anyRenaming = Object.keys(renamingMap).length > 0;
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const dialogRef = useDialogFocusTrap<HTMLDivElement>(onClose);
   // Round 1520: the exact same "stale persisted/plain-state filter traps the
@@ -464,7 +488,14 @@ export function HistoryPanel({
                       onRenamed={handleCheckpointRenamed}
                       onGone={() => setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id))}
                       onEditStart={handleCheckpointEditStart}
-                      onBusyChange={(busy) => setRenamingId(busy ? checkpoint.id : null)}
+                      onBusyChange={(busy) =>
+                        setRenamingMap((prev) => {
+                          if (busy) return checkpoint.id in prev ? prev : { ...prev, [checkpoint.id]: true };
+                          if (!(checkpoint.id in prev)) return prev;
+                          const { [checkpoint.id]: _removed, ...rest } = prev;
+                          return rest;
+                        })
+                      }
                       disabled={busyId !== null || deletingId !== null}
                       readOnly={readOnly}
                     />
@@ -570,7 +601,7 @@ export function HistoryPanel({
                       second concurrent restoreCheckpoint request, and
                       whichever response lands last silently overwrites the
                       other's result via onRestored. Round 1120: also
-                      disabled while ANY row's rename (renamingId) is in
+                      disabled while ANY row's rename (anyRenaming) is in
                       flight, for the identical reason -- a restore/delete
                       landing while a rename on that same checkpoint is
                       still pending can race it. */}
@@ -580,7 +611,7 @@ export function HistoryPanel({
                         type="button"
                         className="secondary small checkpoint-restore-btn"
                         onClick={() => handleRestore(checkpoint)}
-                        disabled={busyId !== null || deletingId !== null || renamingId !== null || isCurrent}
+                        disabled={busyId !== null || deletingId !== null || anyRenaming || isCurrent}
                       >
                         {busyId === checkpoint.id ? t("history.restore.busy") : t("history.restore")}
                       </button>
@@ -589,7 +620,7 @@ export function HistoryPanel({
                         className="checkpoint-delete-btn"
                         aria-label={t("history.deleteOne")}
                         onClick={() => handleDelete(checkpoint)}
-                        disabled={busyId !== null || deletingId !== null || renamingId !== null}
+                        disabled={busyId !== null || deletingId !== null || anyRenaming}
                       >
                         {deletingId === checkpoint.id ? "…" : "🗑️"}
                       </button>
