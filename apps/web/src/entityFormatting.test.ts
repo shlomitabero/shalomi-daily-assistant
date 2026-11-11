@@ -4648,6 +4648,18 @@ test("isDeadlineFieldName rejects field names that merely contain \"due\" as a s
   assert.equal(isDeadlineFieldName("lastDuesPaidDate"), false);
 });
 
+/**
+ * Round 1947: the built-in WorkOrder entity's own scheduledDate (a job
+ * scheduled to happen, status Scheduled/InProgress/Completed/Cancelled) is
+ * exactly the "should have happened by now and didn't" case this feature
+ * exists for -- functionally identical to Task's own dueDate -- but
+ * contained neither "due" nor "deadline" before this round.
+ */
+test("isDeadlineFieldName matches the built-in WorkOrder entity's own scheduledDate field", () => {
+  assert.equal(isDeadlineFieldName("scheduledDate"), true, "WorkOrder's own field name");
+  assert.equal(isDeadlineFieldName("ScheduledDate"), true, "case-insensitive");
+});
+
 test("getDateUrgency classifies a date relative to a fixed reference day, not real wall-clock time", () => {
   const today = new Date(2026, 5, 15); // June 15, 2026 -- a Monday, chosen arbitrarily
   assert.equal(getDateUrgency("2026-06-10", today), "overdue", "a date before today is overdue");

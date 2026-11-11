@@ -405,8 +405,21 @@ const DUE_SOON_WINDOW_DAYS = 3;
  * and "dues"/"Dues" (the trailing "s" blocks the lookahead).
  */
 const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
+/**
+ * Round 1947: the built-in WorkOrder entity's own `scheduledDate` (a job
+ * scheduled to happen, with a Scheduled/InProgress/Completed/Cancelled
+ * status) is exactly the "this should have happened by now and didn't"
+ * case this whole overdue/due-soon feature exists for -- functionally
+ * identical to Task's own dueDate -- but contained neither "due" nor
+ * "deadline", so it silently got none of the urgency treatment every
+ * sibling Table/Board/Calendar view, the Overdue/Due-soon filter, and
+ * Business Twin's observations already give a deadline field. A plain
+ * substring check (no word-boundary regex needed, unlike "due") -- no
+ * other built-in field name contains "schedul" at all.
+ */
 export function isDeadlineFieldName(fieldName: string): boolean {
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || fieldName.toLowerCase().includes("deadline");
+  const lower = fieldName.toLowerCase();
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled");
 }
 
 export type DateUrgency = "overdue" | "dueSoon" | null;

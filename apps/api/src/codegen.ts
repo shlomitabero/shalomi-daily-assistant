@@ -3250,8 +3250,14 @@ function badgeTone(rawValue) {
 // "dues" ("duesPaidDate"), the same collision class SENSITIVE_FIELD_HINTS
 // already hardened "secret"/"token"/"ssn" against (pipeline.ts).
 const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
+// Round 1947: mirrors the live preview's own identical fix -- the built-in
+// WorkOrder entity's own scheduledDate (Scheduled/InProgress/Completed/
+// Cancelled status) is exactly the "should have happened by now" case this
+// feature exists for, but contained neither "due" nor "deadline". Plain
+// substring check: no other built-in field name contains "schedul" at all.
 function isDeadlineFieldName(fieldName) {
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || fieldName.toLowerCase().includes("deadline");
+  const lower = fieldName.toLowerCase();
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled");
 }
 const DUE_SOON_WINDOW_DAYS = 3;
 function getDateUrgency(value, today) {

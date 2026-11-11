@@ -2221,6 +2221,47 @@ test("computeBusinessTwin does not flag a past date field that merely contains '
   assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Residue test date")), `must not flag "residue" as a deadline, got: ${JSON.stringify(twin.jumpableObservations)}`);
 });
 
+/**
+ * Round 1947: mirrors entityFormatting.ts's/codegen.ts's identical fix --
+ * the built-in WorkOrder entity's own scheduledDate (Scheduled/InProgress/
+ * Completed/Cancelled status) is exactly the "should have happened by now"
+ * case computeOverdueObservations exists for, but isDeadlineFieldName
+ * didn't recognize it before this round -- so Business Twin silently
+ * never surfaced an overdue WorkOrder insight at all, in direct
+ * contradiction of its own "honest snapshot" promise.
+ */
+test("computeBusinessTwin flags the built-in WorkOrder entity's own scheduledDate as overdue, but not a Completed work order with the identical past date", () => {
+  const workOrderProject: Project = {
+    ...project,
+    description: "A locksmith repair business",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "WorkOrder",
+          label: "Work Orders",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Scheduled", "InProgress", "Completed", "Cancelled"] },
+            { name: "scheduledDate", label: "Scheduled date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, workOrderProject.id, workOrderProject.spec);
+  const workOrder = workOrderProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, workOrderProject.id, workOrder, { title: "Lock repair", status: "Scheduled", scheduledDate: "2026-01-01" });
+  insertRecord(db, workOrderProject.id, workOrder, { title: "Key duplication", status: "Completed", scheduledDate: "2026-01-01" });
+
+  const twin = computeBusinessTwin(db, workOrderProject, today);
+  const observation = twin.jumpableObservations.find((o) => o.text.includes("Scheduled date"));
+  assert.ok(observation, `expected an overdue observation for the still-Scheduled work order, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(observation!.text, /1 of 1 record/, "only the still-Scheduled record counts -- the Completed one must be excluded entirely, not just left out of the overdue count");
+});
+
 test("computeBusinessTwin stays silent about a deadline field when nothing is actually overdue yet", () => {
   const orderProject: Project = {
     ...project,

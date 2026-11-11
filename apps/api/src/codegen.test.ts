@@ -5330,6 +5330,27 @@ test("the exported EntityView's isDeadlineFieldName rejects field names that mer
 });
 
 /**
+ * Round 1947: mirrors the live preview's own identical fix -- the built-in
+ * WorkOrder entity's own scheduledDate (Scheduled/InProgress/Completed/
+ * Cancelled status) is exactly the "should have happened by now" case this
+ * feature exists for, but contained neither "due" nor "deadline" before
+ * this round. Confirms the exported app's own copy of the function got
+ * the identical fix.
+ */
+test("the exported EntityView's isDeadlineFieldName matches the built-in WorkOrder entity's own scheduledDate field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(patternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
+
+  const isDeadlineFieldName = new Function(`${patternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+
+  assert.equal(isDeadlineFieldName("scheduledDate"), true, "WorkOrder's own field name");
+  assert.equal(isDeadlineFieldName("ScheduledDate"), true, "case-insensitive");
+});
+
+/**
  * Regression test for a real bug found by round 286's Explore survey and
  * fixed the same round in both the live preview (EntityPanel.tsx) and here:
  * findBoardField only ever picks ONE enum field per entity, for Kanban
