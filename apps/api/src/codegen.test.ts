@@ -30952,6 +30952,79 @@ test("the exported EntityView does not flag a record with a true boolean 'cancel
 });
 
 /**
+ * Round 1951: CLOSED_STATUS_VALUES's exported-app copy claims (in its own
+ * doc comment) to be gathered from every status enum this project's domain
+ * library actually ships, but "returned" (the built-in Rental entity's own
+ * terminal status value) was missing -- a "library book rental" app
+ * (dueDate + status Reserved/Active/Returned) would show a permanently-red
+ * overdue chip for an already-returned rental.
+ */
+test("the exported EntityView does not flag a record whose own status enum is 'Returned' as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const rentalEntity = {
+    name: "Rental",
+    label: "Rental",
+    fields: [
+      { name: "borrower", label: "Borrower", type: "text", required: true },
+      { name: "dueDate", label: "Due date", type: "date", required: false },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Reserved", "Active", "Returned"] },
+    ],
+  };
+  const records = [
+    { id: 1, borrower: "Still out", dueDate: isoDateOffset(-5), status: "Active" },
+    { id: 2, borrower: "Already back", dueDate: isoDateOffset(-5), status: "Returned" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Rental") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: rentalEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const activeRow = rows.find((r) => /Still out/.test(r.textContent ?? ""))!;
+      const returnedRow = rows.find((r) => /Already back/.test(r.textContent ?? ""))!;
+
+      assert.ok(activeRow.querySelector(".date-overdue"), "an Active rental with a 5-day-past dueDate must still be flagged overdue");
+      assert.equal(returnedRow.querySelector(".date-overdue"), null, "a Returned rental with the identical past dueDate must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1323: ports the live preview's own new findFilterableFields fix
  * (a deadline-named date field's overdue/due-soon classification, already
  * used for the table cell's own red/amber styling right above, is now

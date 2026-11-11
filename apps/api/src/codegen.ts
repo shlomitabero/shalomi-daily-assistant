@@ -3286,9 +3286,16 @@ function getDateUrgency(value, today) {
 // live preview's own round-1737 widening. The Project Tracker template's
 // Milestone entity has a \`done\` boolean and a \`dueDate\`, no status/stage
 // enum at all, so a completed milestone still rendered as overdue here too.
+// Round 1951: "returned" (Rental.status), "sold" (Property.status), "hired"
+// (JobApplicant.stage), and "graduated" (Student.status) are each their own
+// entity's unambiguous terminal/successful outcome -- already recognized as
+// such by this file's badgeTone()'s POSITIVE_WORDS -- but were missing here.
+// Checked via exact \`.has()\`, not substring match, so "unreturned"/"unsold"
+// can't false-match.
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
+  "returned", "sold", "hired", "graduated",
 ]);
 function isRecordClosedStatus(record, fields) {
   const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));

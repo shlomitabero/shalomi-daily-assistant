@@ -4794,3 +4794,56 @@ test("isRecordClosedStatus also recognizes a sibling BOOLEAN 'cancelled' field (
     "the American-spelling 'is'-prefixed form (isCanceled) must also be recognized, case-insensitively",
   );
 });
+
+/**
+ * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be "gathered
+ * from every status enum this file's own domain library actually ships",
+ * but "returned" (Rental.status), "sold" (Property.status), "hired"
+ * (JobApplicant.stage), and "graduated" (Student.status) -- each already
+ * recognized as its own entity's terminal/successful outcome by this same
+ * file's badgeTone() POSITIVE_WORDS (rounds 1469/1483/1493/1506) -- were
+ * missing. A "library book rental" app (dueDate + status Reserved/Active/
+ * Returned) or similar AI-generated shape would show a permanently-red
+ * overdue badge on an already-returned/sold/hired/graduated record.
+ */
+test("isRecordClosedStatus also recognizes 'returned'/'sold'/'hired'/'graduated' (round 1951), matching the built-in Rental/Property/JobApplicant/Student entities' own terminal status values", () => {
+  const rentalFields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Reserved", "Active", "Returned"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", status: "Returned" }, rentalFields),
+    true,
+    "a returned rental is resolved even though its due date has passed",
+  );
+
+  const propertyFields: Field[] = [
+    { name: "saleDeadline", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Available", "UnderContract", "Sold", "Rented"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, saleDeadline: "2020-01-01", status: "Sold" }, propertyFields),
+    true,
+    "a sold property is resolved even though its sale deadline has passed",
+  );
+
+  const jobApplicantFields: Field[] = [
+    { name: "interviewDeadline", type: "date", required: false },
+    { name: "stage", type: "enum", required: true, enumValues: ["Applied", "Interviewing", "Offer", "Rejected", "Hired"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, interviewDeadline: "2020-01-01", stage: "Hired" }, jobApplicantFields),
+    true,
+    "a hired applicant is resolved even though its interview deadline has passed",
+  );
+
+  const studentFields: Field[] = [
+    { name: "programDeadline", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Active", "Graduated", "OnHold"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, programDeadline: "2020-01-01", status: "Graduated" }, studentFields),
+    true,
+    "a graduated student is resolved even though its program deadline has passed",
+  );
+});

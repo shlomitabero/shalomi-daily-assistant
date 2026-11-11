@@ -2150,6 +2150,45 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the cancelled booking must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be gathered
+ * from every status enum this file's own domain library actually ships,
+ * but "returned" (the built-in Rental entity's own terminal status value)
+ * was missing -- a "library book rental" app (dueDate + status Reserved/
+ * Active/Returned) would show a permanently-red overdue observation for an
+ * already-returned rental.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own status enum is 'Returned' (round 1951), matching the built-in Rental entity", () => {
+  const rentalProject: Project = {
+    ...project,
+    description: "A library book rental service",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Rental",
+          label: "Rentals",
+          fields: [
+            { name: "borrower", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+            { name: "status", type: "enum", required: true, enumValues: ["Reserved", "Active", "Returned"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, rentalProject.id, rentalProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, rentalProject.id, rentalProject.spec.entities[0], { borrower: "Dana", dueDate: "2026-01-01", status: "Active" }); // genuinely overdue
+  insertRecord(db, rentalProject.id, rentalProject.spec.entities[0], { borrower: "Omer", dueDate: "2026-01-01", status: "Returned" }); // already resolved
+
+  const twin = computeBusinessTwin(db, rentalProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the returned rental must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

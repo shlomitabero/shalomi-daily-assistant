@@ -453,9 +453,17 @@ export function getDateUrgency(value: string, today: Date = new Date()): DateUrg
 // ever sees the raw date string. Gathered from every `status` enum this
 // file's own domain library actually ships (domainEntities.ts), not
 // invented speculatively.
+// Round 1951: "returned" (Rental.status), "sold" (Property.status), "hired"
+// (JobApplicant.stage), and "graduated" (Student.status) are each their own
+// entity's unambiguous terminal/successful outcome -- already recognized as
+// such by this same file's badgeTone()'s POSITIVE_WORDS (rounds 1469/1483/
+// 1493/1506) -- but were missing here despite this Set's own comment above
+// claiming to be exhaustive over the same domain library. Checked via exact
+// `.has()`, not substring match, so "unreturned"/"unsold" can't false-match.
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
+  "returned", "sold", "hired", "graduated",
 ]);
 
 /**

@@ -813,9 +813,18 @@ function isDeadlineFieldName(fieldName: string): boolean {
  * status/stage enum at all, so a completed milestone was still counted in
  * computeOverdueObservations/computeDueSoonObservations below.
  */
+// Round 1951: "returned" (Rental.status), "sold" (Property.status), "hired"
+// (JobApplicant.stage), and "graduated" (Student.status) are each their own
+// entity's unambiguous terminal/successful outcome -- already recognized as
+// such by entityFormatting.ts's/codegen.ts's own badgeTone() POSITIVE_WORDS
+// (rounds 1469/1483/1493/1506) -- but were missing here despite this Set's
+// own earlier comment claiming to be exhaustive over the same domain
+// library. Checked via exact `.has()`, not substring match, so
+// "unreturned"/"unsold" can't false-match.
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
+  "returned", "sold", "hired", "graduated",
 ]);
 function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): boolean {
   const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
