@@ -96,6 +96,7 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   // in the first place (their own next character is "a", not "s").
   /(?:(?<![a-zA-Z])ssn|SSN)s?(?![a-z])/,
   "creditcard",
+  "credit_card",
 ];
 
 interface ImpactSummary {

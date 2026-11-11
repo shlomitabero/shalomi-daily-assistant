@@ -1977,6 +1977,49 @@ test("Security scan flags a sensitive-sounding field regardless of its type, exc
 });
 
 /**
+ * Regression test for round 1921: SENSITIVE_FIELD_HINTS's "apikey" hint has
+ * an explicit snake_case sibling, "api_key", so both forms are caught -- but
+ * "creditcard" never got one. A field named with an underscore separator
+ * between the two words ("credit_card_number", "credit_card") lowercases to
+ * a string that still contains the literal underscore, so plain
+ * `lowerName.includes("creditcard")` is false for it -- only the no-separator
+ * camelCase/PascalCase form ("creditCardNumber") was ever actually caught.
+ * Field names have no character-set restriction (FieldSchema's
+ * `name: z.string().min(1)`), so this is a real, reachable gap: an entity
+ * with a `credit_card_number` field scored a perfect security score with
+ * zero warning for the one field this hint exists to catch.
+ */
+test("Security scan flags the snake_case form of a sensitive field name, not just camelCase", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Payment",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "credit_card_number", type: "text", required: false },
+          { name: "credit_card", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  for (const field of ["credit_card_number", "credit_card"]) {
+    assert.ok(
+      security.warnings.some((w) => w.includes(`"Payment.${field}"`)),
+      `'${field}' must be flagged -- it's the snake_case form of the sensitive 'creditcard' field name`,
+    );
+  }
+});
+
+/**
  * Real end-to-end proof of the same fix, run through the actual
  * runBuildPipeline a real build/refine uses (real migrations, real seed
  * data, every real agent step) rather than calling runSecurityScan in
