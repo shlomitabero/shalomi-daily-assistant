@@ -3463,6 +3463,60 @@ test("Employee's 'עובד' keyword doesn't spuriously match 'מעובד' (proce
 });
 
 /**
+ * Regression test for round 1919's finding: round 565's own "מ" pu'al-
+ * prefix lookbehind only ever guarded the single character immediately
+ * BEFORE "עובד" -- it did nothing about "עובד" also being the literal
+ * 4-letter prefix of two different nouns that START with it: "עובדה"
+ * (fact, singular -- completely unambiguous, never means "worker") and
+ * "עובדות" (a true homograph: either "facts"/plural-of-עובדה, or "female
+ * workers"/plural-of-עובדת). A plain trivia/quiz app description had
+ * nothing to do with staff. "עובדה" is excluded outright; "עובדות" is
+ * excluded only alongside the specific co-occurring words that mark the
+ * "facts" sense ("על"/"about", "מעניינ"/"interesting", etc.), mirroring
+ * round 890's identical "ביקורת" audit/review homograph fix's own by-
+ * co-occurrence approach -- a bare "עובדות" with none of those words
+ * nearby still matches Employee by default, same as before this fix.
+ */
+test("Employee's 'עובד' keyword doesn't spuriously match 'עובדה'/'עובדות' (fact/facts), for both the entity and the role", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const singularFact = await provider.generate("אפליקציה שמלמדת אנגלית ומתחילה כל שיעור בעובדה מעניינת");
+  assert.ok(
+    !singularFact.entities.some((e) => e.name === "Employee"),
+    "'עובדה' (fact) alone must not spuriously match Employee via a bare 'עובד' substring",
+  );
+  assert.ok(
+    !singularFact.roles.includes("עובד/ת"),
+    "'עובדה' (fact) alone must not spuriously add an Employee role via a bare 'עובד' substring",
+  );
+
+  const pluralFacts = await provider.generate(
+    "אפליקציית טריוויה שמציגה עובדות מעניינות על חלל ומדע לכל שאלה",
+  );
+  assert.ok(
+    !pluralFacts.entities.some((e) => e.name === "Employee"),
+    "'עובדות מעניינות על' (interesting facts about) alone must not spuriously match Employee",
+  );
+  assert.ok(
+    !pluralFacts.roles.includes("עובד/ת"),
+    "'עובדות מעניינות על' (interesting facts about) alone must not spuriously add an Employee role",
+  );
+
+  // The genuine "female workers" sense of the same plural word, with no
+  // "facts"-marking word nearby, must still match by default -- same as
+  // before this fix.
+  const femaleWorkers = await provider.generate("אפליקציה לניהול עובדות משק הבית בסוכנות כוח אדם");
+  assert.ok(
+    femaleWorkers.entities.some((e) => e.name === "Employee"),
+    "'עובדות' (female workers) with no 'facts'-marking word nearby must still match Employee",
+  );
+  assert.ok(
+    femaleWorkers.roles.includes("עובד/ת"),
+    "'עובדות' (female workers) with no 'facts'-marking word nearby must still add the Employee role",
+  );
+});
+
+/**
  * Regression test for round 825's finding: Employee's bare Hebrew keyword
  * "צוות" ("team"/"staff") -- in both DOMAIN_ENTITY_RULES and ROLE_RULES --
  * is a substring of "מצוות" ("commandments"/"mitzvot"), an ordinary word

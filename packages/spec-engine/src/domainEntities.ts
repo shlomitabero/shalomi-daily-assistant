@@ -249,7 +249,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // has no \b (same reason round 518's "מלאי" and round 564's "מוצר"
       // fixes needed lookbehind too); this excludes the specific "מ" pu'al
       // prefix while still matching every real "עובד"-based phrasing.
-      /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/,
+      //
+      // Round 1919: that fix only ever guarded the single character
+      // immediately BEFORE "עובד" -- it did nothing about "עובד" also
+      // being the literal 4-letter prefix of two different nouns that
+      // START with it: "עובדה" (fact, singular -- completely unambiguous,
+      // never means "worker") and "עובדות", a true homograph (either
+      // "facts"/plural-of-עובדה, or "female workers"/plural-of-עובדת). A
+      // plain trivia/quiz/educational-facts app description ("אפליקציית
+      // טריוויה שמציגה עובדות מעניינות על חלל ומדע") spuriously fabricated
+      // an unrelated Employee entity AND role, purely from "עובדות
+      // מעניינות על" ("interesting facts about"). "עובדה" is dropped
+      // outright (no legitimate "worker" sense collides with it); for the
+      // genuine "עובדות" homograph, only the specific co-occurring words
+      // that mark the "facts" sense are excluded (mirroring round 890's
+      // identical "ביקורת" audit/review homograph fix's own by-co-
+      // occurrence approach), so a bare "עובדות" with no such word nearby
+      // (e.g. "ניהול עובדות משק הבית", "גיוס עובדות חדשות") still matches
+      // Employee by default, same as before this fix.
+      /(?<!מ)עובד(?!ה)(?!ות\s*(?:על|מעניינ|מרתק|מדהימ|משעשע|סקרני|אקראי))/,
+      /(?<!מ)עובדת/, /(?<!מ)עובדים/,
       // Bare "צוות" (round 825) is a substring of "מצוות" ("commandments"/
       // "mitzvot" -- a religious-observance tracker or bar/bat-mitzvah
       // planning app description), the same "מ + root" collision shape
@@ -2047,14 +2066,17 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // "Staffordshire" collision (round 574) as the Employee entity rule's
   // own fix above -- \b-bounded here too. Also same bare "צוות"/"מצוות"
   // collision (round 825) as the Employee entity rule's own fix above --
-  // lookbehind-bounded here too.
+  // lookbehind-bounded here too. Also same "עובדה"/"עובדות" (fact(s))
+  // collision (round 1919) as the Employee entity rule's own fix above --
+  // kept in sync here too.
   Employee: {
     keywords: [
       "employee", /\bstaff\b/, /\bworkers?\b/, "team member",
       // Round 1720: kept in sync with the Employee entity rule's own
       // "trainer"/"מאמן" addition above.
       /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים",
-      /(?<!מ)עובד/, /(?<!מ)עובדת/, /(?<!מ)עובדים/, /(?<!מ)צוות/,
+      /(?<!מ)עובד(?!ה)(?!ות\s*(?:על|מעניינ|מרתק|מדהימ|משעשע|סקרני|אקראי))/,
+      /(?<!מ)עובדת/, /(?<!מ)עובדים/, /(?<!מ)צוות/,
     ],
     labelHe: "עובד/ת",
   },
