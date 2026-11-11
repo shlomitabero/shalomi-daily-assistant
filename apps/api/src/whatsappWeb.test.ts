@@ -3140,6 +3140,37 @@ test("an incoming WhatsApp Status Q&A sticker reply delivered as statusQuestionA
 });
 
 /**
+ * Round 1948: `statusStickerInteractionMessage` is WhatsApp's "react to a
+ * Status update with a sticker" feature -- confirmed against the installed
+ * Baileys protobuf (WAProto/index.d.ts: IStatusStickerInteractionMessage is
+ * `{ key?, stickerKey?, type? }`), distinct from reactionMessage (an emoji
+ * reaction to an ordinary chat message) and from statusQuestionAnswerMessage
+ * just above (a different Status interaction). It had no handling anywhere
+ * and fell through to the final `return null`, vanishing with zero trace.
+ */
+test("an incoming WhatsApp Status sticker reaction is logged as a placeholder, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { statusStickerInteractionMessage: { stickerKey: "abc123" } } },
+    ],
+  });
+
+  const { messages: stickerMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(stickerMessages.length, 1);
+  assert.equal(stickerMessages[0].body, "[Status sticker reaction]");
+  assert.equal(stickerMessages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1901: `commentMessage` is WhatsApp's "comment on a Channel/Status
  * post" feature -- confirmed against the installed Baileys protobuf
  * (WAProto/index.d.ts: ICommentMessage is `{ message?: IMessage;

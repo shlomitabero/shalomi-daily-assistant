@@ -966,6 +966,18 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const text = message.statusQuestionAnswerMessage.text;
     return text ? `[Status Q&A reply] ${text}` : "[Status Q&A reply]";
   }
+  // Round 1948: WhatsApp's "react to a Status update with a sticker"
+  // feature -- confirmed against the installed Baileys protobuf
+  // (WAProto/index.d.ts: IStatusStickerInteractionMessage is `{ key?,
+  // stickerKey?, type? }`), distinct from reactionMessage/encReactionMessage
+  // (emoji/text reactions to ordinary chat messages) and from
+  // statusMentionMessage/statusQuestionAnswerMessage/questionResponseMessage
+  // above (other Status interactions). `stickerKey` is just an opaque key,
+  // not recoverable sticker content, so only presence can be detected --
+  // same bar pollUpdateMessage's "[Poll vote]" above already uses.
+  // Previously fell through to the final `return null` below and vanished
+  // from the message log with zero trace.
+  if (message.statusStickerInteractionMessage) return "[Status sticker reaction]";
   return null;
 }
 
