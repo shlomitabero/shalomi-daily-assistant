@@ -23,7 +23,16 @@ export default function Financial() {
 
   async function onAddSymbol(e) {
     e.preventDefault();
-    if (!symbol.trim()) return;
+    // Same silent-no-op gap already fixed this hour for onPaperTrade just
+    // below and for the Opportunities page's manual-draft form: the symbol
+    // input has no `required` attribute, and this used to just return with
+    // no error on an empty value - clicking "הוסף" with a blank symbol did
+    // nothing at all. Same Hebrew wording routes/financial.js's own
+    // addToWatchlist already uses server-side for this exact case.
+    if (!symbol.trim()) {
+      setError('סימבול הוא שדה חובה וחייב להיות מחרוזת לא ריקה');
+      return;
+    }
     setError('');
     setAddBusy(true);
     try {
