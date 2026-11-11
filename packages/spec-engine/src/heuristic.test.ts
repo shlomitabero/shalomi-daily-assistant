@@ -1715,6 +1715,81 @@ test("WorkOrder's moving/relocation keywords match, and bare 'movers'/'מובי�
   );
 });
 
+/**
+ * Round 1886: house/office cleaning, pest control, and landscaping/lawn
+ * care are the same small-business vertical gap as rounds 1811/1816/1827's
+ * plumber/tailor/mover fixes -- no WorkOrder keyword matched any of them at
+ * all, so each fell through to the generic Customer/Service fallback,
+ * which isn't in BILLING_ENTITY_NAMES, so buildOpenQuestions wrongly
+ * recommended "No payments" for textbook paid businesses. Since WorkOrder
+ * itself IS in BILLING_ENTITY_NAMES, adding these keywords fixes both the
+ * missing entity and the wrong payment recommendation in the same change.
+ */
+test("WorkOrder's cleaning/pest-control/landscaping keywords match, and both close a textbook 'No payments' gap", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const cleaning = await provider.generate(
+    "A house cleaning service that manages clients, cleaners, and scheduled cleaning jobs for homes and offices",
+  );
+  assert.ok(cleaning.entities.some((e) => e.name === "WorkOrder"), "'house cleaning service' must match WorkOrder");
+  const cleaningPaymentQuestion = cleaning.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(cleaningPaymentQuestion);
+  assert.equal(cleaningPaymentQuestion!.recommendation, "Stripe");
+
+  const officeCleaning = await provider.generate("An office cleaning company tracking clients and scheduled cleanings.");
+  assert.ok(officeCleaning.entities.some((e) => e.name === "WorkOrder"), "'office cleaning company' must match WorkOrder");
+
+  const pestControl = await provider.generate("A pest control company tracking customers and scheduled treatment visits");
+  assert.ok(pestControl.entities.some((e) => e.name === "WorkOrder"), "'pest control company' must match WorkOrder");
+  const pestControlPaymentQuestion = pestControl.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(pestControlPaymentQuestion);
+  assert.equal(pestControlPaymentQuestion!.recommendation, "Stripe");
+
+  const landscaping = await provider.generate(
+    "A landscaping and lawn care company tracking clients and scheduled mowing/maintenance visits",
+  );
+  assert.ok(landscaping.entities.some((e) => e.name === "WorkOrder"), "'landscaping company'/'lawn care' must match WorkOrder");
+  const landscapingPaymentQuestion = landscaping.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(landscapingPaymentQuestion);
+  assert.equal(landscapingPaymentQuestion!.recommendation, "Stripe");
+
+  const cleaningHe = await provider.generate("שירותי ניקיון לבתים ולמשרדים עם לקוחות ועבודות מתוזמנות");
+  assert.ok(cleaningHe.entities.some((e) => e.name === "WorkOrder"), "'שירותי ניקיון' must match WorkOrder");
+  const cleaningHePaymentQuestion = cleaningHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(cleaningHePaymentQuestion);
+  assert.equal(cleaningHePaymentQuestion!.recommendation, "Stripe");
+
+  const pestControlHe = await provider.generate("חברת הדברה שמנהלת לקוחות וביקורי טיפול מתוזמנים");
+  assert.ok(pestControlHe.entities.some((e) => e.name === "WorkOrder"), "'חברת הדברה' must match WorkOrder");
+
+  const landscapingHe = await provider.generate("חברת גינון ותחזוקת גינות שמנהלת לקוחות וביקורים מתוזמנים");
+  assert.ok(landscapingHe.entities.some((e) => e.name === "WorkOrder"), "'חברת גינון' must match WorkOrder");
+});
+
+/**
+ * Round 1886: "landscape" is common business-jargon metaphor wording
+ * ("the competitive landscape", "the regulatory landscape") that must NOT
+ * spuriously match WorkOrder, the same bare-noun-collision caution round
+ * 1816's own comment documents for "tailor". Confirms the fix's phrase-
+ * only keywords ("landscaping company" etc., never bare "landscape(s)")
+ * correctly leave these untouched.
+ */
+test("the business-jargon metaphor 'landscape' does not spuriously match WorkOrder's round-1886 landscaping keywords", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const competitive = await provider.generate("A tool to analyze the competitive landscape of the SaaS industry");
+  assert.ok(
+    !competitive.entities.some((e) => e.name === "WorkOrder"),
+    "'competitive landscape' must not spuriously match WorkOrder",
+  );
+
+  const regulatory = await provider.generate("An app to track the regulatory landscape across different countries");
+  assert.ok(
+    !regulatory.entities.some((e) => e.name === "WorkOrder"),
+    "'regulatory landscape' must not spuriously match WorkOrder",
+  );
+});
+
 test("Customer's 'lead' keyword doesn't spuriously match plain 'leaders'/'leadership' text", async () => {
   const provider = new HeuristicSpecProvider();
   const leadership = await provider.generate("An app for managing team leaders and their schedules.");

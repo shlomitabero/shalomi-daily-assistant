@@ -1823,6 +1823,33 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "relocation company", "relocation service", "relocation services", "relocation business",
       "movers and packers", /\blocal movers\b/,
       "חברת הובלות", "חברת הובלה", "שירותי הובלה", "הובלת דירות",
+      // Round 1886: house/office cleaning, pest control, and landscaping/
+      // lawn care are equally common "scheduled technician visits a
+      // customer's property" small-business verticals as the plumber/
+      // tailor/mover ones already covered above, but had no WorkOrder
+      // keyword at all -- "a house cleaning service tracking clients and
+      // scheduled jobs" fell through to the generic Customer/Service
+      // fallback, which isn't in BILLING_ENTITY_NAMES below, so
+      // buildOpenQuestions wrongly recommended "No payments" for a
+      // textbook paid business. WorkOrder IS already in
+      // BILLING_ENTITY_NAMES, so these same keywords fix both the missing
+      // entity and the wrong payment recommendation together. Deliberately
+      // phrase-only for "cleaning"/"landscaping" -- mirrors round 1816's
+      // own bare-noun-collision caution ("tailor X to Y"): "landscape"/
+      // "landscaping" is a common business-jargon metaphor ("the
+      // competitive landscape"), confirmed live, so only the unambiguous
+      // multi-word business-name phrases are included. "pest control" and
+      // "lawn care" are themselves specific enough to include as bare
+      // phrases -- neither has a metaphorical/idiomatic alternate meaning.
+      "cleaning service", "cleaning services", "cleaning company", "cleaning business",
+      "house cleaning", "office cleaning", "janitorial service", "janitorial services",
+      "janitorial company", "maid service", "maid services",
+      "pest control", "exterminator", "exterminators",
+      "landscaping company", "landscaping business", "landscaping service", "landscaping services",
+      "lawn care", "lawn mowing service", "lawn maintenance",
+      "חברת ניקיון", "שירותי ניקיון", "ניקיון בתים", "ניקיון משרדים",
+      "חברת הדברה", "שירותי הדברה", "מדביר",
+      "חברת גינון", "שירותי גינון", "גינון ותחזוקה",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",
