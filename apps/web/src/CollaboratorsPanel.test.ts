@@ -1383,6 +1383,60 @@ test("CollaboratorsPanel cross-gates Resend invite against removal (and vice ver
 });
 
 /**
+ * Round 1885: mirrors round 1884's identical fix for handleRoleChange/
+ * handleTransferOwnership in this same file -- another tab/collaborator can
+ * fully remove a collaborator between this tab rendering their "Resend
+ * invite" button and this tab's own resend-invite POST reaching the server,
+ * which throws COLLABORATOR_NOT_FOUND for exactly that (routes/projects.ts's
+ * resend-invite route). Before this round, handleResendInvite's catch block
+ * only ever did setError(...), leaving the now-gone collaborator's row stuck
+ * repeating the same 404 on every further click.
+ */
+test("CollaboratorsPanel's Resend invite button silently drops a collaborator's row, instead of showing an error, when they were already removed elsewhere", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const dana = makeCollaborator("u1", "dana@example.com", "editor");
+    const yossi = makeCollaborator("u2", "yossi@example.com", "editor");
+    let getCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        getCalls += 1;
+        const collaborators = getCalls === 1 ? [dana, yossi] : [yossi];
+        return new Response(JSON.stringify({ collaborators }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/collaborators/u1/resend-invite") {
+        return new Response(JSON.stringify({ error: "Collaborator not found", code: "COLLABORATOR_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 2);
+
+      const danaRow = Array.from(document.querySelectorAll(".collab-list li")).find((li) => li.textContent?.includes("dana@example.com"))!;
+      const resendBtn = Array.from(danaRow.querySelectorAll("button")).find((b) => b.textContent?.includes("Resend invite"))!;
+      fireEvent.click(resendBtn);
+
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+      assert.match(document.body.textContent ?? "", /yossi@example\.com/, "the still-real collaborator must still be listed");
+      assert.doesNotMatch(document.body.textContent ?? "", /dana@example\.com/, "the now-gone collaborator's row must be dropped, not left stuck");
+      assert.equal(document.querySelector("p.error"), null, "no raw 'Collaborator not found' error banner must be shown for this race");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1012: before the real route/button existed, a calendar subscribe
  * URL (EntityPanel.tsx's own "Subscribe" button, round 1006) could never
  * be invalidated once handed out -- a removed/demoted collaborator kept

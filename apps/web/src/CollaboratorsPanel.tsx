@@ -489,6 +489,17 @@ export function CollaboratorsPanel({
       await resendCollaboratorInvite(projectId, userId, lang);
       setResendInfo(t("collab.resendInvite.success", { email }));
     } catch (err) {
+      // Round 1885: same cross-tab-delete-race gap round 1884 closed for
+      // handleRoleChange/handleTransferOwnership in this same file -- the
+      // target can be fully removed by another tab/collaborator between
+      // this tab rendering their row and this POST reaching the server
+      // (routes/projects.ts's resend-invite route throws the identical
+      // COLLABORATOR_NOT_FOUND for an unknown target). Reload instead of
+      // leaving the row stuck on a repeating 404.
+      if ((err as Error & { code?: string }).code === "COLLABORATOR_NOT_FOUND") {
+        loadCollaborators();
+        return;
+      }
       setError((err as Error).message);
     } finally {
       setResendingUserId(null);
