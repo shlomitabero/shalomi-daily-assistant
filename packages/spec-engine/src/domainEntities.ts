@@ -1894,6 +1894,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "חברת ניקיון", "שירותי ניקיון", "ניקיון בתים", "ניקיון משרדים",
       "חברת הדברה", "שירותי הדברה", "מדביר",
       "חברת גינון", "שירותי גינון", "גינון ותחזוקה",
+      // Round 1932: roofing, house painting, and carpentry contractors are
+      // the same "scheduled trade visits a customer's property" vertical
+      // as plumbers/electricians/tailors/movers/cleaners above, but had no
+      // WorkOrder keyword at all -- "a roofing company dashboard" fell
+      // through to the generic Item fallback (confirmed live), which isn't
+      // in BILLING_ENTITY_NAMES below, so buildOpenQuestions wrongly
+      // recommended "No payments" for a textbook paid trade business.
+      // Bare "roofer(s)" is unambiguous enough to include (no other common
+      // meaning, confirmed live). Deliberately NOT bare "painter" or
+      // "carpenter": both collide with the visual-artist/craftsman sense
+      // ("a portfolio site for a painter to showcase artwork", "a
+      // carpenter's portfolio website for custom furniture art", both
+      // confirmed live to describe a non-repair-job business) -- the same
+      // bare-noun-collision caution round 1816's own comment documents for
+      // "tailor". Phrase-only keywords for those two avoid the false
+      // positive while still closing the realistic repair-contractor cases.
+      "roofing company", "roofing contractor", "roofing service", "roofing services",
+      /\broofer(s)?\b/,
+      "painting contractor", "painting company", "house painting", "house painter", "house painters",
+      "carpentry business", "carpentry shop", "carpenter shop", "carpentry company",
+      "קבלן גגות", "איטום גגות", "חברת צביעה", "צבעי בתים", "נגריה",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",

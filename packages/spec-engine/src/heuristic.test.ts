@@ -1714,6 +1714,52 @@ test("WorkOrder's locksmith keyword (English + Hebrew) matches and flips the pay
   assert.equal(locksmithHe.openQuestions[0].recommendation, "Stripe", "a Hebrew locksmith business must be recommended Stripe, not 'בלי תשלומים'");
 });
 
+// Round 1932: roofing, house painting, and carpentry contractors are the
+// same "scheduled trade visits a customer's property" vertical as
+// plumbers/electricians/tailors/movers/cleaners above, but had no WorkOrder
+// keyword at all -- "a roofing company dashboard" fell through to the
+// generic Item fallback (confirmed live), which isn't in
+// BILLING_ENTITY_NAMES, so buildOpenQuestions wrongly recommended "No
+// payments" for a textbook paid trade business.
+test("WorkOrder's roofing/painting/carpentry keywords match and flip the payment recommendation to Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const roofing = await provider.generate("a roofing company dashboard");
+  assert.ok(roofing.entities.some((e) => e.name === "WorkOrder"), "'roofing company' must match WorkOrder");
+  assert.equal(roofing.openQuestions[0].recommendation, "Stripe", "a roofing company must be recommended Stripe, not 'No payments'");
+
+  const roofer = await provider.generate("an app for a roofer to manage customers");
+  assert.ok(roofer.entities.some((e) => e.name === "WorkOrder"), "bare 'roofer' must match WorkOrder");
+
+  const housePainter = await provider.generate("a house painter's business app");
+  assert.ok(housePainter.entities.some((e) => e.name === "WorkOrder"), "'house painter' must match WorkOrder");
+  assert.equal(housePainter.openQuestions[0].recommendation, "Stripe", "a house painting business must be recommended Stripe");
+
+  const carpentry = await provider.generate("carpentry company website");
+  assert.ok(carpentry.entities.some((e) => e.name === "WorkOrder"), "'carpentry company' must match WorkOrder");
+  assert.equal(carpentry.openQuestions[0].recommendation, "Stripe", "a carpentry company must be recommended Stripe");
+});
+
+// Non-regression: bare "painter"/"carpenter" are deliberately NOT added as
+// WorkOrder keywords, mirroring round 1816's own bare-noun-collision
+// caution for "tailor" -- both collide with the visual-artist/craftsman
+// sense of a portfolio/showcase app, which is not a repair-job business.
+test("bare 'painter'/'carpenter' in a portfolio/art-showcase context must not spuriously match WorkOrder", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const painterPortfolio = await provider.generate("a portfolio site for a painter to showcase artwork");
+  assert.ok(
+    !painterPortfolio.entities.some((e) => e.name === "WorkOrder"),
+    "a visual artist's portfolio app must not spuriously match WorkOrder via bare 'painter'",
+  );
+
+  const carpenterPortfolio = await provider.generate("a carpenter's portfolio website for custom furniture art");
+  assert.ok(
+    !carpenterPortfolio.entities.some((e) => e.name === "WorkOrder"),
+    "a furniture artist's portfolio app must not spuriously match WorkOrder via bare 'carpenter'",
+  );
+});
+
 // Round 1816: a tailoring/alterations shop is the same small-business
 // vertical gap as round 1811's plumber/electrician/handyman fix -- no
 // WorkOrder keyword matched it at all, so it fell through to the generic
