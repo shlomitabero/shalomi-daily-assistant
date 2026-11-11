@@ -552,8 +552,13 @@ export function createProjectFromTemplate(templateId: string, lang: "he" | "en")
  * fuller, more detailed rewrite the user can review before it's used to
  * create the project (same AI-or-heuristic provider seam as createProject).
  */
+/** See createProject's own doc comment for why this generates one idempotency key per call -- here protecting against a duplicate, real-dollar Anthropic call for one user click. */
 export function enhanceIdea(idea: string): Promise<{ enhanced: string; providerName: string }> {
-  return request("/ideas/enhance", { method: "POST", body: JSON.stringify({ idea }) });
+  return request("/ideas/enhance", {
+    method: "POST",
+    headers: { "x-idempotency-key": crypto.randomUUID() },
+    body: JSON.stringify({ idea }),
+  });
 }
 
 export function listProjects(): Promise<{ projects: Project[] }> {

@@ -2021,6 +2021,22 @@ export function createProjectsRouter(
    * into a fuller, more detailed prompt (same AI-or-heuristic provider seam
    * as generateSpec), without creating a project yet -- the client decides
    * whether to use the enhanced text.
+   *
+   * Round 1882: wrapped in withIdempotency, matching every other real,
+   * metered-AI-cost route in this file (POST /projects just below,
+   * /projects/from-template, /projects/:id/clone, /refine, /answers, ...).
+   * This one slipped through round 470's own "full inventory of mutating
+   * routes" audit (docs/wakeRetry-idempotency-design.md) because it's
+   * text-only -- no DB row to show up in a search for routes that write
+   * to the database -- but it has the exact same unguarded-retry hazard
+   * that audit exists to close: fetchWithWakeRetry (apps/web/src/
+   * wakeRetry.ts) retries ANY thrown fetch() error, including this app's
+   * own extensively-documented Render cold-start connection drop that can
+   * happen AFTER the server already answered. Without this, that retry
+   * replays the identical POST with no key for the server to recognize,
+   * so enhancePrompt() -- a real, billed Anthropic call -- runs a second
+   * time for one user click, silently doubling real-dollar cost with no
+   * duplicate resource ever created to reveal it happened.
    */
   router.post(
     "/ideas/enhance",
@@ -2030,8 +2046,12 @@ export function createProjectsRouter(
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
-      const { enhanced, providerName } = await enhancePrompt(parsed.data.idea);
-      res.json({ enhanced, providerName });
+      const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, "POST /ideas/enhance", async () => {
+        const { enhanced, providerName } = await enhancePrompt(parsed.data.idea);
+        return { status: 200, body: { enhanced, providerName } };
+      });
+      res.status(status).json(body);
     }),
   );
 

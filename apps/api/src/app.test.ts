@@ -15689,6 +15689,57 @@ test("the idea-enhance endpoint rejects an idea past a generous but real length 
 });
 
 /**
+ * Round 1882: POST /ideas/enhance was the one remaining real, metered-AI-
+ * cost route in this file with no withIdempotency wrap at all -- it slipped
+ * through round 470's own "full inventory of mutating routes" audit
+ * (docs/wakeRetry-idempotency-design.md) because it's text-only, no DB row
+ * to show up in a search for routes that write to the database, but it has
+ * the exact same unguarded-retry hazard every sibling AI-cost route
+ * (POST /projects just below, /refine, /answers, ...) was already fixed
+ * for: fetchWithWakeRetry (apps/web/src/wakeRetry.ts) retries ANY thrown
+ * fetch() error, including a connection dropped *after* the server already
+ * answered, which replays the identical POST with the identical
+ * X-Idempotency-Key apps/web/src/api.ts's enhanceIdea() now generates.
+ *
+ * HeuristicPromptEnhancer.enhance() (packages/spec-engine/src/
+ * promptEnhancer.ts, the only enhancer available with no ANTHROPIC_API_KEY
+ * in this test environment) echoes the raw idea text verbatim at the very
+ * start of its own output, so this test can prove a REPLAY happened --
+ * not just two calls that coincidentally agree -- by sending a retry with
+ * the SAME key but a DIFFERENT idea: if the fix works, the retry must
+ * still return the FIRST idea's own enhanced text (proving enhancePrompt
+ * never ran a second time on the new input); without the fix, the second
+ * request's own idea would be the one that got enhanced and returned.
+ */
+test("POST /ideas/enhance retried with the same idempotency key after the first attempt already finished replays the original response, instead of running a second real AI call on a different idea", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl);
+    const headers = { ...authHeaders(token), "x-idempotency-key": "enhance-repro-key" };
+    const firstIdea = "a booking app for a hair salon with customers and appointments";
+    const secondIdea = "a CRM for tracking sales leads and deals";
+
+    const firstRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ idea: firstIdea }),
+    });
+    assert.equal(firstRes.status, 200);
+    const first = (await firstRes.json()) as { enhanced: string; providerName: string };
+    assert.match(first.enhanced, /hair salon/);
+
+    const retryRes = await fetch(`${baseUrl}/api/ideas/enhance`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ idea: secondIdea }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retry = (await retryRes.json()) as { enhanced: string; providerName: string };
+    assert.deepEqual(retry, first, "a retry with the same key must replay the first attempt's own response verbatim, even though this request's own body names a completely different idea");
+    assert.doesNotMatch(retry.enhanced, /sales leads/, "the second idea's own text must never have been enhanced at all -- the guarded work must not have run a second time");
+  });
+});
+
+/**
  * apps/api/src/routes/auth.ts already hit this exact problem and fixed it
  * (formatValidationError, moved into httpError.ts so both routers can
  * share it) -- but the fix was never reused here, so every failed
