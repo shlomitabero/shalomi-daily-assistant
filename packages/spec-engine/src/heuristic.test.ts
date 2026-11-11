@@ -3302,6 +3302,42 @@ test("Event's 'כנס' keyword doesn't spuriously match conjugations of the כ.�
 });
 
 /**
+ * Regression test for round 1918's finding: round 562's own כ.נ.ס
+ * conjugation exclusion list above (נ/תי/להי/מת/הת) missed the single
+ * most ordinary way to phrase a login step -- the plain future-tense
+ * "יכנס"/"ייכנס" ("[the user] will log in"), e.g. "המשתמש יכנס למערכת
+ * עם שם משתמש וסיסמה". The character right before "כנס" there is just
+ * "י", which none of the five existing lookbehinds cover, so an
+ * ordinary task-tracker/inventory app description describing its own
+ * login flow this way spuriously fabricated an unrelated Event entity
+ * into the generated spec. Fixed with one more negative lookbehind,
+ * `(?<!י)`, which covers both spellings since the lookbehind only needs
+ * to see the ONE character immediately before "כנס".
+ */
+test("Event's 'כנס' keyword doesn't spuriously match the future-tense 'יכנס'/'ייכנס' ('will log in') conjugation", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const willLogIn = await provider.generate(
+    "אפליקציה לניהול משימות צוות - המשתמש יכנס למערכת עם שם משתמש וסיסמה ויראה את רשימת המשימות שלו",
+  );
+  assert.ok(
+    !willLogIn.entities.some((e) => e.name === "Event"),
+    "'יכנס' (will log in) alone must not spuriously match Event via a bare 'כנס' substring",
+  );
+
+  const willLogInAlt = await provider.generate("מערכת לניהול מלאי בחנות - המשתמש ייכנס עם קוד עובד ויעדכן כמויות");
+  assert.ok(
+    !willLogInAlt.entities.some((e) => e.name === "Event"),
+    "'ייכנס' (the alternate spelling of 'will log in') alone must not spuriously match Event via a bare 'כנס' substring",
+  );
+
+  // The real word still works right after this exact same letter ("י"),
+  // confirming the new lookbehind doesn't overreach into a genuine match.
+  const realConference = await provider.generate("ארגון הכנס השנתי של העמותה");
+  assert.ok(realConference.entities.some((e) => e.name === "Event"), "'הכנס' must still match Event");
+});
+
+/**
  * Regression test for round 563's finding: Subscription's bare Hebrew
  * keyword "מנוי" ("subscriber"/"subscription") -- and PAYMENT_KEYWORDS's
  * own identical bare "מנוי" -- is a substring of the ordinary plural

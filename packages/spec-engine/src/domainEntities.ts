@@ -1152,7 +1152,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // has no \b (same reason round 518's "מלאי" and round 527's "חיוב"
       // fixes needed lookbehind/lookahead too), so this excludes the
       // specific known verb-conjugation prefixes directly.
-      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)כנס/,
+      //
+      // Round 1918: that list missed the single most ordinary way to
+      // phrase a login step -- the plain future-tense "יכנס"/"ייכנס"
+      // ("[the user] will log in"), e.g. "המשתמש יכנס למערכת עם שם
+      // משתמש וסיסמה". The character right before "כנס" there is just
+      // "י", which none of the five existing lookbehinds (נ/תי/להי/מת/
+      // הת) cover, so an ordinary task-tracker/inventory description
+      // describing its own login flow this way spuriously fabricated an
+      // unrelated Event entity (fields: name/date/venue/capacity/
+      // status) into the generated spec. A single `(?<!י)` lookbehind
+      // covers both "יכנס" and "ייכנס" (the lookbehind only needs to see
+      // the ONE character immediately before "כנס", which is "י" in
+      // both spellings), without affecting a genuine standalone "כנס"/
+      // "הכנס" (conference) match.
+      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)כנס/,
       // Bare "חתונה"/"חתונות" (round 575) are substrings of "תחתונה"/
       // "תחתונות" ("lower [clothing]"/"underwear", e.g. "הלבשה תחתונה"),
       // an unrelated, common clothing/lingerie term -- "תחתונה" is
