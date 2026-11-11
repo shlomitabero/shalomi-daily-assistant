@@ -289,6 +289,41 @@ test("a failed label rename shows its error with role=alert, so a screen reader 
 });
 
 /**
+ * Round 1892: another tab/collaborator's refine can remove this exact
+ * entity from the project between this tab loading it and this save --
+ * routes/projects.ts's findEntity throws ENTITY_NOT_FOUND for that, a
+ * real and reachable 404 (entity removal on an already-built project is
+ * a documented refine capability, see App.tsx's own handleBuildComplete
+ * comment). A retry can never succeed once the entity is genuinely gone,
+ * so this confirms the editor closes with no stuck error banner, instead
+ * of the generic-error path the sibling test just above covers.
+ */
+test("the entity label editor closes with no error when the save 404s ENTITY_NOT_FOUND because another tab/collaborator's refine already removed this entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    try {
+      renderEditor(() => {});
+      fireEvent.click(document.querySelector(".entity-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".entity-label-edit input") !== null);
+      const input = document.querySelector(".entity-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Different Label" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".entity-label-edit input") === null);
+      assert.equal(document.querySelector(".error"), null, "no error banner must be shown -- a retry against a genuinely-removed entity can only ever repeat the same 404");
+      assert.ok(document.querySelector(".entity-label"), "the editor must close back to the read-only heading, not stay stuck open");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1432: see ProjectNameEditor.test.ts's own comment on this exact
  * bug -- pressing Enter submits the form and calls save(), which sets busy
  * true and re-renders the still-focused input with disabled={true}. A real

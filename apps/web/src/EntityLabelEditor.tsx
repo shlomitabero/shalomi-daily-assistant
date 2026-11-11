@@ -107,7 +107,23 @@ export function EntityLabelEditor({
       onRenamed(project);
       setEditing(false);
     } catch (err) {
-      setError((err as Error).message);
+      // Round 1892: another tab/collaborator's refine can remove this
+      // exact entity from the project's spec between this tab loading it
+      // and this save -- routes/projects.ts's findEntity throws
+      // ENTITY_NOT_FOUND for that, a real and reachable 404 (entity/field
+      // removal on an already-built project is a documented refine
+      // capability, see App.tsx's own handleBuildComplete comment), not
+      // a hypothetical. A retry can never succeed once the entity is
+      // genuinely gone, so unlike every other failure here, this closes
+      // the editor with no error instead of leaving a stuck, endlessly-
+      // repeatable error for an outcome that will never change -- the
+      // same "ghost target" pattern rounds 1884/1885/1890/1891 already
+      // close for other deferred actions.
+      if ((err as Error & { code?: string }).code === "ENTITY_NOT_FOUND") {
+        setEditing(false);
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }

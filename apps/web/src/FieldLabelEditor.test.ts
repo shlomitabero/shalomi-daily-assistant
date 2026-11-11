@@ -394,6 +394,75 @@ test("a failed field-label rename shows its error with role=alert, so a screen r
 });
 
 /**
+ * Round 1892: another tab/collaborator's refine can remove this exact
+ * field from the project between this tab loading it and this save --
+ * routes/projects.ts's field-label route throws FIELD_NOT_FOUND for that,
+ * a real and reachable 404 (field removal on an already-built project is
+ * a documented refine capability, see App.tsx's own handleBuildComplete
+ * comment). A retry can never succeed once the field is genuinely gone,
+ * so this confirms the editor closes with no stuck error banner, instead
+ * of the generic-error path the sibling test just above covers.
+ */
+test("the field label editor closes with no error when the save 404s FIELD_NOT_FOUND because another tab/collaborator's refine already removed this field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Field "phone" is not part of entity "Customer"', code: "FIELD_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    try {
+      renderEditor(() => {});
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      const input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Different Label" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".field-label-edit input") === null);
+      assert.equal(document.querySelector(".error"), null, "no error banner must be shown -- a retry against a genuinely-removed field can only ever repeat the same 404");
+      assert.ok(document.querySelector(".field-label"), "the editor must close back to the read-only label, not stay stuck open");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1892: routes/projects.ts's field-label route resolves the entity
+ * via findEntity before even reaching findField, so another tab/
+ * collaborator's refine removing this field's whole ENTITY surfaces as
+ * ENTITY_NOT_FOUND here, not FIELD_NOT_FOUND -- confirmed by directly
+ * reading that route's handler. FieldLabelEditor must treat this code
+ * the same way as FIELD_NOT_FOUND: close with no error, since the field
+ * is just as permanently gone either way.
+ */
+test("the field label editor closes with no error when the save 404s ENTITY_NOT_FOUND because another tab/collaborator's refine already removed this field's entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    try {
+      renderEditor(() => {});
+      fireEvent.click(document.querySelector(".field-label-edit-btn") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".field-label-edit input") !== null);
+      const input = document.querySelector(".field-label-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "A Different Label" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".field-label-edit input") === null);
+      assert.equal(document.querySelector(".error"), null, "no error banner must be shown -- a retry against a genuinely-removed entity can only ever repeat the same 404");
+      assert.ok(document.querySelector(".field-label"), "the editor must close back to the read-only label, not stay stuck open");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1432: see ProjectNameEditor.test.ts's own comment on this exact
  * bug -- this component has no <form> (round 1358's own fix above), but
  * the mechanism is identical: pressing Enter calls save() directly from

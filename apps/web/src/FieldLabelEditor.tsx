@@ -100,7 +100,22 @@ export function FieldLabelEditor({
       onRenamed(project);
       setEditing(false);
     } catch (err) {
-      setError((err as Error).message);
+      // Round 1892: mirrors EntityLabelEditor.tsx's own identical fix --
+      // another tab/collaborator's refine can remove this exact field
+      // (FIELD_NOT_FOUND) or its whole entity (ENTITY_NOT_FOUND --
+      // routes/projects.ts's field-label route resolves the entity via
+      // findEntity before even reaching findField, so a removed entity
+      // surfaces as that code here, not FIELD_NOT_FOUND) between this tab
+      // loading it and this save. Either way the target is genuinely,
+      // permanently gone, so this closes the editor instead of leaving a
+      // stuck, endlessly-repeatable error for an outcome that will never
+      // change.
+      const code = (err as Error & { code?: string }).code;
+      if (code === "ENTITY_NOT_FOUND" || code === "FIELD_NOT_FOUND") {
+        setEditing(false);
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
