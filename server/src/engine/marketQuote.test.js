@@ -6,8 +6,15 @@ test('parses a normal numeric price', () => {
   assert.equal(parseQuotePrice({ price: '192.53' }), 192.53);
 });
 
-test('throws on a provider error response (code set)', () => {
-  assert.throws(() => parseQuotePrice({ code: 400, message: 'invalid symbol' }), /invalid symbol/);
+test('throws a clean Hebrew message on a provider error response (code set), never the provider\'s own raw English text', () => {
+  // The provider's raw data.message ('invalid symbol' here, but TwelveData's
+  // real wording is often much longer/more technical) used to be thrown
+  // verbatim and reached the owner unchanged via routes/financial.js's
+  // `לא ניתן היה לקבל מחיר: ${err.message}` - untranslated English dropped
+  // into an otherwise all-Hebrew error line, for the single most common
+  // real reason this call fails (a typo'd or delisted symbol).
+  assert.throws(() => parseQuotePrice({ code: 400, message: 'invalid symbol' }), /מקור נתוני השוק דחה/);
+  assert.throws(() => parseQuotePrice({ code: 400, message: 'invalid symbol' }), (err) => !/invalid symbol/.test(err.message));
 });
 
 test('throws on a missing price', () => {
