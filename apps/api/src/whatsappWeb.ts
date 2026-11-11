@@ -925,6 +925,14 @@ export interface WhatsAppWebManagerOptions {
   sendTimeoutMs?: number;
 }
 
+// Round 1881: see acceptedCallIds' own doc comment -- a real answered call
+// never stays that way for anywhere near this long, so anything still
+// tracked past this ceiling by the time handleIncomingCalls next runs lost
+// its "terminate" to a disconnect/reconnect or a process restart, not a
+// still-ongoing call. Exported so whatsappWeb.test.ts's own regression test
+// can assert staleness without hardcoding the production value twice.
+export const STALE_ACCEPTED_CALL_MS = 6 * 60 * 60_000;
+
 export class WhatsAppWebManager {
   private readonly db: ForgeDatabase;
   private readonly sessionsRootDir: string;
@@ -961,12 +969,23 @@ export class WhatsAppWebManager {
    * "terminate" for the same call (the normal end-of-call signal once an
    * answered call hangs up) isn't mistaken for a missed call in
    * handleIncomingCalls below. An entry is added on "accept" and removed
-   * the moment its matching "terminate" arrives, so this only ever holds
-   * ids for calls currently answered-and-not-yet-ended -- bounded by real
-   * concurrent calls, the same ephemeral-per-key lifetime as sendQueue/
-   * pendingConnect above.
+   * the moment its matching "terminate" arrives, so in the normal case this
+   * only ever holds ids for calls currently answered-and-not-yet-ended.
+   *
+   * Round 1881: unlike sendQueue/pendingConnect above, this isn't actually
+   * bounded by real concurrent calls -- it's a flat, unkeyed map shared
+   * across every project this process ever handles (this class is
+   * instantiated once per process, see server.ts), and Baileys doesn't
+   * replay a lost call-signaling event the way it replays queued messages:
+   * a disconnect/reconnect or a process restart landing between a call's
+   * "accept" and its natural "terminate" strands that id in here forever,
+   * with no cleanup path anywhere else in this file (disconnect() above
+   * never touches this map). The value is the id's own accept time so
+   * handleIncomingCalls below can lazily prune anything stranded past
+   * STALE_ACCEPTED_CALL_MS -- real calls don't stay answered that long, so
+   * anything still here that old was never going to get its "terminate".
    */
-  private readonly acceptedCallIds = new Set<string>();
+  private readonly acceptedCallIds = new Map<string, number>();
   private readonly sendSpacingMs: number;
   private readonly sendTimeoutMs: number;
 
@@ -1360,6 +1379,17 @@ export class WhatsAppWebManager {
     const project = getProject(this.db, projectId);
     if (!project || project.status !== "built") return;
 
+    // Round 1881: see acceptedCallIds' own doc comment -- this is the same
+    // lazy-sweep-piggybacking-on-the-next-call shape rateLimit.ts's own
+    // createRateLimiter already uses to bound a long-lived in-memory map
+    // with no background timer, just keyed by elapsed time instead of a
+    // size cap (there's no meaningful "too many concurrent calls" cap here,
+    // only "this one was clearly abandoned").
+    const staleBefore = Date.now() - STALE_ACCEPTED_CALL_MS;
+    for (const [id, acceptedAt] of this.acceptedCallIds) {
+      if (acceptedAt < staleBefore) this.acceptedCallIds.delete(id);
+    }
+
     // Round 1731: resolve every call's real "from" number first -- same
     // two-pass shape round 1730 gave handleIncomingMessages, and for the
     // same reason: a privacy-mode "LID" caller with no `callerPn` yet
@@ -1377,7 +1407,7 @@ export class WhatsAppWebManager {
       // check just below can tell an answered call ending apart from a
       // genuine miss.
       if (call.status === "accept") {
-        if (call.id) this.acceptedCallIds.add(call.id);
+        if (call.id) this.acceptedCallIds.set(call.id, Date.now());
         continue;
       }
       // Round 1861: the installed @whiskeysockets/baileys's own

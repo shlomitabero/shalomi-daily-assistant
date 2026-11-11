@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
 import { applyMigrations, ensureProjectsTable, ensureWhatsAppConnectionsTable, ensureWhatsAppMessagesTable, getWhatsAppConnection, insertProject, insertRecord, insertWhatsAppMessage, listWhatsAppMessages, markProjectBuilt, openDatabase } from "@forge/db";
-import { WhatsAppWebManager, type BaileysCallEvent, type BaileysConnectionUpdate, type BaileysMessageUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
+import { STALE_ACCEPTED_CALL_MS, WhatsAppWebManager, type BaileysCallEvent, type BaileysConnectionUpdate, type BaileysMessageUpdate, type BaileysMessagesUpsert, type WhatsAppSocket } from "./whatsappWeb.js";
 
 /**
  * Real Baileys sockets talk to WhatsApp's actual servers over a raw
@@ -1276,6 +1276,52 @@ test("an incoming call is NOT logged while it is still ringing, once it's answer
   createdSockets[0].emitCall([{ from: "123456789@g.us", status: "reject", isGroup: true }]);
 
   assert.equal(listWhatsAppMessages(db, project.id).messages.length, 0);
+});
+
+/**
+ * Round 1881: acceptedCallIds is a single flat map shared across every
+ * project for the whole process lifetime (see its own doc comment), and
+ * Baileys never replays a lost call-signaling event -- so a call accepted
+ * right before a disconnect/reconnect or a process restart strands its id
+ * in there forever with no cleanup path, unlike every one of its sibling
+ * per-project maps/sets. Proven here without waiting out real hours: mock
+ * Date.now so an "accept" with no matching "terminate" ages past
+ * STALE_ACCEPTED_CALL_MS, then let any later call event's own lazy sweep
+ * (handleIncomingCalls' own top-of-function prune, mirroring rateLimit.ts's
+ * createRateLimiter) run. Before the fix, the stale id sat in an unbounded
+ * Set forever, so the "terminate" that arrives after it would still be
+ * silently consumed as "that answered call ending normally" -- after the
+ * fix, the prune has already forgotten it, so the same "terminate" is
+ * correctly logged as a missed call instead.
+ */
+test("acceptedCallIds forgets a call's 'accept' once it's stale, so a 'terminate' that arrives long after -- never matched by its own natural end -- is still logged as a missed call instead of leaking forever", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  const realNow = Date.now;
+  let mockedNow = realNow();
+  Date.now = () => mockedNow;
+  try {
+    await manager.connect(project.id);
+    createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+    createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "accept", id: "stranded-call" }]);
+
+    mockedNow += STALE_ACCEPTED_CALL_MS + 1;
+    // Any later call event re-enters handleIncomingCalls and runs its
+    // top-of-function sweep before this unrelated id is even looked at.
+    createdSockets[0].emitCall([{ from: "972509999999@s.whatsapp.net", status: "ringing" }]);
+
+    createdSockets[0].emitCall([{ from: "972501234567@s.whatsapp.net", status: "terminate", id: "stranded-call" }]);
+
+    const { messages } = listWhatsAppMessages(db, project.id);
+    assert.equal(messages.length, 1, "the stale accept must have been pruned, so this terminate is a genuine (if very late-discovered) missed call, not a silently-consumed stale match");
+    assert.equal(messages[0].fromNumber, "972501234567");
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 /**
