@@ -536,7 +536,19 @@ export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boo
   // `isCompleted` (parallel to `isDone`/`isCancelled`, both of which already
   // match) is the idiomatic camelCase boolean-flag name a developer or an
   // AI-generated spec would actually write, but it was never recognized.
-  const doneField = fields.find(
+  // Round 1969: this used to be `fields.find(...)`, which stops at the
+  // FIRST field whose name matches one of these 9 names and checks only
+  // that single field's value. An entity can declare two independent
+  // boolean flags that both match (e.g. a `done` flag for ordinary
+  // completion and a separate `cancelled` flag for abandonment) --
+  // unlike the enum status/stage check above, where "at most one
+  // lifecycle field" is a safe assumption, nothing stops a second
+  // completion-ish boolean from coexisting. If the record has
+  // `done: false, cancelled: true`, `.find()` returned `done` first
+  // (declaration order), checked only it, and wrongly reported "not
+  // closed" even though `cancelled` was true on the same record. Now
+  // every qualifying boolean field is checked, not just the first match.
+  const doneFields = fields.filter(
     (f) =>
       f.type === "boolean" &&
       [
@@ -551,7 +563,7 @@ export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boo
         "iscanceled",
       ].includes(f.name.toLowerCase()),
   );
-  if (doneField && record[doneField.name] === true) return true;
+  if (doneFields.some((f) => record[f.name] === true)) return true;
   return false;
 }
 

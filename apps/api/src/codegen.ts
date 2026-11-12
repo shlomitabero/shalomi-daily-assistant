@@ -3325,7 +3325,12 @@ function isRecordClosedStatus(record, fields) {
   // base word here pairs with its exact "is"-prefixed form, but
   // "completed"'s own pairing, "iscomplete", silently dropped the "-ed".
   // "isCompleted" was never recognized.
-  const doneField = fields.find(
+  // Round 1969: mirrors the live app's own identical fix -- this used to
+  // be \`fields.find(...)\`, stopping at the FIRST field whose name
+  // matched one of these 9 names and checking only that single field's
+  // value, silently ignoring a second qualifying boolean (e.g. \`done\`
+  // false, \`cancelled\` true) that was genuinely true on the same record.
+  const doneFields = fields.filter(
     (f) =>
       f.type === "boolean" &&
       [
@@ -3340,7 +3345,7 @@ function isRecordClosedStatus(record, fields) {
         "iscanceled",
       ].includes(f.name.toLowerCase()),
   );
-  if (doneField && record[doneField.name] === true) return true;
+  if (doneFields.some((f) => record[f.name] === true)) return true;
   return false;
 }
 

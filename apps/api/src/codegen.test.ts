@@ -31048,6 +31048,83 @@ test("the exported EntityView does not flag a record with a true boolean 'isComp
 });
 
 /**
+ * Round 1969: isRecordClosedStatus's exported-app copy used to use
+ * `fields.find(...)`, stopping at the FIRST field whose name matched one
+ * of the boolean-completion names and checking only that single field's
+ * value. An entity can declare two independent boolean flags that both
+ * match (e.g. a `done` flag plus a separate `cancelled` flag); a record
+ * with `done: false, cancelled: true` was wrongly reported as still open.
+ * Same rendering/assertion shape as the "cancelled"/"isCompleted" tests
+ * above, but with BOTH a `done` and a `cancelled` field on the same
+ * Task-shaped entity (no status/stage enum at all).
+ */
+test("the exported EntityView does not flag a record as overdue when it is resolved via its SECOND-declared boolean completion field, not just its first", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due date", type: "date", required: false },
+      { name: "done", label: "Done", type: "boolean", required: false },
+      { name: "cancelled", label: "Cancelled", type: "boolean", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Still open", dueDate: isoDateOffset(-5), done: false, cancelled: false },
+    { id: 2, title: "Cancelled task", dueDate: isoDateOffset(-5), done: false, cancelled: true },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Still open/.test(r.textContent ?? ""))!;
+      const cancelledRow = rows.find((r) => /Cancelled task/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "a record with both done:false and cancelled:false must still be flagged overdue");
+      assert.equal(cancelledRow.querySelector(".date-overdue") === null, true, "a record resolved via 'cancelled' alone (with the earlier-declared 'done' still false) must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1951: CLOSED_STATUS_VALUES's exported-app copy claims (in its own
  * doc comment) to be gathered from every status enum this project's domain
  * library actually ships, but "returned" (the built-in Rental entity's own

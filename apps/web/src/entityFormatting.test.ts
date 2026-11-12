@@ -4834,6 +4834,29 @@ test("isRecordClosedStatus also recognizes a sibling BOOLEAN 'isCompleted' field
   );
 });
 
+test("isRecordClosedStatus checks EVERY qualifying boolean field, not just the first name match (round 1969)", () => {
+  const taskFields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "done", type: "boolean", required: false },
+    { name: "cancelled", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", done: false, cancelled: true }, taskFields),
+    true,
+    "a task cancelled via its own 'cancelled' flag must be resolved even though the earlier-declared 'done' flag is still false",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", done: true, cancelled: false }, taskFields),
+    true,
+    "a task finished via its own 'done' flag must still be resolved when the later-declared 'cancelled' flag is false",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", done: false, cancelled: false }, taskFields),
+    false,
+    "a task that is neither done nor cancelled leaves the date-only overdue classification untouched",
+  );
+});
+
 /**
  * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be "gathered
  * from every status enum this file's own domain library actually ships",

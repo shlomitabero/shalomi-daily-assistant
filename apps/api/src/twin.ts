@@ -862,7 +862,16 @@ function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): b
   // "completed"'s own pairing, "iscomplete", silently dropped the "-ed".
   // `isCompleted` (parallel to `isDone`/`isCancelled`, both of which
   // already match) was never recognized.
-  const doneField = fields.find(
+  // Round 1969: mirrors entityFormatting.ts's own identical fix -- this
+  // used to be `fields.find(...)`, stopping at the FIRST field whose name
+  // matched one of these 9 names and checking only that single field's
+  // value. An entity can declare two independent boolean flags that both
+  // match (e.g. a `done` flag plus a separate `cancelled` flag); if the
+  // record had `done: false, cancelled: true`, `.find()` returned `done`
+  // first (declaration order) and wrongly reported "not closed" even
+  // though `cancelled` was true on the same record. Now every qualifying
+  // boolean field is checked, not just the first match.
+  const doneFields = fields.filter(
     (f) =>
       f.type === "boolean" &&
       [
@@ -877,7 +886,7 @@ function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): b
         "iscanceled",
       ].includes(f.name.toLowerCase()),
   );
-  if (doneField && record[doneField.name] === true) return true;
+  if (doneFields.some((f) => record[f.name] === true)) return true;
   return false;
 }
 

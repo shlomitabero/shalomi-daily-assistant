@@ -2188,6 +2188,38 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the completed milestone must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+test("computeBusinessTwin's overdue-deadline observation excludes a record resolved via its SECOND-declared boolean completion field, not just its first (round 1969)", () => {
+  const taskProject: Project = {
+    ...project,
+    description: "Tasks with independent done/cancelled flags",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Task",
+          label: "Tasks",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+            { name: "done", type: "boolean", required: false },
+            { name: "cancelled", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, taskProject.id, taskProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, taskProject.id, taskProject.spec.entities[0], { title: "Still open", dueDate: "2026-01-01", done: false, cancelled: false }); // genuinely overdue
+  insertRecord(db, taskProject.id, taskProject.spec.entities[0], { title: "Cancelled", dueDate: "2026-01-01", done: false, cancelled: true }); // resolved via the later-declared field
+
+  const twin = computeBusinessTwin(db, taskProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `a task resolved via 'cancelled' alone (with 'done' still false) must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 /**
  * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be gathered
  * from every status enum this file's own domain library actually ships,
