@@ -2066,6 +2066,12 @@ export function EntityPanel({
   const [showImportWarnings, setShowImportWarnings] = useState(false);
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
   const [showPrintList, setShowPrintList] = useState(false);
+  // Round 1996: see handlePrintList's own doc comment below for why this
+  // exists alongside the sheet's usual, fully-reactive
+  // `selectedOrAllRecords(...)` records -- only ever populated for the
+  // one bypass case (see `printRecordsBypassActive`), and only ever read
+  // while that same case still holds.
+  const [printExportRecords, setPrintExportRecords] = useState<EntityRecord[] | null>(null);
   const [hiddenFields, setHiddenFields] = useState<Set<string>>(() => new Set());
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -4705,13 +4711,24 @@ export function EntityPanel({
    * pinned-to-top), so the shape of a genuinely full export still matches
    * what sorting the capped table led the user to expect.
    */
+  // Round 1685: fieldFilters is search's own sibling here -- visibleRecords
+  // (just above) filters by both, and this guard's job is "does the capped
+  // table on screen already reflect everything the user asked to narrow it
+  // to"; checking search alone let a column filter with an empty search box
+  // silently bypass straight to the full unfiltered dataset.
+  //
+  // Round 1996: pulled out of recordsForExport's own `if` below so
+  // handlePrintList (and the print-list sheet's own records prop) can
+  // reuse the identical condition without duplicating it a third time.
+  const recordCapBypassActive = selectedIds.size === 0 && !search.trim() && !Object.values(fieldFilters).some(Boolean) && !groupFieldName && recordListTruncated;
+  // Round 1996: the Print-list-specific narrowing of the condition above --
+  // see handlePrintList's own doc comment for why a grouped print (table
+  // grouping OR Board view's own columns, `printGroups` above) is excluded
+  // even when recordCapBypassActive would otherwise allow it.
+  const printRecordsBypassActive = recordCapBypassActive && !printGroups;
+
   async function recordsForExport(): Promise<EntityRecord[]> {
-    // Round 1685: fieldFilters is search's own sibling here -- visibleRecords
-    // (just above) filters by both, and this guard's job is "does the capped
-    // table on screen already reflect everything the user asked to narrow it
-    // to"; checking search alone let a column filter with an empty search
-    // box silently bypass straight to the full unfiltered dataset.
-    if (selectedIds.size > 0 || search.trim() || Object.values(fieldFilters).some(Boolean) || groupFieldName || !recordListTruncated) {
+    if (!recordCapBypassActive) {
       return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
     }
     try {
@@ -4778,6 +4795,56 @@ export function EntityPanel({
     } catch {
       setCopyStatus("failed");
     }
+  }
+
+  /**
+   * Round 1996: "Print list" used to build its print sheet straight from
+   * `selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)`
+   * -- the same server-capped `records` state recordsForExport's own doc
+   * comment (round 1678) already explains is exactly what the truncation
+   * hint's "export to CSV to get all of them" promise is about. Export
+   * CSV/Export JSON/Copy all route through recordsForExport() to keep that
+   * promise; Print list never did, so printing a table past
+   * RECORD_LIST_RESPONSE_CAP silently printed only the first page with no
+   * indication anything was left out -- the one list-wide action in this
+   * toolbar that never got round 1678/1685's fix.
+   *
+   * Unlike those three (each a one-shot download/clipboard write),
+   * `.print-list-sheet` stays mounted and reactively mirrors `selectedIds`
+   * while it's open (round 365's own fix, confirmed still relied on by
+   * this file's own "selecting a 2nd record restores the plural footer
+   * with no second Print-list click" test) -- so the fetched, uncapped
+   * set can't just replace that reactive value outright, or toggling a
+   * selection afterward would keep showing the stale full-export set
+   * instead of the newly hand-picked rows. `printExportRecords` is
+   * therefore read by the sheet's own `records` prop below ONLY while
+   * `printRecordsBypassActive` still holds (same condition this function
+   * checks before fetching) -- the moment a selection/search/filter/group
+   * makes that condition false, the prop falls straight back to the
+   * ordinary live `selectedOrAllRecords(...)` value, exactly as before
+   * this round, regardless of whatever this function last fetched.
+   *
+   * `printRecordsBypassActive` additionally excludes `printGroups` (the
+   * Print-only case recordCapBypassActive alone doesn't cover): when the
+   * printed sheet will render per-group headings/subtotals (Table view's
+   * own grouping, or Board view's columns) built from the capped,
+   * already-loaded records, fetching the full, unsorted-by-group set
+   * would print a flat records.length/footer count that no longer
+   * matches the sum of each group's own (still-capped) rows. Printing a
+   * grouped view already has no promise to keep past the cap (the hint is
+   * about the ungrouped record list), so that case is left exactly as
+   * selectedOrAllRecords already computes it.
+   */
+  async function handlePrintList() {
+    if (printRecordsBypassActive) {
+      try {
+        const { records: allRecords } = await exportAllRecords(projectId, entity.name);
+        setPrintExportRecords(sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, allEntities, relatedRecords, lang), pinnedIds));
+      } catch {
+        setPrintExportRecords(null);
+      }
+    }
+    setShowPrintList(true);
   }
 
   useEffect(() => {
@@ -6057,7 +6124,7 @@ export function EntityPanel({
             <button
               type="button"
               className="secondary"
-              onClick={() => setShowPrintList(true)}
+              onClick={handlePrintList}
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.printList.selected.one" : "entity.printList.selected.many", { count: selectedIds.size }) : t("entity.printList")}
@@ -6502,7 +6569,7 @@ export function EntityPanel({
       <RecordListPrintSheet
         entity={entity}
         fields={orderedFields}
-        records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
+        records={printRecordsBypassActive && printExportRecords ? printExportRecords : selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
         groups={printGroups}
         show={showPrintList}
         lang={lang}

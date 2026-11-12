@@ -6494,6 +6494,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }, [editingCell, cellDraft, records]);
   const [recordToPrint, setRecordToPrint] = useState(null);
   const [showPrintList, setShowPrintList] = useState(false);
+  // Round 1996: see handlePrintList's own doc comment below (and the live
+  // preview's own EntityPanel.tsx) for why this exists alongside the
+  // sheet's usual, fully-reactive selectedOrAllRecords(...) records --
+  // only ever populated for the one bypass case, and only ever read while
+  // that same case still holds.
+  const [printExportRecords, setPrintExportRecords] = useState(null);
   // Set right before an Escape-cancel clears editingCell so the input's own
   // blur (which removing it from the DOM can still trigger) finds the flag
   // already set and skips committing, rather than racing a stale closure's
@@ -8413,6 +8419,60 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
   }
 
+  /**
+   * Round 1996: mirrors the live Forge AI preview's own round-1996 fix.
+   * "Print list" used to build its print sheet straight from
+   * selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)
+   * -- the same server-capped records state recordsForExport's own doc
+   * comment (round 1678) already explains is exactly what the truncation
+   * hint's "export to CSV to get all of them" promise is about. Export
+   * CSV/Export JSON/Copy all route through recordsForExport() to keep
+   * that promise; Print list never did, so printing a table past the
+   * server's record cap silently printed only the first page with no
+   * indication anything was left out.
+   *
+   * Duplicates recordsForExport's own bypass condition (rather than
+   * factoring it out into a shared constant) so recordsForExport itself
+   * stays byte-identical to what this file's own existing regex-extraction
+   * tests already pull it apart and run standalone -- adding an external
+   * free variable to its body would break every one of those.
+   *
+   * Unlike recordsForExport's three callers (each a one-shot download/
+   * clipboard write), .print-list-sheet stays mounted and reactively
+   * mirrors selectedIds while it's open (so selecting a 2nd record
+   * restores the plural footer with no second Print-list click) -- so the
+   * fetched, uncapped set can't just replace that reactive value outright,
+   * or toggling a selection afterward would keep showing the stale full-
+   * export set instead of the newly hand-picked rows. printExportRecords
+   * is therefore read by the sheet's own records prop below ONLY while
+   * printRecordsBypassActive still holds (the identical condition checked
+   * before fetching) -- the moment a selection/search/filter/group makes
+   * that condition false, the prop falls straight back to the ordinary
+   * live selectedOrAllRecords(...) value, regardless of whatever this
+   * function last fetched.
+   *
+   * printRecordsBypassActive additionally excludes printGroups (the
+   * Print-only case recordsForExport's own condition doesn't cover): when
+   * the printed sheet will render per-group headings/subtotals (Table
+   * view's own grouping, or Board view's columns) built from the capped,
+   * already-loaded records, fetching the full, unsorted-by-group set
+   * would print a flat records.length/footer count that no longer
+   * matches the sum of each group's own (still-capped) rows.
+   */
+  const printRecordsBypassActive =
+    selectedIds.size === 0 && !search.trim() && !Object.values(fieldFilters).some(Boolean) && !groupFieldName && recordListTruncated && !printGroups;
+  async function handlePrintList() {
+    if (printRecordsBypassActive) {
+      try {
+        const { records: allRecords } = await exportAllRecords(entity.name);
+        setPrintExportRecords(sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, relatedRecords), pinnedIds));
+      } catch {
+        setPrintExportRecords(null);
+      }
+    }
+    setShowPrintList(true);
+  }
+
   async function handleExportCsv() {
     const csv = recordsToCsv(orderedFields, await recordsForExport(), relatedRecords, true);
     const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -9150,7 +9210,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             <button
               type="button"
               className="print-list-btn"
-              onClick={() => setShowPrintList(true)}
+              onClick={handlePrintList}
               disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
             >
               {selectedIds.size > 0 ? <>🖨️ Print {selectedIds.size} selected</> : "🖨️ Print list"}
@@ -9536,7 +9596,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       <RecordListPrintSheet
         entity={entity}
         fields={orderedFields}
-        records={selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
+        records={printRecordsBypassActive && printExportRecords ? printExportRecords : selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds)}
         groups={printGroups}
         relatedRecords={relatedRecords}
         show={showPrintList}

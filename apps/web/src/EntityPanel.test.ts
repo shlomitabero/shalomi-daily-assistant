@@ -2721,6 +2721,60 @@ test("EntityPanel's Export CSV button fetches every record via GET .../export wh
 });
 
 /**
+ * Round 1996: the direct "Print list" sequel to round 1678's test just
+ * above -- Export CSV/Export JSON/Copy all route through recordsForExport()
+ * to keep the truncated-list hint's "export to CSV to get all of them"
+ * promise, but "Print list" built its print sheet straight from the same
+ * capped `records` state the hint is about, so printing a truncated,
+ * ungrouped, unfiltered, unselected table silently printed only the
+ * first page with no indication anything was left out.
+ */
+test("EntityPanel's Print list button fetches every record via GET .../export when the live list is truncated, ungrouped and unfiltered", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let exportFetched = false;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Deal/export") {
+        exportFetched = true;
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Beta Inc", status: "new" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.ok(document.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      fireEvent.click(printListBtn);
+
+      await waitForCondition(() => exportFetched);
+      await waitForCondition(() => document.querySelector(".print-list-sheet")?.textContent?.includes("Beta Inc") === true);
+      const sheetText = document.querySelector(".print-list-sheet")?.textContent ?? "";
+      assert.match(sheetText, /Acme Corp/, "the one already-loaded record must still be printed");
+      assert.match(sheetText, /Beta Inc/, "a record beyond the capped page must now be printed, via the uncapped export fetch");
+      assert.match(sheetText, /2 records/, "the printed footer count must reflect the full, uncapped set (2), not just the capped page (1)");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Companion to the test above: an active search filter already has its own
  * documented "export what's showing" convention (selectedOrAllRecords'
  * own doc comment) -- the new truncation-driven full fetch must stay out
