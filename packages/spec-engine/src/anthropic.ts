@@ -239,8 +239,30 @@ function extractJson(text: string): string {
     // not valid JSON as-is; fall through to the heuristics below
   }
 
+  // Round 1962: this branch used to return fenceMatch[1] unconditionally,
+  // unlike every OTHER branch in this function, which all validate their
+  // candidate via JSON.parse before trusting it. Two real model-response
+  // shapes broke this: (1) the JSON's own content (e.g. an entity
+  // description) contains an embedded code fence while the whole response
+  // is also fence-wrapped -- the non-greedy regex above stops at that
+  // FIRST inner fence, truncating the real JSON mid-string; (2) the model
+  // adds an earlier, unrelated illustrative fence before the real JSON
+  // fence (e.g. "Here's the shape: ```ts ... ``` Now the spec: ```json
+  // {...} ```") -- the regex matches that first, wrong block entirely.
+  // Both previously made JSON.parse throw in the caller with no recovery,
+  // discarding a perfectly valid spec. Now: only trust it if it parses;
+  // otherwise fall through to the brace-depth scan below, which doesn't
+  // care about fence markers at all and will still find the real object's
+  // true start/end by depth-counting over the whole trimmed text.
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (fenceMatch) return fenceMatch[1];
+  if (fenceMatch) {
+    try {
+      JSON.parse(fenceMatch[1]);
+      return fenceMatch[1];
+    } catch {
+      // not valid JSON; fall through to the brace-depth scan below
+    }
+  }
 
   let best: string | null = null;
   for (let start = trimmed.indexOf("{"); start !== -1; start = trimmed.indexOf("{", start + 1)) {

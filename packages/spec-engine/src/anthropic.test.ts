@@ -106,6 +106,56 @@ test("generate() correctly parses a clean JSON response whose own entity descrip
   assert.equal(spec.entities[0]!.name, "Snippet");
 });
 
+/**
+ * Round 1962: the test just above covers a fence embedded in an entity
+ * description when the whole response is NOT itself fence-wrapped (so the
+ * as-is JSON.parse succeeds immediately and the fence regex is never
+ * reached). This is the shape that WAS broken: the whole response is
+ * ALSO wrapped in an outer fence, so the as-is parse fails and the fence
+ * regex's non-greedy match stops at the FIRST fence it finds -- the
+ * embedded one inside the description string -- truncating the real JSON
+ * mid-string, long before the real closing fence.
+ */
+test("generate() correctly parses a fence-wrapped response whose own entity description contains a markdown code fence, instead of the fence regex stopping at the inner fence", async () => {
+  const specWithFenceInDescription = {
+    ...VALID_SPEC,
+    entities: [
+      {
+        name: "Snippet",
+        fields: [{ name: "description", type: "longtext", required: false }],
+        description: "Use ```js\ncode\n``` for formatting",
+      },
+    ],
+  };
+  const fenced = "```json\n" + JSON.stringify(specWithFenceInDescription) + "\n```";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: fenced }] }), { status: 200 })) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const spec = await provider.generate("a code-snippet sharing app");
+  assert.equal(spec.entities[0]!.name, "Snippet");
+});
+
+/**
+ * Round 1962: the model adds an earlier, unrelated illustrative fence
+ * before the real JSON fence -- an entirely ordinary way to drift from
+ * the "output raw JSON only" instruction (e.g. showing an example shape
+ * before the actual answer). The fence regex's first match wins, so it
+ * previously grabbed that earlier, wrong block instead of the real spec.
+ */
+test("generate() correctly parses the real JSON fence when an earlier, unrelated fenced block precedes it in the response", async () => {
+  const withEarlierFence =
+    "Here's an example of the shape:\n```ts\ninterface Example {}\n```\nNow the actual spec:\n```json\n" +
+    JSON.stringify(VALID_SPEC) +
+    "\n```";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withEarlierFence }] }), { status: 200 })) as unknown as typeof fetch;
+
+  const provider = new AnthropicSpecProvider({ apiKey: "test-key", fetchImpl: fakeFetch });
+  const spec = await provider.generate("a CRM for my business");
+  assert.equal(spec.entities[0]!.name, "Customer");
+});
+
 test("generate() correctly parses JSON preceded by prose that itself contains a brace, instead of indexOf grabbing the prose's own brace", async () => {
   const withBracyProse =
     "Note: the schema format uses {} for objects. " + JSON.stringify(VALID_SPEC);

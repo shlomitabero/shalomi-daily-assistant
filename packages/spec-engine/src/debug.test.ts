@@ -96,6 +96,49 @@ test("requestSpecFix correctly parses a clean JSON response whose own entity des
   assert.equal(result.entities[0].name, "Snippet");
 });
 
+/**
+ * Round 1962: mirrors anthropic.ts's own identical fix -- the test just
+ * above covers a fence embedded in an entity description when the whole
+ * response is NOT itself fence-wrapped. This is the shape that WAS
+ * broken: the whole response is ALSO wrapped in an outer fence, so the
+ * fence regex's non-greedy match previously stopped at the FIRST fence it
+ * found -- the embedded one inside the description string.
+ */
+test("requestSpecFix correctly parses a fence-wrapped response whose own entity description contains a markdown code fence, matching anthropic.ts's own fix for the same bug", async () => {
+  const fixedSpecWithFenceInDescription = {
+    ...brokenSpec,
+    entities: [
+      {
+        name: "Snippet",
+        fields: [{ name: "fullName", type: "text", required: true }],
+        description: "Use ```js\ncode\n``` for formatting",
+      },
+    ],
+  };
+  const fenced = "```json\n" + JSON.stringify(fixedSpecWithFenceInDescription) + "\n```";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: fenced }] }), { status: 200 })) as unknown as typeof fetch;
+  const result = await requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(result.entities[0].name, "Snippet");
+});
+
+/**
+ * Round 1962: mirrors anthropic.ts's own identical fix -- the model adds
+ * an earlier, unrelated illustrative fence before the real JSON fence.
+ * The fence regex's first match previously grabbed that earlier, wrong
+ * block instead of the real fixed spec.
+ */
+test("requestSpecFix correctly parses the real JSON fence when an earlier, unrelated fenced block precedes it in the response, matching anthropic.ts's own fix for the same bug", async () => {
+  const withEarlierFence =
+    "Here's an example of the shape:\n```ts\ninterface Example {}\n```\nNow the corrected spec:\n```json\n" +
+    JSON.stringify(brokenSpec) +
+    "\n```";
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: withEarlierFence }] }), { status: 200 })) as unknown as typeof fetch;
+  const result = await requestSpecFix(brokenSpec, "some error", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(result.entities[0].name, "Customer");
+});
+
 test("requestSpecFix correctly parses JSON preceded by prose that itself contains a brace, matching anthropic.ts's own fix for the same bug", async () => {
   const withBracyProse = "Note: the schema format uses {} for objects. " + JSON.stringify(brokenSpec);
   const fakeFetch = (async () =>
