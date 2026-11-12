@@ -1081,6 +1081,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // pitfall-1 shape as order/stock/driver/patient/deals/worker/courses/
       // dish/product.
       "vehicle", "vehicles", "fleet management",
+      // Round 1979: "car(s)" is an entirely ordinary synonym for
+      // "vehicle(s)" -- a description that only ever says "cars" ("an
+      // app for my auto repair shop to track customers and cars") and
+      // doesn't happen to also say "vehicle"/"mechanic"/"garage" matched
+      // no domain entity at all. \b-bounded with the same "(s)?" plural
+      // handling used throughout this file; unlike "garage", "car" has no
+      // common idiomatic phrase it needs to be excluded from (confirmed:
+      // \bcar\b correctly leaves "NASCAR"/"scar"/"cargo"/"card" untouched,
+      // since none of those have a word boundary before the trailing
+      // "s"/"e"/"go"/"d" that would make "car" itself a separate token).
+      /\bcars?\b/,
       // Bare "garage" (round 454) is a whole word that's genuinely
       // ambiguous: it means an auto-repair shop in most descriptions, but
       // "garage sale" is an unrelated everyday phrase (a household selling

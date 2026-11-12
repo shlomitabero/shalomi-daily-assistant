@@ -97,6 +97,20 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // needs its own specific phrase rather than relying on Rental firing.
   "car dealership", "car rental", "vehicle rental", "rent out vehicles",
   "רכב להשכרה", "רכבים להשכרה", "מכירת רכבים",
+  // Round 1979: the identical drift once more, for the repair-shop half
+  // of this same Vehicle gap -- "An app for my auto repair shop to track
+  // customers and vehicles" matches Vehicle via its own bare keywords
+  // (genuinely ambiguous, as this comment's own reasoning above already
+  // explains) and still got "No payments", even when Vehicle is matched
+  // through an unambiguous commercial route like "garage"/"mechanic"/
+  // "מוסך". An auto-repair/car-repair/body shop is a textbook paid trade
+  // business, the exact same class this comment's own round-1523 fix
+  // already covers for a sale/rental. "מוסך" is already one of Vehicle's
+  // own exact keywords and, like "car dealership" above, always implies
+  // a commercial repair business (never an internal company fleet tool),
+  // so it's safe to reuse directly here.
+  "auto repair", "car repair", "auto body shop", "auto body",
+  "מוסך", "תיקון רכבים",
   // Round 1700: the same drift once more, this time for Course via
   // "sell"/"paid" wording rather than round 1007's "fee"/"tuition"
   // wording. "A platform for creators to sell online courses" matches

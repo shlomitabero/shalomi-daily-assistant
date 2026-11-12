@@ -441,6 +441,34 @@ test("asks about payments (recommending Stripe) for a car-dealership or vehicle-
   assert.equal(rentalFleet.openQuestions[0].recommendation, "Stripe");
 });
 
+/**
+ * Round 1979: the identical drift once more, for the repair-shop half of
+ * this same Vehicle gap round 1523 never reached -- an auto-repair/car-
+ * repair/body shop is a textbook paid trade business, but Vehicle is
+ * matched only through its own genuinely-ambiguous bare keywords
+ * ("vehicle"/"garage"/"mechanic"/"מוסך"), so the payment recommendation
+ * stayed "No payments" even when Vehicle matched correctly. Also pins a
+ * second, independent gap: Vehicle's own keyword list had no bare
+ * "car(s)" at all, so a description that only ever says "cars" (and not
+ * "vehicle"/"mechanic"/"garage" either) never matched Vehicle in the
+ * first place.
+ */
+test("asks about payments (recommending Stripe) for an auto-repair/car-repair description, and matches Vehicle via bare 'car(s)' alone", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const autoRepair = await provider.generate("An app for my auto repair shop to track customers and vehicles.");
+  assert.ok(autoRepair.entities.some((e) => e.name === "Vehicle"), "'auto repair shop' must still match Vehicle");
+  assert.equal(autoRepair.openQuestions[0].recommendation, "Stripe", "an auto repair shop must be recommended Stripe, not 'No payments'");
+
+  const carsOnly = await provider.generate("An app for an auto body shop to manage customers and cars.");
+  assert.ok(carsOnly.entities.some((e) => e.name === "Vehicle"), "bare 'cars' alone must match Vehicle");
+  assert.equal(carsOnly.openQuestions[0].recommendation, "Stripe", "an auto body shop must be recommended Stripe, not 'No payments'");
+
+  const garageHe = await provider.generate("אפליקציה למוסך לתיקון רכבים לניהול לקוחות ורכבים.");
+  assert.ok(garageHe.entities.some((e) => e.name === "Vehicle"), "'מוסך' alone must match Vehicle");
+  assert.equal(garageHe.openQuestions[0].recommendation, "Stripe", "a Hebrew car-repair garage must be recommended Stripe, not 'בלי תשלומים'");
+});
+
 test("asks about payments (recommending Stripe) for a field-service/repair description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "repair jobs"/"service calls"/"plumbing business" match the Service and
   // WorkOrder entities but share no substring with "payment"/"billing"/
