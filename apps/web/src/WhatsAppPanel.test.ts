@@ -5403,6 +5403,106 @@ test("WhatsAppPanel's per-message delete button calls onMessageDeleted with the 
 });
 
 /**
+ * Round 1987 regression test: mirrors HistoryPanel.tsx's own handleDelete
+ * fix (round 1890) for the structurally identical checkpoint-delete race.
+ * deleteWhatsAppMessage (packages/db/src/whatsapp.ts) throws a generic
+ * NotFoundError (code "NOT_FOUND") once another tab/collaborator already
+ * deleted this exact message -- round 958's withIdempotency wrap only
+ * replays a cached 204 for a RETRY of the SAME request; a genuinely
+ * independent second DELETE (e.g. a different browser tab, or a different
+ * collaborator, clicking the same row before either side's list refreshes)
+ * still gets a real 404. Before this round's fix, handleDeleteMessage's
+ * catch block treated that identically to every other failure -- a
+ * permanent deleteError banner next to a row that can never actually be
+ * deleted (every further click just repeats the same 404), with no way to
+ * resolve the contradiction short of a page reload.
+ */
+test("WhatsAppPanel's per-message delete button drops the row with no error banner when the server reports NOT_FOUND (already deleted elsewhere)", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    const deletedIds: string[] = [];
+    const message: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972521112233",
+      toNumber: "972501234567",
+      body: "already deleted by another tab",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date("2026-03-15T14:32:00Z").toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [message] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/integrations/whatsapp/messages/m1") {
+        // Simulates another tab/collaborator having already deleted this
+        // exact message -- a genuinely independent request, not a retry of
+        // this same click (no idempotency-key replay involved).
+        return new Response(JSON.stringify({ error: "WhatsApp message m1 not found in project proj1", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              onMessageDeleted: (id: string) => deletedIds.push(id),
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 1);
+
+      const deleteButton = document.querySelector(".whatsapp-log-delete") as HTMLButtonElement;
+      fireEvent.click(deleteButton);
+      await waitForCondition(() => document.querySelectorAll(".whatsapp-log-list li").length === 0);
+
+      assert.equal(
+        document.querySelector("p.error"),
+        null,
+        "a NOT_FOUND here is not a real failure -- the outcome this click wanted (the message gone) already happened, so no error banner should render",
+      );
+      assert.deepEqual(
+        deletedIds,
+        ["m1"],
+        "onMessageDeleted must still fire for a NOT_FOUND delete -- the message really is gone, so App.tsx's own notification baseline must still be invalidated",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * The "Clear history" sibling of the test above -- wiping the whole log
  * guarantees any tracked notification baseline vanishes from the next
  * fetched page too (there's no page left at all), so this needs the same

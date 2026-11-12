@@ -1235,7 +1235,25 @@ export function WhatsAppPanel({
       setMessages((prev) => prev.filter((msg) => msg.id !== m.id));
       onMessageDeleted?.(m.id);
     } catch (err) {
-      setDeleteError((err as Error).message);
+      // Round 1987: deleteWhatsAppMessage throws a generic NotFoundError
+      // (code "NOT_FOUND") once another tab/collaborator already deleted
+      // this exact message -- an independent race, not a retry of this
+      // same click (round 958's withIdempotency wrap already covers THAT
+      // case by replaying the original 204). From this click's own point
+      // of view a NOT_FOUND here isn't a failure -- the outcome it wanted
+      // (this message gone) already happened -- so this drops the row and
+      // bumps messagesVersionRef the same way the success branch above
+      // does, instead of leaving a "failed to delete" banner stuck next to
+      // a row that's already gone, with every further click just repeating
+      // the identical 404. Mirrors HistoryPanel.tsx's own handleDelete
+      // (round 1890) for the structurally identical checkpoint-delete race.
+      if ((err as Error & { code?: string }).code === "NOT_FOUND") {
+        messagesVersionRef.current += 1;
+        setMessages((prev) => prev.filter((msg) => msg.id !== m.id));
+        onMessageDeleted?.(m.id);
+      } else {
+        setDeleteError((err as Error).message);
+      }
     } finally {
       setDeletingId(null);
     }
