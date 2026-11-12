@@ -1848,6 +1848,29 @@ test("WorkOrder's appliance-repair keywords match, and bare 'appliance' in an IT
   );
 });
 
+// Round 1978: the same design-intent comment names "plumbers, electricians,
+// appliance/AC technicians, handymen" -- round 1811 closed plumbers/
+// electricians/handymen and round 1949 closed appliance repair, but the
+// "AC" (air conditioning) half of that same phrase was never closed on its
+// own terms. The existing bare "hvac" keyword only matches a description
+// that literally uses the acronym; "an app for an air conditioning repair
+// business" (the far more common phrasing) matched no WorkOrder keyword at
+// all and fell through to the generic Customer fallback (confirmed live).
+test("WorkOrder's air-conditioning/HVAC keywords (English + Hebrew) match and flip the payment recommendation to Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const acRepair = await provider.generate("An app for an air conditioning repair business to manage customers and jobs.");
+  assert.ok(acRepair.entities.some((e) => e.name === "WorkOrder"), "'air conditioning repair business' must match WorkOrder");
+  assert.equal(acRepair.openQuestions[0].recommendation, "Stripe", "an air conditioning repair business must be recommended Stripe, not 'No payments'");
+
+  const hvacTechnician = await provider.generate("a CRM for an hvac technician's business");
+  assert.ok(hvacTechnician.entities.some((e) => e.name === "WorkOrder"), "'hvac technician' must match WorkOrder");
+
+  const acHe = await provider.generate("עסק לתיקון מזגנים למעקב אחרי לקוחות ועבודות.");
+  assert.ok(acHe.entities.some((e) => e.name === "WorkOrder"), "'תיקון מזגנים' alone must match WorkOrder");
+  assert.equal(acHe.openQuestions[0].recommendation, "Stripe", "a Hebrew AC-repair business must be recommended Stripe, not 'בלי תשלומים'");
+});
+
 // Round 1816: a tailoring/alterations shop is the same small-business
 // vertical gap as round 1811's plumber/electrician/handyman fix -- no
 // WorkOrder keyword matched it at all, so it fell through to the generic

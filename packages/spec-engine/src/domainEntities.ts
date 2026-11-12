@@ -1932,6 +1932,29 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "appliance repair", "appliance repair shop", "appliance repair company",
       "appliance repair business", "appliance repair service", "appliance repair services",
       "תיקון מכשירי חשמל", "תיקון מוצרי חשמל", "טכנאי מוצרי חשמל",
+      // Round 1978: the entity's own design intent (see the comment above)
+      // explicitly names "plumbers, electricians, appliance/AC
+      // technicians, handymen" -- round 1811 closed plumbers/electricians/
+      // handymen and round 1949 closed appliance repair, but the "AC"
+      // (air conditioning) half of that same phrase was never closed on
+      // its own terms. The existing bare "hvac" keyword only matches a
+      // description that literally uses the acronym -- "an app for an air
+      // conditioning repair business to manage customers and jobs" (the
+      // far more common way a non-technical person actually describes
+      // this exact trade) matched no WorkOrder keyword at all and fell
+      // through to the generic Customer fallback, which isn't in
+      // BILLING_ENTITY_NAMES below, so buildOpenQuestions wrongly
+      // recommended "No payments" for a textbook paid trade business --
+      // the same failure shape every prior round in this block already
+      // fixed for a different vertical. Phrase-only, mirroring this
+      // block's own established caution: "air conditioning" alone has no
+      // common false-positive collision the way "tailor"/"mover"/
+      // "painter"/"appliance" do, but these are kept as multi-word
+      // phrases for consistency with that same convention.
+      "air conditioning repair", "air conditioning company", "air conditioning service",
+      "air conditioning services", "ac repair", "ac repair company", "hvac repair",
+      "hvac technician", "hvac company",
+      "תיקון מזגנים", "טכנאי מזגנים", "חברת מזגנים",
     ],
     labelHe: "קריאות שירות",
     descriptionHe: "עבודת תיקון או תחזוקה מתוזמנת שהעסק מבצע עבור לקוח.",
