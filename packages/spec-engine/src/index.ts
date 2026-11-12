@@ -214,7 +214,33 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
   // entities.length, for exactly this reason).
   const candidateEntityNames = new Set(candidate.entities.map((entity) => entity.name.toLowerCase()));
   const restoredScreens = current.screens.filter((screen) => screen.entity && !candidateEntityNames.has(screen.entity.toLowerCase()));
-  const mergedScreens = [...candidate.screens, ...restoredScreens];
+  // Round 1973: this block still matched by plain `.toLowerCase()`, not
+  // `entityMergeKey` -- round 1911 added a SECOND merge mode (alias
+  // folding: a regenerated "Employee" entity folds into an existing
+  // "TeamMember"/"Staff" one instead of becoming a separate entity) to
+  // the entity half of this function above, but never updated this
+  // screens half to match. `candidate.screens` is spliced in verbatim,
+  // with no filtering for an entity the alias merge just folded away --
+  // so `candidate.screens` still contains "Employee List"/"Employee
+  // Form" (derived from the candidate's own pre-merge entity list, which
+  // still names it "Employee"), even though no entity named "Employee"
+  // survives in `mergedEntities` once it's folded into "TeamMember".
+  // These two screens become permanently dangling: nothing downstream
+  // ever regenerates/re-validates `screens` against `entities` (round
+  // 1905's own established finding on this exact function), and every
+  // later refine keeps re-splicing `candidate.screens` verbatim again,
+  // baking the mismatch in for good. HistoryPanel.tsx/checkpointDiff.ts
+  // both read `screens.length`, not `entities.length`, for Time
+  // Machine's own "N screens" count (see this function's own round-1753
+  // comment above) -- permanently inflating it by 2 for every checkpoint
+  // on any project that ever hits the alias-merge path. Filtering against
+  // `mergedEntities` itself (ground truth for what actually survived)
+  // rather than re-deriving the alias logic a second time here closes
+  // this without needing to thread entityMergeKey through this block too.
+  const survivingEntityNames = new Set(mergedEntities.map((entity) => entity.name.toLowerCase()));
+  const mergedScreens = [...candidate.screens, ...restoredScreens].filter(
+    (screen) => !screen.entity || survivingEntityNames.has(screen.entity.toLowerCase()),
+  );
   return {
     ...candidate,
     entities: mergedEntities,

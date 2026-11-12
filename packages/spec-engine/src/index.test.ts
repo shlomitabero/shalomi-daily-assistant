@@ -480,6 +480,57 @@ test("mergeRefinedSpec folds a regenerated Employee entity into an existing Staf
   );
 });
 
+/**
+ * Round 1973: round 1911 added entityMergeKey/ENTITY_ALIAS_GROUPS to the
+ * ENTITY half of mergeRefinedSpec (the two tests just above), but never
+ * updated the SCREENS half, which still matches by plain
+ * `.toLowerCase()`. `candidate.screens` is spliced in verbatim -- it
+ * still contains "Employee List"/"Employee Form" (derived from the
+ * candidate's own pre-merge entity list, which still names it
+ * "Employee"), even though no entity named "Employee" survives in
+ * `merged.entities` once it's folded into "TeamMember". This pins that
+ * those two now-dangling screens are filtered out of the merged result,
+ * not left referencing a non-existent entity -- a screen with no
+ * `entity` at all (a dashboard) must still survive untouched.
+ */
+test("mergeRefinedSpec drops the candidate's dangling List/Form screens for an Employee entity the alias merge just folded away", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "TeamMember", label: "Team Member", fields: [{ name: "name", type: "text", required: true }, { name: "jobTitle", type: "text", required: false }] },
+    ],
+    screens: [
+      { name: "Dashboard", type: "dashboard" },
+      { name: "TeamMember List", type: "list", entity: "TeamMember" },
+      { name: "TeamMember Form", type: "form", entity: "TeamMember" },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Employee", label: "Employee", fields: [{ name: "name", type: "text", required: true }, { name: "role", type: "text", required: false }] },
+    ],
+    screens: [
+      { name: "Dashboard", type: "dashboard" },
+      { name: "Employee List", type: "list", entity: "Employee" },
+      { name: "Employee Form", type: "form", entity: "Employee" },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(merged.entities.map((e) => e.name), ["TeamMember"], "sanity check: the alias merge must still fold Employee into TeamMember");
+  assert.deepEqual(
+    merged.screens.map((s) => s.name).sort(),
+    ["Dashboard", "TeamMember Form", "TeamMember List"],
+    "the dangling Employee List/Form screens must be dropped, while TeamMember's own screens (restored from current.screens, since the candidate regenerated the entity under the different name \"Employee\") and the entity-less Dashboard screen must survive",
+  );
+  for (const screen of merged.screens) {
+    if (screen.entity) {
+      assert.ok(
+        merged.entities.some((e) => e.name.toLowerCase() === screen.entity!.toLowerCase()),
+        `screen "${screen.name}" references entity "${screen.entity}", which doesn't exist in merged.entities`,
+      );
+    }
+  }
+});
+
 test("detectLikelyEntityRenames stays silent for the TeamMember/Employee alias pair, instead of misreporting it as a rename", () => {
   const current = baseSpec({
     entities: [{ name: "TeamMember", fields: [{ name: "name", type: "text", required: true }, { name: "jobTitle", type: "text", required: false }] }],
