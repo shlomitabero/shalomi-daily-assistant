@@ -1237,6 +1237,17 @@ export function createAuthRouter(
         // call a few hundred lines below.
         if (previousEmail !== email) {
           deleteEmailVerificationTokensForUser(db, req.userId!);
+          // Round 1980: mirrors round 1757/1960's identical fix on PATCH
+          // /auth/password -- a password-reset token or login code may have
+          // been delivered to the OLD email address being abandoned here,
+          // and neither table records which address it was sent to (see
+          // this route's own round-1756 comment above for the identical
+          // problem with the verification token). Without this, either
+          // secret -- if already captured by whoever controlled that old,
+          // no-longer-trusted inbox -- would otherwise keep working against
+          // this account even after this proactive, defensive email change.
+          deletePasswordResetTokensForUser(db, req.userId!);
+          deleteLoginCodesForUser(db, req.userId!);
         }
         // Resubmitting your own current email (updateUserEmail's own
         // self-exclusion from the uniqueness check already allows this, per

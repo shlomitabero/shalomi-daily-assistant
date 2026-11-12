@@ -2394,6 +2394,102 @@ test("proactively changing your password via PATCH /auth/password invalidates an
 });
 
 /**
+ * Round 1980: mirrors the two tests above, for the sibling route PATCH
+ * /auth/email -- an outstanding forgot-password reset token was minted
+ * against the OLD email address being abandoned here, and
+ * password_reset_tokens never records which address it was sent to, so
+ * the stale token would otherwise still work against this account even
+ * after the owner proactively moved away from a compromised old inbox.
+ */
+test("proactively changing your email via PATCH /auth/email invalidates any outstanding forgot-password reset token", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const oldEmail = `change-email-reset-old-${Date.now()}@example.com`;
+      const newEmail = `change-email-reset-new-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, oldEmail);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself also sends its own verification email -- only the reset email below matters here.
+
+      await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: oldEmail, lang: "en" }),
+      });
+      const resetUrl = emailSender.sentTo[0]!.text.match(/https?:\/\/\S+/)![0];
+      const resetToken = new URL(resetUrl).searchParams.get("resetToken")!;
+
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newEmail }),
+      });
+      assert.equal(changeRes.status, 200);
+
+      const staleResetRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword: "attacker-chosen-password" }),
+      });
+      assert.equal(
+        staleResetRes.status,
+        401,
+        "a reset link minted against the OLD email before it was proactively abandoned must no longer work -- otherwise anyone who captured it from that now-untrusted inbox could still take over the account",
+      );
+      assert.equal(((await staleResetRes.json()) as { code?: string }).code, "RESET_TOKEN_INVALID");
+    },
+    { emailSender },
+  );
+});
+
+/**
+ * Round 1980: mirrors the test just above, for the sibling pending secret
+ * PATCH /auth/email didn't used to touch -- an outstanding email-login code
+ * (POST /auth/login's own second factor) minted against the OLD email
+ * address being abandoned here.
+ */
+test("proactively changing your email via PATCH /auth/email invalidates any outstanding login code", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl) => {
+      const oldEmail = `change-email-logincode-old-${Date.now()}@example.com`;
+      const newEmail = `change-email-logincode-new-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, oldEmail);
+      emailSender.sentTo.length = 0; // Round 1566: signup itself also sends its own verification email -- only the login-code email below matters here.
+
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: oldEmail, password: "correct-horse-battery", lang: "en" }),
+      });
+      assert.equal(loginRes.status, 200);
+      const { loginCodeId } = (await loginRes.json()) as { loginCodeId: string };
+      const code = emailSender.sentTo[0]!.text.match(/\d{6}/)?.[0];
+      assert.ok(code, "the email body must contain the 6-digit code");
+
+      const changeRes = await fetch(`${baseUrl}/api/auth/email`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ currentPassword: "correct-horse-battery", email: newEmail }),
+      });
+      assert.equal(changeRes.status, 200);
+
+      const staleVerifyRes = await fetch(`${baseUrl}/api/auth/login/verify-code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ loginCodeId, code }),
+      });
+      assert.equal(
+        staleVerifyRes.status,
+        401,
+        "a login code minted against the OLD email before it was proactively abandoned must no longer work -- otherwise it could still mint a brand-new session on the account's behalf",
+      );
+      assert.equal(((await staleVerifyRes.json()) as { code?: string }).code, "LOGIN_CODE_EXPIRED");
+    },
+    { emailSender },
+  );
+});
+
+/**
  * Round 1960: mirrors the test just above, for POST /auth/reset-password --
  * the identical reasoning applies there too, since it is the MORE
  * sensitive of the two routes to leave a stale login code valid against
