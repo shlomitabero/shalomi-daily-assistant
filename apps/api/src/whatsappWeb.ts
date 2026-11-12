@@ -197,6 +197,7 @@ export interface BaileysIncomingMessage {
     groupMentionedMessage?: { message?: BaileysIncomingMessage["message"] };
     statusAddYours?: { message?: BaileysIncomingMessage["message"] };
     limitSharingMessage?: { message?: BaileysIncomingMessage["message"] };
+    groupStatusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -570,6 +571,21 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // branch, it fell straight through to the final `return null` and
   // vanished with zero trace.
   if (message.limitSharingMessage?.message) return describeIncomingMessage(message.limitSharingMessage.message);
+  // Round 1955: `groupStatusMentionMessage` (field 92) is confirmed against
+  // the installed Baileys protobuf (WAProto.proto) to be `optional
+  // FutureProofMessage groupStatusMentionMessage`, the exact same wrapper
+  // shape as ephemeralMessage/documentWithCaptionMessage/
+  // associatedChildMessage/groupStatusMessage/groupStatusMessageV2/
+  // deviceSentMessage/pollCreationMessageV4/commentMessage/
+  // statusMentionMessage/lottieStickerMessage/groupMentionedMessage/
+  // statusAddYours/limitSharingMessage just above (round 1888's same
+  // precedent applies: Baileys' own getFutureProofMessage helper doesn't
+  // list this field either, but the protobuf shape is the decisive signal,
+  // not that helper's own list). `groupStatusMentionMessage` is WhatsApp's
+  // "you were mentioned in a Status, inside a group" notification --
+  // ordinary consumer usage. Without this branch, it fell straight through
+  // to the final `return null` and vanished with zero trace.
+  if (message.groupStatusMentionMessage?.message) return describeIncomingMessage(message.groupStatusMentionMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
