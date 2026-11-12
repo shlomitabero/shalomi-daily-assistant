@@ -1285,7 +1285,26 @@ export function AutomationsPanel({
     setLoadingHistoryRuleIds((prev) => ({ ...prev, [rule.id]: true }));
     listAutomationRuns(projectId, rule.id)
       .then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })))
-      .catch((err) => setHistoryErrorByRuleId((prev) => ({ ...prev, [rule.id]: (err as Error).message })))
+      .catch((err) => {
+        // Round 1986: mirrors handleToggle's round-1875 fix and
+        // handleTestRule's/handleRetryRun's round-1976 fix -- round 1875's
+        // own text named this exact route ("list-runs", the GET this
+        // function calls) as one of "6 call sites" that throw
+        // AUTOMATION_RULE_NOT_FOUND, but neither round ever actually
+        // touched this handler. Another tab/collaborator can fully delete
+        // this rule between this tab rendering its "History" button and
+        // this GET reaching the server; without this, the 404 just
+        // populated historyErrorByRuleId with the raw message and left
+        // the now-gone rule's row (History button included) sitting in
+        // `rules` state, repeating the identical 404 on every further
+        // click with no way out except closing and reopening the panel.
+        const error = err as Error & { code?: string };
+        if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+          loadRules();
+          return;
+        }
+        setHistoryErrorByRuleId((prev) => ({ ...prev, [rule.id]: error.message }));
+      })
       .finally(() =>
         setLoadingHistoryRuleIds((prev) => {
           const next = { ...prev };

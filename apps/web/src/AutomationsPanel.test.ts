@@ -4656,6 +4656,51 @@ test("retrying a run whose rule was deleted by another tab/collaborator drops th
 });
 
 /**
+ * Round 1986: mirrors the three tests just above, for handleToggleHistory's
+ * own listAutomationRuns call (the "History" button) -- round 1875's own
+ * text explicitly named this GET route ("list-runs") as one of the "6 call
+ * sites" that throw AUTOMATION_RULE_NOT_FOUND, but neither round 1875 nor
+ * round 1976's own follow-up (which fixed handleTestRule/handleRetryRun)
+ * ever touched this handler. Its catch block fell straight to
+ * setHistoryErrorByRuleId with the raw message, leaving the now-gone
+ * rule's row (and its History button) sitting in `rules` state, repeating
+ * the identical 404 on every further click.
+ */
+test("expanding history for a rule that was deleted by another tab/collaborator drops the row instead of showing a stuck error", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deletedElsewhere = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: deletedElsewhere ? [] : [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        deletedElsewhere = true;
+        return new Response(JSON.stringify({ error: "Automation rule \"rule1\" not found", code: "AUTOMATION_RULE_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+      assert.equal(document.querySelector(".automations-rule-row .error"), null, "no raw 404 error banner should be left showing -- this is a clean drop of a vanished rule, not a history-load failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 831's finding: the rule list's own Edit/Toggle/Delete buttons were
  * only ever disabled by busyRuleId (toggle/delete's own in-flight state),
  * never by createBusy (the shared create-form's own in-flight Save/Create
