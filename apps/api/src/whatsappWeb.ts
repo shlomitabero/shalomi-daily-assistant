@@ -199,6 +199,7 @@ export interface BaileysIncomingMessage {
     limitSharingMessage?: { message?: BaileysIncomingMessage["message"] };
     groupStatusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
     eventCoverImage?: { message?: BaileysIncomingMessage["message"] };
+    pollCreationOptionImageMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -602,6 +603,22 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // this branch, it fell straight through to the final `return null` and
   // vanished with zero trace.
   if (message.eventCoverImage?.message) return describeIncomingMessage(message.eventCoverImage.message);
+  // Round 1961: `pollCreationOptionImageMessage` (field 90) is confirmed
+  // against the installed Baileys protobuf (WAProto.proto) to be `optional
+  // FutureProofMessage pollCreationOptionImageMessage`, the exact same
+  // wrapper shape as ephemeralMessage/documentWithCaptionMessage/
+  // associatedChildMessage/groupStatusMessage/groupStatusMessageV2/
+  // deviceSentMessage/pollCreationMessageV4/commentMessage/
+  // statusMentionMessage/lottieStickerMessage/groupMentionedMessage/
+  // statusAddYours/limitSharingMessage/groupStatusMentionMessage/
+  // eventCoverImage just above (round 1888's same precedent applies:
+  // Baileys' own getFutureProofMessage helper doesn't list this field
+  // either, but the protobuf shape is the decisive signal, not that
+  // helper's own list). `pollCreationOptionImageMessage` is the image
+  // attached to a poll option in WhatsApp's own image-option poll feature
+  // -- ordinary consumer usage. Without this branch, it fell straight
+  // through to the final `return null` and vanished with zero trace.
+  if (message.pollCreationOptionImageMessage?.message) return describeIncomingMessage(message.pollCreationOptionImageMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
