@@ -460,10 +460,15 @@ export function getDateUrgency(value: string, today: Date = new Date()): DateUrg
 // 1493/1506) -- but were missing here despite this Set's own comment above
 // claiming to be exhaustive over the same domain library. Checked via exact
 // `.has()`, not substring match, so "unreturned"/"unsold" can't false-match.
+// Round 1956: round 1951 didn't circle back to check the rest of
+// POSITIVE_WORDS against this Set -- "rented" (Property.status/
+// Vehicle.status, round 1490) and "published" (Review.status, round 1510)
+// satisfy the exact same criterion but were left out. Same exact-`.has()`
+// check, so no collision guard is needed here either.
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
-  "returned", "sold", "hired", "graduated",
+  "returned", "sold", "hired", "graduated", "rented", "published",
 ]);
 
 /**

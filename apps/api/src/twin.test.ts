@@ -2189,6 +2189,45 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the returned rental must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1956: round 1951 fixed "returned"/"sold"/"hired"/"graduated" but
+ * didn't circle back to check the rest of entityFormatting.ts's own
+ * badgeTone() POSITIVE_WORDS list -- "rented" (the built-in Property/Vehicle
+ * entities' own terminal status value) satisfies the identical criterion but
+ * was missing, so a rented property with a past lease deadline would still
+ * show a permanently-red overdue observation.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own status enum is 'Rented' (round 1956), matching the built-in Property/Vehicle entities", () => {
+  const propertyProject: Project = {
+    ...project,
+    description: "A property management service",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Property",
+          label: "Properties",
+          fields: [
+            { name: "address", type: "text", required: true },
+            { name: "leaseDeadline", label: "Lease deadline", type: "date", required: false },
+            { name: "status", type: "enum", required: true, enumValues: ["Available", "UnderContract", "Sold", "Rented"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, propertyProject.id, propertyProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, propertyProject.id, propertyProject.spec.entities[0], { address: "1 Main St", leaseDeadline: "2026-01-01", status: "Available" }); // genuinely overdue
+  insertRecord(db, propertyProject.id, propertyProject.spec.entities[0], { address: "2 Main St", leaseDeadline: "2026-01-01", status: "Rented" }); // already resolved
+
+  const twin = computeBusinessTwin(db, propertyProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Lease deadline"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the rented property must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

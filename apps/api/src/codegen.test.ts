@@ -31015,7 +31015,81 @@ test("the exported EntityView does not flag a record whose own status enum is 'R
       const returnedRow = rows.find((r) => /Already back/.test(r.textContent ?? ""))!;
 
       assert.ok(activeRow.querySelector(".date-overdue"), "an Active rental with a 5-day-past dueDate must still be flagged overdue");
-      assert.equal(returnedRow.querySelector(".date-overdue"), null, "a Returned rental with the identical past dueDate must not be flagged overdue");
+      assert.equal(returnedRow.querySelector(".date-overdue") === null, true, "a Returned rental with the identical past dueDate must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 1956: round 1951 fixed "returned"/"sold"/"hired"/"graduated" but
+ * didn't circle back to check the rest of entityFormatting.ts's/codegen.ts's
+ * own badgeTone() POSITIVE_WORDS list -- "rented" (the built-in Property/
+ * Vehicle entities' own terminal status value) satisfies the identical
+ * criterion but was missing, so a rented property with a past lease
+ * deadline would still show a permanently-red overdue chip in the exported
+ * app's own EntityView, mirroring round 1951's own test shape.
+ */
+test("the exported EntityView does not flag a record whose own status enum is 'Rented' as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const propertyEntity = {
+    name: "Property",
+    label: "Property",
+    fields: [
+      { name: "address", label: "Address", type: "text", required: true },
+      { name: "leaseDeadline", label: "Lease deadline", type: "date", required: false },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Available", "UnderContract", "Sold", "Rented"] },
+    ],
+  };
+  const records = [
+    { id: 1, address: "Still listed", leaseDeadline: isoDateOffset(-5), status: "Available" },
+    { id: 2, address: "Already rented", leaseDeadline: isoDateOffset(-5), status: "Rented" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Property") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: propertyEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const availableRow = rows.find((r) => /Still listed/.test(r.textContent ?? ""))!;
+      const rentedRow = rows.find((r) => /Already rented/.test(r.textContent ?? ""))!;
+
+      assert.ok(availableRow.querySelector(".date-overdue"), "an Available property with a 5-day-past leaseDeadline must still be flagged overdue");
+      assert.equal(rentedRow.querySelector(".date-overdue") === null, true, "a Rented property with the identical past leaseDeadline must not be flagged overdue");
     });
   } finally {
     globalThis.fetch = originalFetch;

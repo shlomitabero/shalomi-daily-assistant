@@ -4847,3 +4847,33 @@ test("isRecordClosedStatus also recognizes 'returned'/'sold'/'hired'/'graduated'
     "a graduated student is resolved even though its program deadline has passed",
   );
 });
+
+/**
+ * Round 1956: round 1951 fixed four of the Set's gaps against POSITIVE_WORDS
+ * but didn't circle back to check the rest of that same list -- "rented"
+ * (Property.status/Vehicle.status, round 1490) and "published"
+ * (Review.status, round 1510) satisfy the identical criterion (each is its
+ * own entity's unambiguous terminal/successful outcome, already recognized
+ * as such by this same file's badgeTone() POSITIVE_WORDS) but were left out.
+ */
+test("isRecordClosedStatus also recognizes 'rented'/'published' (round 1956), matching the built-in Property/Vehicle/Review entities' own terminal status values", () => {
+  const propertyFields: Field[] = [
+    { name: "leaseDeadline", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Available", "UnderContract", "Sold", "Rented"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, leaseDeadline: "2020-01-01", status: "Rented" }, propertyFields),
+    true,
+    "a rented property is resolved even though its lease deadline has passed",
+  );
+
+  const reviewFields: Field[] = [
+    { name: "publishDeadline", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Published", "Pending", "Hidden"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, publishDeadline: "2020-01-01", status: "Published" }, reviewFields),
+    true,
+    "a published review is resolved even though its publish deadline has passed",
+  );
+});
