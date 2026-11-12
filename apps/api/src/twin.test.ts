@@ -2228,6 +2228,44 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
   assert.match(overdue!.text, /1 of 1 record in/, `the rented property must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+/**
+ * Round 1958: round 1956's own audit against entityFormatting.ts's own
+ * badgeTone() POSITIVE_WORDS list still missed one entry -- "received"
+ * (the built-in Donation entity's own terminal status value) satisfies the
+ * identical criterion but was missing, so a received donation with a past
+ * pledge deadline would still show a permanently-red overdue observation.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own status enum is 'Received' (round 1958), matching the built-in Donation entity", () => {
+  const donationProject: Project = {
+    ...project,
+    description: "A nonprofit donation tracker",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Donation",
+          label: "Donations",
+          fields: [
+            { name: "donorName", type: "text", required: true },
+            { name: "pledgeDeadline", label: "Pledge deadline", type: "date", required: false },
+            { name: "status", type: "enum", required: true, enumValues: ["Pledged", "Received", "Refunded"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, donationProject.id, donationProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, donationProject.id, donationProject.spec.entities[0], { donorName: "Dana", pledgeDeadline: "2026-01-01", status: "Pledged" }); // genuinely overdue
+  insertRecord(db, donationProject.id, donationProject.spec.entities[0], { donorName: "Omer", pledgeDeadline: "2026-01-01", status: "Received" }); // already resolved
+
+  const twin = computeBusinessTwin(db, donationProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Pledge deadline"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the received donation must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 test("computeBusinessTwin does not flag a past date field whose name isn't deadline-shaped", () => {
   const orderProject: Project = {
     ...project,

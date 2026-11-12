@@ -479,10 +479,15 @@ export function getDateUrgency(value: string, today: Date = new Date()): DateUrg
 // Vehicle.status, round 1490) and "published" (Review.status, round 1510)
 // satisfy the exact same criterion but were left out. Same exact-`.has()`
 // check, so no collision guard is needed here either.
+// Round 1958: round 1956's own audit against POSITIVE_WORDS still missed
+// one entry -- "received" (Donation.status, round 1478; also the Inventory
+// template's PurchaseOrder.status) satisfies the identical criterion but
+// was left out. Same exact-`.has()` check, so no collision guard is needed
+// here either.
 const CLOSED_STATUS_VALUES = new Set([
   "paid", "done", "completed", "cancelled", "canceled", "closed", "delivered",
   "resolved", "rejected", "denied", "refunded", "won", "lost", "no-show", "noshow",
-  "returned", "sold", "hired", "graduated", "rented", "published",
+  "returned", "sold", "hired", "graduated", "rented", "published", "received",
 ]);
 
 /**

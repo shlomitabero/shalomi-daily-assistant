@@ -4890,3 +4890,22 @@ test("isRecordClosedStatus also recognizes 'rented'/'published' (round 1956), ma
     "a published review is resolved even though its publish deadline has passed",
   );
 });
+
+/**
+ * Round 1958: round 1956's own audit against POSITIVE_WORDS still missed
+ * one entry -- "received" (Donation.status, round 1478; also the Inventory
+ * template's PurchaseOrder.status) satisfies the identical criterion (its
+ * own entity's unambiguous terminal/successful outcome, already recognized
+ * as such by this same file's badgeTone() POSITIVE_WORDS) but was left out.
+ */
+test("isRecordClosedStatus also recognizes 'received' (round 1958), matching the built-in Donation entity's own terminal status value", () => {
+  const donationFields: Field[] = [
+    { name: "pledgeDeadline", type: "date", required: false },
+    { name: "status", type: "enum", required: true, enumValues: ["Pledged", "Received", "Refunded"] },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, pledgeDeadline: "2020-01-01", status: "Received" }, donationFields),
+    true,
+    "a received donation is resolved even though its pledge deadline has passed",
+  );
+});

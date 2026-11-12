@@ -31120,6 +31120,80 @@ test("the exported EntityView does not flag a record whose own status enum is 'R
 });
 
 /**
+ * Round 1958: round 1956's own audit against entityFormatting.ts's/
+ * codegen.ts's own badgeTone() POSITIVE_WORDS list still missed one entry
+ * -- "received" (the built-in Donation entity's own terminal status value)
+ * satisfies the identical criterion but was missing, so a received
+ * donation with a past pledge deadline would still show a permanently-red
+ * overdue chip in the exported app's own EntityView, mirroring round
+ * 1956's own test shape.
+ */
+test("the exported EntityView does not flag a record whose own status enum is 'Received' as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const donationEntity = {
+    name: "Donation",
+    label: "Donation",
+    fields: [
+      { name: "donorName", label: "Donor name", type: "text", required: true },
+      { name: "pledgeDeadline", label: "Pledge deadline", type: "date", required: false },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pledged", "Received", "Refunded"] },
+    ],
+  };
+  const records = [
+    { id: 1, donorName: "Still pledged", pledgeDeadline: isoDateOffset(-5), status: "Pledged" },
+    { id: 2, donorName: "Already received", pledgeDeadline: isoDateOffset(-5), status: "Received" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Donation") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: donationEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const pledgedRow = rows.find((r) => /Still pledged/.test(r.textContent ?? ""))!;
+      const receivedRow = rows.find((r) => /Already received/.test(r.textContent ?? ""))!;
+
+      assert.ok(pledgedRow.querySelector(".date-overdue"), "a Pledged donation with a 5-day-past pledgeDeadline must still be flagged overdue");
+      assert.equal(receivedRow.querySelector(".date-overdue") === null, true, "a Received donation with the identical past pledgeDeadline must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1323: ports the live preview's own new findFilterableFields fix
  * (a deadline-named date field's overdue/due-soon classification, already
  * used for the table cell's own red/amber styling right above, is now
