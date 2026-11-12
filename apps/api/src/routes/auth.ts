@@ -903,6 +903,16 @@ export function createAuthRouter(
         }
         updatePasswordHash(db, user.id, newHash);
         deleteAllSessionsForUser(db, user.id);
+        // Round 1960: mirrors PATCH /auth/password's own identical fix --
+        // an outstanding login code (/auth/login's email-code step) also
+        // represents proof-of-knowledge of the password this route is
+        // replacing, but /auth/login/verify-code never re-checks the
+        // password when redeeming one. Without this, a login code minted
+        // against the OLD password (e.g. by an attacker who still knew it,
+        // or a stale device) stayed valid for up to its own 10-minute TTL
+        // even after the real owner reset the password via this very
+        // route, and could still mint a brand-new session afterward.
+        deleteLoginCodesForUser(db, user.id);
         // Round 1265: mirrors PATCH /auth/password's own round-1252
         // notification -- this route's own revocation is the MORE sensitive
         // of the two (every session on the account, not just other ones, and
@@ -1084,6 +1094,20 @@ export function createAuthRouter(
         // must not survive" instinct, just never extended to the
         // credential itself actually changing here.
         deletePasswordResetTokensForUser(db, req.userId!);
+        // Round 1960: the identical reasoning above applies to an
+        // outstanding login code -- /auth/login's own email-code step also
+        // represents proof-of-knowledge of the password that was in effect
+        // when it was minted. Without this, submitting the correct OLD
+        // password to /auth/login, then changing the password here before
+        // that code's own 10-minute TTL elapses, still let the still-
+        // unexpired loginCodeId/code pair mint a brand-new session via
+        // /auth/login/verify-code, which never re-checks the password at
+        // all. deleteLoginCodesForUser is already used for this same
+        // "supersede the old pending secret on state change" purpose one
+        // call site away, inside /auth/login itself (see its own doc
+        // comment), just never extended to the credential actually
+        // changing here.
+        deleteLoginCodesForUser(db, req.userId!);
         if (emailSender.configured) {
           const isHebrew = lang !== "en";
           const subject = isHebrew ? "הסיסמה של חשבונך ב-Forge AI השתנתה" : "Your Forge AI account's password was changed";
