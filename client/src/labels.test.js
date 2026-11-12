@@ -153,6 +153,27 @@ test('autonomousScanSummary builds its pending-drafts sentence from detail.pendi
   assert.doesNotMatch(summary, /drafts already awaiting/);
 });
 
+test('autonomousScanSummary shows a "?" placeholder rather than crashing when the pending-drafts cap result is missing detail.pendingDrafts', () => {
+  const summary = autonomousScanSummary({ result: 'skipped: 5 drafts already awaiting review', detail: {} });
+  assert.match(summary, /— \? הזדמנויות/);
+});
+
+test('autonomousScanSummary distinguishes a real concurrency conflict from the pending-drafts cap, not a nonsensical "?" count', () => {
+  // services/opportunities.js's own lock logs this exact same 'skipped:'
+  // prefix as the pending-drafts-cap case just below - before this branch
+  // existed, a scan that lost that lock to the manual "צור טיוטת מוצר"
+  // form (a real, already-tested production path - see
+  // autonomousScan.test.js's own "backs off cleanly... when the manual
+  // route is mid-request") fell into the generic pending-drafts branch
+  // instead, which reads detail.pendingDrafts - absent here, since this
+  // case's own detail is {} - producing "הסריקה הושהתה — ? הזדמנויות כבר
+  // ממתינות לסקירה שלך", wrongly blaming a review backlog for what was
+  // actually just a one-off timing conflict.
+  const summary = autonomousScanSummary({ result: 'skipped: another draft creation was in progress', detail: {} });
+  assert.match(summary, /נדחתה זמנית/);
+  assert.doesNotMatch(summary, /\?/);
+});
+
 test('autonomousScanSummary gives a clean Hebrew message on failure, not the raw detail.error', () => {
   const summary = autonomousScanSummary({ result: 'failed', detail: { error: 'ECONNRESET' } });
   assert.match(summary, /בדוק את לוגי השרת/);

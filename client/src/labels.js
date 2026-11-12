@@ -136,6 +136,19 @@ export function autonomousScanSummary(action) {
   if (typeof result === 'string' && result.startsWith('blocked: source not connected')) {
     return 'המקור "מוצרים דיגיטליים מבוססי AI" לא מחובר — ראה עמוד "מקורות הכנסה".';
   }
+  if (typeof result === 'string' && result.startsWith('skipped: another draft creation was in progress')) {
+    // services/opportunities.js's own lock (closing the race between the
+    // scan's fast pendingDraftCount() check and the manual route's own
+    // draft creation) logs this same 'skipped:' prefix as the pending-
+    // drafts-cap case right below - without its own branch here, this fell
+    // straight into that one instead, showing a nonsensical "? הזדמנויות
+    // כבר ממתינות לסקירה שלך" (detail here has no pendingDrafts at all) and
+    // wrongly implying a review backlog when the real cause was a one-off
+    // timing conflict with the manual "צור טיוטת מוצר" form, not the
+    // 5-draft cap this page's own Guide.jsx documents as the normal pause
+    // reason.
+    return 'הסריקה נדחתה זמנית — יצירת טיוטה אחרת (ידנית) רצה באותו רגע בדיוק. הסריקה הבאה תנסה שוב.';
+  }
   if (typeof result === 'string' && result.startsWith('skipped:')) {
     // The raw result string's own free-text detail ('N drafts already
     // awaiting review', from autonomousScan.js's logAction call) is
