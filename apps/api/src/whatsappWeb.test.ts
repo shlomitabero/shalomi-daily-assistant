@@ -3750,3 +3750,42 @@ test("an incoming WhatsApp poll with an image attached to an option (pollCreatio
   assert.equal(messages[0].body, "תמונה לאופציית סקר", "pollCreationOptionImageMessage must unwrap transparently to its inner message, not fall through to a silent drop");
   assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1964: `botInvokeMessage` (field 67) -- confirmed against the
+ * installed Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * botInvokeMessage = 67;`, the exact same wrapper shape as
+ * ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+ * groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+ * pollCreationMessageV4/commentMessage/statusMentionMessage/
+ * lottieStickerMessage/groupMentionedMessage/statusAddYours/
+ * limitSharingMessage/groupStatusMentionMessage/eventCoverImage/
+ * pollCreationOptionImageMessage (rounds 1142/1152/1445/1888/1901/1930/
+ * 1933/1950/1952/1953/1954/1955/1959/1961). Baileys' own
+ * getFutureProofMessage helper doesn't list this field either, but round
+ * 1888 already established that the protobuf shape is the decisive
+ * signal, not that helper's own list. Without this branch, it fell
+ * straight through to the final `return null` and vanished with zero
+ * trace.
+ */
+test("an incoming WhatsApp bot-invoke message (botInvokeMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { botInvokeMessage: { message: { conversation: "הפעלת בוט" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "הפעלת בוט", "botInvokeMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});

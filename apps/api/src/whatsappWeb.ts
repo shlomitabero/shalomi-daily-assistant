@@ -200,6 +200,7 @@ export interface BaileysIncomingMessage {
     groupStatusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
     eventCoverImage?: { message?: BaileysIncomingMessage["message"] };
     pollCreationOptionImageMessage?: { message?: BaileysIncomingMessage["message"] };
+    botInvokeMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -619,6 +620,24 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // -- ordinary consumer usage. Without this branch, it fell straight
   // through to the final `return null` and vanished with zero trace.
   if (message.pollCreationOptionImageMessage?.message) return describeIncomingMessage(message.pollCreationOptionImageMessage.message);
+  // Round 1964: `botInvokeMessage` (field 67) is confirmed against the
+  // installed Baileys protobuf (WAProto.proto) to be `optional
+  // FutureProofMessage botInvokeMessage`, the exact same wrapper shape as
+  // ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+  // groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+  // pollCreationMessageV4/commentMessage/statusMentionMessage/
+  // lottieStickerMessage/groupMentionedMessage/statusAddYours/
+  // limitSharingMessage/groupStatusMentionMessage/eventCoverImage/
+  // pollCreationOptionImageMessage just above (round 1888's same
+  // precedent applies: Baileys' own getFutureProofMessage helper doesn't
+  // list this field either, but the protobuf shape is the decisive
+  // signal, not that helper's own list). `botInvokeMessage` is plausibly
+  // bot-API/enterprise-only, with a weaker path through an ordinary
+  // WhatsApp Web consumer session than most sibling fields in this family
+  // -- but the fix is mechanically identical and equally low-risk.
+  // Without this branch, it fell straight through to the final `return
+  // null` and vanished with zero trace.
+  if (message.botInvokeMessage?.message) return describeIncomingMessage(message.botInvokeMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
