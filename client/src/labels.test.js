@@ -201,10 +201,32 @@ test('saleConfirmedSummary explains a sandbox transaction without implying real 
   assert.match(saleConfirmedSummary({ result: 'skipped: sandbox transaction, not recorded as real revenue' }), /עסקת בדיקה/);
 });
 
-test('saleConfirmedSummary gives a clean Hebrew message for a blocked sale, not the raw engine error text', () => {
-  const summary = saleConfirmedSummary({ result: 'blocked: transaction total is not a valid number: "N/A"' });
+test('saleConfirmedSummary gives a clean Hebrew message for a malformed-amount blocked sale, not the raw engine error text', () => {
+  // billing.js always includes opportunityId in detail for this specific
+  // case (it's only ever logged inside the branch that already confirmed
+  // opportunityId is present) - this is the real shape, not a hand-picked
+  // one, and it's what distinguishes this case from the missing-
+  // opportunityId one right below, which has no opportunityId in detail
+  // at all.
+  const summary = saleConfirmedSummary({
+    result: 'blocked: transaction total is not a valid number: "N/A"',
+    detail: { opportunityId: 'opp_1', transactionId: 'txn_1' },
+  });
   assert.match(summary, /שגיאה בעיבוד/);
   assert.doesNotMatch(summary, /N\/A/);
+});
+
+test('saleConfirmedSummary shows billing.js\'s own specific Hebrew reason for a sale blocked by a missing opportunityId, not a generic one', () => {
+  // This is a real, reachable production case (a checkout-overlay bug,
+  // Paddle dropping the field, or a transaction unrelated to this app's
+  // own product) - distinct from the malformed-amount case above, and
+  // billing.js's own result string here is already a complete, correct
+  // Hebrew sentence with no raw English to hide. Showing the generic
+  // "data processing error" message for it instead would be actively
+  // wrong: there's no malformed amount in this case at all.
+  const reason = 'תשלום אמיתי התקבל אך לא ניתן לזהות לאיזו הזדמנות הוא משתייך — custom_data.opportunityId חסר בעסקה';
+  const summary = saleConfirmedSummary({ result: `blocked: ${reason}`, detail: { transactionId: 'txn_1' } });
+  assert.equal(summary, reason);
 });
 
 test('saleConfirmedSummary falls back to resultLabel for any other result', () => {

@@ -183,10 +183,26 @@ export function autonomousScanSummary(action) {
 // would otherwise fall through resultLabel()'s known partial-translation
 // limitation and show English mid-sentence in the activity log.
 export function saleConfirmedSummary(action) {
-  const { result } = action;
+  const { result, detail } = action;
   if (result === 'success') return 'מכירה אומתה בפועל.';
   if (typeof result === 'string' && result.startsWith('skipped: sandbox transaction')) {
     return 'עסקת בדיקה (sandbox) — לא נרשמה כהכנסה אמיתית.';
+  }
+  // billing.js's webhook logs two different 'blocked:' shapes under this
+  // same type - a malformed transaction amount (detail.opportunityId IS
+  // known; the free-text after 'blocked: ' is engine/paddleTransaction.js's
+  // own raw, possibly-English error, which stays generic below on purpose)
+  // and a transaction.completed arriving with no custom_data.opportunityId
+  // at all (detail has no opportunityId - a checkout-overlay bug, Paddle
+  // dropping the field, or a transaction unrelated to this app's own
+  // product). That second case's own result string is ALREADY a complete,
+  // specific Hebrew sentence billing.js wrote by hand - showing the
+  // generic "data processing error, check the server logs" message for it
+  // instead (the previous behavior here) discarded a real, different,
+  // more actionable diagnosis for the one place a real payment can go
+  // unrecorded with no automated route to fix it.
+  if (typeof result === 'string' && result.startsWith('blocked:') && !detail?.opportunityId) {
+    return result.slice('blocked: '.length);
   }
   if (typeof result === 'string' && result.startsWith('blocked:')) {
     return 'התשלום לא נרשם בגלל שגיאה בעיבוד הנתונים מ-Paddle — בדוק את לוגי השרת.';
