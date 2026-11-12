@@ -40,7 +40,25 @@ export default function ActivityLog() {
                   is English. autonomousScanSummary()/saleConfirmedSummary()
                   already have a full Hebrew sentence for every one of their
                   outcomes. */}
-              <span className={`log-result ${a.result === 'success' ? 'positive' : a.result?.startsWith('blocked') ? 'muted' : 'negative'}`}>
+              {/* 'blocked' is muted (de-emphasized gray), not negative
+                  (red), everywhere else in this log - research mode
+                  blocking a publish, a budget cap, a demo draft, a
+                  rate-limited login are all the safety system working
+                  exactly as intended, not a failure. A blocked
+                  sale_confirmed is the one real exception: it means a
+                  real customer's real payment came in and did NOT get
+                  recorded (a malformed amount, or a transaction missing
+                  custom_data.opportunityId) - Dashboard.jsx already
+                  shows this as a red 🚨 banner and the daily digest
+                  flags it the same way, so this row muting itself gray,
+                  as if nothing worth worrying about happened, directly
+                  contradicted both of those. */}
+              <span className={`log-result ${
+                a.result === 'success' ? 'positive'
+                  : a.type === 'sale_confirmed' && a.result?.startsWith('blocked') ? 'negative'
+                    : a.result?.startsWith('blocked') ? 'muted'
+                      : 'negative'
+              }`}>
                 {a.type === 'autonomous_scan' ? autonomousScanSummary(a) : a.type === 'sale_confirmed' ? saleConfirmedSummary(a) : resultLabel(a.result)}
               </span>
             </div>
