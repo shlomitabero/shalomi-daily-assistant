@@ -47,6 +47,15 @@ process.on('uncaughtException', (err) => {
 });
 
 const app = express();
+// Express sends this on every single response by default (`X-Powered-By:
+// Express`) - pure reconnaissance value for an attacker (confirms the exact
+// framework in use) with no benefit to a real visitor, the same reasoning
+// behind every other header securityHeaders.js already strips/sets below
+// for this exact app (a real owner password, real Paddle checkouts).
+// Express's own docs document this exact call as the way to remove it -
+// res.removeHeader() in middleware would run too late for some response
+// paths (e.g. res.sendFile() below for the client's static build).
+app.disable('x-powered-by');
 // Railway (like Render/Heroku) terminates TLS at its own edge and forwards
 // requests through a reverse proxy — without this, req.ip on every request
 // reads as that proxy's own address, not the real client's, which would
