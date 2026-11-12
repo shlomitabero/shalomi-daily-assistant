@@ -3671,3 +3671,42 @@ test("an incoming WhatsApp group-status-mention notification (groupStatusMention
   assert.equal(messages[0].body, "הזכירו אותך בסטטוס של הקבוצה", "groupStatusMentionMessage must unwrap transparently to its inner message, not fall through to a silent drop");
   assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1959: `eventCoverImage` (field 85) -- confirmed against the
+ * installed Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * eventCoverImage = 85;`, the exact same wrapper shape as
+ * ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+ * groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+ * pollCreationMessageV4/commentMessage/statusMentionMessage/
+ * lottieStickerMessage/groupMentionedMessage/statusAddYours/
+ * limitSharingMessage/groupStatusMentionMessage (rounds 1142/1152/1445/
+ * 1888/1901/1930/1933/1950/1952/1953/1954/1955). Baileys' own
+ * getFutureProofMessage helper doesn't list this field either, but round
+ * 1888 already established that the protobuf shape is the decisive
+ * signal, not that helper's own list. `eventCoverImage` is the cover photo
+ * attached to a WhatsApp Event -- ordinary consumer usage. Without this
+ * branch, it fell straight through to the final `return null` and
+ * vanished with zero trace.
+ */
+test("an incoming WhatsApp Event cover-image notification (eventCoverImage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventCoverImage: { message: { conversation: "תמונת שער לאירוע" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "תמונת שער לאירוע", "eventCoverImage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
