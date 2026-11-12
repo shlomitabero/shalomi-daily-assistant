@@ -508,8 +508,8 @@ const CLOSED_STATUS_VALUES = new Set([
  *
  * Round 1737 widens this to also recognize a sibling BOOLEAN completion
  * field (matched the same case-insensitive way, against "done"/
- * "completed"/"isdone"/"iscomplete") whose value is true -- this app's own
- * built-in Project Tracker template's Milestone entity (packages/spec-
+ * "completed"/"isdone"/"iscomplete"/"iscompleted") whose value is true --
+ * this app's own built-in Project Tracker template's Milestone entity (packages/spec-
  * engine/src/templates.ts) has exactly this shape: a `done` boolean and a
  * `dueDate`, no status/stage enum at all. Without this, a milestone marked
  * done still rendered with the red "overdue" date styling the moment its
@@ -529,12 +529,27 @@ export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boo
   // (e.g. an AI-generated Booking/Order entity modeling cancellation as a
   // plain boolean instead of a status enum) still rendered the red
   // "overdue" date styling once its deadline passed.
+  // Round 1968: every OTHER base word in this list pairs with its exact
+  // "is"-prefixed form ("done"/"isdone", "cancelled"/"iscancelled",
+  // "canceled"/"iscanceled") -- but "completed"'s own pairing, "iscomplete",
+  // silently dropped the "-ed" and paired with a different word instead.
+  // `isCompleted` (parallel to `isDone`/`isCancelled`, both of which already
+  // match) is the idiomatic camelCase boolean-flag name a developer or an
+  // AI-generated spec would actually write, but it was never recognized.
   const doneField = fields.find(
     (f) =>
       f.type === "boolean" &&
-      ["done", "completed", "isdone", "iscomplete", "cancelled", "canceled", "iscancelled", "iscanceled"].includes(
-        f.name.toLowerCase(),
-      ),
+      [
+        "done",
+        "completed",
+        "isdone",
+        "iscomplete",
+        "iscompleted",
+        "cancelled",
+        "canceled",
+        "iscancelled",
+        "iscanceled",
+      ].includes(f.name.toLowerCase()),
   );
   if (doneField && record[doneField.name] === true) return true;
   return false;

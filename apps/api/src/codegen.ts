@@ -3288,8 +3288,8 @@ function getDateUrgency(value, today) {
 //
 // Round 1737 widens this to also recognize a sibling BOOLEAN completion
 // field (matched the same case-insensitive way, against "done"/
-// "completed"/"isdone"/"iscomplete") whose value is true -- mirrors the
-// live preview's own round-1737 widening. The Project Tracker template's
+// "completed"/"isdone"/"iscomplete"/"iscompleted") whose value is true --
+// mirrors the live preview's own round-1737 widening. The Project Tracker template's
 // Milestone entity has a \`done\` boolean and a \`dueDate\`, no status/stage
 // enum at all, so a completed milestone still rendered as overdue here too.
 // Round 1951: "returned" (Rental.status), "sold" (Property.status), "hired"
@@ -3321,12 +3321,24 @@ function isRecordClosedStatus(record, fields) {
   }
   // Round 1889: widened to also recognize "cancelled"/"canceled" (and their
   // "is"-prefixed forms), mirroring the live app's own matching widening.
+  // Round 1968: mirrors the live app's own identical fix -- every OTHER
+  // base word here pairs with its exact "is"-prefixed form, but
+  // "completed"'s own pairing, "iscomplete", silently dropped the "-ed".
+  // "isCompleted" was never recognized.
   const doneField = fields.find(
     (f) =>
       f.type === "boolean" &&
-      ["done", "completed", "isdone", "iscomplete", "cancelled", "canceled", "iscancelled", "iscanceled"].includes(
-        f.name.toLowerCase(),
-      ),
+      [
+        "done",
+        "completed",
+        "isdone",
+        "iscomplete",
+        "iscompleted",
+        "cancelled",
+        "canceled",
+        "iscancelled",
+        "iscanceled",
+      ].includes(f.name.toLowerCase()),
   );
   if (doneField && record[doneField.name] === true) return true;
   return false;

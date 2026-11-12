@@ -30973,6 +30973,81 @@ test("the exported EntityView does not flag a record with a true boolean 'cancel
 });
 
 /**
+ * Round 1968: every OTHER base word in isRecordClosedStatus's boolean-
+ * completion list pairs with its exact "is"-prefixed form ("done"/"isdone",
+ * "cancelled"/"iscancelled") -- but "completed"'s own pairing, "iscomplete",
+ * silently dropped the "-ed" and paired with a different word instead.
+ * `isCompleted` (parallel to `isDone`/`isCancelled`, both of which already
+ * match) was never recognized. Same shape as the "cancelled" boolean test
+ * above, but with an `isCompleted` field on a Milestone-shaped entity (no
+ * status/stage enum at all).
+ */
+test("the exported EntityView does not flag a record with a true boolean 'isCompleted' completion field as overdue/due-soon", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const milestoneEntity = {
+    name: "Milestone",
+    label: "Milestone",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "dueDate", label: "Due date", type: "date", required: false },
+      { name: "isCompleted", label: "Completed", type: "boolean", required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Design", dueDate: isoDateOffset(-5), isCompleted: false },
+    { id: 2, title: "Scope", dueDate: isoDateOffset(-5), isCompleted: true },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Milestone") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: milestoneEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Design/.test(r.textContent ?? ""))!;
+      const completedRow = rows.find((r) => /Scope/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "an isCompleted:false record with a 5-day-past dueDate must still be flagged overdue");
+      assert.equal(completedRow.querySelector(".date-overdue") === null, true, "an isCompleted:true record with the identical past dueDate must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1951: CLOSED_STATUS_VALUES's exported-app copy claims (in its own
  * doc comment) to be gathered from every status enum this project's domain
  * library actually ships, but "returned" (the built-in Rental entity's own

@@ -815,7 +815,7 @@ function isDeadlineFieldName(fieldName: string): boolean {
  *
  * Round 1737 widens this to also recognize a sibling BOOLEAN completion
  * field (matched the same case-insensitive way, against "done"/
- * "completed"/"isdone"/"iscomplete") whose value is true -- mirrors
+ * "completed"/"isdone"/"iscomplete"/"iscompleted") whose value is true -- mirrors
  * entityFormatting.ts's own round-1737 widening. The Project Tracker
  * template's Milestone entity has a `done` boolean and a `dueDate`, no
  * status/stage enum at all, so a completed milestone was still counted in
@@ -857,12 +857,25 @@ function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): b
   // not recognized at all, so a cancelled record still counted as
   // overdue/dueSoon in computeOverdueObservations/computeDueSoonObservations
   // below.
+  // Round 1968: mirrors entityFormatting.ts's own identical fix -- every
+  // OTHER base word here pairs with its exact "is"-prefixed form, but
+  // "completed"'s own pairing, "iscomplete", silently dropped the "-ed".
+  // `isCompleted` (parallel to `isDone`/`isCancelled`, both of which
+  // already match) was never recognized.
   const doneField = fields.find(
     (f) =>
       f.type === "boolean" &&
-      ["done", "completed", "isdone", "iscomplete", "cancelled", "canceled", "iscancelled", "iscanceled"].includes(
-        f.name.toLowerCase(),
-      ),
+      [
+        "done",
+        "completed",
+        "isdone",
+        "iscomplete",
+        "iscompleted",
+        "cancelled",
+        "canceled",
+        "iscancelled",
+        "iscanceled",
+      ].includes(f.name.toLowerCase()),
   );
   if (doneField && record[doneField.name] === true) return true;
   return false;

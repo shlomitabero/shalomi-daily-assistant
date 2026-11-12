@@ -2151,6 +2151,44 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record whose
 });
 
 /**
+ * Round 1968: every OTHER base word in isRecordClosedStatus's boolean-name
+ * list pairs with its exact "is"-prefixed form, but "completed"'s own
+ * pairing, "iscomplete", silently dropped the "-ed" -- "isCompleted" was
+ * never recognized, even though it's the idiomatic camelCase name a
+ * developer or an AI-generated spec would actually write.
+ */
+test("computeBusinessTwin's overdue-deadline observation excludes a record whose own boolean completion field is 'isCompleted' (round 1968)", () => {
+  const milestoneProject: Project = {
+    ...project,
+    description: "Project milestones",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Milestone",
+          label: "Milestones",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "dueDate", label: "Due date", type: "date", required: false },
+            { name: "isCompleted", type: "boolean", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, milestoneProject.id, milestoneProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, milestoneProject.id, milestoneProject.spec.entities[0], { title: "Design", dueDate: "2026-01-01", isCompleted: false }); // genuinely overdue
+  insertRecord(db, milestoneProject.id, milestoneProject.spec.entities[0], { title: "Scope", dueDate: "2026-01-01", isCompleted: true }); // already resolved
+
+  const twin = computeBusinessTwin(db, milestoneProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Due date"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `the completed milestone must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
+/**
  * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be gathered
  * from every status enum this file's own domain library actually ships,
  * but "returned" (the built-in Rental entity's own terminal status value)

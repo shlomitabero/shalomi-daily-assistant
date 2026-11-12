@@ -4809,6 +4809,32 @@ test("isRecordClosedStatus also recognizes a sibling BOOLEAN 'cancelled' field (
 });
 
 /**
+ * Round 1968: every OTHER base word in this list pairs with its exact
+ * "is"-prefixed form ("done"/"isdone", "cancelled"/"iscancelled",
+ * "canceled"/"iscanceled") -- but "completed"'s own pairing, "iscomplete",
+ * silently dropped the "-ed" and paired with a different word instead.
+ * "isCompleted" (parallel to "isDone"/"isCancelled", both of which already
+ * match) is the idiomatic camelCase boolean-flag name a developer or an
+ * AI-generated spec would actually write, but it was never recognized.
+ */
+test("isRecordClosedStatus also recognizes a sibling BOOLEAN 'isCompleted' field (round 1968), matching the 'is'-prefixed pairing every other base word in this list already gets", () => {
+  const milestoneFields: Field[] = [
+    { name: "dueDate", type: "date", required: false },
+    { name: "isCompleted", type: "boolean", required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", isCompleted: true }, milestoneFields),
+    true,
+    "a completed milestone is resolved even though it has no status/stage enum at all",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, dueDate: "2020-01-01", isCompleted: false }, milestoneFields),
+    false,
+    "a not-yet-completed milestone leaves the date-only overdue classification untouched",
+  );
+});
+
+/**
  * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be "gathered
  * from every status enum this file's own domain library actually ships",
  * but "returned" (Rental.status), "sold" (Property.status), "hired"
