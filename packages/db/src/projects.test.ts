@@ -36,6 +36,8 @@ import {
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,
   regenerateCalendarFeedToken,
+  recordCalendarFeedFetch,
+  getLastCalendarFeedFetchAt,
   getOrCreateInboundWebhookToken,
   getInboundWebhookToken,
   regenerateInboundWebhookToken,
@@ -1015,6 +1017,70 @@ test("regenerateCalendarFeedToken overwrites an already-set token with a real, d
   assert.equal(getCalendarFeedToken(db, "proj1"), regenerated, "the new token must actually be persisted, not just returned");
 
   assert.equal(regenerateCalendarFeedToken(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1970: until now a real fetch through this token left no trace
+ * anywhere -- this is the read/write pair that closes that gap, mirroring
+ * recordInboundWebhookDelivery/getLastInboundWebhookAt's own identical
+ * shape for the structural sibling token.
+ */
+test("recordCalendarFeedFetch stamps a real, current timestamp that getLastCalendarFeedFetchAt then returns; absent until the first call", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  assert.equal(getLastCalendarFeedFetchAt(db, "proj1"), undefined, "no fetch has ever landed yet");
+
+  const before = Date.now();
+  recordCalendarFeedFetch(db, "proj1");
+  const after = Date.now();
+
+  const stamped = getLastCalendarFeedFetchAt(db, "proj1");
+  assert.ok(stamped, "expected a real timestamp to be persisted");
+  const stampedMs = new Date(stamped!).getTime();
+  assert.ok(stampedMs >= before && stampedMs <= after, "the stamped value must actually reflect when this call ran, not an unrelated/stale value");
+});
+
+test("recordCalendarFeedFetch overwrites the previous timestamp with a newer one on a second call, and is a silent no-op for a project that doesn't exist", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  recordCalendarFeedFetch(db, "proj1");
+  const first = getLastCalendarFeedFetchAt(db, "proj1");
+
+  recordCalendarFeedFetch(db, "proj1");
+  const second = getLastCalendarFeedFetchAt(db, "proj1");
+  assert.ok(new Date(second!).getTime() >= new Date(first!).getTime(), "a later fetch must advance the stamp, never move it backwards");
+
+  // Must not throw -- the caller (routes/calendar.ts) has already finished
+  // serving the ICS response by the time this runs, so a project deleted
+  // in the meantime has nothing left to roll back.
+  recordCalendarFeedFetch(db, "does-not-exist");
+  assert.equal(getLastCalendarFeedFetchAt(db, "does-not-exist"), undefined);
+});
+
+/**
+ * Round 1970: a fetch recorded under token A must not keep showing up as
+ * "the current state" once the owner rotates to token B -- mirrors
+ * round 1457's identical test for the structural sibling token exactly.
+ */
+test("regenerateCalendarFeedToken also clears lastCalendarFeedFetchAt back to undefined, so a stale fetch from the old token doesn't look current", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  insertProject(db, { id: "proj1", ownerId: "owner1", name: "P1", description: "", spec: validSpec });
+
+  getOrCreateCalendarFeedToken(db, "proj1");
+  recordCalendarFeedFetch(db, "proj1");
+  assert.ok(getLastCalendarFeedFetchAt(db, "proj1"), "sanity check: a fetch was actually recorded under the original token");
+
+  regenerateCalendarFeedToken(db, "proj1");
+  assert.equal(
+    getLastCalendarFeedFetchAt(db, "proj1"),
+    undefined,
+    "rotating the token must clear the old fetch timestamp -- it belongs to a token that no longer works",
+  );
 });
 
 /**

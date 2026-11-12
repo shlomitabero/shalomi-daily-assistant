@@ -157,6 +157,13 @@ export function CollaboratorsPanel({
   const [resendInfo, setResendInfo] = useState<string | null>(null);
   const [regeneratingFeedToken, setRegeneratingFeedToken] = useState(false);
   const [regenerateFeedTokenInfo, setRegenerateFeedTokenInfo] = useState<string | null>(null);
+  // Round 1970: same three-state shape as lastInboundWebhookAt just below
+  // (undefined until the owner actually clicks "Check" -- see
+  // handleCheckLastCalendarFeedFetch's own doc comment -- vs. null once
+  // checked with no fetch ever recorded), mirroring that field's own
+  // identical convention for its structural sibling.
+  const [lastCalendarFeedFetchAt, setLastCalendarFeedFetchAt] = useState<string | null | undefined>(undefined);
+  const [checkingLastCalendarFeedFetch, setCheckingLastCalendarFeedFetch] = useState(false);
   const [regeneratingWebhookToken, setRegeneratingWebhookToken] = useState(false);
   const [regenerateWebhookTokenInfo, setRegenerateWebhookTokenInfo] = useState<string | null>(null);
   // Round 1456: undefined until the owner actually clicks "Check" below
@@ -221,6 +228,29 @@ export function CollaboratorsPanel({
    * on every single render of this owner-only section across the whole
    * app, for a value almost nobody checks on every open.
    */
+  /**
+   * Round 1970: mirrors handleCheckLastInboundWebhook's own doc comment
+   * exactly, for its structural sibling -- deliberately on-demand (a
+   * click), not an automatic fetch on mount. Cross-gates against
+   * regeneratingFeedToken (mirroring handleCheckLastInboundWebhook's own
+   * cross-gate against regeneratingWebhookToken below) and guards its own
+   * reentrancy from the start, applying round 1965's own lesson rather
+   * than reproducing the gap that round closed on handleCheckLastInboundWebhook.
+   */
+  async function handleCheckLastCalendarFeedFetch() {
+    if (regeneratingFeedToken) return;
+    if (checkingLastCalendarFeedFetch) return;
+    setCheckingLastCalendarFeedFetch(true);
+    try {
+      const { lastCalendarFeedFetchAt } = await getCalendarFeedToken(projectId);
+      setLastCalendarFeedFetchAt(lastCalendarFeedFetchAt ?? null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCheckingLastCalendarFeedFetch(false);
+    }
+  }
+
   async function handleCheckLastInboundWebhook() {
     // Round 1466: see handleRegenerateInboundWebhookToken's own matching
     // guard -- the mirror-image half of the same cross-gate, so a Check
@@ -570,6 +600,13 @@ export function CollaboratorsPanel({
     // best-effort-emails every other collaborator (round 1290), so two
     // overlapping calls risk two such emails for one click.
     if (regeneratingFeedToken) return;
+    // Round 1970: cross-gate against handleCheckLastCalendarFeedFetch,
+    // mirroring handleRegenerateInboundWebhookToken's own identical
+    // round-1466 cross-gate below -- without this, a Check already in
+    // flight against the OLD token can resolve after this regenerate call
+    // resets lastCalendarFeedFetchAt back to "haven't checked yet",
+    // silently overwriting that reset with the stale pre-rotation value.
+    if (checkingLastCalendarFeedFetch) return;
     if (!window.confirm(t("collab.calendarFeed.regenerate.confirm"))) return;
     setRegeneratingFeedToken(true);
     setError(null);
@@ -577,6 +614,13 @@ export function CollaboratorsPanel({
     try {
       await regenerateCalendarFeedToken(projectId, lang);
       setRegenerateFeedTokenInfo(t("collab.calendarFeed.regenerate.success"));
+      // Round 1970: the server just cleared lastCalendarFeedFetchAt back
+      // to null for this same reason (see regenerateCalendarFeedToken's
+      // own doc comment, packages/db) -- reset this panel's own
+      // already-checked value back to the "haven't checked yet" sentinel
+      // too, mirroring handleRegenerateInboundWebhookToken's own identical
+      // round-1457 reset below.
+      setLastCalendarFeedFetchAt(undefined);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1127,12 +1171,39 @@ export function CollaboratorsPanel({
           <div className="collab-calendar-feed-section">
             <h3>{t("collab.calendarFeed.heading")}</h3>
             <p className="muted small">{t("collab.calendarFeed.description")}</p>
-            <button type="button" className="secondary" onClick={handleRegenerateCalendarFeedToken} disabled={regeneratingFeedToken}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleRegenerateCalendarFeedToken}
+              disabled={regeneratingFeedToken || checkingLastCalendarFeedFetch}
+            >
               {regeneratingFeedToken ? t("collab.calendarFeed.regenerate.busy") : t("collab.calendarFeed.regenerate")}
             </button>
             {regenerateFeedTokenInfo && (
               <p className="muted small" role="status">
                 {regenerateFeedTokenInfo}
+              </p>
+            )}
+            {/*
+              Round 1970: a second, independent action in this same
+              section -- deliberately NOT auto-fetched on mount (see
+              handleCheckLastCalendarFeedFetch's own doc comment),
+              mirroring the inbound-webhook section's own identical
+              "Check last delivery" button/status placement below.
+            */}
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleCheckLastCalendarFeedFetch}
+              disabled={checkingLastCalendarFeedFetch || regeneratingFeedToken}
+            >
+              {checkingLastCalendarFeedFetch ? t("collab.calendarFeed.checkLastFetched.busy") : t("collab.calendarFeed.checkLastFetched")}
+            </button>
+            {lastCalendarFeedFetchAt !== undefined && (
+              <p className="muted small" role="status">
+                {lastCalendarFeedFetchAt
+                  ? t("collab.calendarFeed.lastFetched.some", { time: new Date(lastCalendarFeedFetchAt).toLocaleString(LOCALE[lang]) })
+                  : t("collab.calendarFeed.lastFetched.never")}
               </p>
             )}
           </div>

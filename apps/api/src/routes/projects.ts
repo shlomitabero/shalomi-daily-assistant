@@ -56,6 +56,7 @@ import {
   disableAutomationRulesForField,
   getOrCreateCalendarFeedToken,
   regenerateCalendarFeedToken,
+  getLastCalendarFeedFetchAt,
   getOrCreateInboundWebhookToken,
   regenerateInboundWebhookToken,
   getLastInboundWebhookAt,
@@ -2230,7 +2231,13 @@ export function createProjectsRouter(
     "/projects/:id/calendar-feed-token",
     asyncRoute(async (req, res) => {
       requireProjectAccess(db, req.params.id, req.userId!);
-      res.json({ token: getOrCreateCalendarFeedToken(db, req.params.id) });
+      res.json({
+        token: getOrCreateCalendarFeedToken(db, req.params.id),
+        // Round 1970: see recordCalendarFeedFetch's own doc comment
+        // (packages/db) -- mirrors the inbound-webhook-token GET route's
+        // own existing lastInboundWebhookAt field.
+        lastCalendarFeedFetchAt: getLastCalendarFeedFetchAt(db, req.params.id),
+      });
     }),
   );
 

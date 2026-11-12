@@ -22549,6 +22549,112 @@ test("POST /projects/:id/calendar-feed-token/regenerate invalidates the old toke
 });
 
 /**
+ * Round 1970: mirrors the inbound-webhook-token sibling's own identical
+ * round-1456 test exactly -- see recordCalendarFeedFetch's own doc
+ * comment (packages/db) for the full reasoning.
+ */
+test("GET /projects/:id/calendar-feed-token reports lastCalendarFeedFetchAt: absent until the first real fetch, set after it", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-last-fetched-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: feedToken, lastCalendarFeedFetchAt: beforeAny } = (await tokenRes.json()) as {
+      token: string;
+      lastCalendarFeedFetchAt?: string;
+    };
+    assert.equal(beforeAny, undefined, "no fetch has happened yet, so this must be absent, not a stale/default timestamp");
+
+    const feedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}`);
+    assert.equal(feedRes.status, 200, "sanity check: the real feed route must actually succeed");
+
+    const afterFetchRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { lastCalendarFeedFetchAt: afterFetch } = (await afterFetchRes.json()) as { lastCalendarFeedFetchAt?: string };
+    assert.ok(afterFetch, "a genuine fetch of the real feed route must stamp a real timestamp");
+    assert.ok(Date.now() - new Date(afterFetch!).getTime() < 60_000, "the stamped timestamp must actually reflect this fetch, not some unrelated stale value");
+
+    // The combined all-entities route must stamp the identical, shared
+    // project-level timestamp too -- not a separate one.
+    const combinedFeedRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/all/feed.ics?token=${feedToken}`);
+    assert.equal(combinedFeedRes.status, 200);
+    const afterCombinedRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { lastCalendarFeedFetchAt: afterCombined } = (await afterCombinedRes.json()) as { lastCalendarFeedFetchAt?: string };
+    assert.ok(
+      new Date(afterCombined!).getTime() >= new Date(afterFetch!).getTime(),
+      "the combined route's own fetch must advance the same shared timestamp, not leave it unchanged",
+    );
+
+    // A 404 (wrong token) must never be mistaken for a real fetch.
+    const before404 = afterCombined;
+    const badTokenRes = await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${feedToken}wrong`);
+    assert.equal(badTokenRes.status, 404);
+    const after404Res = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { lastCalendarFeedFetchAt: after404 } = (await after404Res.json()) as { lastCalendarFeedFetchAt?: string };
+    assert.equal(after404, before404, "a 404'd request (wrong token) must never stamp the timestamp -- recordCalendarFeedFetch only runs on a real success");
+  });
+});
+
+/**
+ * Round 1970: mirrors the inbound-webhook-token sibling's own identical
+ * round-1457 test exactly -- see regenerateCalendarFeedToken's own doc
+ * comment (packages/db) for the full reasoning.
+ */
+test("POST /projects/:id/calendar-feed-token/regenerate clears lastCalendarFeedFetchAt back to absent, so a fetch recorded under the old token doesn't look current under the new one", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `calendar-feed-regen-clears-last-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Appointment", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    insertRecord(db, projectId, spec.entities[0], { name: "Checkup", date: "2026-05-01" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { token: oldToken } = (await tokenRes.json()) as { token: string };
+    await fetch(`${baseUrl}/api/public/calendar/${projectId}/Appointment.ics?token=${oldToken}`);
+
+    const beforeRegenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { lastCalendarFeedFetchAt: beforeRegen } = (await beforeRegenRes.json()) as { lastCalendarFeedFetchAt?: string };
+    assert.ok(beforeRegen, "sanity check: a fetch was actually recorded under the original token");
+
+    const regenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token/regenerate`, {
+      method: "POST",
+      headers: authHeaders(authToken),
+    });
+    assert.equal(regenRes.status, 200);
+
+    const afterRegenRes = await fetch(`${baseUrl}/api/projects/${projectId}/calendar-feed-token`, { headers: authHeaders(authToken) });
+    const { lastCalendarFeedFetchAt: afterRegen } = (await afterRegenRes.json()) as { lastCalendarFeedFetchAt?: string };
+    assert.equal(afterRegen, undefined, "rotating the token must clear the old fetch timestamp -- it belongs to a token that no longer works");
+  });
+});
+
+/**
  * Round 1313: this route's own effect invalidates the exact token a retry
  * would otherwise still expect -- a response lost in transit after the
  * server already rotated the token used to make a retry with no

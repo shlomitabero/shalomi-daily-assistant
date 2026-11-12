@@ -34,6 +34,8 @@ export {
   getOrCreateCalendarFeedToken,
   getCalendarFeedToken,
   regenerateCalendarFeedToken,
+  recordCalendarFeedFetch,
+  getLastCalendarFeedFetchAt,
   getOrCreateInboundWebhookToken,
   getInboundWebhookToken,
   regenerateInboundWebhookToken,

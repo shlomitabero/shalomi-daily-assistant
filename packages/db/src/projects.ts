@@ -55,6 +55,14 @@ export function ensureProjectsTable(db: ForgeDatabase): void {
   if (!columns.includes("lastInboundWebhookFailureReason")) {
     db.exec("ALTER TABLE projects ADD COLUMN lastInboundWebhookFailureReason TEXT");
   }
+  // Round 1970: see recordCalendarFeedFetch's own doc comment. Same
+  // additive-only, lazily-written shape as lastInboundWebhookAt above --
+  // a project whose calendar feed has never been fetched (or was created
+  // before this column existed) simply has null here until the first
+  // fetch lands.
+  if (!columns.includes("lastCalendarFeedFetchAt")) {
+    db.exec("ALTER TABLE projects ADD COLUMN lastCalendarFeedFetchAt TEXT");
+  }
   // Round 1568: see recordCheckpointRestore's own doc comment. Same
   // additive-only, lazily-written shape as lastInboundWebhookAt above -- a
   // project that's never had a checkpoint restored simply has null in all
@@ -515,12 +523,19 @@ export function getOrCreateCalendarFeedToken(db: ForgeDatabase, projectId: strin
  * getOrCreateCalendarFeedToken's own token-generation shape exactly, but
  * unconditionally overwrites rather than returning an existing value --
  * the whole point is to make the old one stop matching.
+ *
+ * Round 1970: also clears lastCalendarFeedFetchAt back to null -- mirrors
+ * regenerateInboundWebhookToken's own identical round-1457 fix exactly.
+ * Without this, round 1970's own delivery-visibility feature would keep
+ * reporting a real timestamp from a fetch that landed under the OLD,
+ * now-dead token, indistinguishable from a fresh fetch under the token
+ * actually live right now.
  */
 export function regenerateCalendarFeedToken(db: ForgeDatabase, projectId: string): string | undefined {
   const project = db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as { id: string } | undefined;
   if (!project) return undefined;
   const token = randomBytes(32).toString("hex");
-  db.prepare("UPDATE projects SET calendarFeedToken = ? WHERE id = ?").run(token, projectId);
+  db.prepare("UPDATE projects SET calendarFeedToken = ?, lastCalendarFeedFetchAt = NULL WHERE id = ?").run(token, projectId);
   return token;
 }
 
@@ -537,6 +552,49 @@ export function getCalendarFeedToken(db: ForgeDatabase, projectId: string): stri
     | { calendarFeedToken: string | null }
     | undefined;
   return row?.calendarFeedToken ?? undefined;
+}
+
+/**
+ * Round 1970: a real calendar app (Google/Apple Calendar, a phone) that's
+ * been handed this project's "Subscribe" URL re-fetches it forever on its
+ * own schedule, with zero other signal reaching this app -- the exact
+ * same shape of integration round 1456 built delivery-visibility for on
+ * its structural sibling, the inbound webhook token. Before this, a user
+ * who pasted the subscribe URL into their calendar app and had it
+ * silently fail (wrong URL, a slow first poll, a copy/paste mistake) had
+ * no way inside Forge AI to tell "nothing has ever fetched this" apart
+ * from "it's working, just hasn't produced a visible new event yet" --
+ * they could only wait and check their calendar app days later.
+ *
+ * Called from routes/calendar.ts's own two public feed routes (per-entity
+ * and combined), right before each one serves a successful ICS response
+ * -- mirroring recordInboundWebhookDelivery's own "only ever fires on
+ * success" discipline. Both routes share this single project-level
+ * timestamp, matching how lastInboundWebhookAt is already shared across
+ * every entity's own webhook URL.
+ *
+ * Silently no-ops for a project that's since been deleted (the row simply
+ * no longer exists to UPDATE) -- the caller has already finished serving
+ * the ICS response by the time this runs, so there's nothing left to roll
+ * back or report.
+ */
+export function recordCalendarFeedFetch(db: ForgeDatabase, projectId: string): void {
+  db.prepare("UPDATE projects SET lastCalendarFeedFetchAt = ? WHERE id = ?").run(new Date().toISOString(), projectId);
+}
+
+/**
+ * The read side of recordCalendarFeedFetch just above -- undefined for
+ * both "project doesn't exist" and "no fetch has ever landed", mirroring
+ * getLastInboundWebhookAt's own undifferentiated-undefined shape on this
+ * same table for the identical reason: the only caller (the GET
+ * .../calendar-feed-token route) already 404s uniformly on project lookup
+ * failure before this is ever reached.
+ */
+export function getLastCalendarFeedFetchAt(db: ForgeDatabase, projectId: string): string | undefined {
+  const row = db.prepare("SELECT lastCalendarFeedFetchAt FROM projects WHERE id = ?").get(projectId) as
+    | { lastCalendarFeedFetchAt: string | null }
+    | undefined;
+  return row?.lastCalendarFeedFetchAt ?? undefined;
 }
 
 /**

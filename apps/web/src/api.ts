@@ -1115,7 +1115,15 @@ export function getEntityCounts(projectId: string): Promise<{ counts: Record<str
  * comment on this route, and getOrCreateCalendarFeedToken (packages/db)
  * for why this is a real persisted secret, not derived client-side.
  */
-export function getCalendarFeedToken(projectId: string): Promise<{ token: string }> {
+/**
+ * `lastCalendarFeedFetchAt` (round 1970): the ISO timestamp of the most
+ * recent fetch this project's live calendar feed has ever actually
+ * received from a real calendar app, or undefined if none has landed
+ * yet -- backs CollaboratorsPanel.tsx's own delivery-visibility line,
+ * mirroring getInboundWebhookToken's own lastInboundWebhookAt convention
+ * for its structural sibling.
+ */
+export function getCalendarFeedToken(projectId: string): Promise<{ token: string; lastCalendarFeedFetchAt?: string }> {
   return request(`/projects/${projectId}/calendar-feed-token`);
 }
 

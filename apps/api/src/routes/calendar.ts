@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import type { ForgeDatabase } from "@forge/db";
-import { getCalendarFeedToken, listRecords } from "@forge/db";
+import { getCalendarFeedToken, listRecords, recordCalendarFeedFetch } from "@forge/db";
 import { ProductSpecSchema, type Entity, type EntityRecord } from "@forge/shared";
 import { isHebrewText } from "@forge/spec-engine";
 import { buildCalendarFeedIcs, buildCombinedCalendarFeedIcs, type RelatedRecordsByEntity } from "../calendarFeed.js";
@@ -162,6 +162,11 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
         res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
         return;
       }
+      // Round 1970: see recordCalendarFeedFetch's own doc comment
+      // (packages/db) -- mirrors recordInboundWebhookDelivery's own "only
+      // ever fires on success" discipline, right before the response that
+      // confirms this fetch actually succeeded is sent.
+      recordCalendarFeedFetch(db, projectId);
       res.setHeader("Content-Type", "text/calendar; charset=utf-8");
       res.send(ics);
     }),
@@ -249,6 +254,10 @@ export function createCalendarFeedRouter(db: ForgeDatabase): Router {
         res.status(404).json({ error: "Calendar feed not found", code: "CALENDAR_FEED_NOT_FOUND" });
         return;
       }
+      // Round 1970: see the combined-feed route's own matching call just
+      // above for the full reasoning -- both routes share the same
+      // project-level lastCalendarFeedFetchAt timestamp.
+      recordCalendarFeedFetch(db, projectId);
       res.setHeader("Content-Type", "text/calendar; charset=utf-8");
       res.send(ics);
     }),

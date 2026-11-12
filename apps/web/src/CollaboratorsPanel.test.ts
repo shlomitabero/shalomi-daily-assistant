@@ -1823,6 +1823,91 @@ test("handleCheckLastInboundWebhook is a no-op while checkingLastInboundWebhook 
 });
 
 /**
+ * Round 1970: mirrors round 1456's own "Check last delivery" test above
+ * exactly, for the calendar-feed token's own new "Check last fetch"
+ * button -- see recordCalendarFeedFetch's own doc comment (packages/db)
+ * for the full reasoning. The regenerate button is index 0 in this
+ * section; the new check button is index 1, placed right after it.
+ */
+test("CollaboratorsPanel's \"Check last fetch\" button shows \"Never fetched yet\" when lastCalendarFeedFetchAt is absent, and the real formatted timestamp once one is returned", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let tokenFetchCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/calendar-feed-token") {
+        tokenFetchCalls += 1;
+        return new Response(JSON.stringify({ token: "abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+      assert.equal(tokenFetchCalls, 0, "merely opening the panel must never fetch this on its own");
+
+      const checkButton = document.querySelectorAll(".collab-calendar-feed-section button")[1] as HTMLButtonElement;
+      fireEvent.click(checkButton);
+      await waitForCondition(() => (document.querySelector(".collab-calendar-feed-section") as HTMLElement).textContent!.includes("Never fetched yet"));
+      assert.equal(tokenFetchCalls, 1, "clicking it must call the real token route exactly once");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("CollaboratorsPanel's \"Check last fetch\" button shows the real, formatted fetch timestamp once the server returns one", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchedAt = new Date("2026-01-15T10:00:00Z").toISOString();
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/calendar-feed-token") {
+        return new Response(JSON.stringify({ token: "abc", lastCalendarFeedFetchAt: fetchedAt }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderPanel(true);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+
+      const checkButton = document.querySelectorAll(".collab-calendar-feed-section button")[1] as HTMLButtonElement;
+      fireEvent.click(checkButton);
+      await waitForCondition(() => (document.querySelector(".collab-calendar-feed-section") as HTMLElement).textContent!.includes("Last fetched"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1970: mirrors round 1965's own extraction-technique test above
+ * exactly, for the new handleCheckLastCalendarFeedFetch handler -- built
+ * with its own-click reentrancy guard from the start (see that handler's
+ * own doc comment), so this proves the guard genuinely stops execution
+ * rather than merely asserting it was never reachable in the first place.
+ */
+test("handleCheckLastCalendarFeedFetch is a no-op while checkingLastCalendarFeedFetch is already true", async () => {
+  const handlerMatch = collaboratorsPanelSrc.match(/ {2}async function handleCheckLastCalendarFeedFetch\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleCheckLastCalendarFeedFetch in CollaboratorsPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function(
+    "regeneratingFeedToken",
+    "checkingLastCalendarFeedFetch",
+    `${code}\nreturn handleCheckLastCalendarFeedFetch;`,
+  )(false, true) as () => Promise<void>;
+  await fn();
+});
+
+/**
  * Round 1471: the failure-side counterpart to the test just above -- a
  * rejected delivery (bad payload, not a bad token/project/entity) is now
  * tracked separately from lastInboundWebhookAt, and this proves the new
