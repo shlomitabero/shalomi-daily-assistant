@@ -500,6 +500,97 @@ test("generated server.js's combined calendar feed 404s when NO entity in the pr
 });
 
 /**
+ * The live backend's own apps/api/src/calendarFeed.ts (round 1807) fixed the
+ * VALARM reminder's own DESCRIPTION line to follow the project's language --
+ * every other DESCRIPTION/SUMMARY in the same VEVENT already renders in
+ * Hebrew via each field's own label text, so a hardcoded English "Reminder"
+ * was the one leftover English string in an otherwise fully Hebrew feed.
+ * That round-1807 fix was ported to this exported app's own per-entity feed
+ * (buildCalendarFeedIcs) and combined feed (buildCombinedCalendarFeedIcs)
+ * when the VALARM feature itself was first added here (round 1438/1472),
+ * but only the "add a VALARM" half ever made it across -- the DESCRIPTION
+ * text itself stayed a bare "Reminder" with no hebrew check at all, in both
+ * copies, confirmed by reading the generated server.js's own source before
+ * this round's fix. Reuses this exported app's own established "no
+ * per-request lang, decided once at export time from entity/field labels"
+ * convention (renderWebIndexHtml's own `hebrew` computation, reused via the
+ * identical formula in renderServerJs).
+ */
+test("generated server.js's calendar feed VALARM reminder follows the project's own language, matching the live preview's round-1807 fix (per-entity and combined feed)", async () => {
+  const appointmentEntity: Entity = {
+    name: "Appointment",
+    label: "תורים",
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text", required: true },
+      { name: "date", label: "תאריך", type: "date", required: true },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [appointmentEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-hebrew-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const createRes = await fetch(`http://localhost:${port}/api/Appointment`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ customerName: "דנה לוי", date: "2026-11-05" }),
+        });
+        assert.equal(createRes.status, 201);
+
+        const feedRes = await fetch(`http://localhost:${port}/api/calendar/Appointment.ics`);
+        assert.equal(feedRes.status, 200);
+        const ics = await feedRes.text();
+        assert.match(
+          ics,
+          /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:תזכורת\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/,
+          "a Hebrew-labeled project's per-entity feed VALARM must read 'תזכורת', not 'Reminder'",
+        );
+
+        const combinedFeedRes = await fetch(`http://localhost:${port}/api/calendar/all/feed.ics`);
+        assert.equal(combinedFeedRes.status, 200);
+        const combinedIcs = await combinedFeedRes.text();
+        assert.match(
+          combinedIcs,
+          /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:תזכורת\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/,
+          "a Hebrew-labeled project's combined feed VALARM must read 'תזכורת', not 'Reminder'",
+        );
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1280: PATCH /projects/:id/entities/:entityName/label (the live
  * backend's own route; this exported app has no such route since its
  * entities are frozen at export time) never enforced label uniqueness
@@ -7970,7 +8061,14 @@ test("the exported EntityView renders a real 'Export to Calendar (ICS)' button b
   // file itself to request a reminder, a subscribing calendar app's own
   // "default reminder" setting never applies retroactively to an
   // imported VEVENT -- mirrors the live preview's own calendarIcs.ts fix.
-  assert.match(entityViewJsx, /BEGIN:VALARM.*ACTION:DISPLAY.*DESCRIPTION:Reminder.*TRIGGER:-P1D.*END:VALARM/s);
+  // The DESCRIPTION line itself now follows document.documentElement.dir
+  // (see the dedicated VALARM-reminder test below for why), so this only
+  // checks the literal "תזכורת"/"Reminder" ternary is actually present,
+  // not a single fixed "Reminder" string.
+  assert.match(
+    entityViewJsx,
+    /BEGIN:VALARM.*ACTION:DISPLAY.*DESCRIPTION:\$\{document\.documentElement\.dir === "rtl" \? "תזכורת" : "Reminder"\}.*TRIGGER:-P1D.*END:VALARM/s,
+  );
   // Round 937: the button's own label now states which month it exports
   // (unlike before, when it silently exported only the calendar grid's
   // currently-shown month with zero indication of that scope) -- the
@@ -8069,6 +8167,98 @@ test("the exported EntityView's real generated buildCalendarIcs produces a genui
   // (calendarIcs.ts) -- without X-WR-CALNAME, an exported .ics showed up
   // blank/untitled once opened in a real calendar app.
   assert.match(ics, /X-WR-CALNAME:תורים\r\n/);
+});
+
+/**
+ * The live preview's own apps/web/src/calendarIcs.ts (round 1807) made the
+ * VALARM's own DESCRIPTION follow `lang`, since every other DESCRIPTION/
+ * SUMMARY in the same VEVENT already renders in the project's own language.
+ * This exported app's buildCalendarIcs has no per-request `lang` the live
+ * preview reads (no login/session here at all) -- but, exactly like
+ * computeResizedWidth's own `dir` parameter just above in the real
+ * generated source (round 1373's own doc comment: "this standalone app...
+ * does... have the dir baked into <html> when it was built"), the browser's
+ * own document.documentElement.dir already carries that same baked-in
+ * choice at the moment this button is actually clicked. Before this round,
+ * buildCalendarIcs's own VALARM always read "Reminder" regardless of dir,
+ * confirmed by reading the generated source before the fix.
+ */
+test("the exported EntityView's real generated buildCalendarIcs's VALARM reminder follows document.documentElement.dir, matching the live preview's round-1807 fix", () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(withDate).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const pickDisplaySrc = entityViewJsx.match(/export function pickDisplayField\(entity\) \{[\s\S]*?\n\}\n/)?.[0]?.replace(/^export /, "");
+  const labelFieldSrc = entityViewJsx.match(/function calendarLabelField\(entity, dateField\) \{[\s\S]*?\n\}\n/)?.[0];
+  const pad2Src = entityViewJsx.match(/function icsPad2\(n\) \{[\s\S]*?\n\}\n/)?.[0];
+  const dateSrc = entityViewJsx.match(/function formatIcsDate\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const tsSrc = entityViewJsx.match(/function formatIcsTimestamp\(date\) \{[\s\S]*?\n\}\n/)?.[0];
+  const escSrc = entityViewJsx.match(/function icsEscapeText\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const utf8LenSrc = entityViewJsx.match(/function utf8ByteLength\(s\) \{[\s\S]*?\n\}\n/)?.[0];
+  const foldSrc = entityViewJsx.match(/function foldIcsLine\(line\) \{[\s\S]*?\n\}\n/)?.[0];
+  const buildSrc = entityViewJsx.match(
+    /function buildCalendarIcs\(entity, dateField, labelField, records, relatedRecords, now, endField, orderedFields = entity\.fields\) \{[\s\S]*?\n\}\n/,
+  )?.[0];
+  assert.ok(
+    pickDisplaySrc && labelFieldSrc && pad2Src && dateSrc && tsSrc && escSrc && utf8LenSrc && foldSrc && buildSrc,
+    "expected to find every ICS helper function in the real generated output",
+  );
+
+  const relationStub = "function relationDisplayLabel() { return ''; }\n";
+  const buildCalendarIcs = new Function(
+    `${pickDisplaySrc}\n${labelFieldSrc}\n${pad2Src}\n${dateSrc}\n${tsSrc}\n${escSrc}\n${utf8LenSrc}\n${foldSrc}\n${relationStub}\n${buildSrc}\nreturn buildCalendarIcs;`,
+  )() as (entity: unknown, dateField: unknown, labelField: unknown, records: unknown[], relatedRecords: unknown, now: Date) => string;
+
+  const entity = {
+    name: "Appointment",
+    label: "תורים",
+    fields: [
+      { name: "customerName", label: "שם לקוח", type: "text" },
+      { name: "date", label: "תאריך", type: "date" },
+    ],
+  };
+  const dateField = entity.fields[1];
+  const labelField = entity.fields[0];
+  const records = [{ id: 5, customerName: "Dana Levi", date: "2026-03-15" }];
+
+  // jsdomWarmup's own global `document` is shared across this whole test
+  // file -- saved and restored so this test's own dir mutation can't leak
+  // into any other test that happens to run after it.
+  const originalDir = document.documentElement.dir;
+  try {
+    document.documentElement.dir = "ltr";
+    const icsLtr = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+    assert.match(
+      icsLtr,
+      /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/,
+      "under dir=ltr the VALARM reminder must read 'Reminder'",
+    );
+
+    document.documentElement.dir = "rtl";
+    const icsRtl = buildCalendarIcs(entity, dateField, labelField, records, {}, new Date("2026-01-01T00:00:00Z"));
+    assert.match(
+      icsRtl,
+      /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:תזכורת\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/,
+      "under dir=rtl the VALARM reminder must read 'תזכורת', not 'Reminder'",
+    );
+  } finally {
+    document.documentElement.dir = originalDir;
+  }
 });
 
 /**

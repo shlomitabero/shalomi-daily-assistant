@@ -288,6 +288,18 @@ function renderServerJs(project: Project): string {
     }
   }
 
+  // Mirrors renderWebIndexHtml's own identical hebrew computation exactly
+  // (entity label OR any of its fields' labels) -- this exported app has no
+  // per-request language choice (there's no login/session to carry a
+  // preference), so the project's own language is decided once, here, at
+  // export time, the same way renderWebIndexHtml already decides it once
+  // for the client's own dir/lang attributes. Used below so this server's
+  // own calendar-feed VALARM reminder text matches the rest of a Hebrew
+  // project's exported app instead of always reading "Reminder" in English.
+  const hebrew = project.spec.entities.some(
+    (e) => isHebrew(e.label ?? "") || e.fields.some((f) => isHebrew(f.label ?? "")),
+  );
+
   const entitiesJson = JSON.stringify(
     project.spec.entities.map((e) => ({
       name: e.name,
@@ -1568,7 +1580,12 @@ function buildCalendarFeedIcs(entity, records, recordIndexByEntity) {
     // retroactively to an imported/subscribed VEVENT.
     lines.push("BEGIN:VALARM");
     lines.push("ACTION:DISPLAY");
-    lines.push("DESCRIPTION:Reminder");
+    // Mirrors the live preview's own round-1807 fix (calendarFeed.ts) --
+    // this exported app's own \`hebrew\` is decided once, at export time
+    // (renderServerJs's own top-of-function computation), since every
+    // other DESCRIPTION/SUMMARY in this same VEVENT already renders in the
+    // project's own language via each field's own label text.
+    lines.push("DESCRIPTION:${hebrew ? "תזכורת" : "Reminder"}");
     lines.push("TRIGGER:-P1D");
     lines.push("END:VALARM");
     lines.push("END:VEVENT");
@@ -1699,10 +1716,11 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
       if (descriptionLines.length > 0) {
         lines.push(foldFeedIcsLine(\`DESCRIPTION:\${feedIcsEscapeText(descriptionLines.join("\\n"))}\`));
       }
-      // See the per-entity feed builder above for why this VALARM is needed.
+      // See the per-entity feed builder above for why this VALARM is needed,
+      // and why its own DESCRIPTION follows \`hebrew\`.
       lines.push("BEGIN:VALARM");
       lines.push("ACTION:DISPLAY");
-      lines.push("DESCRIPTION:Reminder");
+      lines.push("DESCRIPTION:${hebrew ? "תזכורת" : "Reminder"}");
       lines.push("TRIGGER:-P1D");
       lines.push("END:VALARM");
       lines.push("END:VEVENT");
@@ -5143,7 +5161,15 @@ function buildCalendarIcs(entity, dateField, labelField, records, relatedRecords
     // retroactively to an imported VEVENT.
     lines.push("BEGIN:VALARM");
     lines.push("ACTION:DISPLAY");
-    lines.push("DESCRIPTION:Reminder");
+    // Mirrors the live preview's own round-1807 fix (calendarIcs.ts) --
+    // every other DESCRIPTION/SUMMARY in this same VEVENT already renders
+    // in the project's own language via each field's own label text. This
+    // standalone app has no per-request lang the live preview's own \`lang\`
+    // reads (see computeResizedWidth's own doc comment, same file, for the
+    // identical "no per-request lang, but dir is baked into <html>"
+    // reasoning) -- document.documentElement.dir is that baked-in value,
+    // read at the moment this button is actually clicked.
+    lines.push(\`DESCRIPTION:\${document.documentElement.dir === "rtl" ? "תזכורת" : "Reminder"}\`);
     lines.push("TRIGGER:-P1D");
     lines.push("END:VALARM");
     lines.push("END:VEVENT");
