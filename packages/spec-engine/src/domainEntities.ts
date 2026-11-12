@@ -447,7 +447,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // Hebrew has no \b (same reason round 565's "מעובד" and round 825's
     // "מצוות" fixes needed lookbehind too); this excludes the specific "כ"
     // prefix while still matching every real "שירות"-based phrasing.
-    keywords: [/\bservice(s)?\b/, /\btreatment(s)?\b/, /(?<!כ)שירות/, /(?<!כ)שירותים/, "טיפול", "טיפולים"],
+    //
+    // Round 1984: bare "טיפול" is itself an unguarded 5-letter prefix of
+    // the unrelated, ordinary Hebrew word "טיפולוגיה" ("typology" -- a
+    // psychology/personality-classification or categorization-system term,
+    // e.g. "טיפולוגיה פסיכולוגית"/"טיפולוגיה ארגונית"), with zero connection
+    // to selling a service. Hebrew has no `\b` (the same reason this same
+    // entry's own "שירות" fix above, and round 518's "מלאי", needed a
+    // lookahead/lookbehind too), so an unguarded bare substring match fired
+    // on the "typology" sense exactly as readily as the real "treatment"
+    // sense -- confirmed empirically via the real `matchEntities`:
+    // "אפליקציה למיון סוגי אנשים לפי טיפולוגיה פסיכולוגית" (an app to sort
+    // people by psychological typology) and "אתר שמציג טיפולוגיה של סוגי
+    // אישיות שונים" (a site presenting a typology of different personality
+    // types) both produced only `[Service]`, fabricating a price/duration
+    // catalog entity for an app with nothing to do with selling a service --
+    // the same "real domain entirely lost" severity round 880's own "menu"
+    // finding and rounds 1982/1983's own "משובח"/"ספארי" findings already
+    // document. A single `(?!וג)` lookahead excludes exactly the
+    // "טיפולוגיה"/"טיפולוגי"/"טיפולוגים" inflections (all of which continue
+    // with "וג" right after "טיפול", with no space) while still matching
+    // every real standalone use ("טיפול", "הטיפול", "לטיפול", and the
+    // plural "טיפולים", none of which are followed by "וג"), confirmed
+    // empirically after fixing.
+    keywords: [/\bservice(s)?\b/, /\btreatment(s)?\b/, /(?<!כ)שירות/, /(?<!כ)שירותים/, /טיפול(?!וג)/, "טיפולים"],
     labelHe: "שירותים",
     descriptionHe: "משהו שהעסק מציע למכירה.",
     fieldLabelsHe: { name: "שם", price: "מחיר", durationMinutes: "משך בדקות", description: "תיאור" },

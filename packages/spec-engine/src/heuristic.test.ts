@@ -2774,6 +2774,42 @@ test("Service's 'שירות' keyword doesn't spuriously match 'כשירות' (co
 });
 
 /**
+ * Round 1984: Service's bare "טיפול" keyword is itself an unguarded
+ * 5-letter prefix of the unrelated, ordinary Hebrew word "טיפולוגיה"
+ * ("typology" -- a psychology/personality-classification term), the same
+ * unbounded-Hebrew-substring pitfall this file's own "שירות"/"כשירות" fix
+ * right above already demonstrates for a different root. Confirmed live via
+ * the real HeuristicSpecProvider before fixing: both descriptions below
+ * produced only `[Service]`, fabricating a price/duration selling-service
+ * entity for an app with nothing to do with one.
+ */
+test("Service's 'טיפול' keyword doesn't spuriously match 'טיפולוגיה' (typology)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const personalityTypology = await provider.generate("אפליקציה למיון סוגי אנשים לפי טיפולוגיה פסיכולוגית");
+  assert.ok(
+    !personalityTypology.entities.some((e) => e.name === "Service"),
+    "'טיפולוגיה' (typology) alone must not spuriously match Service via a bare 'טיפול' substring",
+  );
+
+  const personalityTypesSite = await provider.generate("אתר שמציג טיפולוגיה של סוגי אישיות שונים");
+  assert.ok(
+    !personalityTypesSite.entities.some((e) => e.name === "Service"),
+    "'טיפולוגיה' (typology) alone must not spuriously match Service via a bare 'טיפול' substring",
+  );
+
+  // The real word still works, singular and plural, with or without the
+  // definite-article prefixes -- these descriptions avoid this rule's other
+  // keywords ("service"/"treatment"/"שירות"), so a match here can only come
+  // from "טיפול"/"טיפולים" itself.
+  const realTreatment = await provider.generate("אפליקציה לניהול לקוחות וטיפול שהם מקבלים מהעסק");
+  assert.ok(realTreatment.entities.some((e) => e.name === "Service"), "'טיפול' must still match Service");
+
+  const realTreatments = await provider.generate("אפליקציה לניהול לקוחות וטיפולים שהם מקבלים מהעסק");
+  assert.ok(realTreatments.entities.some((e) => e.name === "Service"), "'טיפולים' must still match Service");
+});
+
+/**
  * Regression test for a real bug noticed in round 450 and fixed in round
  * 454: Vehicle's bare "garage" keyword is a whole word that's genuinely
  * ambiguous -- it means an auto-repair shop in most descriptions, but
