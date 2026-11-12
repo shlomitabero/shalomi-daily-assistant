@@ -3865,3 +3865,69 @@ test("an incoming WhatsApp question reply message (questionReplyMessage) is logg
   assert.equal(messages[0].body, "תשובה לשאלה", "questionReplyMessage must unwrap transparently to its inner message, not fall through to a silent drop");
   assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1994: `botTaskMessage` (field 100) -- confirmed against the
+ * installed Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * botTaskMessage = 100;`, the exact same wrapper shape as every sibling
+ * field already fixed above (rounds 1142/1152/1445/1888/1901/1930/1933/
+ * 1950/1952/1953/1954/1955/1959/1961/1964/1988). Baileys' own
+ * getFutureProofMessage helper doesn't list this field either, but round
+ * 1888 already established that the protobuf shape is the decisive signal,
+ * not that helper's own list. Without this branch, it fell straight
+ * through to the final `return null` and vanished with zero trace.
+ */
+test("an incoming WhatsApp bot-task message (botTaskMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { botTaskMessage: { message: { conversation: "משימת בוט" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "משימת בוט", "botTaskMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
+ * Round 1994: `botForwardedMessage` (field 104) -- confirmed against the
+ * installed Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * botForwardedMessage = 104;`, the exact same wrapper shape as every
+ * sibling field already fixed above (rounds 1142/1152/1445/1888/1901/1930/
+ * 1933/1950/1952/1953/1954/1955/1959/1961/1964/1988). Baileys' own
+ * getFutureProofMessage helper doesn't list this field either, but round
+ * 1888 already established that the protobuf shape is the decisive signal,
+ * not that helper's own list. Without this branch, it fell straight
+ * through to the final `return null` and vanished with zero trace.
+ */
+test("an incoming WhatsApp bot-forwarded message (botForwardedMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { botForwardedMessage: { message: { conversation: "הודעה מועברת מבוט" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "הודעה מועברת מבוט", "botForwardedMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});

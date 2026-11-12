@@ -203,6 +203,8 @@ export interface BaileysIncomingMessage {
     botInvokeMessage?: { message?: BaileysIncomingMessage["message"] };
     questionMessage?: { message?: BaileysIncomingMessage["message"] };
     questionReplyMessage?: { message?: BaileysIncomingMessage["message"] };
+    botTaskMessage?: { message?: BaileysIncomingMessage["message"] };
+    botForwardedMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -675,6 +677,33 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // vanished with zero trace.
   if (message.questionMessage?.message) return describeIncomingMessage(message.questionMessage.message);
   if (message.questionReplyMessage?.message) return describeIncomingMessage(message.questionReplyMessage.message);
+  // Round 1994: `botTaskMessage` (field 100) and `botForwardedMessage`
+  // (field 104) -- confirmed against the installed Baileys protobuf
+  // (WAProto.proto): `optional FutureProofMessage botTaskMessage = 100;`
+  // and `optional FutureProofMessage botForwardedMessage = 104;`, the exact
+  // same wrapper shape as every sibling field above (ephemeralMessage/
+  // documentWithCaptionMessage/associatedChildMessage/groupStatusMessage/
+  // groupStatusMessageV2/deviceSentMessage/pollCreationMessageV4/
+  // commentMessage/statusMentionMessage/lottieStickerMessage/
+  // groupMentionedMessage/statusAddYours/limitSharingMessage/
+  // groupStatusMentionMessage/eventCoverImage/pollCreationOptionImageMessage/
+  // botInvokeMessage/questionMessage/questionReplyMessage (rounds 1142/1152/
+  // 1445/1888/1901/1930/1933/1950/1952/1953/1954/1955/1959/1961/1964/1988).
+  // Baileys' own getFutureProofMessage helper doesn't list either field, but
+  // round 1888 already established that the protobuf shape is the decisive
+  // signal, not that helper's own list. These were rounds 1964/1965's own
+  // documented backlog remainder, repeatedly deferred as "plausibly bot-API/
+  // enterprise-only, with little plausible path through a normal WhatsApp
+  // Web consumer session" -- but a WhatsApp Business API bot account (an
+  // ordinary business's automated order-confirmation/support bot) can send
+  // either shape to any regular consumer number, which this app's own
+  // connected WhatsApp Web session would receive exactly like any other
+  // incoming message; the fix is also mechanically identical and equally
+  // low-risk to every already-fixed sibling above. Without this branch,
+  // either message type fell straight through to the final `return null`
+  // and vanished with zero trace.
+  if (message.botTaskMessage?.message) return describeIncomingMessage(message.botTaskMessage.message);
+  if (message.botForwardedMessage?.message) return describeIncomingMessage(message.botForwardedMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
