@@ -322,12 +322,33 @@ export function detectLikelyEntityRenames(current: ProductSpec, candidate: Produ
  * the same relationTo -- a same-named field keeping its name but
  * changing type/relationTo is already covered by computeImpact's own
  * retypedFields/retargetedFields, a different, already-handled shape).
+ *
+ * Round 1974: this used to match entities by plain `.toLowerCase()`,
+ * same as `mergeRefinedSpec`/`detectLikelyEntityRenames` did before round
+ * 1911 -- but that round's own `entityMergeKey` fix (ENTITY_ALIAS_GROUPS
+ * above) was only ever applied to those two functions, never to this
+ * one. `mergeRefinedSpec` itself IS alias-aware, so a regenerated
+ * "Employee" entity correctly folds its fields into an existing
+ * "TeamMember"/"Staff" entity rather than becoming a separate one -- but
+ * that merge is additive-only (current survives, candidate only adds),
+ * so a field rename INSIDE that same alias-matched entity (e.g. the
+ * regenerated "Employee" drops `name` and gains `fullName`) still leaves
+ * both the stale `name` and the new `fullName` on the merged entity,
+ * exactly the silent duplication this function exists to warn about.
+ * Without this fix, `pipeline.ts`'s `describeImpactHazards` -- called
+ * with the same raw, pre-merge current/candidate pair `mergeRefinedSpec`
+ * itself receives -- never even looked up the alias-matched entity here
+ * (the map was keyed by the OTHER alias member's plain lowercase name),
+ * so `currentEntity` came back `undefined` and the whole comparison was
+ * silently skipped, for the exact entity this function is most likely to
+ * ever see a genuine rename on (it's a known hotspot for a regenerated-
+ * under-a-different-name entity in the first place).
  */
 export function detectLikelyFieldRenames(current: ProductSpec, candidate: ProductSpec): { entity: string; from: string; to: string }[] {
-  const currentByLowerName = new Map(current.entities.map((entity) => [entity.name.toLowerCase(), entity]));
+  const currentByLowerName = new Map(current.entities.map((entity) => [entityMergeKey(entity.name), entity]));
   const renames: { entity: string; from: string; to: string }[] = [];
   for (const candidateEntity of candidate.entities) {
-    const currentEntity = currentByLowerName.get(candidateEntity.name.toLowerCase());
+    const currentEntity = currentByLowerName.get(entityMergeKey(candidateEntity.name));
     if (!currentEntity) continue;
     const candidateFieldNames = new Set(candidateEntity.fields.map((field) => field.name.toLowerCase()));
     const currentFieldNames = new Set(currentEntity.fields.map((field) => field.name.toLowerCase()));

@@ -618,6 +618,29 @@ test("detectLikelyFieldRenames flags a field the candidate dropped paired with a
   assert.deepEqual(detectLikelyFieldRenames(current, candidate), [{ entity: "Ticket", from: "Priority", to: "Urgency Level" }]);
 });
 
+/**
+ * Round 1974: round 1911 added entityMergeKey (ENTITY_ALIAS_GROUPS) so
+ * mergeRefinedSpec/detectLikelyEntityRenames correctly treat a
+ * regenerated "Employee" entity as the same entity as an existing
+ * "TeamMember"/"Staff" one -- but never applied that same fix to THIS
+ * function, which still matched by plain `.toLowerCase()`. Without the
+ * fix, this test's own `currentByLowerName.get("employee")` lookup
+ * misses entirely (the map was keyed by "teammember"), so the whole
+ * field comparison is silently skipped for the exact entity most likely
+ * to ever hit this function's alias-matched path in the first place --
+ * confirmed as a real pre-1974 gap via the usual stash/pop fail-before
+ * cycle, not just by inspection.
+ */
+test("detectLikelyFieldRenames still flags a rename inside an entity that was itself matched via the TeamMember/Employee alias, not just an exact name match", () => {
+  const current = baseSpec({
+    entities: [{ name: "TeamMember", label: "Team Member", fields: [{ name: "name", label: "Name", type: "text", required: true }, { name: "email", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [{ name: "Employee", label: "Employee", fields: [{ name: "fullName", label: "Full Name", type: "text", required: true }, { name: "email", type: "text", required: false }] }],
+  });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), [{ entity: "Employee", from: "Name", to: "Full Name" }]);
+});
+
 test("detectLikelyFieldRenames finds nothing when the candidate genuinely just adds a new, unrelated field (current field survives untouched)", () => {
   const current = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "subject", type: "text", required: true }] }] });
   const candidate = baseSpec({
