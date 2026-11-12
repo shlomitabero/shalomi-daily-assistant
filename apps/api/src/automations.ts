@@ -1985,11 +1985,42 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * genuinely broken rule would. Lookback widened from 5x to 6x for the same
  * reason as every prior widening: a sixth independently-retained bucket can
  * now each contribute up to that many rows ahead of a real failure.
+ *
+ * Round 1998: every widening above (2x/3x/4x/5x/6x) only ever matched the
+ * multiplier to the NUMBER of independently-retained excluded buckets
+ * (WHATSAPP_NOT_CONNECTED_ERROR, EMAIL_NOT_CONFIGURED_ERROR,
+ * WEBHOOK_TIMEOUT_ERROR, EMAIL_TIMEOUT_ERROR, WHATSAPP_SEND_TIMEOUT_ERROR,
+ * isTest -- 6 today), each capped at AUTOMATION_RUNS_RETENTION_LIMIT rows
+ * -- leaving ZERO slack for the MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY
+ * real rows this function actually needs to see past them. These 6
+ * buckets are scoped by (projectId, ruleId) alone, never by actionType --
+ * and updateAutomationRule (packages/db/src/automations.ts) lets a rule's
+ * actionType be changed at any time without resetting its automation_runs
+ * history -- so a rule that was reconfigured across send_whatsapp/webhook/
+ * send_email at different points in its life (an entirely ordinary
+ * troubleshooting flow: try WhatsApp, hit a disconnect, switch to a
+ * webhook, hit a timeout, switch to email, hit "not configured", switch
+ * back...) can genuinely accumulate rows in ALL 6 excluded buckets at
+ * once. Once their combined 6*20=120 rows are collectively more recent
+ * than this rule's own real, consecutive failures (the exact case this
+ * cap exists to catch), the old `6 *` lookback fetched ONLY those 120
+ * excluded rows, the in-memory filter discarded every one of them, and
+ * this function returned `false` -- "not too many failures" -- even
+ * though 5 genuine consecutive failures from today were sitting right
+ * there in the table, just one row past the fetch's own LIMIT. Reproduced
+ * directly: 5 genuine failures recorded first, then 20 rows in each of
+ * the 6 excluded buckets recorded after (so they're the 120 MOST RECENT
+ * rows for this rule), and this function returned false. Adding
+ * MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY on top of the existing 6x
+ * margin guarantees the fetch always has room for the real rows it needs,
+ * regardless of how many of the 6 excluded buckets this one rule happens
+ * to have filled -- and needs no further widening the next time a new
+ * excluded bucket is added, unlike the multiplier-only approach above.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const timeZone = rule.scheduleTimezone ?? "UTC";
   const today = wallClockIn(now, timeZone).date;
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, 6 * AUTOMATION_RUNS_RETENTION_LIMIT)
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 6 * AUTOMATION_RUNS_RETENTION_LIMIT + MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY)
     .filter(
       (run) =>
         run.error !== WHATSAPP_NOT_CONNECTED_ERROR &&
