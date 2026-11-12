@@ -203,8 +203,20 @@ function normalizeBodyKeys(entity: Entity, body: Record<string, unknown>): Recor
  * the new record to the wrong customer -- a silent cross-record data
  * corruption, not just a rejected request. Now the label lookup always
  * runs first, matching this route's own existing case-insensitive
- * precedent (round 1512); only when no record's label matches does the
- * raw value fall through to be treated as a literal id, same as before.
+ * precedent (round 1512).
+ *
+ * Round 1971: this comment's own closing line used to say the raw value
+ * "falls through to be treated as a literal id" on zero matches, "same as
+ * before" -- but that fallthrough reached coerceValue's bare
+ * `Number(raw)` relation branch (repository.ts), which has no existence
+ * check at all, so it accepted ANY finite number, not just a genuine
+ * internal id. The exact coincidence this comment already names above
+ * (a numeric business code colliding with a different record's real id)
+ * was therefore still silently possible on zero matches, this round's own
+ * doc comment just below spells out why in full. A bare numeric value is
+ * no longer treated as an implicit id at all -- only the literal
+ * "#<digits>" shorthand buildImportRecords already established is, and
+ * only once confirmed to actually exist.
  */
 const WEBHOOK_BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const WEBHOOK_BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
@@ -344,16 +356,49 @@ function normalizeBodyValues(
         // no indication anything was ambiguous. Mirrors CSV import's own
         // precedent for this exact shape (entityFormatting.ts's
         // buildImportRecords, round 1162's doc comment there): resolve only
-        // on an unambiguous single match; on zero matches, leave the raw
-        // label in place so coerceValue's existing relation branch
-        // (packages/db/src/repository.ts) rejects it with its own
-        // ValidationError, exactly as a genuinely unmatched label already
-        // does today -- never guess.
+        // on an unambiguous single match.
+        //
+        // Round 1971: the zero-match case used to leave the raw label in
+        // place, on the documented (and, until now, never actually
+        // verified) assumption that coerceValue's own relation branch
+        // (packages/db/src/repository.ts) would reject it the same way it
+        // rejects a genuinely unmatched label. That assumption is false
+        // whenever the raw value is itself a plain numeric string:
+        // coerceValue's number/relation branch has no existence check at
+        // all, it just does `Number(raw)` and accepts any finite result --
+        // the ONLY thing that can still reject it is SQLite's own FOREIGN
+        // KEY constraint, which only fires when that id genuinely doesn't
+        // exist. If a sender references a record by some numeric business
+        // code that matches no display label but happens to equal a real
+        // OTHER row's id (a realistic coincidence in any table with more
+        // than a handful of rows -- round 1926 already named this exact
+        // coincidence risk for its own, >1-match case), the write silently
+        // succeeds with a real but completely unrelated foreign key: 201
+        // Created, zero error, zero indication anything was wrong. Now
+        // mirrors CSV import's own established "#<digits>" convention
+        // (buildImportRecords, entityFormatting.ts) exactly: a bare
+        // unprefixed numeric value is never treated as an implicit
+        // internal id, and an explicit "#<id>" reference is honored only
+        // once confirmed to actually exist -- any other zero-match value
+        // is now an honest, explicit rejection instead of a silent guess.
         const matches = recordsByTargetEntity
           .get(targetEntity.name)!
           .filter((r) => recordDisplayLabel(targetEntity, r, lang).toLowerCase() === value.toLowerCase());
         if (matches.length === 1) {
           normalized[field.name] = String(matches[0].id);
+        } else if (matches.length === 0) {
+          const hashMatch = /^#(\d+)$/.exec(value);
+          const hashId = hashMatch ? Number(hashMatch[1]) : undefined;
+          const targetRecords = recordsByTargetEntity.get(targetEntity.name)!;
+          if (hashId !== undefined && targetRecords.some((r) => Number(r.id) === hashId)) {
+            normalized[field.name] = String(hashId);
+          } else {
+            throw new HttpError(
+              400,
+              `Field "${field.name}" doesn't match any ${targetEntity.label ?? targetEntity.name} record's display label`,
+              "INVALID_RELATION_TARGET",
+            );
+          }
         } else if (matches.length > 1) {
           // Round 1926: this branch used to fall through with the raw label
           // left in place, same as the zero-match case above, relying on

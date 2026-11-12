@@ -24999,6 +24999,119 @@ test("POST /public/webhook-in/:projectId/:entityName rejects an ambiguous relati
   });
 });
 
+// Round 1971: the ZERO-match branch (distinct from the >1-match branch just
+// above) used to leave the raw label in place and rely on coerceValue's own
+// Number(raw) call to incidentally reject it, the same false assumption
+// round 1926 found for the ambiguous case. coerceValue's relation branch
+// has no existence check at all, so a numeric business code that matches
+// NO record's display label but happens to equal some OTHER record's real
+// internal id silently succeeded as a literal foreign key -- pointing the
+// new record at a completely unrelated record, with no FOREIGN KEY failure
+// (the id is real) and no error anywhere.
+test("POST /public/webhook-in/:projectId/:entityName rejects a numeric relation value that matches no record's display label, even when it happens to equal a DIFFERENT record's real internal id, instead of silently linking to that unrelated record", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-zero-match-numeric-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const unrelated = insertRecord(db, projectId, spec.entities[0], { name: "Globex Inc" });
+    assert.equal(String(unrelated.id), "1", "test setup: the unrelated record must land on internal id 1, the same text as the numeric code sent below");
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: "1" }),
+    });
+    assert.equal(
+      webhookRes.status,
+      400,
+      "a numeric relation value matching no record's display label must be rejected, not silently resolved to whichever unrelated record happens to have that number as its internal id",
+    );
+    const records = listRecords(db, projectId, spec.entities[1]);
+    assert.equal(records.length, 0, "the zero-match webhook call must not have created an Order silently linked to the unrelated record");
+  });
+});
+
+// Round 1971: mirrors CSV import's own established "#<digits>" convention
+// (buildImportRecords, entityFormatting.ts) -- an explicit "#<id>"
+// reference, unlike a bare numeric value, is a genuine, intentional way to
+// reference a record by its internal id, and is honored once confirmed to
+// actually exist.
+test("POST /public/webhook-in/:projectId/:entityName resolves an explicit \"#<id>\" relation value to the real record with that id, even though no record's label matches it", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-relation-hash-id-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "Order",
+          fields: [
+            { name: "item", type: "text", required: true },
+            { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+    const customer = insertRecord(db, projectId, spec.entities[0], { name: "Acme Corp" });
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Widget", customer: `#${customer.id}` }),
+    });
+    assert.equal(webhookRes.status, 201, "an explicit #<id> reference to a real record must still be honored");
+    const records = listRecords(db, projectId, spec.entities[1]);
+    assert.equal(records.length, 1);
+    assert.equal(String(records[0].customer), String(customer.id), "the created Order must link to the record the #<id> actually named");
+
+    const notFoundRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item: "Gadget", customer: "#999999" }),
+    });
+    assert.equal(notFoundRes.status, 400, "an explicit #<id> reference to a record that doesn't actually exist must still be rejected");
+  });
+});
+
 // Round 1644: the relation branch used to skip the label lookup entirely
 // whenever the raw value parsed as a finite number, treating it as this
 // app's own internal record id instead -- the exact ambiguity CSV import's
