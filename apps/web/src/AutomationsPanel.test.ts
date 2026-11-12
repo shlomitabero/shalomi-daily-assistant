@@ -4561,6 +4561,101 @@ test("toggling a rule that was deleted by another tab/collaborator drops the row
 });
 
 /**
+ * Round 1976: mirrors the two tests just above, for handleTestRule's own
+ * testAutomationRule call (the Test button) -- round 1875 named "6 call
+ * sites" for this exact server error but only ever fixed handleSubmit/
+ * handleToggle, leaving this sibling handler's catch block falling
+ * straight to setTestErrorByRuleId with the raw message, so the now-gone
+ * rule's row (and its Test button) stayed exactly as clickable as
+ * before, repeating the same 404 on every further click.
+ */
+test("testing a rule that was deleted by another tab/collaborator drops the row instead of showing a stuck error", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deletedElsewhere = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: deletedElsewhere ? [] : [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/test") {
+        deletedElsewhere = true;
+        return new Response(JSON.stringify({ error: "Automation rule \"rule1\" not found", code: "AUTOMATION_RULE_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const testButton = Array.from(document.querySelectorAll(".automations-rule-actions button")).find(
+        (b) => b.textContent === "Test" || b.textContent === "Send test",
+      ) as HTMLButtonElement;
+      fireEvent.click(testButton);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+      assert.equal(document.querySelector(".automations-rule-row .error"), null, "no raw 404 error banner should be left showing -- this is a clean drop of a vanished rule, not a test failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1976: mirrors the test just above, for handleRetryRun's own
+ * retryAutomationRun call (the Retry button inside an expanded History
+ * list) -- the identical gap, one level down inside a rule's own run
+ * history.
+ */
+test("retrying a run whose rule was deleted by another tab/collaborator drops the row instead of showing a stuck error", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deletedElsewhere = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: deletedElsewhere ? [] : [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({ runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "WhatsApp not connected", recordId: 7, triggeredAt: new Date("2026-03-15T08:00:00Z").toISOString() }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/runs/run1/retry") {
+        deletedElsewhere = true;
+        return new Response(JSON.stringify({ error: "Automation rule \"rule1\" not found", code: "AUTOMATION_RULE_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const retryButton = Array.from(document.querySelectorAll(".automations-rule-history-list li button")).find((b) => b.textContent === "Retry") as HTMLButtonElement;
+      fireEvent.click(retryButton);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+      assert.equal(document.querySelector(".automations-rule-row .error"), null, "no raw 404 error banner should be left showing -- this is a clean drop of a vanished rule, not a retry failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 831's finding: the rule list's own Edit/Toggle/Delete buttons were
  * only ever disabled by busyRuleId (toggle/delete's own in-flight state),
  * never by createBusy (the shared create-form's own in-flight Save/Create

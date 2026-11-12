@@ -1325,7 +1325,22 @@ export function AutomationsPanel({
     retryAutomationRun(projectId, rule.id, run.id)
       .then(() => listAutomationRuns(projectId, rule.id))
       .then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })))
-      .catch((err) => setRetryErrorByRunId((prev) => ({ ...prev, [run.id]: (err as Error).message })))
+      .catch((err) => {
+        // Round 1976: mirrors handleToggle's own identical round-1875
+        // fix -- another tab/collaborator can fully delete this rule
+        // between this tab rendering its row and this retry POST
+        // reaching the server. Without this, the 404 just populated
+        // retryErrorByRunId with the raw message, but the now-gone
+        // rule's row (and its Retry button) stayed exactly as clickable
+        // as before, repeating the identical 404 on every further
+        // click. loadRules() drops the stale row instead.
+        const error = err as Error & { code?: string };
+        if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+          loadRules();
+          return;
+        }
+        setRetryErrorByRunId((prev) => ({ ...prev, [run.id]: error.message }));
+      })
       .finally(() => setRetryingRunId((current) => (current === run.id ? null : current)));
   }
 
@@ -1362,7 +1377,18 @@ export function AutomationsPanel({
         if (expandedHistoryRuleId !== rule.id) return;
         return listAutomationRuns(projectId, rule.id).then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })));
       })
-      .catch((err) => setTestErrorByRuleId((prev) => ({ ...prev, [rule.id]: (err as Error).message })))
+      .catch((err) => {
+        // Round 1976: mirrors handleRetryRun's own identical fix just
+        // above, and handleToggle's original round-1875 fix -- another
+        // tab/collaborator can fully delete this rule between this tab
+        // rendering its row and this Test POST reaching the server.
+        const error = err as Error & { code?: string };
+        if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+          loadRules();
+          return;
+        }
+        setTestErrorByRuleId((prev) => ({ ...prev, [rule.id]: error.message }));
+      })
       .finally(() => setTestingRuleId((current) => (current === rule.id ? null : current)));
   }
 
