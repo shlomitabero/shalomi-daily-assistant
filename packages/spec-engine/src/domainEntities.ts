@@ -1773,10 +1773,29 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // strings in the pre-fix code above), excluding only the specific
     // audit co-occurrences actually found. "ביקור" (visit) alone, with
     // neither the ת nor ות suffix, still correctly never matches.
+    //
+    // Round 1982: bare "משוב" is itself a literal 4-letter prefix of the
+    // ordinary, extremely common Hebrew adjective "משובח"/"משובחת"/
+    // "משובחים"/"משובחות" ("excellent"/"praised" -- as in "מוצרים
+    // משובחים", "שירות משובח", "יינות משובחים"), an unrelated word used
+    // constantly in product/quality/marketing descriptions with zero
+    // connection to collecting customer feedback. Hebrew has no `\b` (the
+    // same reason round 518's "מלאי" and this same block's own "ביקורת"
+    // fix above needed a lookahead/lookbehind too), so an unguarded bare
+    // substring match fired on the "excellent" sense exactly as readily
+    // as the real feedback sense -- confirmed empirically before fixing:
+    // "אתר המציג יינות משובחים מהיקב שלנו" (a site presenting our
+    // winery's excellent wines) produced only `[Review]` via the real
+    // matchEntities, the same "real domain entirely lost" severity round
+    // 880's own "menu" finding and this block's own "ביקורת" audit fix
+    // above already document. A single `(?!ח)` lookahead excludes exactly
+    // the "excellent" inflections (all four start with "משובח") while
+    // still matching every real standalone use ("משוב מלקוחות", "איסוף
+    // משוב", the plural "משובים"), confirmed empirically after fixing.
     keywords: [
       "customer review", "customer feedback", "product review", "testimonial",
       /ביקור(?:ות|ת)(?!\s*(?:פנים|פנימית|חשבונות|תקנים|תקן|איכות|בטיחות|מס|רגולטורית|חוקית))/,
-      "חוות דעת", "משוב", "דירוג",
+      "חוות דעת", /משוב(?!ח)/, "דירוג",
     ],
     labelHe: "ביקורות",
     descriptionHe: "ביקורת או משוב שהשאיר לקוח.",

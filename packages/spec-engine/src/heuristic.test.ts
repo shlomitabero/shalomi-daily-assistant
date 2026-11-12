@@ -2317,6 +2317,35 @@ test("Review's 'ביקורת'/'ביקורות' keywords don't spuriously match t
 });
 
 /**
+ * Regression test for a real bug found in round 1982: the same
+ * unbounded-Hebrew-substring shape round 1981 just fixed for domainEntities
+ * .ts's bare "ac" keyword, but on Review's bare "משוב" keyword -- it is a
+ * literal 4-letter prefix of the ordinary, extremely common Hebrew adjective
+ * "משובח"/"משובחת"/"משובחים"/"משובחות" ("excellent"/"praised"), used
+ * constantly in product/quality/marketing descriptions with zero connection
+ * to collecting customer feedback. JS's `\b` doesn't bound Hebrew, so an
+ * unguarded bare substring match fired on the "excellent" sense exactly as
+ * readily as the real feedback sense, fabricating a star-rating/moderation
+ * Review entity for an app with nothing to do with customer reviews,
+ * confirmed empirically before fixing. Fixed with a single `(?!ח)`
+ * lookahead excluding exactly the "excellent" inflections, while confirming
+ * ordinary standalone "משוב" usage still matches.
+ */
+test("Review's bare 'משוב' keyword doesn't spuriously match the unrelated 'משובח' (excellent) adjective, and ordinary feedback usage still matches", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const excellentProducts = await provider.generate("אפליקציה לניהול קטלוג מוצרים משובחים לחנות בוטיק.", true);
+  assert.ok(!excellentProducts.entities.some((e) => e.name === "Review"), "'מוצרים משובחים' (excellent products) must not spuriously match Review");
+
+  const excellentWines = await provider.generate("אתר המציג יינות משובחים מהיקב שלנו.", true);
+  assert.ok(!excellentWines.entities.some((e) => e.name === "Review"), "'יינות משובחים' (excellent wines) must not spuriously match Review");
+
+  // Ordinary standalone feedback usage must still match.
+  const realFeedback = await provider.generate("אפליקציה לאיסוף משוב מלקוחות על השירות שלנו.", true);
+  assert.ok(realFeedback.entities.some((e) => e.name === "Review"), "ordinary standalone 'משוב' usage must still match Review");
+});
+
+/**
  * Regression test for a real bug found in round 446: Employee's bare
  * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
  * substring of "coworker" -- an ordinary word in a plain personal
