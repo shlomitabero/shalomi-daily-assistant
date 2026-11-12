@@ -128,9 +128,31 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // round-1007 free-course regression test ("free weekly yoga courses")
   // still correctly stays "No payments" -- neither new pattern fires on
   // it.
-  /\bsell(?:ing)?\s+(?:online\s+)?courses?\b/,
-  /\bpaid\s+(?:online\s+)?courses?\b/,
+  //
+  // Round 1989: this round-1700 pair only ever covered the word "course(s)"
+  // itself -- but domainEntities.ts's own Course keyword list (round 1727's
+  // comment there) explicitly treats "class"/"classes" as the exact same
+  // concept as "course"/"courses" for ENTITY matching purposes ("A course
+  // or class the business teaches"). That equivalence was never carried
+  // over here: "A yoga studio offering paid classes and workshops." and "A
+  // platform for creators to sell online classes." both match Course (via
+  // its own bare /\bclasses?\b/-shaped keywords) exactly like their
+  // "course(s)" counterparts already do, but hit neither new pattern below
+  // and got "No payments" -- the identical drift round 1700 itself fixed,
+  // just one word short of covering the entity's own documented synonym.
+  // Verified live that a plain "free weekly yoga classes" description
+  // still correctly stays "No payments" (bare "classes" alone is
+  // untouched, same as bare "courses" already was).
+  /\bsell(?:ing)?\s+(?:online\s+)?(?:courses?|classes?)\b/,
+  /\bpaid\s+(?:online\s+)?(?:courses?|classes?)\b/,
   "למכור קורסים", "מכירת קורסים", "קורסים בתשלום", "קורס בתשלום",
+  // Round 1989: same "course"/"class" synonym gap as the two regexes just
+  // above, for Hebrew -- "שיעור"/"שיעורים" ("lesson"/"lessons") is already
+  // one of Course's own bare Hebrew keywords (domainEntities.ts), the exact
+  // Hebrew-language counterpart to English "class(es)" in this same
+  // tutoring/lesson-selling context, but only the "קורס"/"קורסים" wording
+  // had its own fee-charging phrases here.
+  "למכור שיעורים", "מכירת שיעורים", "שיעורים בתשלום", "שיעור בתשלום",
   // Round 1819: a hair salon/barbershop/spa/massage business matches only
   // Appointment (rounds 1799/1800's own keywords), which isn't in
   // BILLING_ENTITY_NAMES below and hits none of this array's other

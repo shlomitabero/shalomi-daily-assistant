@@ -970,6 +970,54 @@ test("asks about payments (recommending Stripe) for a description that SELLS or 
   );
 });
 
+/**
+ * Round 1989: the same drift round 1700's own comment documents for
+ * "course(s)" wording, one word short of covering domainEntities.ts's own
+ * documented "class(es)" synonym for the same entity (round 1727's comment
+ * there: "A course or class the business teaches"). A description that
+ * sells or charges for CLASSES, rather than literally saying "course(s)",
+ * still fell through to "No payments" since round 1700's two regexes only
+ * ever matched the word "course(s)" itself.
+ */
+test("asks about payments (recommending Stripe) for a description that SELLS or charges for classes, the same synonym Course's own entity-matching keywords already treat as 'course'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const sellsClasses = await provider.generate("A platform for creators to sell online classes and digital downloads.");
+  assert.deepEqual(sellsClasses.entities.map((e) => e.name), ["Course"]);
+  const sellsClassesQuestion = sellsClasses.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(sellsClassesQuestion);
+  assert.equal(sellsClassesQuestion!.recommendation, "Stripe");
+
+  const paidClasses = await provider.generate("A yoga studio offering paid classes and workshops.");
+  assert.deepEqual(paidClasses.entities.map((e) => e.name), ["Course"]);
+  const paidClassesQuestion = paidClasses.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(paidClassesQuestion);
+  assert.equal(paidClassesQuestion!.recommendation, "Stripe");
+
+  const hebrewSellsLessons = await provider.generate("פלטפורמה למורים למכור שיעורים אונליין לתלמידים.");
+  const hebrewQuestion = hebrewSellsLessons.openQuestions.find((q) => q.options.includes("Stripe"));
+  assert.ok(hebrewQuestion);
+  assert.equal(hebrewQuestion!.recommendation, "Stripe");
+
+  // Round 1700's and round 1007's own free-course regressions must stay
+  // untouched by this fix, and so must their exact "class" counterparts --
+  // bare "classes" alone (no sell/paid wording) must still get "No
+  // payments", the same way bare "courses" already does.
+  const freeCourse = await provider.generate("A community center app to manage free weekly yoga courses and track who signed up.");
+  const freeCourseQuestion = freeCourse.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeCourseQuestion);
+  assert.equal(freeCourseQuestion!.recommendation, "No payments");
+
+  const freeClasses = await provider.generate("A community center app to manage free weekly yoga classes and track who signed up.");
+  const freeClassesQuestion = freeClasses.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeClassesQuestion);
+  assert.equal(
+    freeClassesQuestion!.recommendation,
+    "No payments",
+    "a plain free-class description must not be swept up by the new 'sell'/'paid classes' phrases",
+  );
+});
+
 test("does not ask about payments for a clothing-store description mentioning 'striped' shirts, but still asks when 'stripe' itself is used", async () => {
   // Regression test for a real bug found by a round 460 Explore survey:
   // PAYMENT_KEYWORDS's bare "stripe" hint matched via plain .includes(),
