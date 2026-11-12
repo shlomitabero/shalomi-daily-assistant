@@ -288,6 +288,25 @@ test('patchOpportunity accepts a partial revenueEstimate with only low filled in
   assert.deepEqual(res.body.opportunity.revenueEstimate, { low: 50, mid: null, high: null });
 });
 
+test('patchOpportunity rejects a revenueEstimate that is not an object (e.g. a raw number or string)', () => {
+  // { low, mid, high } destructured from a non-object all come out
+  // undefined, which isFiniteOrNullish treats as nullish - so this used to
+  // pass validation vacuously and store the raw value as-is instead of
+  // being rejected like every other malformed field on this endpoint.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const resNumber = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: 5 } }, resNumber);
+  assert.equal(resNumber.statusCode, 400);
+  assert.match(resNumber.body.error, /הערכת ההכנסה חייבת להיות אובייקט/);
+  assert.equal(db.opportunities.get(opp.id).revenueEstimate, null);
+
+  const resArray = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: [1, 2, 3] } }, resArray);
+  assert.equal(resArray.statusCode, 400);
+  assert.match(resArray.body.error, /הערכת ההכנסה חייבת להיות אובייקט/);
+});
+
 test('patchOpportunity rejects a non-finite cost field', () => {
   __resetForTests();
   const opp = insertOpportunity();
@@ -305,6 +324,19 @@ test('patchOpportunity rejects a negative cost - a single typo must not silently
   assert.equal(res.statusCode, 400);
   assert.match(res.body.error, /העלות "aiUsage" חייבת להיות מספר לא שלילי/);
   assert.equal(db.opportunities.get(opp.id).costs.aiUsage, undefined);
+});
+
+test('patchOpportunity rejects a costs value that is not an object (e.g. a raw number) instead of silently dropping it', () => {
+  // Object.entries(5) returns [] - the validation loop never runs, so this
+  // used to pass with totalCost silently staying 0, as if no cost had been
+  // set at all, directly contradicting feasibility.js's own promise that a
+  // missing cost is reported as missing rather than treated as zero.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { costs: 5 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /העלויות חייבות להיות אובייקט/);
 });
 
 test('patchOpportunity still accepts a zero or null cost - unlike negative, both are legitimate', () => {

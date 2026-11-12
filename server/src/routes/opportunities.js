@@ -133,7 +133,18 @@ export function patchOpportunity(req, res) {
   }
 
   if ('revenueEstimate' in patch && patch.revenueEstimate !== null) {
-    const { low, mid, high } = patch.revenueEstimate ?? {};
+    // A non-object value here (a raw number, string or array) destructures
+    // to low/mid/high all undefined - isFiniteOrNullish treats undefined as
+    // nullish, so it passed this check vacuously and got stored as-is.
+    // computeNetProfit (feasibility.js) already treats a malformed
+    // revenueEstimate as "missing" rather than corrupting the math, so
+    // nothing crashes - but this endpoint rejects every other malformed
+    // field at the door instead of silently storing it, and this one
+    // should too.
+    if (typeof patch.revenueEstimate !== 'object' || Array.isArray(patch.revenueEstimate)) {
+      return res.status(400).json({ error: 'הערכת ההכנסה חייבת להיות אובייקט עם low/mid/high, או ריקה' });
+    }
+    const { low, mid, high } = patch.revenueEstimate;
     if (!isFiniteOrNullish(low) || !isFiniteOrNullish(mid) || !isFiniteOrNullish(high)) {
       return res.status(400).json({ error: 'הערכת ההכנסה (נמוכה/בינונית/גבוהה) חייבת להיות מספר סופי או ריקה' });
     }
@@ -147,6 +158,17 @@ export function patchOpportunity(req, res) {
     }
   }
   if ('costs' in patch && patch.costs != null) {
+    // Object.entries on a raw number (e.g. costs: 5) returns [] - the loop
+    // below then never runs, totalCost silently stays 0, and the real cost
+    // the caller tried to set is just dropped with no error at all. That
+    // directly contradicts feasibility.js's own stated promise ("any
+    // missing cost field is reported as missing rather than treated as
+    // zero") - a wrong-typed costs payload must be rejected here, the same
+    // as every other malformed field on this endpoint, not silently
+    // coerced into "no costs".
+    if (typeof patch.costs !== 'object' || Array.isArray(patch.costs)) {
+      return res.status(400).json({ error: 'העלויות חייבות להיות אובייקט עם ערכים מספריים, או ריקות' });
+    }
     for (const [key, value] of Object.entries(patch.costs)) {
       if (!isFiniteOrNullish(value)) {
         return res.status(400).json({ error: `העלות "${key}" חייבת להיות מספר סופי או ריקה (לא ידוע)` });
