@@ -1572,6 +1572,96 @@ test("a field chip's required checkbox reflects the field's current state, and t
 });
 
 /**
+ * Round 1963: handleToggleRequired had no guard against racing ITSELF --
+ * the same own-click reentrancy gap round 1522 closed for the shared
+ * useRemovableSpecItem hook's handleRemove, but never ported to this
+ * chip's own ad hoc required-toggle handler. A fast double-click on the
+ * checkbox must only ever reach the PATCH .../required endpoint once.
+ */
+test("a field chip's required checkbox guards against a fast double-click, so only one PATCH ever fires for one toggle", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/required") {
+        patchCount++;
+        return new Response(JSON.stringify({ project: baseProject }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      const checkbox = document.querySelector(".chip-field-required input") as HTMLInputElement;
+      fireEvent.click(checkbox);
+      fireEvent.click(checkbox);
+      await waitForCondition(() => changedProjects.length > 0);
+
+      assert.equal(
+        patchCount,
+        1,
+        "a fast double-click must only ever reach the required-toggle PATCH once -- the second click must be blocked by requiredBusy, not fire its own independent request",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 1963: commitTypeChange had no guard against racing ITSELF either
+ * -- the more serious half of this gap, since it's parameterized by
+ * `type` and its own caller (handleTypeSelectChange) is a plain <select
+ * onChange> with no form/submit boundary. Picking two different types in
+ * quick succession must only ever send the LAST one the user picked, not
+ * risk a stale earlier response winning the race.
+ */
+test("a field chip's type select guards against two rapid changes, so only the last-picked type's PATCH wins", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const patchedTypes: string[] = [];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/fields/email/type") {
+        const body = JSON.parse(init!.body as string) as { type: string };
+        patchedTypes.push(body.type);
+        const updated = {
+          ...baseProject,
+          spec: {
+            ...baseProject.spec,
+            entities: [{ ...baseProject.spec.entities[0], fields: [{ name: "email", type: body.type, required: true }] }],
+          },
+        };
+        return new Response(JSON.stringify({ project: updated }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      const select = document.querySelector(".chip-field-type") as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: "number" } });
+      fireEvent.change(select, { target: { value: "boolean" } });
+      await waitForCondition(() => changedProjects.length > 0);
+
+      assert.equal(
+        patchedTypes.length,
+        1,
+        "two rapid type changes must only ever reach the type-change PATCH once -- the second change must be blocked by typeBusy, not fire its own independent request",
+      );
+      assert.equal(patchedTypes[0], "number", "the first change to actually fire must be the one sent -- typeBusy blocks the second until the first resolves");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 931: this chip has three independent error states (remove's own
  * `error`, requiredError, typeError) that all render unconditionally
  * together at the bottom, with nothing distinguishing which action

@@ -992,7 +992,16 @@ export function FieldChip({
   const [requiredBusy, setRequiredBusy] = useState(false);
   const [requiredError, setRequiredError] = useState<string | null>(null);
 
+  // Round 1963: mirrors useRemovableSpecItem's own handleRemove guard
+  // (round 1522's `if (busy) return;`) -- this chip's own
+  // handleToggleRequired/commitTypeChange live outside that shared hook
+  // and never got the identical "own-click reentrancy" guard, even though
+  // every other busy-gated handler in this file has one. A fast
+  // double-toggle of the checkbox fires this handler twice before React
+  // has committed the first click's own `disabled` attribute, sending two
+  // concurrent setFieldRequired calls for one click.
   async function handleToggleRequired() {
+    if (requiredBusy) return;
     setRequiredBusy(true);
     setRequiredError(null);
     // Round 931: this chip renders `error`/requiredError/typeError all
@@ -1101,7 +1110,18 @@ export function FieldChip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [field.name, onBusyChange]);
 
+  // Round 1963: mirrors handleToggleRequired's own identical fix just
+  // above, and useRemovableSpecItem's own handleRemove guard (round 1522)
+  // -- this is the more serious half of the two, since commitTypeChange
+  // is parameterized by `type` and its own caller, handleTypeSelectChange,
+  // is a plain <select onChange> with no form/submit boundary. Picking two
+  // different field types in quick succession can fire two DIFFERENT
+  // setFieldType PATCH calls concurrently before the first's own disabled
+  // state ever paints, and whichever response lands last silently wins via
+  // the shared onChanged(project) full-state replace -- not necessarily
+  // the type the user actually picked last.
   async function commitTypeChange(type: Field["type"], opts?: { enumValues?: string; relationTo?: string }) {
+    if (typeBusy) return;
     setTypeBusy(true);
     setTypeError(null);
     // Round 931: mirrors handleToggleRequired's own cross-clear above --
