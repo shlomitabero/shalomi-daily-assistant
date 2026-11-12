@@ -148,7 +148,14 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // business, never a free/government/school/volunteer booking.
   "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
   /\bspa\b/, "massage", "massage therapy",
-  "מספרה", "סלון יופי", "ספא", "עיסוי",
+  // Round 1983: bare "ספא" here is the identical mirrored copy of
+  // domainEntities.ts's own Appointment keyword (see that file's own
+  // round-1983 comment) -- it's a literal 3-letter prefix of "ספארי"
+  // (safari) and "ספאם" (spam), so an unrelated safari-tour or spam-
+  // filter app description spuriously hit this array too, wrongly
+  // recommending Stripe on top of the entity-match false positive. Kept
+  // in sync with the same `(?!רי|ם)` lookahead guard.
+  "מספרה", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
   // Round 1831: the exact same drift round 1819 fixed for salons/spas,
   // this time for pet care. A dog/cat grooming, pet sitting/boarding/
   // walking, or veterinary business matches only Pet (rounds 1752/1817's

@@ -1449,6 +1449,34 @@ test("recognizes spa and massage descriptions as the Appointment entity, without
   assert.ok(!workspace.entities.some((e) => e.name === "Appointment"), "'workspace' must NOT match the Appointment entity rule -- it's not a substring collision with bare 'spa'");
 });
 
+/**
+ * Round 1983: round 1800's own Hebrew "ספא" keyword was left as a bare,
+ * unguarded substring -- never given the same `\b` protection its English
+ * sibling "spa" got from that same round. "ספא" is a literal 3-letter
+ * prefix of two ordinary, unrelated Hebrew words: "ספארי" ("safari") and
+ * "ספאם" ("spam"). Confirmed empirically via the real `matchEntities`
+ * before fixing: a safari-tour-management description matched Appointment
+ * as its ONLY entity (the real domain entirely lost), and a spam-filter
+ * description matched only Appointment too. The identical bare "ספא" is
+ * also mirrored into heuristic.ts's own PAYMENT_KEYWORDS array (round
+ * 1819), so the same collision wrongly recommended "Stripe" for the safari
+ * description as well.
+ */
+test("does not spuriously match the Appointment entity (or recommend Stripe) for Hebrew 'ספארי'/'ספאם' descriptions, while still matching real 'ספא' usage", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const safari = await provider.generate("אפליקציה לניהול טיולי ספארי באפריקה.", true);
+  assert.ok(!safari.entities.some((e) => e.name === "Appointment"), "'ספארי' (safari) must NOT match the Appointment entity rule -- it's not a substring collision with bare 'ספא'");
+  const safariPaymentQuestion = safari.openQuestions.find((q) => q.question.includes("תשלומים"));
+  assert.strictEqual(safariPaymentQuestion?.recommendation, "בלי תשלומים", "a safari-tour description must not recommend Stripe purely from the 'ספארי'/'ספא' collision");
+
+  const spam = await provider.generate("אפליקציה לסינון הודעות ספאם נכנסות.", true);
+  assert.ok(!spam.entities.some((e) => e.name === "Appointment"), "'ספאם' (spam) must NOT match the Appointment entity rule -- it's not a substring collision with bare 'ספא'");
+
+  const realSpa = await provider.generate("מכון ספא יוקרתי במרכז העיר", true);
+  assert.ok(realSpa.entities.some((e) => e.name === "Appointment"), "a genuine standalone 'ספא' (spa) usage must still match the Appointment entity rule");
+});
+
 test("the new Event/Vehicle/Rental keywords don't spuriously trigger on common unrelated phrases", async () => {
   const provider = new HeuristicSpecProvider();
 

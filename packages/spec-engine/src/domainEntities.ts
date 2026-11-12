@@ -186,11 +186,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // match would have spuriously matched any shared-workspace or
     // office-space business too. Confirmed via direct `matchEntities`
     // invocation: "a shared workspace for freelancers" must NOT match.
+    //
+    // Round 1983: the Hebrew counterpart "ספא" was left as a bare,
+    // unguarded substring -- the same unbounded-Hebrew-substring pitfall
+    // this file's header and every other round-518-style fix already
+    // warns about, which English "spa" above was explicitly protected
+    // from via `\b` but Hebrew never got an equivalent guard for. "ספא" is
+    // a literal 3-letter prefix of two ordinary, common, completely
+    // unrelated Hebrew words: "ספארי" ("safari", as in an African safari
+    // tour/park business) and "ספאם" ("spam", the common transliteration
+    // for unwanted email/messages). Confirmed empirically via the real
+    // `matchEntities`: "אפליקציה לניהול טיולי ספארי באפריקה" (an app for
+    // managing safari trips in Africa) matched Appointment as its ONLY
+    // entity, the real safari-tour domain entirely lost -- the same
+    // severity round 880's own "menu" finding and round 1982's own
+    // "משובח" finding already document -- and "אפליקציה לסינון הודעות
+    // ספאם נכנסות" (an app for filtering incoming spam messages) matched
+    // only Appointment too. A lookahead excluding "רי" and "ם" immediately
+    // after "ספא" rejects both collisions while still matching every real
+    // standalone use ("ספא לעיסויים", "מכון ספא", "חדר ספא").
     keywords: [
       "appointment", /\bbookings?\b/, /\breservations?\b/,
       "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
       /\bspa\b/, "massage", "massage therapy",
-      "תורים", "פגישה", "פגישות", "מספרה", "סלון יופי", "ספא", "עיסוי",
+      "תורים", "פגישה", "פגישות", "מספרה", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
     ],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",
