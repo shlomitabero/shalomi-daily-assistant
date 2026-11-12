@@ -160,7 +160,16 @@ test('autonomousScanSummary gives a clean Hebrew message on failure, not the raw
 });
 
 test('autonomousScanSummary falls back to resultLabel for any other result shape', () => {
-  assert.equal(autonomousScanSummary({ result: 'success', detail: {} }).length > 0, true);
+  // This previously passed { result: 'success' } - which hits the very
+  // first branch above, not this fallback at all, so this line was
+  // actually uncovered despite the test's own name (node's own coverage
+  // tool flagged it directly, after the Sources/Dashboard coverage work
+  // earlier this session). A result autonomousScan.js never actually logs
+  // today (every real 'blocked:' case there is specifically "source not
+  // connected") but the same defensive-fallback pattern this app already
+  // tests elsewhere (actionTypeLabel/riskLevelLabel/sourceLabel all have
+  // their own "falls back for an unknown value" test) applies here too.
+  assert.equal(autonomousScanSummary({ result: 'blocked: something unexpected', detail: {} }), 'נחסם: something unexpected');
 });
 
 test('saleConfirmedSummary reports a verified sale', () => {
