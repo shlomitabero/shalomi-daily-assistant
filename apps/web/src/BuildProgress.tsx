@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { AgentStepEvent, Project } from "@forge/shared";
+import type { AgentStepEvent, ProductSpec, Project } from "@forge/shared";
 import { safeDownloadName } from "./api.js";
 import { useTranslation } from "./i18n/LanguageContext.js";
 import type { Lang } from "./i18n/language.js";
@@ -282,6 +282,26 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
         ))}
       </ul>
     );
+  }
+
+  // Round 1990: pipeline.ts's Debug success event already carries a real
+  // `detail: { correctedSpec }` payload (the exact spec its own one-shot AI
+  // fix produced) -- but this function had no branch for `agent === "Debug"`
+  // at all, and hasDetail below used to explicitly exclude "Debug" outright,
+  // so that payload could never reach the screen no matter what: the "Show
+  // detail" toggle itself never even rendered for this step. Every other
+  // agent with a detail payload (Architect, Database, Seed Data, QA,
+  // Security) already gets a real disclosure panel; Debug -- the one agent
+  // whose own work is itself an AI-authored repair a person would most want
+  // to inspect -- was the one silent exception. Lists the corrected spec's
+  // own entity labels/names (the most concrete, human-readable fact in an
+  // otherwise large ProductSpec object), the same "just the real names,
+  // nothing fabricated" register every sibling branch here already uses.
+  if (agent === "Debug" && detail) {
+    const { correctedSpec } = detail as { correctedSpec: ProductSpec };
+    const entityNames = correctedSpec.entities.map((e) => e.label || e.name);
+    if (entityNames.length === 0) return <p className="muted small">{t("build.detail.debug.none")}</p>;
+    return <p className="muted small">{t("build.detail.debug.correctedSpec", { entities: entityNames.join(", ") })}</p>;
   }
 
   // A failed seed step (apps/api/src/pipeline.ts) sends `detail` as a
@@ -593,9 +613,17 @@ export function BuildProgress({
                 : status === "running"
                   ? t(`build.agent.${key}.running`)
                   : t("build.status.pending");
+          // Round 1990: this used to also exclude `agent !== "Debug"`, the
+          // one agent whose own success event (pipeline.ts) genuinely does
+          // carry a real detail payload (`{ correctedSpec }`) -- see
+          // AgentDetail's own new "Debug" branch above, added in the same
+          // round, which is what that exclusion was silently hiding. Debug's
+          // own "failed" events never carry a `detail` field at all (see
+          // pipeline.ts), so `event?.detail !== undefined` alone already
+          // keeps this false for those -- no extra agent-specific exclusion
+          // was ever actually needed here.
           const hasDetail =
             agent !== "Forge" &&
-            agent !== "Debug" &&
             event?.detail !== undefined &&
             (status === "success" || status === "failed");
           const isOpen = expanded.has(agent);

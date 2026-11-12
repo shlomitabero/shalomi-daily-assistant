@@ -628,6 +628,44 @@ test("BuildProgress's Database detail panel reports a relation field's changed t
 });
 
 /**
+ * Round 1990: pipeline.ts's Debug success event (the AI Team's one-shot
+ * automatic migration fix) carries a real `detail: { correctedSpec }`
+ * payload -- but hasDetail used to explicitly exclude `agent === "Debug"`
+ * outright, so the "Show detail" toggle itself never even rendered for
+ * this step, no matter what the payload held, and AgentDetail had no
+ * rendering branch for it either. Every other agent with a detail payload
+ * (Architect, Database, Seed Data, QA, Security) already gets a real
+ * disclosure panel for its own success/failure detail; this is the
+ * identical regression-proof shape for Debug's own.
+ */
+test("BuildProgress's Debug detail panel reports the corrected spec's entities, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Database", status: "failed", message: "duplicate column name: notes" },
+      { agent: "Debug", status: "running", message: "…" },
+      {
+        agent: "Debug",
+        status: "success",
+        message: "Found an automatic fix for the issue, and continuing the build with it.",
+        detail: { correctedSpec: { entities: [{ name: "Order", label: "Order", fields: [] }] } },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const debugStep = steps.find((s) => s.textContent?.includes("Debug Agent"));
+    const toggle = debugStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Debug step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detail = debugStep?.querySelector(".agent-detail");
+    assert.ok(detail, "expected the detail panel to render once expanded");
+    assert.match(detail!.textContent ?? "", /Order/, "the corrected spec's real entity name/label must appear");
+  });
+});
+
+/**
  * Regression test for a real gap found by round 464's checkpoint-restore
  * audit: migrate.ts's MigrationChange has a 5th variant, "relation_missing_fk"
  * (reported when a relation field reuses a column that was never linked to
