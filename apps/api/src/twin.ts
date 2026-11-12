@@ -789,9 +789,17 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
  * "deadline". Plain substring check: no other built-in field name
  * contains "schedul" at all.
  */
+/**
+ * Round 1957: mirrors entityFormatting.ts's/codegen.ts's identical fix --
+ * the built-in Rental entity's own endDate (Reserved/Active/Returned
+ * status, "returned" already in CLOSED_STATUS_VALUES since round 1951) is
+ * exactly the same "should have happened by now" case, but contained
+ * neither "due", "deadline", nor "scheduled". Plain substring check: no
+ * other built-in field name contains "enddate" at all.
+ */
 function isDeadlineFieldName(fieldName: string): boolean {
   const lower = fieldName.toLowerCase();
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled");
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate");
 }
 
 /**

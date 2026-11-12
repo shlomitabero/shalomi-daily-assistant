@@ -3255,9 +3255,15 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 // Cancelled status) is exactly the "should have happened by now" case this
 // feature exists for, but contained neither "due" nor "deadline". Plain
 // substring check: no other built-in field name contains "schedul" at all.
+// Round 1957: mirrors the live preview's own identical fix -- the built-in
+// Rental entity's own endDate (Reserved/Active/Returned status, "returned"
+// already in CLOSED_STATUS_VALUES since round 1951) is exactly the same
+// "should have happened by now" case, but contained neither "due",
+// "deadline", nor "scheduled". Plain substring check: no other built-in
+// field name contains "enddate" at all.
 function isDeadlineFieldName(fieldName) {
   const lower = fieldName.toLowerCase();
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled");
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate");
 }
 const DUE_SOON_WINDOW_DAYS = 3;
 function getDateUrgency(value, today) {

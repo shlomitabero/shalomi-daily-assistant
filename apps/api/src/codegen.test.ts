@@ -5351,6 +5351,27 @@ test("the exported EntityView's isDeadlineFieldName matches the built-in WorkOrd
 });
 
 /**
+ * Round 1957: mirrors the live preview's own identical fix -- the built-in
+ * Rental entity's own endDate (Reserved/Active/Returned status) is exactly
+ * the same "should have happened by now" case, but contained neither
+ * "due", "deadline", nor "scheduled" before this round. Confirms the
+ * exported app's own copy of the function got the identical fix.
+ */
+test("the exported EntityView's isDeadlineFieldName matches the built-in Rental entity's own endDate field", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(patternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
+
+  const isDeadlineFieldName = new Function(`${patternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+
+  assert.equal(isDeadlineFieldName("endDate"), true, "Rental's own field name");
+  assert.equal(isDeadlineFieldName("EndDate"), true, "case-insensitive");
+  assert.equal(isDeadlineFieldName("startDate"), false, "only the end of a ranged record is a deadline, not the start");
+});
+
+/**
  * Regression test for a real bug found by round 286's Explore survey and
  * fixed the same round in both the live preview (EntityPanel.tsx) and here:
  * findBoardField only ever picks ONE enum field per entity, for Kanban

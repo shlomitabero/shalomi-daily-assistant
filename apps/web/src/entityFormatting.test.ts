@@ -4660,6 +4660,19 @@ test("isDeadlineFieldName matches the built-in WorkOrder entity's own scheduledD
   assert.equal(isDeadlineFieldName("ScheduledDate"), true, "case-insensitive");
 });
 
+/**
+ * Round 1957: the built-in Rental entity's own endDate (the date a rented
+ * item is due back, status Reserved/Active/Returned) is exactly the same
+ * "should have happened by now and didn't" case -- functionally identical
+ * to Task's own dueDate -- but contained neither "due", "deadline", nor
+ * "scheduled" before this round.
+ */
+test("isDeadlineFieldName matches the built-in Rental entity's own endDate field", () => {
+  assert.equal(isDeadlineFieldName("endDate"), true, "Rental's own field name");
+  assert.equal(isDeadlineFieldName("EndDate"), true, "case-insensitive");
+  assert.equal(isDeadlineFieldName("startDate"), false, "only the end of a ranged record is a deadline, not the start");
+});
+
 test("getDateUrgency classifies a date relative to a fixed reference day, not real wall-clock time", () => {
   const today = new Date(2026, 5, 15); // June 15, 2026 -- a Monday, chosen arbitrarily
   assert.equal(getDateUrgency("2026-06-10", today), "overdue", "a date before today is overdue");

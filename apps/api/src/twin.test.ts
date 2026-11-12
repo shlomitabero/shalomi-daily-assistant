@@ -2340,6 +2340,50 @@ test("computeBusinessTwin flags the built-in WorkOrder entity's own scheduledDat
   assert.match(observation!.text, /1 of 1 record/, "only the still-Scheduled record counts -- the Completed one must be excluded entirely, not just left out of the overdue count");
 });
 
+/**
+ * Round 1957: mirrors entityFormatting.ts's/codegen.ts's identical fix --
+ * the built-in Rental entity's own endDate (Reserved/Active/Returned
+ * status) is exactly the same "should have happened by now" case, but
+ * isDeadlineFieldName didn't recognize it before this round -- so an
+ * Active rental past its endDate never surfaced an overdue Business Twin
+ * insight at all. Uses the REAL domain-library field names (itemName/
+ * renterName/startDate/endDate/status), not a synthetic "dueDate"
+ * stand-in, so the test actually exercises the shipped entity shape.
+ */
+test("computeBusinessTwin flags the built-in Rental entity's own endDate as overdue, but not a Returned rental with the identical past date", () => {
+  const rentalProject: Project = {
+    ...project,
+    description: "An item rental service",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Rental",
+          label: "Rentals",
+          fields: [
+            { name: "itemName", type: "text", required: true },
+            { name: "renterName", type: "text", required: false },
+            { name: "startDate", type: "date", required: false },
+            { name: "endDate", label: "End date", type: "date", required: false },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Reserved", "Active", "Returned"] },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, rentalProject.id, rentalProject.spec);
+  const rental = rentalProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, rentalProject.id, rental, { itemName: "Ladder", renterName: "Dana", startDate: "2025-12-20", status: "Active", endDate: "2026-01-01" });
+  insertRecord(db, rentalProject.id, rental, { itemName: "Drill", renterName: "Omer", startDate: "2025-12-20", status: "Returned", endDate: "2026-01-01" });
+
+  const twin = computeBusinessTwin(db, rentalProject, today);
+  const observation = twin.jumpableObservations.find((o) => o.text.includes("End date"));
+  assert.ok(observation, `expected an overdue observation for the still-Active rental, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(observation!.text, /1 of 1 record/, "only the still-Active rental counts -- the Returned one must be excluded entirely, not just left out of the overdue count");
+});
+
 test("computeBusinessTwin stays silent about a deadline field when nothing is actually overdue yet", () => {
   const orderProject: Project = {
     ...project,

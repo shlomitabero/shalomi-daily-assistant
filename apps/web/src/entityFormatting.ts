@@ -417,9 +417,23 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
  * substring check (no word-boundary regex needed, unlike "due") -- no
  * other built-in field name contains "schedul" at all.
  */
+/**
+ * Round 1957: the built-in Rental entity's own `endDate` (the date a rented
+ * item is due back, paired with `status` Reserved/Active/Returned) is the
+ * same "this should have happened by now and didn't" case -- an Active
+ * rental past its `endDate` is exactly as overdue as a Task past its
+ * `dueDate` -- but `endDate` contained neither "due", "deadline", nor
+ * "scheduled", so it silently got none of the urgency treatment either.
+ * `CLOSED_STATUS_VALUES` already has "returned" (round 1951), so a
+ * Returned rental still correctly stays unflagged once this is added. A
+ * plain substring check: grepped the full built-in domain library
+ * (domainEntities.ts + templates.ts) and confirmed "endDate" appears
+ * exactly once, only on Rental, so this carries zero false-positive risk
+ * for any other built-in entity.
+ */
 export function isDeadlineFieldName(fieldName: string): boolean {
   const lower = fieldName.toLowerCase();
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled");
+  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate");
 }
 
 export type DateUrgency = "overdue" | "dueSoon" | null;
