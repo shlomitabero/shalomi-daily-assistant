@@ -125,6 +125,21 @@ export default function ProductPage() {
   useEffect(() => {
     api.getProduct(slug).then(async (r) => {
       setData(r);
+
+      // A reload right after paying (or before this session's own poll
+      // finished) must not force the customer to find and re-enter a
+      // checkout — resume from the transaction id saved on this device.
+      // tryFetchGuide() only calls this app's own server; it never touches
+      // window.Paddle. Checking this FIRST, before any Paddle setup, means
+      // a customer whose purchase is already confirmed gets their guide
+      // even if Paddle's script fails to load on this particular reload
+      // (an ad-blocker, a flaky CDN) — previously the early returns below
+      // for paddleFailed/paddleNotConfigured ran first and skipped this
+      // check entirely, stranding an already-paying customer with no way
+      // to retrieve what they already bought.
+      const savedTransactionId = safeGetStoredTransactionId(slug);
+      if (savedTransactionId) pollForGuide(savedTransactionId);
+
       // Without this, a real customer on a product page published before
       // Paddle was configured (or if it's ever unset again) would see a
       // "קנה עכשיו" button that's just silently disabled forever — no
@@ -151,12 +166,6 @@ export default function ProductPage() {
         },
       });
       setPaddleReady(true);
-
-      // A reload right after paying (or before this session's own poll
-      // finished) must not force the customer to find and re-enter a
-      // checkout — resume from the transaction id saved on this device.
-      const savedTransactionId = safeGetStoredTransactionId(slug);
-      if (savedTransactionId) pollForGuide(savedTransactionId);
     }).catch((err) => setError(err.data?.error || err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
