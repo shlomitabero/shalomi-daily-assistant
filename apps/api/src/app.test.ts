@@ -24692,6 +24692,55 @@ test("POST /public/webhook-in/:projectId/:entityName accepts Yen/Rupee/Won curre
 });
 
 /**
+ * Round 1993: normalizeDecimalSeparator (webhookIn.ts) mirrors this exact
+ * reasoning for a comma -- "¥1,234" above is correctly read as 1234, not a
+ * decimal 1.234 -- but never got the symmetric branch for a lone dot, even
+ * though "." is just as commonly a thousands-grouping separator (not a
+ * decimal point) in many non-US locales (Germany/Austria/Switzerland/the
+ * Netherlands/Scandinavia, much of Latin America). Before this round,
+ * "€1.234" (meant as one thousand two hundred thirty-four) silently became
+ * the number 1.234 -- a 1000x-too-small value stored with a clean 201 and
+ * zero indication anything was wrong.
+ */
+test("POST /public/webhook-in/:projectId/:entityName treats a European dot-grouped amount as a thousands separator, not a decimal point", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-dot-thousands-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dana", amount: "€1.234" }),
+    });
+    assert.equal(webhookRes.status, 201, "a European-formatted amount using a dot as a thousands separator must not be rejected as an invalid number");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; amount: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.amount, 1234, "the dot must be read as a thousands separator (1234), not a decimal point (1.234)");
+  });
+});
+
+/**
  * Round 1887: a percent-rate field (discount/tax/commission -- all
  * realistic for this app's small-business templates) sent as "15%" got
  * the whole record hard-rejected as an invalid number, even though the

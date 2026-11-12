@@ -2730,6 +2730,49 @@ test("buildImportRecords treats a comma as the decimal point for a European-loca
 });
 
 /**
+ * Round 1993: the comma-only leniency above (round 1925) was never mirrored
+ * for a lone DOT -- many non-US locales (Germany/Austria/Switzerland/the
+ * Netherlands/Scandinavia, much of Latin America) write "." as the
+ * thousands-grouping separator with no decimal part at all. Before this
+ * fix, "€1.234" (meant as 1234) was silently read as the decimal 1.234 --
+ * a 1000x-too-small, but still finite and silently-ACCEPTED, number. A
+ * currency symbol (or similar) is needed to reach this leniency at all --
+ * a BARE "1.234" with no such symbol already parses as the finite decimal
+ * 1.234 via a plain `Number(raw)` before this function is ever called
+ * (the same pre-existing, out-of-scope ambiguity webhookIn.ts's own
+ * "already parses as a number" fast path has), so this test, like the
+ * sibling comma-decimal regression test above, only exercises values that
+ * actually reach normalizeDecimalSeparator. "1.234.567" (repeated dot-
+ * grouping, no comma at all, no currency symbol needed since multiple dots
+ * already make a bare Number() parse fail) must also resolve to 1234567,
+ * and an ordinary decimal ("99.90", "₪1.5") must keep working exactly as
+ * before.
+ */
+test("buildImportRecords treats a dot as a thousands separator for a European-locale number cell, not a decimal point to keep", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "€1.234"],
+    ["Beta LLC", "₪12.345"],
+    ["Gamma Inc", "1.234.567"],
+    ["Delta Inc", "99.90"],
+    ["Epsilon Inc", "₪1.5"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { client: "Acme Corp", amount: 1234 },
+    { client: "Beta LLC", amount: 12345 },
+    { client: "Gamma Inc", amount: 1234567 },
+    { client: "Delta Inc", amount: 99.9 },
+    { client: "Epsilon Inc", amount: 1.5 },
+  ]);
+  assert.equal(result.errors.length, 0);
+});
+
+/**
  * Round 1808: CSV_NUMBER_FORMATTING's character class only ever covered
  * USD/EUR/GBP/ILS ($€£₪), so a spreadsheet column formatted with Yen,
  * Rupee, or Won currency symbols (e.g. "¥1,234") got the whole row

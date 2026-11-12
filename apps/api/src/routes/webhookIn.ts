@@ -247,6 +247,25 @@ const WEBHOOK_NUMBER_FORMATTING = /[$€£₪¥₹₩%\s]/g;
  * already handled correctly and still does. Takes the string AFTER
  * WEBHOOK_NUMBER_FORMATTING has already stripped every currency symbol/
  * "%"/whitespace, so `trailingDigits` below counts real digits only.
+ *
+ * Round 1993: the comma-only branch above was never mirrored for a DOT-only
+ * value, even though "." is just as commonly a thousands-grouping separator
+ * (not a decimal point) in many non-US locales -- Germany/Austria/
+ * Switzerland/the Netherlands/Scandinavia and much of Latin America write
+ * "1.234" to mean one thousand two hundred thirty-four, the exact same
+ * concept round 1808's own Yen/Won comma-grouping fix already covers for a
+ * COMMA ("¥1,234" -> 1234, tested and correct). Before this, a dot-only
+ * value fell straight through to the final `return s` below unconditionally
+ * -- "€1.234" (meant as 1234) silently became the number 1.234, a 1000x-too-
+ * small value stored with a clean 201 and zero indication anything was
+ * wrong, not even the loud, honest rejection a genuinely malformed number
+ * gets. Mirrors the comma branch's own trailingDigits/count heuristic
+ * exactly, just with the two separators' roles swapped: this branch is only
+ * ever reached once the hasComma one above has already ruled out a comma
+ * being present at all, so there's no "which one is the real decimal"
+ * ambiguity left to resolve here, only "is this lone dot (or run of dots) a
+ * decimal point or thousands grouping" -- the identical question the comma
+ * branch already answers the same way.
  */
 function normalizeDecimalSeparator(s: string): string {
   const hasComma = s.includes(",");
@@ -258,6 +277,11 @@ function normalizeDecimalSeparator(s: string): string {
     const trailingDigits = s.length - s.lastIndexOf(",") - 1;
     const commaCount = s.split(",").length - 1;
     return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  if (hasDot) {
+    const trailingDigits = s.length - s.lastIndexOf(".") - 1;
+    const dotCount = s.split(".").length - 1;
+    return dotCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s : s.replace(/\./g, "");
   }
   return s;
 }

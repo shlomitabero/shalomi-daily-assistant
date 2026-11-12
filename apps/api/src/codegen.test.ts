@@ -14973,6 +14973,32 @@ test("the exported EntityView's own generated buildImportRecordsFromJson treats 
 });
 
 /**
+ * Round 1993: mirrors the live preview's own round-1993 fix -- the
+ * comma-only leniency just above (round 1925) was never mirrored for a
+ * lone DOT, even though "." is just as commonly a thousands-grouping
+ * separator (not a decimal point) in many non-US locales. "€1.234" (meant
+ * as 1234) was silently read as the decimal 1.234 -- a 1000x-too-small,
+ * but still finite and silently-ACCEPTED, number. "1.234.567" (repeated
+ * dot-grouping, no comma or currency symbol at all) must also resolve to
+ * 1234567.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson treats a European dot-grouped numeral string's dot as a thousands separator, not a decimal point", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(fields, [{ amount: "€1.234" }, { amount: "1.234.567" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: 1234 }, { amount: 1234567 }]);
+});
+
+/**
  * Round 1808: mirrors the live preview's own round-1808 fix -- this
  * generated function's own CSV_NUMBER_FORMATTING copy only ever covered
  * USD/EUR/GBP/ILS ($€£₪), so a Yen/Rupee/Won-formatted numeral string
@@ -16660,6 +16686,67 @@ test("the exported EntityView's CSV import treats a European decimal-comma numer
   assert.deepEqual(records, [
     { client: "Acme Corp", amount: 99.9 },
     { client: "Beta LLC", amount: 1234.56 },
+  ]);
+  assert.equal(errors.length, 0);
+});
+
+/**
+ * Round 1993: mirrors the live preview's own round-1993 fix -- the
+ * comma-only leniency just above (round 1925) was never mirrored for a
+ * lone DOT, even though "." is just as commonly a thousands-grouping
+ * separator (not a decimal point) in many non-US locales. "€1.234" (meant
+ * as 1234) was silently read as the decimal 1.234 -- a 1000x-too-small,
+ * but still finite and silently-ACCEPTED, number. A currency symbol is
+ * needed to reach this leniency at all -- a bare "1.234" with no such
+ * symbol already parses as the finite decimal 1.234 via a plain Number()
+ * before this function's own fallback path is ever reached, so this test
+ * only exercises values that actually reach normalizeDecimalSeparator.
+ */
+test("the exported EntityView's CSV import treats a European dot-grouped numeral cell's dot as a thousands separator, not a decimal point", () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = invoiceProject.spec.entities[0].fields;
+  const rows = [
+    ["Client", "Amount"],
+    ["Acme Corp", "€1.234"],
+    ["Beta LLC", "1.234.567"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [
+    { client: "Acme Corp", amount: 1234 },
+    { client: "Beta LLC", amount: 1234567 },
   ]);
   assert.equal(errors.length, 0);
 });

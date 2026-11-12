@@ -2174,6 +2174,16 @@ const CSV_NUMBER_FORMATTING = /[$€£₪¥₹₩%\s]/g;
  * string AFTER CSV_NUMBER_FORMATTING has already stripped every currency
  * symbol/"%"/whitespace, so `trailingDigits` below counts real digits
  * only, never a trailing symbol character.
+ *
+ * Round 1993: mirrors webhookIn.ts's own identical fix -- the comma-only
+ * branch above was never mirrored for a DOT-only value, even though "."
+ * is just as commonly a thousands-grouping separator (not a decimal
+ * point) in many non-US locales (Germany/Austria/Switzerland/the
+ * Netherlands/Scandinavia, much of Latin America). Before this, "€1.234"
+ * (meant as one thousand two hundred thirty-four) silently became the
+ * number 1.234 in a CSV import -- a 1000x-too-small value accepted with
+ * zero indication anything was wrong, not even the honest rejection a
+ * genuinely malformed cell gets.
  */
 function normalizeDecimalSeparator(s: string): string {
   const hasComma = s.includes(",");
@@ -2185,6 +2195,11 @@ function normalizeDecimalSeparator(s: string): string {
     const trailingDigits = s.length - s.lastIndexOf(",") - 1;
     const commaCount = s.split(",").length - 1;
     return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  if (hasDot) {
+    const trailingDigits = s.length - s.lastIndexOf(".") - 1;
+    const dotCount = s.split(".").length - 1;
+    return dotCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s : s.replace(/\./g, "");
   }
   return s;
 }

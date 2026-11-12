@@ -4121,6 +4121,11 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   // for the classic European shape -- exactly one comma followed by 1-2
   // digits; any other shape (3 trailing digits, multiple commas) is the
   // ordinary thousands-separator case this leniency already handled.
+  // Round 1993: mirrors webhookIn.ts's/entityFormatting.ts's own identical
+  // fix -- the comma-only branch above was never mirrored for a DOT-only
+  // value, even though "." is just as commonly a thousands-grouping
+  // separator (not a decimal point) in many non-US locales. Before this,
+  // "€1.234" (meant as 1234) silently became 1.234 in a CSV import.
   const normalizeDecimalSeparator = (s) => {
     const hasComma = s.includes(",");
     const hasDot = s.includes(".");
@@ -4131,6 +4136,11 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
       const trailingDigits = s.length - s.lastIndexOf(",") - 1;
       const commaCount = s.split(",").length - 1;
       return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+    }
+    if (hasDot) {
+      const trailingDigits = s.length - s.lastIndexOf(".") - 1;
+      const dotCount = s.split(".").length - 1;
+      return dotCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s : s.replace(/\\./g, "");
     }
     return s;
   };
@@ -4548,6 +4558,10 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         // large) instead of 99.90, since "," was unconditionally deleted
         // as a thousands separator. See that copy's own comment for the
         // full heuristic.
+        // Round 1993: mirrors the identical fix in buildImportRecords above
+        // -- the comma-only branch never had a dot-only sibling, so "€1.234"
+        // (meant as 1234) silently became 1.234 instead of being read as a
+        // thousands-grouped value.
         const normalizeDecimalSeparator = (s) => {
           const hasComma = s.includes(",");
           const hasDot = s.includes(".");
@@ -4558,6 +4572,11 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
             const trailingDigits = s.length - s.lastIndexOf(",") - 1;
             const commaCount = s.split(",").length - 1;
             return commaCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+          }
+          if (hasDot) {
+            const trailingDigits = s.length - s.lastIndexOf(".") - 1;
+            const dotCount = s.split(".").length - 1;
+            return dotCount === 1 && trailingDigits >= 1 && trailingDigits <= 2 ? s : s.replace(/\\./g, "");
           }
           return s;
         };
