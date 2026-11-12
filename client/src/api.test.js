@@ -129,6 +129,28 @@ test('a non-2xx response throws with the server\'s own error message and status 
   }
 });
 
+test('a non-2xx response with no error field in its body falls back to a generic Hebrew message', async () => {
+  // A raw infra-level failure (a proxy/platform error page, not this app's
+  // own JSON error handler) can return a non-2xx status with a body that
+  // either isn't JSON at all or is JSON with no `error` field - data.error
+  // is then undefined, and without this fallback `new Error(undefined)`
+  // would produce the literal string "undefined" as the message shown to
+  // the owner, in an otherwise all-Hebrew app.
+  const restore = stubFetchOnce(() => new Response('<html>502 Bad Gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } }));
+  try {
+    await assert.rejects(
+      () => api.health(),
+      (err) => {
+        assert.equal(err.message, 'שגיאה');
+        assert.equal(err.status, 502);
+        return true;
+      }
+    );
+  } finally {
+    restore();
+  }
+});
+
 test('a response body that is not valid JSON falls back to an empty object instead of throwing from res.json()', async () => {
   const restore = stubFetchOnce(() => new Response('not json at all', { status: 200, headers: { 'content-type': 'text/plain' } }));
   try {
