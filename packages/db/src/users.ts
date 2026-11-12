@@ -264,10 +264,14 @@ export function countOtherSessionsForUser(db: ForgeDatabase, userId: string, kee
  * Deletes the user row itself -- the last step of "delete my account"
  * (routes/auth.ts), called only after every project this user owns has
  * already been deleted, every OTHER project's collaborator grant for them
- * has been removed (removeAllCollaborationsForUser), and every one of
- * their own sessions has been revoked (deleteAllSessionsForUser). Nothing
- * in this table itself needs cleanup once those are done -- the users row
- * has no foreign-key children of its own left pointing at it by that point.
+ * has been removed (removeAllCollaborationsForUser), every one of their
+ * own sessions has been revoked (deleteAllSessionsForUser), and (round
+ * 1985) any outstanding password-reset token, login code and email-
+ * verification token for them has been superseded
+ * (deletePasswordResetTokensForUser/deleteLoginCodesForUser/
+ * deleteEmailVerificationTokensForUser) -- those three tables each carry
+ * their own `userId` column with no foreign-key constraint, so a row left
+ * behind there would otherwise never be cleaned up by this delete alone.
  */
 export function deleteUser(db: ForgeDatabase, userId: string): void {
   db.prepare("DELETE FROM users WHERE id = ?").run(userId);

@@ -1393,6 +1393,31 @@ export function createAuthRouter(
           // the same reason the existing "the deleted user's own session
           // token must stop working immediately" check below already expects.
           deleteAllSessionsForUser(db, req.userId!);
+          // Round 1985: mirrors the identical "an old pending secret must
+          // not survive this state change" convention this file already
+          // applies to every other account-security state change --
+          // PATCH /auth/password (round 1757/1960), PATCH /auth/email
+          // (round 1756/1980) and POST /auth/reset-password (round 1960)
+          // all supersede any outstanding password-reset token/login code/
+          // email-verification token for this exact user. Account deletion
+          // is the most sensitive state change of all, yet was the one
+          // place this never ran -- deleteUser's own doc comment
+          // (packages/db/src/users.ts) even claims "the users row has no
+          // foreign-key children of its own left pointing at it" once
+          // sessions/projects/collaborations are cleaned up, which is
+          // simply wrong: these three tables all carry their own `userId`
+          // column and are untouched by anything above. Without this, a
+          // password-reset/login-code/verification row minted before
+          // deletion sat in its own table forever (or until some
+          // completely unrelated future row of the same type happened to
+          // trigger that table's own lazy prune), permanently orphaned
+          // under a userId that can never resolve to a real user again --
+          // harmless only because every route that consumes one of these
+          // already re-checks findUserById after the fact, not because
+          // this cleanup ever ran.
+          deletePasswordResetTokensForUser(db, req.userId!);
+          deleteLoginCodesForUser(db, req.userId!);
+          deleteEmailVerificationTokensForUser(db, req.userId!);
           // Round 1259: the isHebrew check mirrors every other no-body/no-
           // session server-side text this file already uses `lang` for
           // (change-password, change-email) -- DELETE has no body, so this

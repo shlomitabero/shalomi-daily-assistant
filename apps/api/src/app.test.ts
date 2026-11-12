@@ -13658,6 +13658,115 @@ test("DELETE /auth/account succeeds even when one of the owned projects has a st
 });
 
 /**
+ * Round 1985: DELETE /auth/account's own doc comment on deleteUser
+ * (packages/db/src/users.ts) claims "the users row has no foreign-key
+ * children of its own left pointing at it" once sessions are revoked and
+ * projects/collaborations are cleaned up -- but password_reset_tokens,
+ * login_codes and email_verification_tokens all carry their own `userId`
+ * column, and this route never calls deletePasswordResetTokensForUser/
+ * deleteLoginCodesForUser/deleteEmailVerificationTokensForUser the way
+ * every OTHER account-security state change in this exact file does
+ * (PATCH /auth/password round 1757/1960, PATCH /auth/email round 1756/
+ * 1980, POST /auth/reset-password round 1960) -- the identical "an old
+ * pending secret must not survive this state change" gap, just never
+ * closed for the one state change that matters most: the account itself
+ * ceasing to exist. These three tests confirm each of those tables still
+ * has its row behind, orphaned under a userId that can never resolve to a
+ * real user again, immediately after a real DELETE /auth/account round
+ * trip -- not just stale rows that happen to outlive their own TTL, but
+ * ones deleteUser's own doc comment incorrectly claims don't exist at all.
+ */
+test("DELETE /auth/account leaves an outstanding forgot-password reset token's row behind, orphaned", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `delete-account-orphan-reset-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, email);
+
+      await fetch(`${baseUrl}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM password_reset_tokens").get()!.n,
+        1,
+        "expected exactly one pending password reset token row before deletion",
+      );
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+      assert.equal(deleteRes.status, 204);
+
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM password_reset_tokens").get()!.n,
+        0,
+        "a password-reset token row must not outlive the account it was minted for -- deleting the account must supersede it, the same as changing the password/email already does",
+      );
+    },
+    { emailSender },
+  );
+});
+
+test("DELETE /auth/account leaves an outstanding login code's row behind, orphaned", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `delete-account-orphan-logincode-${Date.now()}@example.com`;
+      const token = await signup(baseUrl, email);
+
+      const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "correct-horse-battery" }),
+      });
+      assert.equal(loginRes.status, 200);
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM login_codes").get()!.n,
+        1,
+        "expected exactly one pending login code row before deletion",
+      );
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+      assert.equal(deleteRes.status, 204);
+
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM login_codes").get()!.n,
+        0,
+        "a login code row must not outlive the account it was minted for -- deleting the account must supersede it, the same as changing the password/email already does",
+      );
+    },
+    { emailSender },
+  );
+});
+
+test("DELETE /auth/account leaves an outstanding email verification token's row behind, orphaned", async () => {
+  const emailSender = createFakeEmailSender();
+  await withServer(
+    async (baseUrl, db) => {
+      // Signup itself mints an email_verification_tokens row whenever
+      // emailSender.configured is true (round 1566) -- no separate
+      // resend-verification call needed to have a pending row to check.
+      const token = await signup(baseUrl, `delete-account-orphan-verify-${Date.now()}@example.com`);
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM email_verification_tokens").get()!.n,
+        1,
+        "expected exactly one pending email verification token row before deletion",
+      );
+
+      const deleteRes = await fetch(`${baseUrl}/api/auth/account`, { method: "DELETE", headers: authHeaders(token) });
+      assert.equal(deleteRes.status, 204);
+
+      assert.equal(
+        db.prepare("SELECT COUNT(*) AS n FROM email_verification_tokens").get()!.n,
+        0,
+        "an email verification token row must not outlive the account it was minted for -- deleting the account must supersede it, the same as changing the email already does",
+      );
+    },
+    { emailSender },
+  );
+});
+
+/**
  * New in this round: a checkpoint's label was previously only ever the
  * automatic one build/refine gave it -- no way to give an important one a
  * name that's actually memorable months later. Confirms the real PATCH
