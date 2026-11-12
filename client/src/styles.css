@@ -69,6 +69,15 @@ input, select, textarea {
 .cash-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 4px; }
 .cash-box span { color: var(--text-dim); font-size: 12px; }
 .cash-box strong { font-size: 20px; }
+/* Dashboard.jsx pairs the base .cash-box class with .cash-in/.cash-out, but
+   neither modifier ever had a rule of its own - both boxes rendered in the
+   exact same plain gray, with no visual distinction at all between "money
+   that came in today" and "money that went out today", unlike every other
+   positive/negative pairing in this app (.net-profit-box.positive/.negative
+   right below, .dot-on/.dot-off, .log-result.positive/.negative). Same tint
+   values as .net-profit-box.positive/.negative, for the same reason. */
+.cash-box.cash-in { background: rgba(61, 220, 151, 0.12); border-color: var(--positive); }
+.cash-box.cash-out { background: rgba(255, 107, 107, 0.12); border-color: var(--negative); }
 
 .net-profit-box { border-radius: var(--radius); padding: 16px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); }
 .net-profit-box.positive { background: rgba(61, 220, 151, 0.12); border-color: var(--positive); }
