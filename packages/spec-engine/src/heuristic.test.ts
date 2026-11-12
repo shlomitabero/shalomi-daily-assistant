@@ -327,6 +327,42 @@ test("recognizes plain 'classes'/'class schedules' phrasing as the Course entity
   assert.ok(!worldClass.entities.some((e) => e.name === "Course"), "'world-class' must not spuriously match the Course entity");
 });
 
+test("Course's bare 'שיעור' keyword doesn't spuriously match the unrelated Hebrew homograph 'שיעור' meaning 'rate'/'proportion' (interest rate, tax rate, unemployment rate, attrition rate), while still matching every real standalone lesson use", async () => {
+  // Round 1992: "שיעור" is a true Hebrew homograph, the same shape round
+  // 890's "ביקורת" (audit/review) and round 1982's "משוב"
+  // (feedback/"excellent") fixes already closed for this file -- the
+  // identical spelling also means "rate"/"proportion" (a statistic), with
+  // zero connection to a lesson/class. Each of these four descriptions is a
+  // plausible, real app for a financial/statistics-tracking business with
+  // nothing to do with lessons, and each previously matched only `Course`
+  // (fabricating a schedule/instructor/price entity) via the bare substring.
+  const provider = new HeuristicSpecProvider();
+
+  const interestRate = await provider.generate("אפליקציה לחישוב שיעור הריבית על הלוואות למשתמשים.");
+  assert.ok(!interestRate.entities.some((e) => e.name === "Course"), "'שיעור הריבית' (interest rate) must not spuriously match Course");
+
+  const unemploymentRate = await provider.generate("מערכת למעקב אחרי שיעור האבטלה באזורים שונים של המדינה.");
+  assert.ok(!unemploymentRate.entities.some((e) => e.name === "Course"), "'שיעור האבטלה' (unemployment rate) must not spuriously match Course");
+
+  const taxRate = await provider.generate("אפליקציה לחישוב שיעור המס השנתי של עובדים.");
+  assert.ok(!taxRate.entities.some((e) => e.name === "Course"), "'שיעור המס' (tax rate) must not spuriously match Course");
+
+  const attritionRate = await provider.generate("מערכת לניתוח שיעור הנשירה של עובדים מהחברה.");
+  assert.ok(!attritionRate.entities.some((e) => e.name === "Course"), "'שיעור הנשירה' (attrition rate) must not spuriously match Course");
+
+  // Every real standalone lesson use must still match -- the exact
+  // regression boundary round 1727's own "class"/"world-class" test above
+  // pins for the English sibling exclusion.
+  const privateEnglishLesson = await provider.generate("אפליקציה שמלמדת אנגלית ומתחילה כל שיעור בעובדה מעניינת");
+  assert.ok(privateEnglishLesson.entities.some((e) => e.name === "Course"), "a standalone 'שיעור' (lesson) use must still match Course");
+
+  const privateMathLesson = await provider.generate("אפליקציה לניהול שיעור פרטי במתמטיקה לתלמידים");
+  assert.ok(privateMathLesson.entities.some((e) => e.name === "Course"), "'שיעור פרטי' (private lesson) must still match Course");
+
+  const weeklyYogaClass = await provider.generate("מערכת לקביעת שיעור יוגה שבועי");
+  assert.ok(weeklyYogaClass.entities.some((e) => e.name === "Course"), "'שיעור יוגה' (yoga class) must still match Course");
+});
+
 test("recognizes 'opportunity'/'הזדמנויות' and 'לידים' as Deal-shaped sales pipeline terms, in both the English and Hebrew built-in 'Sales CRM' example descriptions", async () => {
   // Round 1722: the app's own home-screen built-in example
   // (apps/web/src/i18n/language.ts, home.examples.crm.text/[he]) reads

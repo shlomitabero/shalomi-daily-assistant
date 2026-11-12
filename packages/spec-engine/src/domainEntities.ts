@@ -959,7 +959,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // would collide with "of course" and "golf course", both far more
     // common than any real education-app phrasing that needs it.
     keywords: [
-      /\bcourses\b/, "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעור", "שיעורים", "כיתה",
+      /\bcourses\b/, "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעורים", "כיתה",
       // "כיתה" (classroom/class) had no plural entry (round 583). Its
       // plural "כיתות" swaps the word-final ה for ות mid-word, the same
       // construct-state gap shape rounds 576-582 already found elsewhere
@@ -979,6 +979,28 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // separately so the common singular phrasing ("a weekly class
       // schedule") still matches without touching bare singular "class".
       /\bclasses\b/, /\bclass schedules?\b/,
+      // Round 1992: "שיעור" is a true Hebrew homograph, the same
+      // grammatical-polysemy shape round 890's "ביקורת" (audit/review) fix
+      // and round 1982's "משוב" (feedback/"excellent") fix already closed
+      // for this file -- the identical spelling also means "rate"/
+      // "proportion" (a statistic, e.g. "שיעור ריבית" = interest rate,
+      // "שיעור המס" = tax rate, "שיעור האבטלה" = unemployment rate, "שיעור
+      // הצלחה" = success rate), with zero connection to a lesson/class this
+      // entity exists to represent. Confirmed empirically via the real
+      // HeuristicSpecProvider before fixing: an interest-rate calculator, an
+      // unemployment-rate tracker, a tax-rate calculator, and an employee-
+      // attrition-rate analyzer each produced a spurious Course entity (with
+      // its own schedule/instructor/price fields) via this bare substring,
+      // for an app with nothing to do with lessons. Fixed the same way round
+      // 890's "ביקורת" fix was: a negative lookahead excluding only the
+      // specific rate co-occurrences actually found (`ה?` optional since
+      // Hebrew's definite article can attach directly to the following
+      // noun, e.g. "שיעור המס"), not a word-boundary (Hebrew has no `\b`).
+      // Every real standalone lesson use -- "שיעור פרטי", "שיעור יוגה", "כל
+      // שיעור", a bare "שיעור בבית ספר" -- still matches, confirmed
+      // empirically after fixing; "שיעורים" (plural) is a separate keyword
+      // entry, untouched.
+      /שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
