@@ -3720,6 +3720,62 @@ test("resolveFileFieldsForWebhook never resolves a scripted-scheme or attacker-c
   });
 });
 
+/**
+ * Round 1972: `name`/`mimeType` used to be copied straight from the
+ * untyped JSON.parse result with no validation at all -- unlike every
+ * other reader of this identical {url,name,size,mimeType} descriptor
+ * (findTemplateFileAttachment/findAllTemplateFileAttachments, both
+ * require `typeof parsed.name/mimeType === "string"`; entityFormatting.ts's
+ * parseFileFieldValue, the canonical FileFieldValue shape, requires the
+ * same for `name` and defensively coerces `size`/`mimeType`). coerceValue
+ * (packages/db/src/repository.ts) never validates these three fields at
+ * write time either, so a collaborator who can write to a record could
+ * PATCH a file field with a hand-built descriptor that reuses a real
+ * file's own url (satisfying SAFE_FILE_URL/coerceValue's own checks) but
+ * sets name/size/mimeType to a non-scalar value -- the next webhook
+ * automation to fire would then embed that type-confused data straight
+ * into the outbound JSON payload with no sanitization on this server's
+ * side. Confirms a non-string name/mimeType is now rejected the same way
+ * a malformed descriptor already is (left untouched, not resolved), and
+ * that a non-numeric size is defensively coerced to 0 rather than passed
+ * through raw -- mirroring parseFileFieldValue's own exact convention.
+ */
+test("resolveFileFieldsForWebhook never resolves a descriptor whose name/mimeType aren't real strings, and defensively coerces a non-numeric size instead of passing it through raw", () => {
+  const entityWithInvoice: Entity = {
+    ...orderEntity,
+    fields: [...orderEntity.fields, { name: "invoice", type: "file", required: false }],
+  };
+
+  const objectNameRecord = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: { x: 1 }, size: 1, mimeType: "application/pdf" }),
+  };
+  assert.deepEqual(
+    resolveFileFieldsForWebhook(entityWithInvoice, objectNameRecord, "https://example.com"),
+    objectNameRecord,
+    "a non-string name must be left untouched, not passed through into the webhook payload",
+  );
+
+  const arrayMimeTypeRecord = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: "invoice.pdf", size: 1, mimeType: ["a", "b"] }),
+  };
+  assert.deepEqual(
+    resolveFileFieldsForWebhook(entityWithInvoice, arrayMimeTypeRecord, "https://example.com"),
+    arrayMimeTypeRecord,
+    "a non-string mimeType must be left untouched too",
+  );
+
+  const nonNumericSizeRecord = {
+    customerName: "Dana",
+    invoice: JSON.stringify({ url: "/api/uploads/proj1/Order/abc123.pdf", name: "invoice.pdf", size: "not-a-number", mimeType: "application/pdf" }),
+  };
+  assert.deepEqual(resolveFileFieldsForWebhook(entityWithInvoice, nonNumericSizeRecord, "https://example.com"), {
+    customerName: "Dana",
+    invoice: { url: "https://example.com/api/uploads/proj1/Order/abc123.pdf", name: "invoice.pdf", size: 0, mimeType: "application/pdf" },
+  });
+});
+
 test("runAutomationsForRecordChange records a failed outcome when the webhook responds with a non-2xx status, without throwing", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {

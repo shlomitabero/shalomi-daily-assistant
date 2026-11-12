@@ -127,7 +127,33 @@ export function resolveFileFieldsForWebhook(entity: Entity, record: EntityRecord
       continue;
     }
     if (typeof parsed.url !== "string" || !SAFE_FILE_URL.test(parsed.url)) continue;
-    resolved[field.name] = { url: new URL(parsed.url, baseUrl).toString(), name: parsed.name, size: parsed.size, mimeType: parsed.mimeType };
+    // Round 1972: `name`/`mimeType` used to be copied straight from the
+    // untyped JSON.parse result with no validation at all -- unlike every
+    // other reader of this identical {url,name,size,mimeType} descriptor
+    // (findTemplateFileAttachment/findAllTemplateFileAttachments just
+    // below, both require `typeof parsed.name/mimeType === "string"`
+    // before trusting them; entityFormatting.ts's parseFileFieldValue,
+    // the canonical FileFieldValue shape, requires the same for `name`
+    // and defensively coerces `size`/`mimeType` rather than passing them
+    // through raw). `coerceValue` (packages/db/src/repository.ts) never
+    // validates these three fields either, and `routes/projects.ts`'s
+    // create/update routes pass `req.body` straight into insertRecord/
+    // updateRecord with no file-field-specific handling first -- so any
+    // collaborator who can write to a record could PATCH a file field
+    // with a hand-built descriptor that reuses a real, already-uploaded
+    // file's own `url` (satisfying SAFE_FILE_URL and coerceValue's own
+    // checks) but sets `name`/`size`/`mimeType` to an object, array, or
+    // other non-scalar value. The next webhook automation to fire against
+    // that record would then embed this type-confused data straight into
+    // the outbound JSON payload sent to an external destination (Zapier/
+    // Slack/Make, this feature's own stated compatibility target) with no
+    // sanitization at all on this server's side. Rejected the same way a
+    // malformed descriptor already is just above (left untouched, not
+    // thrown) when `name`/`mimeType` aren't real strings; `size` is
+    // coerced the same defensive way parseFileFieldValue already does,
+    // rather than passed through raw.
+    if (typeof parsed.name !== "string" || typeof parsed.mimeType !== "string") continue;
+    resolved[field.name] = { url: new URL(parsed.url, baseUrl).toString(), name: parsed.name, size: Number(parsed.size) || 0, mimeType: parsed.mimeType };
   }
   return resolved;
 }
