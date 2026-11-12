@@ -3789,3 +3789,79 @@ test("an incoming WhatsApp bot-invoke message (botInvokeMessage) is logged with 
   assert.equal(messages[0].body, "הפעלת בוט", "botInvokeMessage must unwrap transparently to its inner message, not fall through to a silent drop");
   assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
+
+/**
+ * Round 1988: `questionMessage` (field 101) -- confirmed against the
+ * installed Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * questionMessage = 101;`, the exact same wrapper shape as
+ * ephemeralMessage/documentWithCaptionMessage/associatedChildMessage/
+ * groupStatusMessage/groupStatusMessageV2/deviceSentMessage/
+ * pollCreationMessageV4/commentMessage/statusMentionMessage/
+ * lottieStickerMessage/groupMentionedMessage/statusAddYours/
+ * limitSharingMessage/groupStatusMentionMessage/eventCoverImage/
+ * pollCreationOptionImageMessage/botInvokeMessage (rounds 1142/1152/1445/
+ * 1888/1901/1930/1933/1950/1952/1953/1954/1955/1959/1961/1964). Baileys'
+ * own getFutureProofMessage helper doesn't list this field either, but
+ * round 1888 already established that the protobuf shape is the decisive
+ * signal, not that helper's own list. Round 1883's own write-up explicitly
+ * ruled this field out as "a generic forward-compat wrapper with no
+ * plaintext field of its own" -- but that is a description of
+ * IFutureProofMessage itself, which round 1888 (five rounds later)
+ * established DOES unwrap to a fully recoverable inner message, the same
+ * way every sibling field listed above already does. Without this branch,
+ * it fell straight through to the final `return null` and vanished with
+ * zero trace.
+ */
+test("an incoming WhatsApp question message (questionMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { questionMessage: { message: { conversation: "שאלה בסטטוס" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "שאלה בסטטוס", "questionMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
+ * Round 1988: `questionReplyMessage` (field 106) -- the other field round
+ * 1883 incorrectly ruled out alongside `questionMessage` just above, for
+ * the identical, now-superseded reasoning. Confirmed against the installed
+ * Baileys protobuf (WAProto.proto): `optional FutureProofMessage
+ * questionReplyMessage = 106;`, sitting directly between
+ * statusQuestionAnswerMessage (field 105, round 1901) and
+ * questionResponseMessage (field 107, round 1883) -- a sibling of the same
+ * "Status Q&A sticker" feature family, ordinary consumer usage.
+ */
+test("an incoming WhatsApp question reply message (questionReplyMessage) is logged with its inner message content instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { questionReplyMessage: { message: { conversation: "תשובה לשאלה" } } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "תשובה לשאלה", "questionReplyMessage must unwrap transparently to its inner message, not fall through to a silent drop");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});

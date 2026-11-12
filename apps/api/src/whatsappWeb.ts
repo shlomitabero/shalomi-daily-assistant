@@ -201,6 +201,8 @@ export interface BaileysIncomingMessage {
     eventCoverImage?: { message?: BaileysIncomingMessage["message"] };
     pollCreationOptionImageMessage?: { message?: BaileysIncomingMessage["message"] };
     botInvokeMessage?: { message?: BaileysIncomingMessage["message"] };
+    questionMessage?: { message?: BaileysIncomingMessage["message"] };
+    questionReplyMessage?: { message?: BaileysIncomingMessage["message"] };
   };
 }
 
@@ -638,6 +640,41 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // Without this branch, it fell straight through to the final `return
   // null` and vanished with zero trace.
   if (message.botInvokeMessage?.message) return describeIncomingMessage(message.botInvokeMessage.message);
+  // Round 1988: `questionMessage` (field 101) and `questionReplyMessage`
+  // (field 106) -- confirmed against the installed Baileys protobuf
+  // (WAProto.proto): `optional FutureProofMessage questionMessage = 101;`
+  // and `optional FutureProofMessage questionReplyMessage = 106;`, the
+  // exact same wrapper shape as ephemeralMessage/documentWithCaptionMessage/
+  // associatedChildMessage/groupStatusMessage/groupStatusMessageV2/
+  // deviceSentMessage/pollCreationMessageV4/commentMessage/
+  // statusMentionMessage/lottieStickerMessage/groupMentionedMessage/
+  // statusAddYours/limitSharingMessage/groupStatusMentionMessage/
+  // eventCoverImage/pollCreationOptionImageMessage/botInvokeMessage just
+  // above (round 1888's same precedent applies: Baileys' own
+  // getFutureProofMessage helper doesn't list either field, but the
+  // protobuf shape is the decisive signal, not that helper's own list).
+  // Both sit directly alongside statusQuestionAnswerMessage (field 105)
+  // and questionResponseMessage (field 107) above -- siblings in WhatsApp's
+  // own "Status Q&A sticker" feature, ordinary consumer usage, not a
+  // bot-API/enterprise-only edge case.
+  //
+  // Round 1883's own write-up explicitly ruled these two out, reasoning
+  // they were "a generic forward-compat wrapper with no plaintext field of
+  // its own" -- but that description is `IFutureProofMessage` itself
+  // (`{ message?: IMessage }`), the exact wrapper type round 1888 (five
+  // rounds later) established DOES have a fully recoverable inner message,
+  // via the same recursive unwrap used for every sibling listed above.
+  // Round 1883's reasoning was never revisited once round 1888 superseded
+  // it: botTaskMessage/botForwardedMessage (the OTHER two IFutureProofMessage
+  // fields left after round 1883, both genuinely bot-API/enterprise-only)
+  // stayed on this file's own tracked backlog through round 1965, but
+  // questionMessage/questionReplyMessage were dropped from that list
+  // entirely rather than carried forward -- confirmed via grep of
+  // docs/roadmap.md, which never mentions either field again after round
+  // 1883. Previously fell through to the final `return null` below and
+  // vanished with zero trace.
+  if (message.questionMessage?.message) return describeIncomingMessage(message.questionMessage.message);
+  if (message.questionReplyMessage?.message) return describeIncomingMessage(message.questionReplyMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
   // encReactionMessage/encEventResponseMessage already have with their own
