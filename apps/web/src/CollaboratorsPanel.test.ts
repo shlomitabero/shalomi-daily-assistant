@@ -2,6 +2,7 @@ import "./jsdomWarmup.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { transformSync } from "esbuild";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
@@ -9,6 +10,8 @@ import type { CollaboratorRole, Entity, Project, ProjectCollaborator } from "@fo
 import { CollaboratorsPanel } from "./CollaboratorsPanel.js";
 import { LanguageProvider } from "./i18n/LanguageContext.js";
 import { ThemeProvider } from "./theme/ThemeContext.js";
+
+const collaboratorsPanelSrc = readFileSync(new URL("./CollaboratorsPanel.tsx", import.meta.url), "utf8");
 
 /** Same jsdom-swap technique as the rest of this project's real-DOM tests. */
 async function withJsdom<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -1785,6 +1788,38 @@ test("CollaboratorsPanel's \"Check last delivery\" button shows the real, format
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+/**
+ * Round 1965: handleCheckLastInboundWebhook never guarded against its OWN
+ * reentrancy, unlike every other mutating handler in this file. A full-
+ * render `fireEvent.click()`-twice test would pass even without the fix
+ * (confirmed empirically before writing this test) -- jsdom/testing-
+ * library's `fireEvent.click` respects the `disabled` attribute once
+ * React's `act()`-wrapped first click has already committed it, the same
+ * false-pass round 1401's own methodology correction documents for this
+ * identical shape (and round 1522's own "first draft" independently
+ * rediscovered for this exact file's sibling `handleRemove`). So this
+ * test uses that same established extraction technique instead: regex-
+ * extract the real handler out of the source, strip TypeScript via
+ * esbuild's `transformSync`, and call it via `new Function` with ONLY
+ * `checkingLastInboundWebhook`/`regeneratingWebhookToken` declared
+ * (the first already `true`, simulating an in-flight call; the second
+ * `false`, so the pre-existing cross-gate doesn't trip first) -- if this
+ * round's new guard were ever removed, the very next line reached
+ * (`setCheckingLastInboundWebhook`) throws a `ReferenceError` instead of
+ * silently doing nothing, proving the guard itself stops execution.
+ */
+test("handleCheckLastInboundWebhook is a no-op while checkingLastInboundWebhook is already true", async () => {
+  const handlerMatch = collaboratorsPanelSrc.match(/ {2}async function handleCheckLastInboundWebhook\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleCheckLastInboundWebhook in CollaboratorsPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function(
+    "checkingLastInboundWebhook",
+    "regeneratingWebhookToken",
+    `${code}\nreturn handleCheckLastInboundWebhook;`,
+  )(true, false) as () => Promise<void>;
+  await fn();
 });
 
 /**

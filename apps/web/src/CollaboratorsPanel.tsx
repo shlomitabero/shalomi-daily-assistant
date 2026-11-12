@@ -227,6 +227,18 @@ export function CollaboratorsPanel({
     // can't start reading the token that's about to be rotated out from
     // under it either.
     if (regeneratingWebhookToken) return;
+    // Round 1965: this handler never guarded against its OWN reentrancy,
+    // unlike every other mutating handler in this file. Unlike round
+    // 1860's own two fixes (handleRegenerateCalendarFeedToken/
+    // handleRegenerateInboundWebhookToken), this one has no window.confirm()
+    // to serialize a fast double-click before React commits the button's
+    // own disabled state -- it's a plain read action -- so this gap is
+    // genuinely reachable, not just defensive consistency. A fast double-
+    // click fires two independent getInboundWebhookToken GETs, and
+    // whichever response resolves last silently wins the two
+    // setLastInboundWebhookAt/setLastInboundWebhookFailure calls below,
+    // regardless of which click it actually came from.
+    if (checkingLastInboundWebhook) return;
     setCheckingLastInboundWebhook(true);
     try {
       const { lastInboundWebhookAt, lastInboundWebhookFailure } = await getInboundWebhookToken(projectId);
