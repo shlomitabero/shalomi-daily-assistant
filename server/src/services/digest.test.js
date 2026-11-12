@@ -348,6 +348,24 @@ test('generateDailyDigest does not count an approval whose opportunity was alrea
   assert.doesNotMatch(digest.text, /מאושרות ומחכות/);
 });
 
+test('generateDailyDigest does not count an approval for a demo draft, which can never actually be published', () => {
+  // routes/approvals.js now refuses to even create this approval for a
+  // demo draft (no ANTHROPIC_API_KEY when drafted) going forward - this
+  // proves a stale one created before that server-side fix existed
+  // doesn't keep nagging the owner about something that structurally can
+  // never become real money.
+  __resetForTests();
+  const opp = db.opportunities.insert({
+    id: makeId('opp'), status: 'draft', title: 'מדריך דמו', costs: {}, productDraft: { demo: true },
+  });
+  db.approvals.insert({
+    id: makeId('appr'), opportunityId: opp.id, actionType: 'publish_product', status: 'approved',
+    createdAt: new Date().toISOString(), approvedAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /מאושרות ומחכות/);
+});
+
 // Times are explicit UTC (Z) and chosen so that in winter (Israel = UTC+2,
 // no DST), '04:59Z' is 06:59 Israel time, '07:00Z' is 09:00 Israel time,
 // and '08:00Z' is 10:00 Israel time - the function checks Israel-local

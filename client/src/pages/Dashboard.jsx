@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { actionTypeLabel, formatMoney } from '../labels.js';
+import { actionTypeLabel, formatMoney, pendingPublishApprovals } from '../labels.js';
 
 const MODE_LABEL = {
   research: 'מחקר בלבד — איתור והצגת הזדמנויות, שום דבר לא מתבצע לבד',
@@ -74,11 +74,12 @@ export default function Dashboard() {
   }, []);
 
   // An approval has already done its job once its opportunity is published —
-  // only count ones whose opportunity is still a draft as "waiting to run".
-  const pendingApprovals = approvals.filter((a) => {
-    const opp = opportunities.find((o) => o.id === a.opportunityId);
-    return opp?.status === 'draft';
-  });
+  // only count ones whose opportunity is still a draft (and a real,
+  // non-demo one - routes/approvals.js now refuses to even create one for
+  // a demo draft, but a stale approval from before that fix existed must
+  // not keep inflating this count or this page's own preview list below)
+  // as "waiting to run".
+  const pendingApprovals = pendingPublishApprovals(approvals, opportunities);
   // pendingApprovals looks up each approval's own opportunity by id - a
   // failed opportunities load (not just a failed approvals load) makes
   // this count just as unreliable, since every lookup above would

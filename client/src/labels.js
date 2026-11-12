@@ -207,6 +207,23 @@ export function latestSourceCheckTimestamp(sources) {
   ), null);
 }
 
+// Dashboard.jsx's own "an approval has already done its job once its
+// opportunity is published" filter never excluded a demo draft (no
+// ANTHROPIC_API_KEY when it was drafted) - routes/approvals.js now
+// refuses to even create one going forward (it can never actually be
+// published - services/publishing.js always refuses that), but a stale
+// approval created before that server-side fix existed would otherwise
+// still inflate this count and could occupy one of the dashboard's own
+// 3 preview slots, same reasoning as every other "what should I look at"
+// surface in this app (digest.js, autonomousScan, Opportunities.jsx's own
+// active list) already excluding demo drafts for the same reason.
+export function pendingPublishApprovals(approvals, opportunities) {
+  return approvals.filter((a) => {
+    const opp = opportunities.find((o) => o.id === a.opportunityId);
+    return opp?.status === 'draft' && !opp.productDraft?.demo;
+  });
+}
+
 export function missingFieldLabel(field) {
   if (MISSING_FIELD_LABEL[field]) return MISSING_FIELD_LABEL[field];
   if (field.startsWith('cost:')) {

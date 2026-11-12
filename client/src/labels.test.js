@@ -4,7 +4,7 @@ import {
   formatMoney, actionTypeLabel, resultLabel, riskLevelLabel, sideLabel,
   opportunityStatusLabel, sourceLabel, missingFieldLabel, reasonLabel,
   autonomousScanSummary, saleConfirmedSummary, refreshAllFailuresSummary,
-  latestSourceCheckTimestamp,
+  latestSourceCheckTimestamp, pendingPublishApprovals,
 } from './labels.js';
 
 // This is the client's one module with zero React/DOM dependency - pure
@@ -226,4 +226,31 @@ test('latestSourceCheckTimestamp picks the most recent timestamp regardless of l
     { lastCheckedAt: '2026-02-01T00:00:00.000Z' },
   ];
   assert.equal(latestSourceCheckTimestamp(sources), '2026-03-01T00:00:00.000Z');
+});
+
+test('pendingPublishApprovals keeps an approval whose opportunity is still a real (non-demo) draft', () => {
+  const approvals = [{ id: 'appr_1', opportunityId: 'opp_1' }];
+  const opportunities = [{ id: 'opp_1', status: 'draft', productDraft: { demo: false } }];
+  assert.equal(pendingPublishApprovals(approvals, opportunities).length, 1);
+});
+
+test('pendingPublishApprovals drops an approval whose opportunity has already been published', () => {
+  const approvals = [{ id: 'appr_1', opportunityId: 'opp_1' }];
+  const opportunities = [{ id: 'opp_1', status: 'published', productDraft: { demo: false } }];
+  assert.equal(pendingPublishApprovals(approvals, opportunities).length, 0);
+});
+
+test('pendingPublishApprovals drops an approval for a demo draft, which can never actually be published', () => {
+  // routes/approvals.js now refuses to create this approval going
+  // forward, but a stale one created before that server-side fix
+  // existed must not keep inflating this count or this page's own
+  // preview list indefinitely.
+  const approvals = [{ id: 'appr_1', opportunityId: 'opp_1' }];
+  const opportunities = [{ id: 'opp_1', status: 'draft', productDraft: { demo: true } }];
+  assert.equal(pendingPublishApprovals(approvals, opportunities).length, 0);
+});
+
+test('pendingPublishApprovals drops an approval whose opportunity failed to load, rather than crashing', () => {
+  const approvals = [{ id: 'appr_1', opportunityId: 'opp_missing' }];
+  assert.equal(pendingPublishApprovals(approvals, []).length, 0);
 });

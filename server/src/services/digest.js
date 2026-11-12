@@ -73,9 +73,19 @@ export function generateDailyDigest(now = new Date()) {
   // "approved but not yet acted on"). Without surfacing this count, an
   // approved opportunity could sit unpublished indefinitely with nothing
   // in the daily digest to remind the owner it's one click away.
+  //
+  // routes/approvals.js now refuses to even create this approval for a
+  // demo draft (no ANTHROPIC_API_KEY when it was drafted) - it can never
+  // actually be published, publishOpportunity always refuses it - but a
+  // stale approval created before that server-side fix existed would
+  // otherwise still count here, telling the owner something is "one click
+  // from real money" that structurally never can be.
   const approvedAwaitingPublish = db.approvals
     .where((a) => a.status === 'approved' && a.actionType === 'publish_product')
-    .filter((a) => db.opportunities.get(a.opportunityId)?.status === 'draft')
+    .filter((a) => {
+      const opp = db.opportunities.get(a.opportunityId);
+      return opp?.status === 'draft' && !opp.productDraft?.demo;
+    })
     .length;
 
   // runAutonomousScan logs this as a 'skipped: N drafts already awaiting
