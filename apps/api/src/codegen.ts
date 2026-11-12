@@ -4388,6 +4388,24 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
   const checkDuplicateWarning = makeDuplicateWarningChecker(entity, existingRecords || []);
   const seenIds = new Set();
 
+  // Round 1977: mirrors the live preview's own entityFormatting.ts
+  // buildImportRecordsFromJson's identical fix -- without this, a
+  // generic external JSON file (not a genuine round-trip re-export)
+  // whose own "id" key happens to hold small sequential integers that
+  // coincide with this entity's own real existing record ids silently
+  // PATCH-overwrote those unrelated real records instead of creating new
+  // ones, nulling out every other real field the file doesn't happen to
+  // share. Mirrors buildImportRecords' own idColumnTrusted exactly, just
+  // adapted to JSON's shape: every field name must appear as a key
+  // somewhere across the uploaded rows before "id" is trusted at all.
+  const allJsonKeys = new Set();
+  for (const row of rows) {
+    if (typeof row === "object" && row !== null && !Array.isArray(row)) {
+      for (const key of Object.keys(row)) allJsonKeys.add(key);
+    }
+  }
+  const idColumnTrusted = fields.every((f) => allJsonKeys.has(f.name));
+
   rows.forEach((row, rowIndex) => {
     if (typeof row !== "object" || row === null || Array.isArray(row)) {
       errors.push(\`Row \${rowIndex + 1}: expected a JSON object, got \${Array.isArray(row) ? "an array" : typeof row}.\`);
@@ -4396,7 +4414,7 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
     const record = {};
     let rowError = null;
 
-    if (row.id !== undefined && row.id !== null) {
+    if (idColumnTrusted && row.id !== undefined && row.id !== null) {
       // Round 1293: every other field-type branch below this one requires
       // a specific typeof before coercing (boolean/number/enum/date/text),
       // but this bare Number(...) call had no such guard -- Number(true)

@@ -14525,6 +14525,68 @@ test("the exported EntityView's own generated buildImportRecordsFromJson rejects
 });
 
 /**
+ * Round 1977: ports the live preview's own identical fix
+ * (entityFormatting.ts's buildImportRecordsFromJson) to the exported
+ * app's generated copy -- a generic external JSON file (not a genuine
+ * recordsToJson re-export) whose own "id" key happens to collide with
+ * this entity's own real existing record ids used to silently
+ * PATCH-overwrite those unrelated real records instead of creating new
+ * ones, nulling out every other real field the file doesn't happen to
+ * share. Mirrors buildImportRecords' own round-942 idColumnTrusted fix,
+ * adapted to JSON's shape: the "id" key is now only trusted once every
+ * one of the entity's own real fields is also present as a key
+ * somewhere across the uploaded rows.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson ignores an \"id\" key (treats the row as a brand-new record) when the uploaded rows don't also cover every one of the entity's own real fields", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  // A plausible external customer list: its own "id" key (e.g. a
+  // membership number) plus "name" -- but no "email" key anywhere.
+  const result = buildImportRecordsFromJson(fields, [{ id: 7, name: "Dana" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.records,
+    [{ name: "Dana", email: null }],
+    "the external id value must never be mistaken for this app's own record id -- this row must create a new record, not attempt to update record #7",
+  );
+});
+
+/**
+ * Round 1977: sibling of the test just above -- the "id" key IS trusted
+ * once the uploaded rows cover every real field, confirming the fix
+ * doesn't regress the legitimate re-export case.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson still trusts the \"id\" key once the uploaded rows cover every one of the entity's own real fields", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  const result = buildImportRecordsFromJson(fields, [{ id: 7, name: "Dana", email: "dana@example.com" }], {});
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana", email: "dana@example.com" }]);
+});
+
+/**
  * Round 1724: ports the live preview's own round-1715 fix
  * (entityFormatting.ts) to the exported app's generated
  * buildImportRecordsFromJson -- a genuine recordsToJson export always

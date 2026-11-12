@@ -2557,13 +2557,28 @@ export function buildImportRecords(
  * refuses the whole import with one clear error (mirroring
  * buildImportRecords); an optional one is simply ignored per row.
  *
- * `id` needs none of buildImportRecords' own "only trust the id column
- * once every real field is also present" heuristic -- that defense exists
- * specifically because a CSV header's plain text is ambiguous (an
- * external spreadsheet can coincidentally have its own unrelated "ID"
- * column), but `id` is a reserved field name no real field can ever
- * claim (packages/shared's RESERVED_FIELD_NAMES), so a JSON object's own
- * top-level `id` key is unambiguous on its own.
+ * Round 1977: this comment used to claim `id` needs none of
+ * buildImportRecords' own "only trust the id column once every real
+ * field is also present" heuristic, reasoning that `id` is a reserved
+ * field name no real field can ever claim (packages/shared's
+ * RESERVED_FIELD_NAMES) -- true, but it answers the wrong question. The
+ * real risk round 942 exists to prevent isn't a real FIELD colliding
+ * with "id", it's an externally-sourced file (JSON import is equally
+ * meant for migrating in genuinely external data, same as CSV) whose own
+ * `id` key happens to hold small sequential integers that coincide with
+ * this entity's own real existing record ids, with zero relationship to
+ * this app. A generic external JSON file (sample/test data from some
+ * other tool) starting its own `id` at 1, 2, 3... would otherwise
+ * silently PATCH-overwrite real records 1, 2, 3..., nulling out every
+ * other real field the file doesn't happen to share (the per-field loop
+ * below sets a missing optional field to `null`, correct for a genuine
+ * round-trip re-import, corrupting for an unrelated file). Mirrors
+ * `idColumnTrusted`'s exact reasoning, just adapted to JSON's shape (no
+ * single header row to check -- every field name must appear as a key
+ * somewhere across the uploaded rows instead): `recordsToJson`'s own
+ * output always includes every one of the entity's own fields as a key
+ * on every row, something a coincidental external file is vanishingly
+ * unlikely to also satisfy in full.
  */
 export function buildImportRecordsFromJson(
   fields: Field[],
@@ -2597,6 +2612,18 @@ export function buildImportRecordsFromJson(
   const checkDuplicateWarning = makeDuplicateWarningChecker(entity, existingRecords);
   const seenIds = new Set<number>();
 
+  // Round 1977: see this function's own doc comment above -- mirrors
+  // buildImportRecords' idColumnTrusted exactly, just adapted to JSON's
+  // shape (no single header row; every field name must appear as a key
+  // somewhere across the uploaded rows instead).
+  const allJsonKeys = new Set<string>();
+  for (const row of rows) {
+    if (typeof row === "object" && row !== null && !Array.isArray(row)) {
+      for (const key of Object.keys(row as Record<string, unknown>)) allJsonKeys.add(key);
+    }
+  }
+  const idColumnTrusted = fields.every((f) => allJsonKeys.has(f.name));
+
   rows.forEach((row, rowIndex) => {
     if (typeof row !== "object" || row === null || Array.isArray(row)) {
       errors.push(`Row ${rowIndex + 1}: expected a JSON object, got ${Array.isArray(row) ? "an array" : typeof row}.`);
@@ -2606,7 +2633,7 @@ export function buildImportRecordsFromJson(
     const record: Record<string, unknown> = {};
     let rowError: string | null = null;
 
-    if (data.id !== undefined && data.id !== null) {
+    if (idColumnTrusted && data.id !== undefined && data.id !== null) {
       // Round 1293: every other field-type branch below this one requires
       // a specific typeof before coercing (boolean/number/enum/date/text),
       // but this bare Number(...) call had no such guard -- Number(true)

@@ -3517,6 +3517,53 @@ test("buildImportRecordsFromJson rejects an array \"id\" instead of silently coe
   assert.match(result.errors[0], /isn't a valid record id/);
 });
 
+/**
+ * Round 1977: mirrors round 942's own identical CSV-side fix exactly, just
+ * adapted to JSON's shape -- a generic external JSON file (sample/test
+ * data from some other tool) can just as plausibly have its own
+ * unrelated "id" key (a membership number, an external reference) that
+ * has nothing to do with this app's row ids. If that key's values
+ * happened to collide with existing records' real ids, the old behavior
+ * silently PATCH-overwrote those unrelated real records instead of
+ * creating new ones -- nulling out every other real field (email, in
+ * this test) the external file doesn't happen to share. Confirms the
+ * "id" key is now only trusted once EVERY one of the entity's own real
+ * fields is also present as a key somewhere across the uploaded rows --
+ * exactly what a genuine recordsToJson re-export always has -- and
+ * ignored (new record, not an update) the moment even one field is
+ * missing, regardless of how plausible the id value itself looks.
+ */
+test("buildImportRecordsFromJson ignores an \"id\" key (treats every row as a brand-new record) when the uploaded rows don't also cover every one of the entity's own real fields -- an external JSON file's own unrelated id must never be mistaken for this app's own round-trip key", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  // A plausible external customer list: its own "id" key (e.g. a
+  // membership number) plus "name" -- but no "email" key anywhere, so
+  // this file can never be this entity's own genuine re-export (which
+  // would always include email too).
+  const rows = [{ id: 7, name: "Dana" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(
+    result.records,
+    [{ name: "Dana", email: null }],
+    "the external id value must never be mistaken for this app's own record id -- this row must create a new record (no `id` key at all), not attempt to update record #7",
+  );
+});
+
+/** Sibling of the test above: the "id" key IS trusted once the uploaded rows cover every real field, confirming the fix doesn't regress the legitimate re-export case for a multi-field entity. */
+test("buildImportRecordsFromJson still trusts the \"id\" key once the uploaded rows cover every one of the entity's own real fields", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "email", label: "Email", type: "text", required: false },
+  ];
+  const rows = [{ id: 7, name: "Dana", email: "dana@example.com" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ id: 7, name: "Dana", email: "dana@example.com" }]);
+});
+
 test("buildImportRecordsFromJson rejects a boolean relation-field value instead of silently coercing it to a real record id", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },
