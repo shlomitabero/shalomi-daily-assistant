@@ -517,6 +517,70 @@ test("seeded records with a required relation point at DIFFERENT target rows, no
 });
 
 /**
+ * Round 1995: the Seed Data step's loop above used to only overwrite
+ * seed.ts's static guess for a REQUIRED relation field, leaving an OPTIONAL
+ * one exactly as seedValueFor left it -- a static `null` -- even when the
+ * target entity genuinely has real rows right here in this same batch. An
+ * entirely ordinary spec shape (e.g. domainEntities.ts's own Ticket, whose
+ * `customerId` is deliberately optional since a support-desk description
+ * doesn't always also match Customer) reaches this the moment it DOES also
+ * match Customer -- a Ticket entity with a real Customer sibling in the
+ * same build still showed every seeded Ticket with no linked Customer at
+ * all, even though real Customer rows exist two tabs away.
+ */
+test("seeded records with an OPTIONAL relation also point at real target rows when the target entity genuinely has them, instead of staying null", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        name: "Ticket",
+        fields: [
+          { name: "subject", type: "text", required: true },
+          { name: "customerId", type: "relation", relationTo: "Customer", required: false },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const [customer, ticket] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "success", "seeding must not report any failed inserts");
+
+  const customerRows = listRecords(db, project.id, customer);
+  const ticketRows = listRecords(db, project.id, ticket);
+  assert.equal(customerRows.length, 2, "expected the default 2 seeded Customer rows");
+  assert.equal(ticketRows.length, 2, "expected the default 2 seeded Ticket rows");
+
+  const customerIdsPointedAt = ticketRows.map((r) => r.customerId);
+  assert.ok(
+    customerIdsPointedAt.every((id) => id !== null),
+    "every seeded Ticket row must be linked to a real Customer row, not left null, now that Customer genuinely has rows",
+  );
+  assert.deepEqual(
+    new Set(customerIdsPointedAt),
+    new Set(customerRows.map((c) => c.id)),
+    "every seeded Customer row should be pointed at by exactly one seeded Ticket row, cycling the same way a required relation already does",
+  );
+});
+
+/**
  * Round 753: seedValueFor (seed.ts) deliberately leaves every "file" field
  * null -- there's no real uploaded file to point a seeded record at. For
  * an entity with a REQUIRED file field, that used to mean every single

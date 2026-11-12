@@ -1006,8 +1006,31 @@ export async function* runBuildPipeline(
       // data. Cycling by this record's own position among its siblings
       // (wrapping if the target has fewer rows than the dependent) spreads
       // seeded records across the target's available rows instead.
+      //
+      // Round 1995: this loop used to skip every OPTIONAL relation field
+      // outright (`!field.required` continue), leaving seedValueFor's own
+      // static `null` guess (seed.ts) untouched even when the target
+      // genuinely has real rows sitting right here, right now, in this same
+      // batch -- several of this platform's own built-in domain entities
+      // (domainEntities.ts) have an optional relation to Customer for
+      // exactly the reason seedValueFor's own doc comment gives for
+      // Order.courierId: the description that matches them doesn't
+      // necessarily also match Customer, so the target entity may not even
+      // be in the spec at all, and a REQUIRED relation would then dangle or
+      // block the build. But when the description DOES also match Customer
+      // -- an entirely ordinary, common phrasing ("support ticket system
+      // for our customers" matches both Ticket and Customer; same for
+      // Subscription, WorkOrder, and Case's own clientId) -- that reasoning
+      // no longer applies, yet every seeded Ticket/Subscription/WorkOrder/
+      // Case still showed up with no linked Customer at all, even with real
+      // Customer rows two tabs away. Dropping the required-only gate here
+      // applies the exact same real-row linking to an optional relation
+      // whenever its target genuinely has rows (the `existing.length > 0`
+      // check already guards the only case that matters -- when the target
+      // has no rows yet, record[field.name] is simply left as seedValueFor
+      // already set it, null for an optional field, identical to before).
       for (const field of entity.fields) {
-        if (field.type !== "relation" || !field.required || !field.relationTo) continue;
+        if (field.type !== "relation" || !field.relationTo) continue;
         const target = entityByName.get(field.relationTo.toLowerCase());
         const existing = target ? listRecords(db, project.id, target) : [];
         if (existing.length > 0) record[field.name] = existing[recordIndex % existing.length].id;
