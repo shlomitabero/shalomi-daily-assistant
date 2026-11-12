@@ -93,9 +93,23 @@ const BILLING_ENTITY_NAMES = new Set(["Invoice", "Order", "Donation", "Subscript
  * early return meant 5 of the 6 templates (every one but Restaurant)
  * permanently lost the payment decision point -- now fixed to genuinely
  * mirror buildOpenQuestions's always-one-question shape.
+ *
+ * Round 1975: `force` lets a specific template override the plain
+ * BILLING_ENTITY_NAMES check when its own curated entity shape makes a
+ * payment recommendation unambiguous even though none of its entity
+ * names happen to be in that set -- see the Appointments & Clients
+ * template's own `spec()`/`specEn()` call sites below for the one
+ * template that currently uses this (a priced `Service` entity with no
+ * literal "Invoice"/"Order"-named entity). Round 1345 deliberately kept
+ * "Appointment" OUT of BILLING_ENTITY_NAMES itself because that set also
+ * drives heuristic.ts's own free-text matching, where "appointment" is
+ * genuinely ambiguous (a school's parent-teacher-conference scheduler
+ * has appointments too, with no payment concept at all) -- but a
+ * template's entity set is fixed, curated data, not free text, so that
+ * ambiguity simply doesn't apply here.
  */
-function paymentOpenQuestion(entities: EntitySpec[], isHebrew: boolean): OpenQuestion[] {
-  const needsPayments = entities.some((e) => BILLING_ENTITY_NAMES.has(e.name));
+function paymentOpenQuestion(entities: EntitySpec[], isHebrew: boolean, force?: boolean): OpenQuestion[] {
+  const needsPayments = force || entities.some((e) => BILLING_ENTITY_NAMES.has(e.name));
   return isHebrew
     ? [
         {
@@ -166,6 +180,7 @@ function spec(input: {
   personas?: string[];
   assumptions?: string[];
   isHebrew?: boolean;
+  forcePaymentsQuestion?: boolean;
 }): ProductSpec {
   return ProductSpecSchema.parse({
     summary: input.summary,
@@ -186,7 +201,7 @@ function spec(input: {
     // payment-provider decision the dedicated Open Questions UI exists
     // for, despite running the same billing entities as a from-scratch
     // description would.
-    openQuestions: paymentOpenQuestion(input.entities, input.isHebrew ?? true),
+    openQuestions: paymentOpenQuestion(input.entities, input.isHebrew ?? true, input.forcePaymentsQuestion),
   });
 }
 
@@ -1107,12 +1122,20 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "מערכת לניהול תורים -- לקוחות, צוות, שירותים ותורים מתוזמנים.",
       roles: ["צוות", "לקוח/ה"],
       entities: APPOINTMENTS_ENTITIES,
+      // Round 1975: see paymentOpenQuestion's own doc comment -- none of
+      // this template's entities (Customer/Staff/Service/Appointment) is
+      // in BILLING_ENTITY_NAMES, so without this every project built from
+      // this template (a textbook paid salon/spa/clinic/personal-training
+      // business, confirmed by its own Service.price field) always got
+      // the wrong "No payments" default.
+      forcePaymentsQuestion: true,
     }),
     specEn: spec({
       summary: "An appointment management system -- clients, staff, services and scheduled appointments.",
       roles: ["Staff", "Customer"],
       entities: APPOINTMENTS_ENTITIES_EN,
       isHebrew: false,
+      forcePaymentsQuestion: true,
     }),
   },
   {

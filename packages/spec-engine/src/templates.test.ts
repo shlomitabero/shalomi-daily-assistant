@@ -841,6 +841,34 @@ test("the Restaurant template (the one template with a billing entity -- MenuIte
 });
 
 /**
+ * Round 1975: the Appointments & Clients template is a textbook paid
+ * business (its own Service entity has a required-in-spirit `price`
+ * field), but none of its entities (Customer/Staff/Service/Appointment)
+ * is in BILLING_ENTITY_NAMES -- unlike the Restaurant template above,
+ * which gets its correct "Stripe" recommendation purely from the
+ * MenuItem/Order entity-name match. This is the exact gap 7 separate
+ * heuristic.ts rounds (1819/1831/1841/1872/1879/1928/1934) fixed for the
+ * free-text path, never ported to this curated template -- confirmed by
+ * round 1345's own text, which deliberately kept "Appointment" OUT of
+ * BILLING_ENTITY_NAMES for free-text matching (too ambiguous there, e.g.
+ * a school's parent-teacher scheduler), an ambiguity concern that
+ * doesn't apply to a template's own fixed, curated entity shape.
+ */
+test("the Appointments & Clients template (a priced Service entity, but no literal billing-entity name) still surfaces a Stripe recommendation via forcePaymentsQuestion, in both languages", () => {
+  const appointments = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointments, "expected an \"appointments\" template to exist");
+  assert.equal(appointments!.spec.openQuestions.length, 1, "expected exactly one open question for the Hebrew spec");
+  assert.equal(appointments!.spec.openQuestions[0].question, "באיזה ספק תשלומים כדאי להשתמש?");
+  assert.deepEqual(appointments!.spec.openQuestions[0].options, ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"]);
+  assert.equal(appointments!.spec.openQuestions[0].recommendation, "Stripe");
+
+  assert.equal(appointments!.specEn.openQuestions.length, 1, "expected exactly one open question for the English specEn");
+  assert.equal(appointments!.specEn.openQuestions[0].question, "Which payment provider should this use?");
+  assert.deepEqual(appointments!.specEn.openQuestions[0].options, ["Stripe", "PayPal", "No payments", "Decide for me"]);
+  assert.equal(appointments!.specEn.openQuestions[0].recommendation, "Stripe");
+});
+
+/**
  * Round 1271's finding: round 1248's own paymentOpenQuestion early-returned
  * `[]` for any template with no billing entity, but heuristic.ts's real
  * buildOpenQuestions has no such early return -- it unconditionally
@@ -856,9 +884,13 @@ test("the Restaurant template (the one template with a billing entity -- MenuIte
  * membership check, not whether buildOpenQuestions ever actually returns
  * `[]` for any input (it doesn't).
  */
-test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/Appointments/Inventory templates) still gets the same always-present payment open question heuristic.ts generates for an identical business shape, in both languages", () => {
+test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/Inventory templates) still gets the same always-present payment open question heuristic.ts generates for an identical business shape, in both languages", () => {
   for (const template of TEMPLATES) {
-    if (template.id === "restaurant") continue;
+    // Round 1975: "appointments" is no longer in this group -- see the
+    // dedicated test just below. Excluded here the same way "restaurant"
+    // already was, for the identical reason: it now gets a "Stripe"
+    // recommendation instead of "No payments".
+    if (template.id === "restaurant" || template.id === "appointments") continue;
     assert.equal(template.spec.openQuestions.length, 1, `template "${template.id}" must get the always-present payment open question like a from-scratch description would`);
     assert.equal(template.spec.openQuestions[0].question, "האם האפליקציה צריכה לקבל תשלומים?");
     assert.deepEqual(template.spec.openQuestions[0].options, ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"]);
