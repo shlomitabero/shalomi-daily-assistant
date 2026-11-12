@@ -45,9 +45,19 @@ export function generateDailyDigest(now = new Date()) {
     reject: 'ביטול אישור',
     reject_opportunity: 'דחיית הזדמנות',
   };
+  // Every 'failed' writer in this codebase puts the real, useful diagnostic
+  // text under detail.error (draft_product, autonomous_scan, publish_product)
+  // - except routes/actions.js's reportClientError (a real render crash
+  // reported by the client's own ErrorBoundary), which logs it under
+  // detail.message instead, with no detail.error key at all. Without this,
+  // every single client-side crash reached this line as "תקלה במסך: failed" -
+  // the literal word "failed" (a.result, this type's own hardcoded fallback
+  // for an empty detail.error) - discarding the actual crash message
+  // (detail.message) that ActivityLog.jsx already shows correctly on the
+  // activity log page for the exact same entries.
   const failuresToday = db.actions_log
     .where((a) => todayKey(new Date(a.createdAt)) === today && String(a.result).startsWith('failed') && a.type !== 'login_attempt')
-    .map((a) => ({ summary: `${ACTION_TYPE_LABEL_HE[a.type] ?? a.type}: ${a.detail?.error ?? a.result}` }));
+    .map((a) => ({ summary: `${ACTION_TYPE_LABEL_HE[a.type] ?? a.type}: ${a.detail?.error ?? a.detail?.message ?? a.result}` }));
 
   const openOpportunities = db.opportunities.all()
     // A demo draft (no ANTHROPIC_API_KEY set when it was drafted) can never

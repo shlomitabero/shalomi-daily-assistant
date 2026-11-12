@@ -59,21 +59,38 @@ test('generateDailyDigest surfaces a real failed action in the real digest text'
   assert.doesNotMatch(digest.text, /draft_product/);
 });
 
-test('generateDailyDigest falls back to the raw result string when a real failed action has no detail.error', () => {
+test('generateDailyDigest shows a real client-side crash\'s own message, not just the generic word "failed"', () => {
   // routes/actions.js's reportClientError (a real render crash reported by
   // the client's own ErrorBoundary) logs result: 'failed' with detail:
-  // {message, path} - no 'error' key at all. Without the ?? a.result
-  // fallback, that entry's summary would read "client_error: undefined"
-  // instead of something at least minimally informative.
+  // {message, path} - unlike every other 'failed' writer in this codebase
+  // (draft_product/autonomous_scan/publish_product), which all use
+  // detail.error. Falling back straight to a.result (the literal word
+  // "failed", this type's own hardcoded result value) discarded the actual
+  // crash message - the one piece of information that would tell the owner
+  // what actually broke - even though ActivityLog.jsx already shows that
+  // same detail.message correctly on the activity log page itself.
   __resetForTests();
   db.actions_log.insert({
     id: makeId('act'), type: 'client_error', detail: { message: 'TypeError: x is undefined', path: '/opportunities' },
     result: 'failed', createdAt: new Date().toISOString(),
   });
   const digest = generateDailyDigest();
-  assert.match(digest.text, /בעיות: תקלה במסך: failed/);
-  assert.doesNotMatch(digest.text, /undefined/);
+  assert.match(digest.text, /בעיות: תקלה במסך: TypeError: x is undefined/);
   assert.doesNotMatch(digest.text, /client_error/);
+});
+
+test('generateDailyDigest falls back to the raw result string when a failed action has neither detail.error nor detail.message', () => {
+  // A genuine defensive fallback, not currently reachable through any real
+  // writer in this codebase (every one of them sets detail.error or
+  // detail.message) - kept so a future caller that forgets either still
+  // shows something minimally informative instead of the literal
+  // string "undefined".
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'draft_product', detail: {}, result: 'failed', createdAt: new Date().toISOString(),
+  });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /בעיות: יצירת טיוטת מוצר: failed/);
 });
 
 test('generateDailyDigest translates a real failed publish_product/autonomous_scan entry\'s type too, not just draft_product/client_error', () => {
