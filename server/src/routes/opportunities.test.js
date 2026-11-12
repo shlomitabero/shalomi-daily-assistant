@@ -110,6 +110,16 @@ test('createDigitalProduct responds 502 instead of crashing when the AI returns 
     assert.equal(res.statusCode, 502);
     assert.match(res.body.error, /יצירת הטיוטה נכשלה/);
     assert.equal(db.opportunities.all().length, 0);
+    // Without this, the exact same underlying AI-call failure left zero
+    // trace in the activity log when triggered from this manual form -
+    // services/autonomousScan.js already logs its own equivalent failure,
+    // this route had no such entry at all, contradicting this app's own
+    // "the log shows every action the system tried, including failures"
+    // promise (Guide.jsx).
+    const logged = db.actions_log.where((a) => a.type === 'draft_product' && a.result === 'failed');
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].detail.topic, 'ניהול זמן');
+    assert.match(logged[0].detail.error, /שדות חסרים/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalEnv === undefined) delete process.env.ANTHROPIC_API_KEY;

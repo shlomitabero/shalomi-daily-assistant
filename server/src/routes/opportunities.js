@@ -46,6 +46,19 @@ export async function createDigitalProduct(req, res) {
   try {
     result = await createDigitalProductOpportunityUnderCap({ topic: topic.trim(), audience: audience.trim(), createdBy: 'owner' });
   } catch (err) {
+    // services/autonomousScan.js already logs its own equivalent AI-call
+    // failure (type: 'autonomous_scan', result: 'failed') - this manual
+    // route had no such entry at all, so the exact same underlying failure
+    // (a rate limit, an invalid ANTHROPIC_API_KEY, the AI returning
+    // malformed JSON) left zero trace in the activity log when triggered
+    // from the owner's own "מוצר דיגיטלי חדש" form, only a one-time error
+    // shown synchronously in the form itself - directly contradicting this
+    // app's own stated "the log shows every action the system tried,
+    // including failures" promise (Guide.jsx). err.message here is already
+    // clean Hebrew (engine/productDraft.js never throws raw English), same
+    // safety guarantee autonomousScan.js's own identical logAction call
+    // already relies on.
+    logAction({ type: 'draft_product', detail: { topic: topic.trim(), audience: audience.trim(), error: err.message }, result: 'failed' });
     return res.status(502).json({ error: `יצירת הטיוטה נכשלה: ${err.message}` });
   }
   if (!result.ok) {
