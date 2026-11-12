@@ -33394,7 +33394,7 @@ test("the exported EntityView's toolbar Print list button fills .print-list-shee
       const sheetText = container.querySelector(".print-list-sheet")!.textContent ?? "";
       assert.match(sheetText, /Globex/, "the printed list must include the selected record");
       assert.doesNotMatch(sheetText, /Acme Corp/, "the printed list must NOT include the unselected record");
-      assert.match(sheetText, /1 records/, "the footer must report the real selected count (1), not the full store (2)");
+      assert.match(sheetText, /1 record ·/, "the footer must report the real selected count (1), not the full store (2)");
     });
   } finally {
     globalThis.fetch = originalFetch;
