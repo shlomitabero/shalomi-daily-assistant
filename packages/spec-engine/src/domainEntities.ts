@@ -1963,8 +1963,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "painter"/"appliance" do, but these are kept as multi-word
       // phrases for consistency with that same convention.
       "air conditioning repair", "air conditioning company", "air conditioning service",
-      "air conditioning services", "ac repair", "ac repair company", "hvac repair",
-      "hvac technician", "hvac company",
+      "air conditioning services",
+      // Round 1981: "ac" is only two characters, so as a bare substring it
+      // false-positive-matched any word ending in "...ac" immediately
+      // followed by " repair" (e.g. "tarmac repair", "iMac repair") --
+      // mirrors this same file's own /\broofer(s)?\b/ (round 1932) and
+      // /\bcars?\b/ (round 1979) word-boundary convention, which this
+      // round's own original phrase-only reasoning never applied to these
+      // two unusually short, unusually risky strings.
+      /\bac repair\b/, /\bac repair company\b/,
+      "hvac repair", "hvac technician", "hvac company",
       "תיקון מזגנים", "טכנאי מזגנים", "חברת מזגנים",
     ],
     labelHe: "קריאות שירות",

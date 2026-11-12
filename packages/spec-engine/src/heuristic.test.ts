@@ -1899,6 +1899,21 @@ test("WorkOrder's air-conditioning/HVAC keywords (English + Hebrew) match and fl
   assert.equal(acHe.openQuestions[0].recommendation, "Stripe", "a Hebrew AC-repair business must be recommended Stripe, not 'בלי תשלומים'");
 });
 
+// Round 1981: round 1978's own "ac repair"/"ac repair company" keywords were
+// bare substrings with no word boundary -- "ac" is only two characters, so
+// it matches as a suffix of any word ending in "...ac" immediately followed
+// by " repair" (e.g. "tarmac repair", "iMac repair"), none of which have
+// anything to do with air conditioning.
+test("WorkOrder's 'ac repair' keyword does not false-positive on unrelated words ending in 'ac'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const tarmac = await provider.generate("An app for a tarmac repair crew at a small regional airport.");
+  assert.ok(!tarmac.entities.some((e) => e.name === "WorkOrder"), "'tarmac repair' must not spuriously match WorkOrder via bare 'ac repair'");
+
+  const imac = await provider.generate("An app for an iMac repair shop to manage customers and jobs.");
+  assert.ok(!imac.entities.some((e) => e.name === "WorkOrder"), "'iMac repair' must not spuriously match WorkOrder via bare 'ac repair'");
+});
+
 // Round 1816: a tailoring/alterations shop is the same small-business
 // vertical gap as round 1811's plumber/electrician/handyman fix -- no
 // WorkOrder keyword matched it at all, so it fell through to the generic
