@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
 import { updateSettings } from './settings.js';
-import { executeGatedAction } from './execution.js';
+import { executeGatedAction, logAction } from './execution.js';
 import { makeIdempotencyKey } from '../engine/idempotency.js';
 import { todayKey } from './ledger.js';
 
@@ -244,4 +244,67 @@ test('logs a failed outcome and rethrows when perform() throws, instead of swall
   );
   const failed = db.actions_log.all().filter((a) => a.result === 'failed');
   assert.equal(failed.length, 1);
+});
+
+test('logAction prunes the oldest prunable entries once the cap is exceeded, keeping the newest', () => {
+  // This app is explicitly built to run indefinitely (autonomous_scan alone
+  // logs roughly every 4 hours, forever) - db/store.js's persist() rewrites
+  // the ENTIRE db.json on every write, so an actions_log that only ever
+  // grows would progressively slow down every future write in the whole
+  // app, the same risk routes/auth.js's own login_attempt pruning already
+  // solves for that one type. Seeds 500 entries directly (at the cap) then
+  // calls logAction once for the 501st, rather than calling logAction
+  // 501 times, purely for test speed - the behavior under test is the
+  // prune step itself, not logAction's insert.
+  __resetForTests();
+  const base = Date.now();
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(base + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: { i: 500 }, result: 'success' });
+  const remaining = db.actions_log.where((a) => a.type === 'draft_product');
+  assert.equal(remaining.length, 500);
+  // The very first (oldest) entry must be the one pruned, not an arbitrary one.
+  assert.equal(remaining.some((a) => a.detail.i === 0), false);
+  assert.equal(remaining.some((a) => a.detail.i === 500), true);
+});
+
+test('logAction never prunes a sale_confirmed entry, even a very old one past the cap', () => {
+  // ledger.js's countUnrecordedSales() scans this type's ENTIRE lifetime
+  // history - a blocked sale_confirmed means a real payment went
+  // unrecorded, with no route that ever marks it resolved, so dropping an
+  // old one could silently hide a real, still-open payment problem.
+  __resetForTests();
+  const oldSale = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { transactionId: 'txn_old' },
+    result: 'blocked: תשלום אמיתי התקבל אך לא ניתן לזהות לאיזו הזדמנות הוא משתייך',
+    createdAt: new Date('2020-01-01').toISOString(),
+  });
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(Date.now() + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: {}, result: 'success' });
+  assert.ok(db.actions_log.get(oldSale.id), 'the old sale_confirmed entry must survive pruning');
+});
+
+test('logAction never prunes a login_attempt entry - that type already has its own dedicated, tighter cap', () => {
+  __resetForTests();
+  const oldLogin = db.actions_log.insert({
+    id: makeId('act'), type: 'login_attempt', detail: { ip: '1.2.3.4' }, result: 'failed',
+    createdAt: new Date('2020-01-01').toISOString(),
+  });
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(Date.now() + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: {}, result: 'success' });
+  assert.ok(db.actions_log.get(oldLogin.id), 'login_attempt pruning belongs to routes/auth.js alone');
 });

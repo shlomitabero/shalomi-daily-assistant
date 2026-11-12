@@ -5,8 +5,48 @@ import { makeIdempotencyKey, wasAlreadyPerformed } from '../engine/idempotency.j
 import { getSettings } from './settings.js';
 import { totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
 
+// This app is explicitly built to run indefinitely (autonomous_scan alone
+// logs roughly every 4 hours, every day, forever) - db/store.js's persist()
+// re-serializes and rewrites the ENTIRE db.json on every single write, to
+// every table, not just this one, so an actions_log that only ever grows
+// would progressively slow down every future write in the whole app, not
+// just future logAction calls. routes/auth.js's own login_attempt pruning
+// already solved this exact problem for that one type specifically (same
+// reasoning, smaller cap, since a brute-force attempt can log far faster)
+// - every OTHER type was left unbounded.
+//
+// sale_confirmed is the one type this must never prune: ledger.js's
+// countUnrecordedSales() scans this type's ENTIRE lifetime history (a
+// blocked sale_confirmed means a real payment came in and was never
+// recorded, with no route that ever marks it resolved), so dropping an old
+// one could silently hide a real, still-open payment problem. login_attempt
+// already has its own tighter, dedicated cap - pruning it again here would
+// just be redundant, not wrong, but excluding it keeps this cap's own
+// accounting simple. Every other type is only ever read either capped
+// (listActions: 200 most recent) or scoped to today (generateDailyDigest,
+// executeGatedAction's own idempotency check below) - nothing else needs
+// more than a bounded recent history - listActions() itself never shows
+// more than its own most recent 200 regardless, so this cap only needs to
+// comfortably clear that, not approach it. Same value as login_attempt's
+// own dedicated cap, for simplicity.
+const MAX_ACTIONS_LOG_ENTRIES = 500;
+const UNPRUNABLE_ACTION_TYPES = new Set(['sale_confirmed', 'login_attempt']);
+
 export function logAction({ type, detail, result }) {
-  return db.actions_log.insert({ id: makeId('act'), type, detail, result, createdAt: new Date().toISOString() });
+  const entry = db.actions_log.insert({ id: makeId('act'), type, detail, result, createdAt: new Date().toISOString() });
+  pruneActionsLog();
+  return entry;
+}
+
+function pruneActionsLog() {
+  const prunable = db.actions_log.where((a) => !UNPRUNABLE_ACTION_TYPES.has(a.type));
+  const excess = prunable.length - MAX_ACTIONS_LOG_ENTRIES;
+  if (excess > 0) {
+    prunable
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .slice(0, excess)
+      .forEach((entry) => db.actions_log.delete(entry.id));
+  }
 }
 
 function hasApprovalFor(opportunityId, actionType) {
