@@ -1147,7 +1147,19 @@ export function WhatsAppPanel({
    * nextCursorRef and the server running the query, which can still repeat
    * the newest row of the previous page under a small window.
    */
+  // Round 1966: mirrors handleRetry's own round-1401 fix -- the
+  // disabled={loadingMore || ...} prop on the "Load older messages" button
+  // only takes effect after a render commits, not synchronously on click,
+  // so a fast double-click fires this function twice before the first
+  // setLoadingMore(true) below has had a chance to re-render. Every other
+  // mutating handler in this file already guards against racing itself
+  // this exact way (handleRemoveAttachment/handleResetTestForm/
+  // handleReplyToMessage/handleSendTest, round 1364; handleRetry, round
+  // 1401) or is serialized by a blocking window.confirm()
+  // (handleDeleteMessage/handleClearHistory) -- this was the one
+  // mutating-fetch handler in the file that got neither treatment.
   async function handleLoadMore() {
+    if (loadingMore) return;
     setLoadingMore(true);
     try {
       const versionBeforeFetch = messagesVersionRef.current;

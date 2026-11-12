@@ -7343,6 +7343,26 @@ test("WhatsAppPanel's handleRetry is a no-op while retryingId is already set", a
 });
 
 /**
+ * Round 1966: mirrors the test just above -- handleLoadMore was the one
+ * mutating-fetch handler in this file that never got the own-click
+ * reentrancy guard every sibling handler already has. A full-render
+ * `fireEvent.click()`-twice test would pass even without the fix (jsdom/
+ * testing-library already blocks the second click via the committed
+ * `disabled` attribute, the same false-pass rounds 1401/1522/1965
+ * document for this identical shape), so this uses the same extraction
+ * technique instead: if the guard were ever removed, the very next line
+ * reached (`setLoadingMore`) throws a ReferenceError instead of silently
+ * doing nothing, proving the guard itself is what's stopping execution.
+ */
+test("WhatsAppPanel's handleLoadMore is a no-op while loadingMore is already true", async () => {
+  const handlerMatch = whatsAppPanelSrc.match(/ {2}async function handleLoadMore\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleLoadMore in WhatsAppPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("loadingMore", `${code}\nreturn handleLoadMore;`)(true) as () => Promise<void>;
+  await fn();
+});
+
+/**
  * Round 1360: following up on the same fix just applied to
  * GlobalSearchPanel's own group-header entity label, this message log row
  * had an identical gap -- `.whatsapp-log-who` (the sender display, used by
