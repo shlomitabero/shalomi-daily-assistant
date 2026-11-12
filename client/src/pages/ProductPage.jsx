@@ -186,7 +186,19 @@ export default function ProductPage() {
   if (guide) {
     return (
       <div className="public-page">
-        <div className="demo-banner" style={{ background: 'var(--positive-bg, #e6f4ea)', color: 'var(--positive, #1a7f37)' }}>
+        {/* --positive-bg was never defined anywhere in styles.css - this
+            always fell back to its own literal default, #e6f4ea, a light
+            theme's pastel-green success background. This app's actual
+            theme is dark throughout (--bg: #0b0f1a), so a real paying
+            customer landed on a jarring near-white box the instant after
+            a real purchase, with its own text color (--positive, which
+            IS defined: a bright mint #3ddc97) rendering at a 1.56:1
+            contrast ratio against it - far below WCAG AA's 4.5:1 minimum,
+            and barely readable in practice. Mirrors net-profit-box.positive's
+            own already-established pattern instead: a dark-theme-appropriate
+            tinted background, with the text itself staying the default
+            --text color (bright, always-readable) rather than tinted too. */}
+        <div className="demo-banner" style={{ background: 'rgba(61, 220, 151, 0.12)', color: 'var(--text)', border: '1px solid var(--positive)' }}>
           התשלום אומת — הנה המדריך שלך
         </div>
         {/* data.sandbox means Paddle's test environment — no real money
