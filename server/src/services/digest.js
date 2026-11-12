@@ -44,6 +44,7 @@ export function generateDailyDigest(now = new Date()) {
     approve: 'אישור פעולה',
     reject: 'ביטול אישור',
     reject_opportunity: 'דחיית הזדמנות',
+    market_quote_fetch: 'שליפת מחיר שוק',
   };
   // Every 'failed' writer in this codebase puts the real, useful diagnostic
   // text under detail.error (draft_product, autonomous_scan, publish_product)

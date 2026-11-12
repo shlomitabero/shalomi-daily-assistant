@@ -95,6 +95,15 @@ test('addToWatchlist surfaces a 502 instead of storing a broken entry when the q
       assert.equal(res.statusCode, 502);
       assert.match(res.body.error, /לא ניתן היה לקבל מחיר/);
       assert.equal(db.financial_watchlist.all().length, 0);
+      // A real external API failure (the market data provider) must leave a
+      // trace in the activity log, not just a one-time error shown
+      // synchronously in the add-symbol form - same reasoning as the
+      // manual "new digital product" form's own equivalent AI-call-failure
+      // logging.
+      const logged = db.actions_log.where((a) => a.type === 'market_quote_fetch' && a.result === 'failed');
+      assert.equal(logged.length, 1);
+      assert.equal(logged[0].detail.symbol, 'AAPL');
+      assert.match(logged[0].detail.error, /429/);
     } finally {
       restore();
     }
@@ -264,6 +273,11 @@ test('refreshWatchlistEntry surfaces a 502 instead of silently keeping the stale
       const unchanged = db.financial_watchlist.get(entry.id);
       assert.equal(unchanged.connected, false);
       assert.equal(unchanged.lastPrice, null);
+      // Same activity-log gap as addToWatchlist's own equivalent failure.
+      const logged = db.actions_log.where((a) => a.type === 'market_quote_fetch' && a.result === 'failed');
+      assert.equal(logged.length, 1);
+      assert.equal(logged[0].detail.symbol, 'AAPL');
+      assert.match(logged[0].detail.error, /429/);
     } finally {
       restore();
     }

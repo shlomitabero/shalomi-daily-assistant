@@ -51,6 +51,17 @@ export async function addToWatchlist(req, res) {
       try {
         quote = await fetchQuote(normalizedSymbol);
       } catch (err) {
+        // A real, external API call (twelvedata.com) failing - a rate
+        // limit, an unknown symbol, a network error - left zero trace in
+        // the activity log, only a one-time error shown synchronously in
+        // this form, gone the moment the owner navigated away. Same gap
+        // already fixed for the manual "new digital product" form's own
+        // AI-call failure (routes/opportunities.js) - this app's own
+        // Guide.jsx promises the log shows every action tried, including
+        // failures, and a real external dependency failing is exactly the
+        // kind of thing worth a permanent record, unlike a plain
+        // client-reproducible validation error.
+        logAction({ type: 'market_quote_fetch', detail: { symbol: normalizedSymbol, error: err.message }, result: 'failed' });
         return res.status(502).json({ error: `לא ניתן היה לקבל מחיר: ${err.message}` });
       }
     }
@@ -86,6 +97,10 @@ export async function refreshWatchlistEntry(req, res) {
   try {
     quote = await fetchQuote(entry.symbol);
   } catch (err) {
+    // Same gap as addToWatchlist's own identical catch above - a real
+    // external API failure here (the owner's "רענן מחיר"/"רענן הכל" click)
+    // left zero trace in the activity log.
+    logAction({ type: 'market_quote_fetch', detail: { symbol: entry.symbol, error: err.message }, result: 'failed' });
     return res.status(502).json({ error: `לא ניתן היה לקבל מחיר: ${err.message}` });
   }
 

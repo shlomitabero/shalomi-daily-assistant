@@ -24,6 +24,7 @@ export const ACTION_TYPE_LABEL = {
   paper_trade: 'עסקה מדומה',
   client_error: 'תקלה במסך',
   login_attempt: 'ניסיון התחברות',
+  market_quote_fetch: 'שליפת מחיר שוק',
 };
 
 export function actionTypeLabel(type) {

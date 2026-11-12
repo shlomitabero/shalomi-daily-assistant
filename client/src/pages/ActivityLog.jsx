@@ -98,6 +98,16 @@ export default function ActivityLog() {
             {a.type === 'login_attempt' && a.detail?.ip && (
               <p className="hint log-reason">מקור: {a.detail.ip}</p>
             )}
+            {/* routes/financial.js logs symbol/error on every failed
+                market_quote_fetch (addToWatchlist/refreshWatchlistEntry's
+                own real call to the external market data provider) - without
+                this, the row just said "שליפת מחיר שוק - נכשל" with no way
+                to tell which symbol failed or why, even though that's
+                exactly the information the owner needs to decide whether to
+                retry, fix a typo'd symbol, or suspect the provider itself. */}
+            {a.type === 'market_quote_fetch' && a.detail?.symbol && (
+              <p className="hint log-reason">{a.detail.symbol}{a.detail.error ? ` · ${a.detail.error}` : ''}</p>
+            )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
           </div>
