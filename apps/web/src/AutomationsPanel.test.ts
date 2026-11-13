@@ -150,6 +150,55 @@ test("AutomationsPanel lists existing rules once loaded, describing the trigger 
 });
 
 /**
+ * Round 2024: the empty-state message ("No automations yet. Add your
+ * first rule below.") unconditionally told the reader to add a rule
+ * "below" -- but the whole "New rule" form is suppressed outright for a
+ * read-only viewer (`{!readOnly && (...)}` a few lines down), so that
+ * exact instruction pointed a viewer at a form that simply isn't there
+ * for them. The two sibling empty-state strings in this app
+ * (history.empty/collab.empty) are already role-neutral with no CTA for
+ * exactly this reason.
+ */
+test("AutomationsPanel's empty-state message never tells a read-only viewer to add a rule 'below' when no such form is shown to them", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(AutomationsPanel, { projectId: "proj1", project, userId: "user1", onClose: () => {}, readOnly: true }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") === true);
+      assert.equal(
+        document.querySelector(".automations-new-heading"),
+        null,
+        "a read-only viewer must never see the 'New rule' form this empty-state message could otherwise point to",
+      );
+      assert.equal(
+        document.body.textContent?.includes("Add your first rule below"),
+        false,
+        "a read-only viewer must never be told to use a form they can't see",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1000: a "send_email" rule's own subject line (round 996,
  * emailSubject) is interpolated and sent completely independently of
  * messageTemplate (the email body) -- never shown anywhere in the rule

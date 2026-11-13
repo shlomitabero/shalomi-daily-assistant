@@ -1553,7 +1553,18 @@ export function AutomationsPanel({
           </p>
         ) : (
           <>
-            {rules !== null && rules.length === 0 && <p className="muted small">{t("automations.empty")}</p>}
+            {/* Round 2024: "automations.empty" tells the reader to "Add
+                your first rule below" -- true for an owner/editor, but a
+                read-only viewer never sees that form at all (it's
+                suppressed outright by the `!readOnly` gate a few lines
+                down), so the exact same message pointed them at a form
+                that simply isn't there. The two sibling empty-state
+                strings in this app (history.empty/collab.empty) are
+                already role-neutral with no CTA for exactly this reason;
+                this one just never got the same treatment. */}
+            {rules !== null && rules.length === 0 && (
+              <p className="muted small">{t(readOnly ? "automations.empty.readOnly" : "automations.empty")}</p>
+            )}
             <ul className="automations-list">
               {rules?.map((rule) => (
                 <li key={rule.id} className="automations-rule-row">
