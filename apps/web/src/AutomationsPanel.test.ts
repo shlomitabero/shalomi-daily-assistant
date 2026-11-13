@@ -5237,6 +5237,71 @@ test("AutomationsPanel's Test button fires the rule on demand, refreshes the run
 });
 
 /**
+ * Found via a live Playwright session, not pure code reading: creating a
+ * rule and clicking "Send test" (with History left collapsed) left the
+ * row's own "Never triggered yet" summary unchanged forever, even though
+ * the server genuinely just recorded a real run -- the test route's own
+ * response already carries that run back (see testAutomationRule's `{
+ * run }` return type), but handleTestRule used to discard it entirely
+ * unless History already happened to be expanded, and even then it only
+ * ever refreshed the separate History list, never this row's own
+ * describeLastRun summary line (which renders unconditionally, History
+ * expanded or not). This test never expands History at all, isolating
+ * the summary-line gap from the already-covered History-refresh case
+ * just above.
+ */
+test("AutomationsPanel's Test button updates the rule's own last-run summary immediately, even without History expanded", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let testCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/test") {
+        testCalls += 1;
+        return new Response(
+          JSON.stringify({
+            run: {
+              id: "run-test",
+              ruleId: "rule1",
+              status: "sent",
+              error: null,
+              actionType: "send_whatsapp",
+              recordId: 7,
+              triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString(),
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+      const row = document.querySelector(".automations-rule-row")!;
+      assert.match(row.textContent ?? "", /Never triggered yet/, "a brand-new rule must start with no last-run summary");
+
+      const testButton = () =>
+        Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Test" || b.textContent === "Send test") as HTMLButtonElement;
+      fireEvent.click(testButton());
+      await waitForCondition(() => testCalls === 1);
+
+      // History was never expanded (no "History" button click anywhere
+      // above) -- the row's own summary must still update from the
+      // test's own response, not stay stuck on "Never triggered yet".
+      await waitForCondition(() => !(row.textContent ?? "").includes("Never triggered yet"));
+      assert.match(row.textContent ?? "", /Last sent:/, "the row's own last-run summary must reflect the just-fired test");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 972: a "schedule" rule's own failed run always has recordId:
  * null (there's no triggering record at all) -- the round-971 test just
  * above correctly hides Retry for a null-recordId run on a NON-schedule
@@ -5278,6 +5343,77 @@ test("AutomationsPanel shows a Retry button for a schedule rule's own failed run
 
       const retryButton = Array.from(document.querySelectorAll(".automations-rule-history-list li button")).find((b) => b.textContent === "Retry");
       assert.ok(retryButton, "a schedule rule's own failed run must offer Retry despite having no recordId");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * The exact same gap as the Test-button test above, for handleRetryRun's
+ * own identical sibling omission -- a successful Retry's response already
+ * carries the run the server just recorded, but the row's own
+ * describeLastRun summary line never picked it up, only the History list
+ * this handler already, correctly, always refreshes.
+ */
+test("AutomationsPanel's Retry button updates the rule's own last-run summary too, not just the refreshed History list", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let retryCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule({ lastTriggeredAt: "2026-03-15T09:00:00.000Z", lastStatus: "failed", lastError: "recipient not found" })] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [{ id: "run1", ruleId: "rule1", status: "failed", error: "recipient not found", recordId: 7, triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/runs/run1/retry") {
+        retryCalls += 1;
+        return new Response(
+          JSON.stringify({
+            run: { id: "run2", ruleId: "rule1", status: "sent", error: null, actionType: "send_whatsapp", recordId: 7, triggeredAt: new Date("2026-03-15T11:00:00Z").toISOString() },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+      const row = document.querySelector(".automations-rule-row")!;
+      // The rule's own summary line (describeLastRun) has no class of its
+      // own to query by -- it's the fixed next sibling right after the
+      // messageTemplate div (see AutomationsPanel.tsx's own rule-row JSX).
+      // Querying it specifically, rather than the whole row's textContent,
+      // matters here because once History is expanded, a PAST failed run
+      // legitimately keeps showing "Last failed" in its own history-list
+      // entry even after the retry succeeds -- only the summary line
+      // above the History list is expected to flip to "Last sent:".
+      const summaryDiv = () =>
+        Array.from(row.querySelectorAll(".automations-rule-info > div")).find((d) => d.textContent === "Hi {{customerName}}, delivered!")!.nextElementSibling!;
+      assert.match(summaryDiv().textContent ?? "", /Last failed/, "the rule's starting summary must reflect its stored lastStatus: failed");
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 1);
+
+      const retryButton = Array.from(document.querySelectorAll(".automations-rule-history-list li button")).find((b) => b.textContent === "Retry") as HTMLButtonElement;
+      fireEvent.click(retryButton);
+      await waitForCondition(() => retryCalls === 1);
+
+      await waitForCondition(() => !(summaryDiv().textContent ?? "").includes("Last failed"));
+      assert.match(summaryDiv().textContent ?? "", /Last sent:/, "the row's own last-run summary must reflect the retry's own success, not stay stuck on the old failure");
     } finally {
       globalThis.fetch = originalFetch;
     }

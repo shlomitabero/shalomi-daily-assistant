@@ -1321,7 +1321,10 @@ export function AutomationsPanel({
    * overwriting the one being retried) shows up immediately -- the same
    * "just re-fetch the list" approach handleToggleHistory's own initial
    * load already uses, rather than trying to splice one new row into
-   * runsByRuleId by hand.
+   * runsByRuleId by hand. Also patches this rule's own lastTriggeredAt/
+   * lastStatus/lastError/lastActionType in `rules` from the same response
+   * -- see handleTestRule's own identical fix for why describeLastRun's
+   * summary line needs this too, not just the History list.
    */
   function handleRetryRun(rule: AutomationRuleView, run: AutomationRunView) {
     // Round 1402: own-click reentrancy guard -- mirrors WhatsAppPanel's
@@ -1342,7 +1345,27 @@ export function AutomationsPanel({
       return next;
     });
     retryAutomationRun(projectId, rule.id, run.id)
-      .then(() => listAutomationRuns(projectId, rule.id))
+      .then(({ run: newRun }) => {
+        // Same gap as handleTestRule's own identical fix above, for the
+        // identical reason: a retry's response already carries the run
+        // the server just recorded, but this row's own describeLastRun
+        // summary (rendered unconditionally, not just inside the History
+        // list this function always refreshes right below) used to never
+        // see it, staying stuck on whatever it read when this panel
+        // first loaded even after a retry genuinely just succeeded or
+        // failed for real.
+        if (newRun) {
+          setRules(
+            (prev) =>
+              prev?.map((r) =>
+                r.id === rule.id
+                  ? { ...r, lastTriggeredAt: newRun.triggeredAt, lastStatus: newRun.status, lastError: newRun.error, lastActionType: newRun.actionType }
+                  : r,
+              ) ?? prev,
+          );
+        }
+        return listAutomationRuns(projectId, rule.id);
+      })
       .then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })))
       .catch((err) => {
         // Round 1976: mirrors handleToggle's own identical round-1875
@@ -1371,7 +1394,26 @@ export function AutomationsPanel({
    * successful test still records a new run the same way a retry does, so
    * if History is already expanded for this rule, re-fetching its run
    * list surfaces the test the same way a retry's own new run already
-   * does; if History isn't expanded, there's nothing to refresh.
+   * does.
+   *
+   * That History-list refresh was never the only thing worth updating,
+   * though: the server's own test route (routes/projects.ts) fires
+   * through the exact same fireRule/fireScheduledRule path a real trigger
+   * does, which unconditionally writes this rule's lastTriggeredAt/
+   * lastStatus/lastError/lastActionType (recordAutomationRun,
+   * packages/db/src/automations.ts) -- and hands that same freshly-
+   * recorded run straight back in the response body (testAutomationRule's
+   * own `{ run }` return type). describeLastRun's "Never triggered yet"/
+   * last-run line just below renders unconditionally on every rule row,
+   * History expanded or not, straight from this component's OWN `rules`
+   * state -- which this handler used to leave completely untouched. So a
+   * rule freshly tested via this exact button kept reading "Never
+   * triggered yet" forever (until the next loadRules(), i.e. closing and
+   * reopening this panel), even though the test just now genuinely fired
+   * for real -- most visibly wrong the moment History is ALSO expanded,
+   * where the correctly-refreshed history list shows the brand-new run
+   * sitting directly under a summary line that still claims the rule has
+   * never fired at all.
    */
   function handleTestRule(rule: AutomationRuleView) {
     // Round 1488: own-click reentrancy guard -- mirrors handleRetryRun's
@@ -1392,7 +1434,22 @@ export function AutomationsPanel({
       return next;
     });
     testAutomationRule(projectId, rule.id)
-      .then(() => {
+      .then(({ run }) => {
+        // Patch this row's own summary fields from the run the server
+        // just recorded -- see this function's own doc comment above for
+        // why describeLastRun would otherwise keep showing stale/"never
+        // triggered" text regardless of whether History happens to be
+        // expanded.
+        if (run) {
+          setRules(
+            (prev) =>
+              prev?.map((r) =>
+                r.id === rule.id
+                  ? { ...r, lastTriggeredAt: run.triggeredAt, lastStatus: run.status, lastError: run.error, lastActionType: run.actionType }
+                  : r,
+              ) ?? prev,
+          );
+        }
         if (expandedHistoryRuleId !== rule.id) return;
         return listAutomationRuns(projectId, rule.id).then(({ runs }) => setRunsByRuleId((prev) => ({ ...prev, [rule.id]: runs })));
       })
