@@ -1725,9 +1725,28 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // excludes "ספק" immediately preceded by those specific idiom words
     // and excludes the "ות" plural suffix that marks "ספקות" (doubts),
     // while still matching real usage like "ספק"/"ספקים".
+    //
+    // Round 2027: that denylist was never exhaustive -- it only covered
+    // the "undoubtedly"/"in doubt" idioms, not the equally common "doubt
+    // whether" shape ("יש ספק אם"/"קיים ספק אם"/"מטיל ספק"/"מעלה ספק"),
+    // so a project description like "יש ספק אם הפרויקט יסתיים בזמן"
+    // ("there's doubt whether the project will finish on time" -- nothing
+    // about vendors) still spuriously matched and built an unwanted
+    // Vendor entity/screen, confirmed live. Adding "מטיל"/"מטילה"/"מעלה"
+    // as further unambiguous-doubt-only lookbehinds (no vendor-sense
+    // parse exists for "casts/raises a supplier") and a lookahead
+    // excluding "ספק" immediately followed by "אם" (the one grammatically
+    // reliable "doubt whether" marker -- "supplier if" doesn't parse in
+    // Hebrew either) closes the specific repro without excluding genuine
+    // singular vendor mentions like "יש לנו ספק טוב" or "קיים ספק אחד
+    // בלבד". Other, rarer "doubt" phrasings without "אם" immediately
+    // after (e.g. "קיים ספק מסוים") can still slip through -- this
+    // remains a leaky denylist for an extremely productive Hebrew word,
+    // not an exhaustive fix.
     keywords: [
       "vendor", "vendors", "supplier", "suppliers", "procurement",
-      /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)ספק(?!ות)/, "ספקים", "רכש",
+      /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מעלה )ספק(?!ות)(?!\s*אם)/,
+      "ספקים", "רכש",
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",

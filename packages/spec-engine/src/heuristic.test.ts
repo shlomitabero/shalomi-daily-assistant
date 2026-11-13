@@ -4054,6 +4054,59 @@ test("Vendor's 'ספק' keyword doesn't spuriously match the unrelated 'doubt' i
 });
 
 /**
+ * Round 2027: round 571's own denylist just above was never exhaustive --
+ * it only covered the "undoubtedly"/"in doubt" idioms, not the equally
+ * common "doubt whether" shape ("יש ספק אם"/"מטיל ספק"/"מעלה ספק"), so a
+ * plain project-management description using that ordinary phrasing still
+ * spuriously matched Vendor via the same bare "ספק" substring -- confirmed
+ * live against a real build. Adding "מטיל"/"מטילה"/"מעלה" as further
+ * unambiguous-doubt-only lookbehinds and a lookahead excluding "ספק"
+ * immediately followed by "אם" closes this specific gap without excluding
+ * genuine singular vendor mentions, including ones that start with the
+ * exact same "יש"/"קיים" words the doubt idioms do (e.g. "יש לנו ספק" vs.
+ * "יש ספק אם").
+ */
+test("Vendor's 'ספק' keyword also doesn't spuriously match the 'doubt whether'/'casts doubt' idioms round 571's own fix missed", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const doubtWhether = await provider.generate(
+    "אפליקציה לניהול פרויקטים עם לקוחות וצוות. יש ספק אם הפרויקט יסתיים בזמן, ולכן אנחנו צריכים מעקב קפדני.",
+  );
+  assert.ok(
+    !doubtWhether.entities.some((e) => e.name === "Vendor"),
+    "'יש ספק אם' (there's doubt whether) alone must not spuriously match Vendor via a bare 'ספק' substring",
+  );
+
+  const castsDoubt = await provider.generate(
+    "אפליקציה לניהול משימות לעסק קטן. מטיל ספק בכך שהתוכנית הזו תצליח, ומטילה ספק גם בתקציב.",
+  );
+  assert.ok(
+    !castsDoubt.entities.some((e) => e.name === "Vendor"),
+    "'מטיל/מטילה ספק' (casts doubt) alone must not spuriously match Vendor via a bare 'ספק' substring",
+  );
+
+  const raisesDoubt = await provider.generate(
+    "אפליקציה לניהול משימות לעסק קטן. זה מעלה ספק משמעותי לגבי התוצאה.",
+  );
+  assert.ok(
+    !raisesDoubt.entities.some((e) => e.name === "Vendor"),
+    "'מעלה ספק' (raises doubt) alone must not spuriously match Vendor via a bare 'ספק' substring",
+  );
+
+  // Real singular vendor usage -- including phrasings that start with the
+  // same "יש"/"קיים" words the doubt idioms above do -- must still match,
+  // so the new guard doesn't overcorrect into a false negative.
+  const realSingleVendor = await provider.generate("אנחנו עסק קטן שצריך לנהל ספק אחד שמספק לנו חומרי גלם.");
+  assert.ok(realSingleVendor.entities.some((e) => e.name === "Vendor"), "'ספק' must still match Vendor");
+
+  const realVendorWithYesh = await provider.generate("יש לנו ספק טוב שמספק לנו חומרי גלם מזה שנים.");
+  assert.ok(realVendorWithYesh.entities.some((e) => e.name === "Vendor"), "'יש לנו ספק' (we have a supplier) must still match Vendor");
+
+  const realVendorWithKayam = await provider.generate("קיים ספק אחד בלבד שמייצר את החלק הזה שאנחנו צריכים.");
+  assert.ok(realVendorWithKayam.entities.some((e) => e.name === "Vendor"), "'קיים ספק' (there exists a supplier) must still match Vendor");
+});
+
+/**
  * Regression test for round 572's finding: InsuranceClaim's bare Hebrew
  * keyword "תביעה" is the ordinary, generic word for "claim"/"lawsuit" in
  * Hebrew, used constantly in general legal contexts ("הגשת תביעה", "תביעה
