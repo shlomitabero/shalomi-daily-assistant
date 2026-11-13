@@ -517,6 +517,74 @@ test("seeded records with a required relation point at DIFFERENT target rows, no
 });
 
 /**
+ * Round 2019: round 1711's own cycling fix just above indexes `existing`
+ * (listRecords, repository.ts) by `recordIndex` -- the dependent record's
+ * ASCENDING generation order -- but listRecords always returns rows
+ * newest-first (`ORDER BY id DESC`), so `existing[recordIndex % ...]`
+ * actually cycled through the target's rows in REVERSE order relative to
+ * their own generation order. Invisible while nothing else depended on
+ * matching generation order -- but seed.ts's own "customerName" text-field
+ * case (added for Appointment/Order in rounds 2008/2009, specifically so a
+ * companion text field names the same person as a `customer` relation)
+ * picks from the exact same PERSON_NAMES pool as Customer's own "name"
+ * field via a plain ascending index, so the two "same customer" fields on
+ * one dependent record disagreed about who that customer actually is.
+ * Mirrors round 1711's own entity/field shapes, just using "customerId"/
+ * "customerName" field names to reach the real seed.ts branch.
+ */
+test("a seeded record's relation and its same-pool-indexed companion text field agree on which target row they both describe", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      { name: "Customer", fields: [{ name: "name", type: "text", required: true }] },
+      {
+        name: "Appointment",
+        fields: [
+          { name: "customer", type: "relation", relationTo: "Customer", required: true },
+          { name: "customerName", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const [customer, appointment] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "success", "seeding must not report any failed inserts");
+
+  const customerRows = listRecords(db, project.id, customer);
+  const appointmentRows = listRecords(db, project.id, appointment);
+  assert.equal(customerRows.length, 2, "expected the default 2 seeded Customer rows");
+  assert.equal(appointmentRows.length, 2, "expected the default 2 seeded Appointment rows");
+
+  const customerById = new Map(customerRows.map((c) => [c.id, c]));
+  for (const row of appointmentRows) {
+    const linkedCustomer = customerById.get(row.customer as string | number);
+    assert.ok(linkedCustomer, "every seeded Appointment row must point at a real Customer row");
+    assert.equal(
+      row.customerName,
+      linkedCustomer!.name,
+      "the seeded customerName text field must name the exact same person as the customer relation it sits next to, not a different seeded row",
+    );
+  }
+});
+
+/**
  * Round 1995: the Seed Data step's loop above used to only overwrite
  * seed.ts's static guess for a REQUIRED relation field, leaving an OPTIONAL
  * one exactly as seedValueFor left it -- a static `null` -- even when the

@@ -1032,7 +1032,22 @@ export async function* runBuildPipeline(
       for (const field of entity.fields) {
         if (field.type !== "relation" || !field.relationTo) continue;
         const target = entityByName.get(field.relationTo.toLowerCase());
-        const existing = target ? listRecords(db, project.id, target) : [];
+        // Round 2019: listRecords always returns rows newest-first
+        // (ORDER BY id DESC, repository.ts), but recordIndex above is this
+        // record's ASCENDING generation order (0, 1, 2, ... straight from
+        // generateSeedRecords's own entries()). Indexing the DESC list by
+        // an ascending position cycled through target rows in reverse --
+        // invisible while nothing else depended on matching generation
+        // order, but round 2008/2009 added a same-pool-indexed companion
+        // text field (Appointment/Order's own "customerName", picked by
+        // seed.ts via this same ascending index against the exact pool
+        // Customer.name uses) specifically so both fields name the same
+        // person as the relation. Reversing back to ascending order here
+        // restores this loop's own stated round-1711 intent -- "cycle
+        // through the target's available rows by this record's own
+        // position among its siblings" -- without touching listRecords'
+        // own DESC contract, which other callers rely on.
+        const existing = target ? [...listRecords(db, project.id, target)].reverse() : [];
         if (existing.length > 0) record[field.name] = existing[recordIndex % existing.length].id;
       }
       try {
