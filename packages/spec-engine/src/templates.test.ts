@@ -1061,6 +1061,30 @@ test("the Appointments & Clients template (a priced Service entity, but no liter
 });
 
 /**
+ * Round 2026: the exact same gap round 1975 fixed for Appointments & Clients
+ * just above, found in the Inventory & Products template -- its entities
+ * (Supplier/Product/PurchaseOrder/StockMovement) include neither "Order"
+ * nor any other literal BILLING_ENTITY_NAMES match ("PurchaseOrder" is not
+ * "Order" under an exact-string Set.has check), even though Product.price
+ * and PurchaseOrder.total make this an unambiguous vendor-payments
+ * business. Never cross-checked against this template when round 1975
+ * only fixed Appointments.
+ */
+test("the Inventory & Products template (priced Product/PurchaseOrder entities, but no literal billing-entity name) still surfaces a Stripe recommendation via forcePaymentsQuestion, in both languages", () => {
+  const inventory = TEMPLATES.find((t) => t.id === "inventory");
+  assert.ok(inventory, "expected an \"inventory\" template to exist");
+  assert.equal(inventory!.spec.openQuestions.length, 1, "expected exactly one open question for the Hebrew spec");
+  assert.equal(inventory!.spec.openQuestions[0].question, "באיזה ספק תשלומים כדאי להשתמש?");
+  assert.deepEqual(inventory!.spec.openQuestions[0].options, ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"]);
+  assert.equal(inventory!.spec.openQuestions[0].recommendation, "Stripe");
+
+  assert.equal(inventory!.specEn.openQuestions.length, 1, "expected exactly one open question for the English specEn");
+  assert.equal(inventory!.specEn.openQuestions[0].question, "Which payment provider should this use?");
+  assert.deepEqual(inventory!.specEn.openQuestions[0].options, ["Stripe", "PayPal", "No payments", "Decide for me"]);
+  assert.equal(inventory!.specEn.openQuestions[0].recommendation, "Stripe");
+});
+
+/**
  * Round 1271's finding: round 1248's own paymentOpenQuestion early-returned
  * `[]` for any template with no billing entity, but heuristic.ts's real
  * buildOpenQuestions has no such early return -- it unconditionally
@@ -1076,13 +1100,15 @@ test("the Appointments & Clients template (a priced Service entity, but no liter
  * membership check, not whether buildOpenQuestions ever actually returns
  * `[]` for any input (it doesn't).
  */
-test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer/Inventory templates) still gets the same always-present payment open question heuristic.ts generates for an identical business shape, in both languages", () => {
+test("a template with no billing entity (e.g. the CRM/Project Tracker/Volunteer templates) still gets the same always-present payment open question heuristic.ts generates for an identical business shape, in both languages", () => {
   for (const template of TEMPLATES) {
-    // Round 1975: "appointments" is no longer in this group -- see the
-    // dedicated test just below. Excluded here the same way "restaurant"
-    // already was, for the identical reason: it now gets a "Stripe"
-    // recommendation instead of "No payments".
-    if (template.id === "restaurant" || template.id === "appointments") continue;
+    // Round 1975: "appointments" is no longer in this group -- see its own
+    // dedicated test above. Excluded here the same way "restaurant" already
+    // was, for the identical reason: it now gets a "Stripe" recommendation
+    // instead of "No payments".
+    // Round 2026: "inventory" joins them for the identical reason -- see
+    // its own dedicated test just above.
+    if (template.id === "restaurant" || template.id === "appointments" || template.id === "inventory") continue;
     assert.equal(template.spec.openQuestions.length, 1, `template "${template.id}" must get the always-present payment open question like a from-scratch description would`);
     assert.equal(template.spec.openQuestions[0].question, "האם האפליקציה צריכה לקבל תשלומים?");
     assert.deepEqual(template.spec.openQuestions[0].options, ["Stripe", "PayPal", "בלי תשלומים", "תחליטו בשבילי"]);

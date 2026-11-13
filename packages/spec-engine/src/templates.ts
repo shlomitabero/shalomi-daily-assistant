@@ -1251,12 +1251,23 @@ export const TEMPLATES: AppTemplate[] = [
       summary: "מערכת לניהול מלאי -- מוצרים, ספקים, הזמנות רכש ותנועות מלאי.",
       roles: ["מנהל/ת מחסן", "קניין/ית"],
       entities: INVENTORY_ENTITIES,
+      // Round 2026: see paymentOpenQuestion's own round-1975 doc comment --
+      // none of this template's entities (Supplier/Product/PurchaseOrder/
+      // StockMovement) is in BILLING_ENTITY_NAMES ("PurchaseOrder" !==
+      // "Order", an exact-string Set.has check), so without this every
+      // project built from this template (a vendor-payments/purchasing
+      // business, confirmed by its own Product.price and PurchaseOrder.total
+      // fields) always got the wrong "No payments" default -- the same gap
+      // round 1975 already fixed for Appointments & Clients, just never
+      // cross-checked against this template.
+      forcePaymentsQuestion: true,
     }),
     specEn: spec({
       summary: "An inventory management system -- products, suppliers, purchase orders and stock movements.",
       roles: ["Warehouse Manager", "Buyer"],
       entities: INVENTORY_ENTITIES_EN,
       isHebrew: false,
+      forcePaymentsQuestion: true,
     }),
   },
 ];
