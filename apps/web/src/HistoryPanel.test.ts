@@ -159,6 +159,84 @@ test("HistoryPanel shows a real error with a Retry button when the initial load 
 });
 
 /**
+ * Round 2022: round 328's own fix just above (the test above this one)
+ * taught HistoryPanel to show a real error+Retry row instead of the
+ * misleading "No saved points yet" message once a load genuinely fails --
+ * but it never gave `checkpoints` a true "not loaded yet" tri-state, so
+ * the in-flight window of the initial load (and of a retry after a prior
+ * failure) still fell through to that exact same misleading empty-state
+ * text, for as long as the real GET .../checkpoints request takes --
+ * normally fast locally, but this codebase elsewhere documents Render's
+ * free-tier cold-start adding multi-second delays to ordinary requests.
+ * Every sibling panel (BusinessTwinPanel/CollaboratorsPanel/
+ * AutomationsPanel/WhatsAppPanel) already uses a nullable tri-state for
+ * its own initial-load data and shows a genuine loading message during
+ * that exact window; this was the one panel that never got it. Mirrors
+ * this project's own established delayed-fetch-under-direct-control
+ * technique (rounds 2016-2018) to make the normally-brief in-flight window
+ * directly observable and assertable.
+ */
+test("HistoryPanel shows a genuine loading message while the initial checkpoint load is in flight, never the misleading 'No saved points yet' message", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    let resolveCheckpoints!: (value: Response) => void;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Promise<Response>((resolve) => {
+          resolveCheckpoints = resolve;
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+
+      await waitForCondition(() => document.querySelector(".history-panel p[role='status']") !== null);
+      assert.match(
+        document.querySelector(".history-panel p[role='status']")!.textContent ?? "",
+        /Loading/,
+        "while the real checkpoint fetch is genuinely still pending, the dialog must show a loading message",
+      );
+      assert.equal(
+        document.body.textContent?.includes("No saved points yet"),
+        false,
+        "an in-flight load must never show the misleading 'No saved points yet' empty-state text -- the project's real history isn't known yet",
+      );
+
+      await act(async () => {
+        resolveCheckpoints(new Response(JSON.stringify({ checkpoints: [cp1] }), { status: 200, headers: { "content-type": "application/json" } }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.match(document.querySelector(".checkpoint-list li")!.textContent ?? "", /Initial build/, "the real checkpoint must render once the fetch actually resolves");
+      assert.equal(document.body.textContent?.includes("No saved points yet"), false, "a project that genuinely has checkpoints must never show the empty-state text");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test: handleRestore only disabled the ONE button whose own
  * checkpoint.id matched the in-flight busyId, leaving every other
  * checkpoint's restore button clickable while a restore request was still

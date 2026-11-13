@@ -46,7 +46,16 @@ export function HistoryPanel({
   readOnly?: boolean;
 }) {
   const { t, lang } = useTranslation();
-  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  // Round 2022: null means "not loaded yet" -- distinct from a genuinely
+  // empty [] once the real GET .../checkpoints response comes back --
+  // mirroring every sibling panel's own identical tri-state (twin/
+  // collaborators/rules/status in BusinessTwinPanel/CollaboratorsPanel/
+  // AutomationsPanel/WhatsAppPanel). `checkpoints` below is the derived,
+  // always-an-array view every existing usage in this file already reads;
+  // only the dedicated loading check further down needs to tell "still
+  // loading" apart from "loaded, and the project truly has none yet".
+  const [checkpointsOrNull, setCheckpoints] = useState<Checkpoint[] | null>(null);
+  const checkpoints = checkpointsOrNull ?? [];
   // Round 1567: populated from GET .../checkpoints' own sibling field --
   // defaults to {} (never missing-field-crashes) so a stale cached response
   // or any test fixture built before this round's own server change keeps
@@ -137,7 +146,7 @@ export function HistoryPanel({
 
   /** Splices the freshly-renamed checkpoint back into the loaded list, matching handleRestore's own "update from the real server response" shape rather than an optimistic local edit. */
   function handleCheckpointRenamed(renamed: Checkpoint) {
-    setCheckpoints((prev) => prev.map((c) => (c.id === renamed.id ? renamed : c)));
+    setCheckpoints((prev) => (prev ?? []).map((c) => (c.id === renamed.id ? renamed : c)));
   }
 
   // Round 933: error/restoreWarning/deleteError render unconditionally
@@ -223,7 +232,7 @@ export function HistoryPanel({
       // drop the ghost row instead of leaving a stuck, endlessly-repeatable
       // error for something that no longer exists.
       if ((err as Error & { code?: string }).code === "CHECKPOINT_NOT_FOUND") {
-        setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
+        setCheckpoints((prev) => (prev ?? []).filter((c) => c.id !== checkpoint.id));
       } else {
         setError((err as Error).message);
       }
@@ -255,7 +264,7 @@ export function HistoryPanel({
     setRestoreWarning(null);
     try {
       await deleteCheckpoint(projectId, checkpoint.id);
-      setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
+      setCheckpoints((prev) => (prev ?? []).filter((c) => c.id !== checkpoint.id));
     } catch (err) {
       // Round 1890: deleteCheckpoint throws a generic NotFoundError (code
       // "NOT_FOUND", not "CHECKPOINT_NOT_FOUND" -- that's the restore
@@ -267,7 +276,7 @@ export function HistoryPanel({
       // same way the success branch above does, instead of leaving a
       // "failed to delete" banner next to a row that's already gone.
       if ((err as Error & { code?: string }).code === "NOT_FOUND") {
-        setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id));
+        setCheckpoints((prev) => (prev ?? []).filter((c) => c.id !== checkpoint.id));
       } else {
         setDeleteError((err as Error).message);
       }
@@ -467,7 +476,13 @@ export function HistoryPanel({
             </div>
           </div>
         )}
-        {checkpoints.length === 0 ? (
+        {checkpointsOrNull === null ? (
+          loadError ? null : (
+            <p className="muted" role="status">
+              {t("history.loading")}
+            </p>
+          )
+        ) : checkpoints.length === 0 ? (
           loadError ? null : <p className="muted">{t("history.empty")}</p>
         ) : visibleCheckpoints.length === 0 ? (
           <p className="muted">{t("history.search.noResults")}</p>
@@ -486,7 +501,7 @@ export function HistoryPanel({
                       checkpoint={checkpoint}
                       projectId={projectId}
                       onRenamed={handleCheckpointRenamed}
-                      onGone={() => setCheckpoints((prev) => prev.filter((c) => c.id !== checkpoint.id))}
+                      onGone={() => setCheckpoints((prev) => (prev ?? []).filter((c) => c.id !== checkpoint.id))}
                       onEditStart={handleCheckpointEditStart}
                       onBusyChange={(busy) =>
                         setRenamingMap((prev) => {

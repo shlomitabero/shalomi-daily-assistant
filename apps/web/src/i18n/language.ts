@@ -736,6 +736,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "history.count.filtered": "{shown} מתוך {total} נקודות שמירה",
     "history.close": "סגירה",
     "history.description": "כל בנייה או שיפור נשמר כאן כנקודת שחזור. חוזרים אחורה בלי לאבד מידע — אף פעולה כאן לא מוחקת נתונים קיימים.",
+    "history.loading": "טוען…",
     "history.empty": "אין עדיין נקודות שמורות.",
     "history.retry": "ניסיון נוסף",
     "history.copy": "📋 העתקת ציר הזמן",
@@ -1728,6 +1729,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "history.close": "Close",
     "history.description":
       "Every build or improvement is saved here as a restore point. Go back without losing data — nothing here deletes existing data.",
+    "history.loading": "Loading…",
     "history.empty": "No saved points yet.",
     "history.retry": "Try again",
     "history.copy": "📋 Copy timeline",
