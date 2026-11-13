@@ -5602,8 +5602,20 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
           left in this file's own established "N record(s)" convention
           (see formatEntityRecordCount a few hundred lines up, and the
           handleBulkDelete confirm dialog) -- printing exactly one record
-          from the list view showed "1 records". */}
-      <p className="print-record-footer">{records.length} {records.length === 1 ? "record" : "records"} · Printed on {new Date().toLocaleString()}</p>
+          from the list view showed "1 records".
+          Round 2021: see the bulk-actions-bar's own round-2021 doc comment
+          -- this digit-first count+word has the identical no-i18n bidi
+          gap for a Hebrew project, rendering as "records · Printed on
+          <date> 2" with the leading count pushed past the whole rest of
+          the line. The single-record RecordPrintSheet's own identical
+          "Printed on {date}" just above has no leading digit, so it isn't
+          affected and needs no change. */}
+      <p className="print-record-footer">
+        <bdi dir="ltr">
+          {records.length} {records.length === 1 ? "record" : "records"}
+        </bdi>{" "}
+        · Printed on {new Date().toLocaleString()}
+      </p>
     </div>
   );
 }
@@ -9601,7 +9613,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             <div className="table-scroll">
               {selectedIds.size > 0 && (
                 <div className="bulk-actions-bar">
-                  <span>{selectedIds.size} selected</span>
+                  {/* Round 2021: see the empty-state/record-count badge's
+                      own round-2020 doc comment -- this exported app has
+                      no i18n, so this hardcoded-English, digit-first
+                      string sits bare inside <html dir="rtl"> for a
+                      Hebrew project with no bidi isolation, and renders as
+                      "selected 2" instead of "2 selected". <bdi dir="ltr">
+                      keeps it in its own internal LTR order regardless of
+                      the surrounding RTL paragraph direction. */}
+                  <span><bdi dir="ltr">{selectedIds.size} selected</bdi></span>
                   <label className="bulk-edit-field-label">
                     Set field:
                     <select value={bulkEditField} onChange={(e) => handleBulkEditFieldChange(e.target.value)}>

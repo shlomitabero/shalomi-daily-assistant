@@ -29458,6 +29458,140 @@ test("the exported EntityView's record count badge is bidi-isolated against the 
 });
 
 /**
+ * Round 2021: the bulk-actions-bar sequel to round 2020's own record-count/
+ * empty-state bidi-isolation fix just above -- this exported app has no
+ * i18n, so this hardcoded-English, digit-first "N selected" span sits bare
+ * inside <html dir="rtl"> for a Hebrew project with no bidi isolation,
+ * and a live-built, installed, and run exported app rendered it as
+ * "selected 2" instead of "2 selected" -- the same mechanism round 1716/
+ * 2020 already established the <bdi dir="ltr"> fix for. Unlike the
+ * toolbar's own "Export N selected"/"Copy N selected" buttons (confirmed
+ * NOT affected: the digit there sits between two strong-LTR words, which
+ * resolves to one coherent run with no reordering ambiguity), this span's
+ * digit has nothing preceding it, so it's directly exposed to the
+ * surrounding RTL paragraph.
+ */
+test("the exported EntityView's bulk-actions-bar selected-count span is bidi-isolated against the surrounding RTL document", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr input[type='checkbox']").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rowCheckbox = container.querySelector("tbody tr input[type='checkbox']") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(rowCheckbox);
+      });
+
+      const bulkCountBdi = container.querySelector(".bulk-actions-bar bdi[dir='ltr']");
+      assert.ok(bulkCountBdi, "the bulk-actions-bar selected-count span must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(bulkCountBdi!.textContent, "1 selected");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2021: see the bulk-actions-bar test's own doc comment just above --
+ * the Print list sheet's footer has the identical digit-first, no-i18n
+ * bidi gap, rendered live as "records · Printed on <date> 2" with the
+ * leading count pushed past the whole rest of the line. The single-record
+ * RecordPrintSheet's own "Printed on {date}" (no leading count) is NOT
+ * affected and needs no change.
+ */
+test("the exported EntityView's Print list sheet footer count is bidi-isolated against the surrounding RTL document", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const store = [
+    { id: 1, name: "Alice" },
+    { id: 2, name: "Bob" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === `/api/${project.spec.entities[0].name}`) {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  window.print = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: project.spec.entities[0],
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const printListButton = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Print"))!;
+      await act(async () => {
+        fireEvent.click(printListButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".print-record-footer")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const footer = container.querySelector(".print-record-footer");
+      const footerBdi = footer?.querySelector("bdi[dir='ltr']");
+      assert.ok(footerBdi, "the Print list sheet footer's record count must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(footerBdi!.textContent, "2 records");
+      assert.match(footer!.textContent ?? "", /^2 records · Printed on/, "the overall footer text must still read 'N records · Printed on ...' unchanged");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the live preview's search box (EntityPanel.tsx)
  * wraps the real matched substring in a `<mark className="search-match">`
  * inside each visible cell -- for both a plain text field and an enum
