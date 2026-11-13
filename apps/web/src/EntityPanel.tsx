@@ -6048,7 +6048,18 @@ export function EntityPanel({
       ) : records.length === 0 ? (
         loadError ? null : (
           <div className="empty-state">
-            <p>{t("entity.noRecords")}</p>
+            {/* Round 2025: "entity.noRecords" tells the reader to "add the
+                first one above" -- true for an owner/editor, but the
+                create-record form it refers to is suppressed outright for
+                a read-only viewer (`{!readOnly && (...)}` around the
+                `<form className="record-form">` near the top of this
+                component), so the exact same message pointed them at a
+                form that simply isn't there. Mirrors round 2024's
+                identical fix for AutomationsPanel's own "automations.empty"
+                -- the sibling collab.empty/history.empty/entity.noResults
+                strings are already role-neutral with no CTA for exactly
+                this reason. */}
+            <p>{t(readOnly ? "entity.noRecords.readOnly" : "entity.noRecords")}</p>
           </div>
         )
       ) : (

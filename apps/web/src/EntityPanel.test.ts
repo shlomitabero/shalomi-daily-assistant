@@ -2604,6 +2604,38 @@ test("EntityPanel shows a real error with a Retry button when the initial load f
 });
 
 /**
+ * Round 2025: "entity.noRecords" tells the reader to "add the first one
+ * above" -- true for an owner/editor, but the create-record form it
+ * refers to is suppressed outright for a read-only viewer
+ * (`{!readOnly && (...)}` around the `<form className="record-form">`),
+ * so the exact same message pointed a viewer at a form that simply isn't
+ * there for them. Mirrors round 2024's identical fix for
+ * AutomationsPanel's own "automations.empty".
+ */
+test("EntityPanel's empty-state message never tells a read-only viewer to add a record 'above' when no such form is shown to them", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch([]) as typeof fetch;
+    try {
+      renderEntityPanel({ readOnly: true });
+      await waitForCondition(() => document.body.textContent?.includes("No records yet") === true);
+      assert.equal(
+        document.querySelector(".record-form"),
+        null,
+        "a read-only viewer must never see the create-record form this empty-state message could otherwise point to",
+      );
+      assert.equal(
+        document.body.textContent?.includes("add the first one above"),
+        false,
+        "a read-only viewer must never be told to use a form they can't see",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1638: GET .../entities/:entityName now caps its response
  * (RECORD_LIST_RESPONSE_CAP) for a very large entity and returns
  * totalCount/truncated alongside records. Confirms the client surfaces
