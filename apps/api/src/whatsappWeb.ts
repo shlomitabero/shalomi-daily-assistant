@@ -1571,7 +1571,20 @@ export class WhatsAppWebManager {
         // still works fine against a session left in "disconnected"
         // status -- see connect()'s own `existing.status !== "disconnected"`
         // check -- it just overwrites this one with a fresh session object.
-        const wasAwaitingQr = session.status === "qr" || session.status === "connecting";
+        //
+        // Round 2012: this used to also treat `session.status ===
+        // "connecting"` as `wasAwaitingQr` -- but "connecting" is the
+        // session's own starting status, set before Baileys has ever
+        // emitted a single `qr` event (see this class's session
+        // initializer above). A close that lands while still
+        // "connecting" means the handshake with WhatsApp's own servers
+        // never got far enough to show the user any QR code at all (a
+        // real network/firewall failure, a cold-starting host, WhatsApp
+        // itself rejecting the attempt) -- telling them "the QR code
+        // expired before it was scanned" in that case is false: there
+        // was never a QR for them to scan or let expire. Only
+        // `session.status === "qr"` means a QR was genuinely shown.
+        const wasAwaitingQr = session.status === "qr";
         session.status = "disconnected";
         session.qrDataUrl = null;
         session.error = wasAwaitingQr ? QR_EXPIRED_MESSAGE : CONNECTION_LOST_MESSAGE;

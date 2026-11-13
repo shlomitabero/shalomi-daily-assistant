@@ -271,6 +271,42 @@ test("a connection that drops after being fully connected (not a QR timeout, not
 });
 
 /**
+ * Round 2012: a third branch neither of the two tests above covers -- a
+ * close that happens BEFORE Baileys ever emits a single `qr` event at
+ * all, while `session.status` is still `"connecting"` (the very first
+ * value `connect()`'s own session initializer sets, confirmed by reading
+ * it directly). This is a genuine, real-world case, not a hypothetical
+ * one: it is exactly what a failed handshake against WhatsApp's own
+ * servers looks like (a network/firewall problem, a cold-starting host,
+ * WhatsApp itself rejecting the attempt before ever issuing a QR) --
+ * confirmed live via a real Playwright browser session against this
+ * sandboxed dev environment's own blocked outbound WebSocket, which
+ * reproduces precisely this sequence. `wasAwaitingQr`'s own
+ * `session.status === "connecting"` disjunct lumped this in with the
+ * real "QR was shown, never scanned, timed out" case the test above this
+ * one covers, so the user was told "The QR code expired before it was
+ * scanned. Click Connect to get a new one." for a connection attempt
+ * that never got far enough to show them any QR code at all -- a false,
+ * confusing explanation for what is really just an ordinary connection
+ * failure.
+ */
+test("a connection that closes before any QR is ever issued (status still 'connecting') surfaces a connection-failure explanation, not a false 'QR expired' one", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  assert.equal(manager.getStatus("proj1").status, "connecting");
+
+  // No `qr` event at all -- the socket just closes right away, exactly
+  // like a real handshake failure reaching WhatsApp's own servers.
+  createdSockets[0].emitConnectionUpdate({ connection: "close", lastDisconnect: { error: { output: { statusCode: 428 } } } });
+
+  const state = manager.getStatus("proj1");
+  assert.equal(state.status, "disconnected");
+  assert.equal(state.qrDataUrl, null);
+  assert.ok(state.error, "expected a real explanation, not a silent revert to disconnected");
+  assert.doesNotMatch(state.error!, /qr/i, "no QR was ever shown, so the explanation must not blame a QR code");
+});
+
+/**
  * Round 1415's Explore survey found that status code 515 (Baileys'
  * DisconnectReason.restartRequired) is not actually "a connection that
  * drops after being fully connected" the way the test above USED to
