@@ -599,31 +599,45 @@ export function WhatsAppPanel({
         if (!mountedRef.current) return;
         setStatus(s);
         if (s.status === "connecting" || s.status === "qr") startPolling();
+        // Round 2023: message history is independent of the live connection
+        // state -- GET .../whatsapp/messages (projects.ts) happily returns
+        // it regardless of status, and handleDisconnect/the server's own
+        // disconnect() never touch the whatsapp_messages table -- so a
+        // project whose WhatsApp link has since dropped (or was
+        // deliberately disconnected) still has its real conversation
+        // history sitting in the DB. This used to only fetch it inside the
+        // `s.status === "connected"` branch below, so the message-log
+        // section (unconditionally rendered regardless of status, just
+        // below in this component's JSX) fell back to its initial `[]`
+        // and showed the flatly false "No messages sent or received yet"
+        // for every other status, even with real history on the server.
+        // Fetching it here for every status closes that gap; only
+        // startConnectedPolling() genuinely belongs inside the "connected"
+        // branch. Same messagesVersionRef idiom as startPolling/
+        // startConnectedPolling below -- this fetch can still be in flight
+        // when handleDisconnect runs (e.g. the panel mounts already-
+        // connected and the user hits Disconnect before this resolves).
+        // Without the guard, this .then would unconditionally overwrite
+        // the empty log handleDisconnect just set with this stale,
+        // pre-disconnect page (round 541).
+        const versionBeforeFetch = messagesVersionRef.current;
+        listWhatsAppMessages(projectId)
+          .then(({ messages, hasMore, nextCursor }) => {
+            // Round 1920: this inner .then was the one continuation in
+            // the whole file that never checked mountedRef (every other
+            // one does -- see this function's own two checks above, plus
+            // lines 722/765/899) -- it only ever guarded against
+            // messagesVersionRef going stale (round 541), not against the
+            // panel having unmounted entirely while this fetch was still
+            // in flight (e.g. open an already-connected panel, then close
+            // it before this resolves). Same convention applied here too.
+            if (!mountedRef.current || messagesVersionRef.current !== versionBeforeFetch) return;
+            setMessages(messages);
+            setHasMoreMessages(hasMore);
+            nextCursorRef.current = nextCursor;
+          })
+          .catch(() => {});
         if (s.status === "connected") {
-          // Same messagesVersionRef idiom as startPolling/startConnectedPolling
-          // below -- this fetch can still be in flight when handleDisconnect
-          // runs (e.g. the panel mounts already-connected and the user hits
-          // Disconnect before this resolves). Without the guard, this
-          // .then would unconditionally overwrite the empty log
-          // handleDisconnect just set with this stale, pre-disconnect page
-          // (round 541).
-          const versionBeforeFetch = messagesVersionRef.current;
-          listWhatsAppMessages(projectId)
-            .then(({ messages, hasMore, nextCursor }) => {
-              // Round 1920: this inner .then was the one continuation in
-              // the whole file that never checked mountedRef (every other
-              // one does -- see this function's own two checks above, plus
-              // lines 722/765/899) -- it only ever guarded against
-              // messagesVersionRef going stale (round 541), not against the
-              // panel having unmounted entirely while this fetch was still
-              // in flight (e.g. open an already-connected panel, then close
-              // it before this resolves). Same convention applied here too.
-              if (!mountedRef.current || messagesVersionRef.current !== versionBeforeFetch) return;
-              setMessages(messages);
-              setHasMoreMessages(hasMore);
-              nextCursorRef.current = nextCursor;
-            })
-            .catch(() => {});
           startConnectedPolling();
         }
       })

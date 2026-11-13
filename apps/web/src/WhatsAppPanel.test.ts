@@ -1514,6 +1514,83 @@ test("WhatsAppPanel does not show the never-connected viewer message when a phon
   });
 });
 
+/**
+ * Round 2023: loadInitialStatus only ever called listWhatsAppMessages
+ * inside its own `s.status === "connected"` branch -- but the message-log
+ * section just below in this component's JSX renders unconditionally
+ * regardless of status, and the server's own GET .../whatsapp/messages
+ * route (projects.ts) happily returns real history regardless of
+ * connection state (disconnecting never touches the whatsapp_messages
+ * table). So a project whose WhatsApp link has since dropped, or was
+ * deliberately disconnected, still has real conversation history on the
+ * server, but the panel never asked for it and fell back to its initial
+ * `[]`, showing the flatly false "No messages sent or received yet" even
+ * though the server would happily have returned the real message.
+ */
+test("WhatsAppPanel fetches and shows real message history even while disconnected, instead of the misleading 'No messages sent or received yet' message", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const realMessage: WhatsAppMessageLogEntry = {
+      id: "m1",
+      direction: "in",
+      fromNumber: "972501234567",
+      toNumber: "972521112233",
+      body: "Hi, I would like to book an appointment",
+      matchedLabel: null,
+      matchedEntityName: null,
+      matchedRecordId: null,
+      status: "received",
+      createdAt: new Date().toISOString(),
+    };
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "disconnected", qrDataUrl: null, phoneNumber: "972501234567", error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [realMessage], hasMore: false, nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(WhatsAppPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              onClose: () => {},
+              onJumpToEntity: () => {},
+              onJumpToRecord: () => {},
+              entities: [],
+              onCreateRecordFromMessage: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => /Hi, I would like to book an appointment/.test(document.body.textContent ?? ""));
+      assert.equal(
+        document.body.textContent?.includes("No messages sent or received yet"),
+        false,
+        "real history must never be hidden behind the misleading empty-state message just because the project is currently disconnected",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecutive failures, instead of leaving the user stuck with a stale QR code", async (t) => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
