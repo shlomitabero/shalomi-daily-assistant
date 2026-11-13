@@ -665,25 +665,56 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
 }
 
 /**
- * Orders a batch of entities being seeded together so a required relation
- * field's best-effort `id=1` guess (seedValueFor above) actually lands on a
- * real row instead of a dangling foreign key -- e.g. an AI-generated or
- * refined spec listing entities as [Invoice, Customer] with
- * Invoice.customerId a required relation to Customer (an entirely ordinary,
- * correct data model the built-in domain library just never happens to
- * produce, per that guess's own doc-comment). Without this, seeding
- * Invoice first throws a real FK-constraint violation on every attempt
- * (Customer has zero rows yet) -- and the pipeline's own seed step doesn't
- * stop the build on that failure, so by the time QA's required-field smoke
- * test runs, Customer has since been seeded by its own later turn in the
- * loop, making the SAME guessed id=1 succeed there and mask that Invoice's
- * table is left with zero demo rows, the one thing seeding exists to
- * prevent. A plain topological sort by required-relation target, falling
- * back to the given order for anything left in a cycle (including a
+ * Orders a batch of entities being seeded together so a relation field's
+ * best-effort target (seedValueFor above's `id=1` guess for a *required*
+ * relation, or pipeline.ts's own "overwrite with whichever real row the
+ * target actually has right now" pass for an *optional* one) actually lands
+ * on a real row instead of staying a dangling FK or a needlessly null
+ * optional link -- e.g. an AI-generated or refined spec listing entities as
+ * [Invoice, Customer] with Invoice.customerId a required relation to
+ * Customer (an entirely ordinary, correct data model the built-in domain
+ * library just never happens to produce, per that guess's own doc-comment).
+ * Without this, seeding Invoice first throws a real FK-constraint violation
+ * on every attempt (Customer has zero rows yet) -- and the pipeline's own
+ * seed step doesn't stop the build on that failure, so by the time QA's
+ * required-field smoke test runs, Customer has since been seeded by its own
+ * later turn in the loop, making the SAME guessed id=1 succeed there and
+ * mask that Invoice's table is left with zero demo rows, the one thing
+ * seeding exists to prevent. A plain topological sort by relation target,
+ * falling back to the given order for anything left in a cycle (including a
  * self-relation, e.g. Employee.managerId -> Employee, which this
  * deliberately leaves exactly as fragile as it already was rather than
  * attempting a same-entity ordering this guess-based generator can't
  * actually satisfy anyway).
+ *
+ * Round 2000: this used to build its dependency edges from *required*
+ * relations only (`!field.required` excluded an optional one outright),
+ * reasoning (per this function's own pre-round-2000 doc comment and a
+ * dedicated regression test) that "only a required one actually needs a
+ * real row to point at." That was true for seedValueFor's own static guess
+ * (an optional relation is left `null`, never a dangling guessed id), but
+ * round 1995's own fix to pipeline.ts's seeding loop made it false for
+ * ORDERING: that loop now upgrades an optional relation to a real target row
+ * too, whenever the target genuinely has rows "right here, right now, in
+ * this same batch" -- but whether it does at the exact moment a given
+ * entity is processed depends entirely on this function's own ordering.
+ * The built-in domain library's own Order.courierId (optional, ->Courier)
+ * is declared BEFORE Courier in domainEntities.ts's own rule array, and
+ * matchEntities() preserves that declaration order verbatim in the
+ * generated spec regardless of how the description phrases things -- so a
+ * description matching both ("delivery orders and the couriers who deliver
+ * them") seeds Order before Courier under the old required-only ordering,
+ * and round 1995's own "existing.length > 0" check sees zero Courier rows
+ * yet for every one of them: every seeded Order's courierId stayed `null`
+ * even though 2 real Courier rows exist two lines later in the exact same
+ * build. Independently reproduced against the real `generateSpec`/
+ * `runBuildPipeline` before fixing: that description seeded 2 real Courier
+ * rows, yet both seeded Order rows had `courierId: null`. Dropping the
+ * `!field.required` exclusion here -- so an optional relation's target gets
+ * the identical ordering priority a required one already has -- closes this
+ * without touching pipeline.ts's own linking pass at all: it already does
+ * the right thing the moment the target it's checking has actually been
+ * seeded first.
  */
 export function orderForSeeding(entities: Entity[]): Entity[] {
   // Round 1209: resolved through a LOWERCASE-keyed lookup to the target's
@@ -695,34 +726,37 @@ export function orderForSeeding(entities: Entity[]): Entity[] {
   // differently cased from its target's real name with nothing else
   // about the spec changed. Before this, that dependency edge was
   // silently dropped (names.has(field.relationTo) failed, so the target
-  // was never added to this entity's own requiredTargets), with no
+  // was never added to this entity's own seedTargets), with no
   // guarantee the target got seeded first -- resolving against the
   // target's real name here means `targets` always holds the same
   // canonical casing `placed` is populated with below, so the ordering
   // comparison stays meaningful regardless of relationTo's own casing.
   const namesByLowerName = new Map(entities.map((e) => [e.name.toLowerCase(), e.name]));
-  const requiredTargets = new Map<string, Set<string>>();
+  // Round 2000: no longer filtered to `field.required` only -- see this
+  // function's own doc comment above for why an optional relation needs
+  // the identical ordering priority.
+  const seedTargets = new Map<string, Set<string>>();
   for (const entity of entities) {
     const targets = new Set<string>();
     for (const field of entity.fields) {
-      if (field.type !== "relation" || !field.required || !field.relationTo) continue;
+      if (field.type !== "relation" || !field.relationTo) continue;
       const resolvedTarget = namesByLowerName.get(field.relationTo.toLowerCase());
       if (resolvedTarget && resolvedTarget !== entity.name) {
         targets.add(resolvedTarget);
       }
     }
-    requiredTargets.set(entity.name, targets);
+    seedTargets.set(entity.name, targets);
   }
 
   const ordered: Entity[] = [];
   const placed = new Set<string>();
   const remaining = [...entities];
   while (remaining.length > 0) {
-    const readyIndex = remaining.findIndex((e) => [...requiredTargets.get(e.name)!].every((target) => placed.has(target)));
+    const readyIndex = remaining.findIndex((e) => [...seedTargets.get(e.name)!].every((target) => placed.has(target)));
     if (readyIndex === -1) {
-      // A cycle (or a required relation to an entity outside this batch
-      // that will never show up as "placed") -- append what's left in its
-      // original relative order rather than looping forever.
+      // A cycle (or a relation to an entity outside this batch that will
+      // never show up as "placed") -- append what's left in its original
+      // relative order rather than looping forever.
       ordered.push(...remaining);
       break;
     }

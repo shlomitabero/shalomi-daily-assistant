@@ -581,6 +581,79 @@ test("seeded records with an OPTIONAL relation also point at real target rows wh
 });
 
 /**
+ * Round 2000: round 1995's own fix just above only works when the OPTIONAL
+ * relation's target happens to already be seeded by the time this loop
+ * reaches the dependent entity -- which depended entirely on
+ * orderForSeeding (seed.ts), itself still filtered to REQUIRED relations
+ * only at the time round 1995 shipped. The test above never caught this,
+ * because it engineers its spec as `[Customer, Ticket]` -- target first --
+ * exactly the one order orderForSeeding's own pre-round-2000 fallback
+ * (preserve original relative order when no required dependency applies)
+ * happens to get right. The built-in domain library's own real Order/
+ * Courier pair (domainEntities.ts: Order's optional `courierId` ->Courier)
+ * is declared the OTHER way around -- Order before Courier -- and
+ * matchEntities() preserves that declaration order verbatim regardless of
+ * how a real description phrases things, so this spec deliberately mirrors
+ * that exact real, reachable order instead of the lucky one. Independently
+ * reproduced against the real `generateSpec`/`runBuildPipeline` before
+ * fixing (a standalone script, not this test): the description "An app to
+ * track delivery orders and the couriers who deliver them to customers."
+ * generates `[Customer, Order, Courier]`, seeds 2 real Courier rows, yet
+ * both seeded Order rows had `courierId: null`.
+ */
+test("seeded records with an OPTIONAL relation also point at real target rows when the spec lists the dependent BEFORE its target", async () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          { name: "total", type: "number", required: true },
+          { name: "courierId", type: "relation", relationTo: "Courier", required: false },
+        ],
+      },
+      { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec,
+  });
+  const [order, courier] = spec.entities;
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build" }));
+  const seedEvent = events.find((e) => e.agent === "Seed Data" && e.status !== "running");
+  assert.equal(seedEvent!.status, "success", "seeding must not report any failed inserts");
+
+  const orderRows = listRecords(db, project.id, order);
+  const courierRows = listRecords(db, project.id, courier);
+  assert.equal(orderRows.length, 2, "expected the default 2 seeded Order rows");
+  assert.equal(courierRows.length, 2, "expected the default 2 seeded Courier rows");
+
+  const courierIdsPointedAt = orderRows.map((r) => r.courierId);
+  assert.ok(
+    courierIdsPointedAt.every((id) => id !== null),
+    "every seeded Order row must be linked to a real Courier row, not left null, even though the spec lists Order before its optional relation's target Courier",
+  );
+  assert.deepEqual(
+    new Set(courierIdsPointedAt),
+    new Set(courierRows.map((c) => c.id)),
+    "every seeded Courier row should be pointed at by exactly one seeded Order row, cycling the same way the dependent-first case already does",
+  );
+});
+
+/**
  * Round 753: seedValueFor (seed.ts) deliberately leaves every "file" field
  * null -- there's no real uploaded file to point a seeded record at. For
  * an entity with a REQUIRED file field, that used to mean every single

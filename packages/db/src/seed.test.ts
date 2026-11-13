@@ -1141,7 +1141,19 @@ test("orderForSeeding leaves entities with no required-relation dependency betwe
   );
 });
 
-test("orderForSeeding doesn't reorder an OPTIONAL relation's target -- only a required one actually needs a real row to point at", () => {
+/**
+ * Round 2000: this test used to assert the OPPOSITE order ("Order" before
+ * "Courier"), reasoning that only a required relation's target "actually
+ * needs a real row to point at." That was true for seedValueFor's own
+ * static guess, but false for pipeline.ts's own round-1995 linking pass,
+ * which upgrades an OPTIONAL relation to a real target row too, whenever
+ * the target genuinely has rows at the moment this entity is reached in the
+ * seeding loop -- a guarantee that only holds if the target is ordered
+ * first. See orderForSeeding's own doc comment for the full Order/Courier
+ * reachability chain (domainEntities.ts declares Order before Courier, and
+ * matchEntities() preserves that order verbatim).
+ */
+test("orderForSeeding moves an OPTIONAL relation's target entity before its dependent too, so pipeline.ts's own linking pass finds it already seeded", () => {
   const order: Entity = {
     name: "Order",
     fields: [{ name: "courierId", type: "relation", relationTo: "Courier", required: false }],
@@ -1149,7 +1161,7 @@ test("orderForSeeding doesn't reorder an OPTIONAL relation's target -- only a re
   const courier: Entity = { name: "Courier", fields: [{ name: "name", type: "text", required: true }] };
   assert.deepEqual(
     orderForSeeding([order, courier]).map((e) => e.name),
-    ["Order", "Courier"],
+    ["Courier", "Order"],
   );
 });
 
