@@ -2044,16 +2044,30 @@ export function EntityPanel({
   const [icsExportStatus, setIcsExportStatus] = useState<"idle" | "exporting" | "done">("idle");
   // Round 1006: the calendar view's "Subscribe" button's own status,
   // mirroring copyStatus's exact idle/copied/failed shape just above.
-  const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "copied" | "failed">("idle");
+  //
+  // Round 2018: widened to add a "subscribing" busy state -- see
+  // handleSubscribeCalendar's own doc comment for why this button, like
+  // copyStatus before round 2015, needed one: getCalendarFeedToken() is a
+  // real network round-trip, not just a local clipboard write, and this
+  // button gave zero feedback and had no reentrancy guard for that entire
+  // wait.
+  const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "subscribing" | "copied" | "failed">("idle");
   // Round 1405: the "Copy webhook URL" button's own status, mirroring
   // subscribeStatus's exact idle/copied/failed shape just above.
-  const [webhookUrlStatus, setWebhookUrlStatus] = useState<"idle" | "copied" | "failed">("idle");
+  //
+  // Round 2018: widened to add a "copying" busy state, mirroring
+  // subscribeStatus's own identical round-2018 fix just above --
+  // getInboundWebhookToken() is the exact same kind of real network
+  // round-trip.
+  const [webhookUrlStatus, setWebhookUrlStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
   // Round 1697: the update/delete webhook URL templates' own status,
   // mirroring webhookUrlStatus's exact shape -- see handleCopyWebhookUpdateUrl/
   // handleCopyWebhookDeleteUrl's own doc comment for why these two buttons
   // exist at all.
-  const [webhookUpdateUrlStatus, setWebhookUpdateUrlStatus] = useState<"idle" | "copied" | "failed">("idle");
-  const [webhookDeleteUrlStatus, setWebhookDeleteUrlStatus] = useState<"idle" | "copied" | "failed">("idle");
+  //
+  // Round 2018: widened identically to webhookUrlStatus just above.
+  const [webhookUpdateUrlStatus, setWebhookUpdateUrlStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const [webhookDeleteUrlStatus, setWebhookDeleteUrlStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
   const [relatedRecords, setRelatedRecords] = useState<RelatedRecordsByEntity>({});
   const [importBusy, setImportBusy] = useState(false);
   // Round 1363: the one write path in this whole writesInFlight family that
@@ -5085,8 +5099,16 @@ export function EntityPanel({
    * is a single indexed row read once the token already exists) rather
    * than caching it, since this button is clicked rarely and a stale
    * cached value would be wrong forever if the token were ever rotated.
+   *
+   * Round 2018: unlike handleCopy/handleExportCsv/etc. (fixed in rounds
+   * 2014-2017), this button gave zero visual feedback while
+   * `await getCalendarFeedToken()` was genuinely in flight -- a real
+   * network round-trip -- and had no reentrancy guard, so a second click
+   * mid-flight fired a second, fully redundant token fetch.
    */
   async function handleSubscribeCalendar() {
+    if (subscribeStatus === "subscribing") return;
+    setSubscribeStatus("subscribing");
     try {
       const { token } = await getCalendarFeedToken(projectId);
       const url = `${window.location.origin}/api/public/calendar/${projectId}/${encodeURIComponent(entity.name)}.ics?token=${token}`;
@@ -5098,7 +5120,11 @@ export function EntityPanel({
   }
 
   useEffect(() => {
-    if (subscribeStatus === "idle") return;
+    // Round 2018: only the two terminal outcomes should auto-revert --
+    // "subscribing" is cleared by handleSubscribeCalendar's own try/catch
+    // the moment the real work finishes, the same way copyStatus's own
+    // "copying" state (round 2015) is already excluded here.
+    if (subscribeStatus === "idle" || subscribeStatus === "subscribing") return;
     const timer = setTimeout(() => setSubscribeStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [subscribeStatus]);
@@ -5110,8 +5136,13 @@ export function EntityPanel({
    * above -- same fetch-token-fresh-each-click reasoning (getOrCreateInboundWebhookToken
    * is a cheap indexed row read once the token already exists, and a
    * cached value would be wrong forever across a rotation).
+   *
+   * Round 2018: see handleSubscribeCalendar's own identical doc comment
+   * just above -- the same gap, same fix.
    */
   async function handleCopyWebhookUrl() {
+    if (webhookUrlStatus === "copying") return;
+    setWebhookUrlStatus("copying");
     try {
       const { token } = await getInboundWebhookToken(projectId);
       const url = `${window.location.origin}/api/public/webhook-in/${projectId}/${encodeURIComponent(entity.name)}?token=${token}`;
@@ -5123,7 +5154,7 @@ export function EntityPanel({
   }
 
   useEffect(() => {
-    if (webhookUrlStatus === "idle") return;
+    if (webhookUrlStatus === "idle" || webhookUrlStatus === "copying") return;
     const timer = setTimeout(() => setWebhookUrlStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [webhookUrlStatus]);
@@ -5144,8 +5175,13 @@ export function EntityPanel({
    * how every webhook-documentation page shows a path template -- the
    * create route's own response already returns `{ id }` (see its doc
    * comment in webhookIn.ts) for the external service to substitute in.
+   *
+   * Round 2018: see handleSubscribeCalendar's own identical doc comment --
+   * the same gap, same fix.
    */
   async function handleCopyWebhookUpdateUrl() {
+    if (webhookUpdateUrlStatus === "copying") return;
+    setWebhookUpdateUrlStatus("copying");
     try {
       const { token } = await getInboundWebhookToken(projectId);
       const url = `${window.location.origin}/api/public/webhook-in/${projectId}/${encodeURIComponent(entity.name)}/{recordId}?token=${token}`;
@@ -5157,13 +5193,19 @@ export function EntityPanel({
   }
 
   useEffect(() => {
-    if (webhookUpdateUrlStatus === "idle") return;
+    if (webhookUpdateUrlStatus === "idle" || webhookUpdateUrlStatus === "copying") return;
     const timer = setTimeout(() => setWebhookUpdateUrlStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [webhookUpdateUrlStatus]);
 
-  /** Round 1697: see handleCopyWebhookUpdateUrl's own doc comment just above. */
+  /**
+   * Round 1697: see handleCopyWebhookUpdateUrl's own doc comment just above.
+   * Round 2018: see handleSubscribeCalendar's own doc comment -- the same
+   * zero-feedback/no-reentrancy-guard gap, same fix.
+   */
   async function handleCopyWebhookDeleteUrl() {
+    if (webhookDeleteUrlStatus === "copying") return;
+    setWebhookDeleteUrlStatus("copying");
     try {
       const { token } = await getInboundWebhookToken(projectId);
       const url = `${window.location.origin}/api/public/webhook-in/${projectId}/${encodeURIComponent(entity.name)}/{recordId}/delete?token=${token}`;
@@ -5175,7 +5217,7 @@ export function EntityPanel({
   }
 
   useEffect(() => {
-    if (webhookDeleteUrlStatus === "idle") return;
+    if (webhookDeleteUrlStatus === "idle" || webhookDeleteUrlStatus === "copying") return;
     const timer = setTimeout(() => setWebhookDeleteUrlStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [webhookDeleteUrlStatus]);
@@ -6236,8 +6278,21 @@ export function EntityPanel({
               </button>
             )}
             {viewMode === "calendar" && dateField && (
-              <button type="button" className="secondary ics-subscribe-btn" onClick={handleSubscribeCalendar} aria-live="polite" aria-atomic="true">
-                {subscribeStatus === "copied" ? t("entity.subscribeIcs.copied") : subscribeStatus === "failed" ? t("entity.subscribeIcs.failed") : t("entity.subscribeIcs.button")}
+              <button
+                type="button"
+                className="secondary ics-subscribe-btn"
+                onClick={handleSubscribeCalendar}
+                disabled={subscribeStatus === "subscribing"}
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                {subscribeStatus === "subscribing"
+                  ? t("entity.subscribeIcs.busy")
+                  : subscribeStatus === "copied"
+                    ? t("entity.subscribeIcs.copied")
+                    : subscribeStatus === "failed"
+                      ? t("entity.subscribeIcs.failed")
+                      : t("entity.subscribeIcs.button")}
               </button>
             )}
             <button
@@ -6295,29 +6350,35 @@ export function EntityPanel({
                 type="button"
                 className="secondary webhook-in-copy-btn"
                 onClick={handleCopyWebhookUrl}
+                disabled={webhookUrlStatus === "copying"}
                 aria-live="polite"
                 aria-atomic="true"
               >
-                {webhookUrlStatus === "copied"
-                  ? t("entity.webhookIn.copied")
-                  : webhookUrlStatus === "failed"
-                    ? t("entity.webhookIn.failed")
-                    : t("entity.webhookIn.button")}
+                {webhookUrlStatus === "copying"
+                  ? t("entity.webhookIn.busy")
+                  : webhookUrlStatus === "copied"
+                    ? t("entity.webhookIn.copied")
+                    : webhookUrlStatus === "failed"
+                      ? t("entity.webhookIn.failed")
+                      : t("entity.webhookIn.button")}
               </button>
             )}
             {!readOnly &&
               (() => {
                 const webhookUpdateVisibleText =
-                  webhookUpdateUrlStatus === "copied"
-                    ? t("entity.webhookIn.copied")
-                    : webhookUpdateUrlStatus === "failed"
-                      ? t("entity.webhookIn.failed")
-                      : t("entity.webhookInUpdate.button");
+                  webhookUpdateUrlStatus === "copying"
+                    ? t("entity.webhookIn.busy")
+                    : webhookUpdateUrlStatus === "copied"
+                      ? t("entity.webhookIn.copied")
+                      : webhookUpdateUrlStatus === "failed"
+                        ? t("entity.webhookIn.failed")
+                        : t("entity.webhookInUpdate.button");
                 return (
                   <button
                     type="button"
                     className="secondary webhook-in-update-copy-btn"
                     onClick={handleCopyWebhookUpdateUrl}
+                    disabled={webhookUpdateUrlStatus === "copying"}
                     aria-live="polite"
                     aria-atomic="true"
                     title={t("entity.webhookInUpdate.hint")}
@@ -6330,16 +6391,19 @@ export function EntityPanel({
             {!readOnly &&
               (() => {
                 const webhookDeleteVisibleText =
-                  webhookDeleteUrlStatus === "copied"
-                    ? t("entity.webhookIn.copied")
-                    : webhookDeleteUrlStatus === "failed"
-                      ? t("entity.webhookIn.failed")
-                      : t("entity.webhookInDelete.button");
+                  webhookDeleteUrlStatus === "copying"
+                    ? t("entity.webhookIn.busy")
+                    : webhookDeleteUrlStatus === "copied"
+                      ? t("entity.webhookIn.copied")
+                      : webhookDeleteUrlStatus === "failed"
+                        ? t("entity.webhookIn.failed")
+                        : t("entity.webhookInDelete.button");
                 return (
                   <button
                     type="button"
                     className="secondary webhook-in-delete-copy-btn"
                     onClick={handleCopyWebhookDeleteUrl}
+                    disabled={webhookDeleteUrlStatus === "copying"}
                     aria-live="polite"
                     aria-atomic="true"
                     title={t("entity.webhookInDelete.hint")}

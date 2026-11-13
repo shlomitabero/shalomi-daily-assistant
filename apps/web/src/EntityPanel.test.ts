@@ -6453,6 +6453,92 @@ test("EntityPanel's calendar Subscribe button only appears in calendar view, fet
 });
 
 /**
+ * Round 2018: the calendar-subscribe/webhook-copy sequel to rounds
+ * 2014-2017's own Export CSV/JSON/Copy/Print-list/Export-ICS busy-state
+ * fixes -- handleSubscribeCalendar calls the exact same `await
+ * getCalendarFeedToken()` real network round-trip (round 1006's own test
+ * just above already confirms it's genuinely async, not a local clipboard
+ * write), but unlike those five siblings, gave zero visual feedback while
+ * that fetch was in flight: no busy label, no disabled state, and a second
+ * click mid-flight fired a second, fully redundant token fetch. Mirrors
+ * round 2016's own delayed-fetch-under-direct-control and reentrancy-check
+ * technique exactly.
+ */
+test("EntityPanel's calendar Subscribe button shows a busy label (and disables itself) instead of giving no feedback while the token fetch is in flight", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    let resolveToken: (() => void) | null = null;
+    let tokenFetchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/calendar-feed-token") {
+        tokenFetchCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveToken = resolve;
+        });
+        return new Response(JSON.stringify({ token: "real-feed-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".ics-subscribe-btn") !== null);
+
+      const subscribeBtn = document.querySelector(".ics-subscribe-btn") as HTMLButtonElement;
+      const idleLabel = subscribeBtn.textContent;
+
+      act(() => {
+        fireEvent.click(subscribeBtn);
+      });
+
+      assert.ok(resolveToken, "the real token fetch must have actually started");
+      assert.match(subscribeBtn.textContent ?? "", /Connecting/, "the button must show a busy label while the token fetch is genuinely in flight, not its unchanged idle label");
+      assert.strictEqual(subscribeBtn.disabled, true, "the button must disable itself while the fetch is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      // A second click while the first fetch is still in flight must not
+      // start a second, fully redundant token fetch -- handleSubscribeCalendar's
+      // own `if (subscribeStatus === "subscribing") return` guard must catch
+      // it even though fireEvent bypasses the DOM disabled attribute.
+      act(() => {
+        fireEvent.click(subscribeBtn);
+      });
+      assert.strictEqual(tokenFetchCount, 1, "a reentrant click while already subscribing must not start a second token fetch");
+
+      await act(async () => {
+        resolveToken!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitForCondition(() => subscribeBtn.textContent !== idleLabel);
+      assert.equal(typeof writtenText, "string", "the real clipboard write must still happen once the fetch resolves");
+      assert.match(subscribeBtn.textContent ?? "", /copied/i, "the button must confirm the copy succeeded once the fetch resolves");
+      assert.strictEqual(subscribeBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
  * Round 1405: the inbound-webhook counterpart of the calendar Subscribe
  * button just above -- mirrors its exact test shape (real token fetched
  * from the server, real URL copied to the clipboard, "Copied!"
@@ -6513,6 +6599,83 @@ test("EntityPanel's webhook-URL button renders in any view but not for a read-on
       assert.equal(webhookBtn.textContent, "🔗 Copy inbound webhook URL", "must revert to the normal label once the delay elapses");
     } finally {
       t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+});
+
+/**
+ * Round 2018: the webhook-copy sibling of the calendar Subscribe button's
+ * own round-2018 busy-state fix just above -- handleCopyWebhookUrl calls
+ * the exact same kind of real `await getInboundWebhookToken()` network
+ * round-trip (the test just above already confirms it's genuinely async),
+ * but gave zero visual feedback while that fetch was in flight, with no
+ * reentrancy guard either. `handleCopyWebhookUpdateUrl`/
+ * `handleCopyWebhookDeleteUrl` share the byte-for-byte identical
+ * implementation shape (confirmed by direct source reading) and got the
+ * identical fix, but aren't separately retested here.
+ */
+test("EntityPanel's webhook-URL button shows a busy label (and disables itself) instead of giving no feedback while the token fetch is in flight", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    let resolveToken: (() => void) | null = null;
+    let tokenFetchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/inbound-webhook-token") {
+        tokenFetchCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveToken = resolve;
+        });
+        return new Response(JSON.stringify({ token: "real-webhook-token-abc" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    let writtenText: string | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text: string) => void (writtenText = text) },
+      configurable: true,
+    });
+
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const webhookBtn = document.querySelector(".webhook-in-copy-btn") as HTMLButtonElement;
+      const idleLabel = webhookBtn.textContent;
+
+      act(() => {
+        fireEvent.click(webhookBtn);
+      });
+
+      assert.ok(resolveToken, "the real token fetch must have actually started");
+      assert.match(webhookBtn.textContent ?? "", /Preparing/, "the button must show a busy label while the token fetch is genuinely in flight, not its unchanged idle label");
+      assert.strictEqual(webhookBtn.disabled, true, "the button must disable itself while the fetch is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      act(() => {
+        fireEvent.click(webhookBtn);
+      });
+      assert.strictEqual(tokenFetchCount, 1, "a reentrant click while already copying must not start a second token fetch");
+
+      await act(async () => {
+        resolveToken!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitForCondition(() => webhookBtn.textContent !== idleLabel);
+      assert.equal(typeof writtenText, "string", "the real clipboard write must still happen once the fetch resolves");
+      assert.match(webhookBtn.textContent ?? "", /copied/i, "the button must confirm the copy succeeded once the fetch resolves");
+      assert.strictEqual(webhookBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+    } finally {
       globalThis.fetch = originalFetch;
       delete (navigator as { clipboard?: unknown }).clipboard;
     }
