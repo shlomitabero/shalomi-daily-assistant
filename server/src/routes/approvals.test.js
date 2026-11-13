@@ -34,6 +34,37 @@ test('createApproval rejects a request missing opportunityId or actionType', () 
   assert.equal(db.approvals.all().length, 0);
 });
 
+test('createApproval rejects an object actionType instead of storing it as an unrenderable approval', () => {
+  // {} is truthy, so the old `!actionType` check alone let it through -
+  // it would be stored as-is, never match any real gated action, and
+  // crash Approvals.jsx the moment it tried to render it as a JSX child.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  createApproval({ body: { opportunityId: opp.id, actionType: {} } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /actionType חייב להיות מחרוזת/);
+  assert.equal(db.approvals.all().length, 0);
+});
+
+test('createApproval rejects an array actionType the same way', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  createApproval({ body: { opportunityId: opp.id, actionType: ['publish_product'] } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.approvals.all().length, 0);
+});
+
+test('createApproval rejects a numeric actionType the same way', () => {
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  createApproval({ body: { opportunityId: opp.id, actionType: 5 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(db.approvals.all().length, 0);
+});
+
 test('createApproval rejects an opportunityId that does not exist', () => {
   __resetForTests();
   const res = makeRes();

@@ -12,6 +12,18 @@ export function listApprovals(req, res) {
 export function createApproval(req, res) {
   const { opportunityId, actionType } = req.body ?? {};
   if (!opportunityId || !actionType) return res.status(400).json({ error: 'opportunityId ו-actionType הם שדות חובה' });
+  // Only a truthy check ran before this, so a raw object/array actionType
+  // (e.g. {} or []) slipped through and got stored as-is: it can never
+  // match hasApprovalFor's/digest.js's strict `=== 'publish_product'`
+  // check, so it never functions as a real approval, but Approvals.jsx's
+  // {actionTypeLabel(a.actionType)} then renders that stored value
+  // directly as a JSX child - which throws ("Objects are not valid as a
+  // React child") the moment the Approvals page tries to list it, a real
+  // crash, not just a dead row. Same wrong-type-at-the-door principle
+  // already applied to revenueEstimate/costs on PATCH /opportunities/:id.
+  if (typeof actionType !== 'string') {
+    return res.status(400).json({ error: 'actionType חייב להיות מחרוזת' });
+  }
   const opportunity = db.opportunities.get(opportunityId);
   if (!opportunity) return res.status(404).json({ error: 'ההזדמנות לא נמצאה' });
   // services/publishing.js already refuses to actually publish a demo
