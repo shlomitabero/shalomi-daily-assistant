@@ -11563,7 +11563,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
   body { background: #fff; }
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }
-  .print-record-sheet, .print-list-sheet { display: block !important; position: absolute; inset: 0; padding: 24px; }
+  .print-record-sheet:not(:empty), .print-list-sheet:not(:empty) { display: block !important; position: absolute; inset: 0; padding: 24px; }
 }
 .app-crash-fallback { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 100vh; padding: 24px; text-align: center; background: var(--bg); color: var(--text); }
 `;

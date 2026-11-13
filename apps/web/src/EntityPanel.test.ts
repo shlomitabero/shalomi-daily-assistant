@@ -8974,6 +8974,57 @@ test("the print sheets and the badge color variables reset to light/white for @m
 });
 
 /**
+ * Round 2013: RecordPrintSheet and RecordListPrintSheet (both just above)
+ * are BOTH always rendered -- each is an empty `<div className="print-
+ * record-sheet" />`/`<div className="print-list-sheet" />` stub whenever
+ * it ISN'T the one actually being printed, by the same "never fight
+ * window.print()'s own mount/unmount timing" convention their own doc
+ * comments describe. Before this round's fix, the `@media print` rule
+ * that turns the active sheet into a full-page overlay (`display: block
+ * !important; position: absolute; inset: 0`) matched BOTH classes
+ * unconditionally -- so printing a single record (the per-row/board-card/
+ * calendar-chip "Print" action) turned the EMPTY `.print-list-sheet` stub
+ * into a second, opaque-white (its own `background: #fff` rule, pinned
+ * above this media block), full-viewport overlay too. Neither sheet
+ * carries a z-index, so painting among same-stacking-context siblings
+ * falls back to tree order -- and `.print-list-sheet` is the later
+ * sibling at every call site (RecordPrintSheet renders before
+ * RecordListPrintSheet, see their own JSX call sites), so its empty,
+ * opaque white box painted directly on top of the real, populated
+ * `.print-record-sheet` underneath, producing a completely blank printed
+ * page/PDF with zero visible content. ("Print list" itself was never
+ * affected the same way: its own sheet is the LATER one, so it painted
+ * over the -- also empty, in that case -- `.print-record-sheet` stub
+ * instead of being hidden under it.) Confirmed live via a real headless
+ * Chromium `page.pdf()`/screenshot render (not just computed-style
+ * inspection, which reported everything as visible/correctly-colored the
+ * whole time) -- jsdom has no paint engine and can't detect a
+ * stacking-order bug like this one either, so this reads styles.css's own
+ * source directly, the same discipline every other print-sheet CSS test
+ * in this file already uses.
+ */
+test("an empty print sheet stub is excluded from the @media print full-page overlay rule, so it can't paint over the other sheet's real content", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const mediaPrint = stylesCss.match(/@media print \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(mediaPrint, "expected an @media print block in styles.css");
+
+  const overlayRule = mediaPrint!.match(/\.print-record-sheet[^{]*,\s*\n?\s*\.print-list-sheet[^{]*\{\s*display:\s*block\s*!important;[\s\S]*?\}/)?.[0];
+  assert.ok(overlayRule, "expected the display:block!important/position:absolute overlay rule for .print-record-sheet/.print-list-sheet in the @media print block");
+
+  assert.match(
+    overlayRule!,
+    /\.print-record-sheet:not\(:empty\)/,
+    ".print-record-sheet must be guarded with :not(:empty) in this rule, or the empty stub (rendered whenever a LIST is being printed instead) becomes a full-page absolute overlay of its own and can paint over the real .print-list-sheet content",
+  );
+  assert.match(
+    overlayRule!,
+    /\.print-list-sheet:not\(:empty\)/,
+    ".print-list-sheet must be guarded with :not(:empty) in this rule, or the empty stub (rendered whenever a SINGLE RECORD is being printed instead) becomes a full-page absolute overlay that paints directly over the real .print-record-sheet content -- the exact live-reproduced blank-printout bug this test guards",
+  );
+});
+
+/**
  * New in this round (1376): `.entity-undo-toast` is `display: flex` with
  * the message text and the "Undo" button as direct flex children, and had
  * no `flex-wrap`/`overflow-wrap` of its own at all. The message embeds a

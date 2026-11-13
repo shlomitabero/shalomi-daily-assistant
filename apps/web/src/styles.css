@@ -4097,8 +4097,32 @@ button.sort-header:hover:not(:disabled) {
   .print-list-sheet * {
     visibility: visible !important;
   }
-  .print-record-sheet,
-  .print-list-sheet {
+  /* Round 2013: RecordPrintSheet and RecordListPrintSheet (EntityPanel.tsx)
+     are BOTH always rendered (their own doc comments explain why -- so
+     each one's `display: none` never has to fight window.print()'s
+     mount/unmount timing), each as an empty `<div className="print-record-
+     sheet" />`/`<div className="print-list-sheet" />` stub whenever it
+     isn't the one actually being printed. Without `:not(:empty)` here,
+     printing a SINGLE record turned this rule's `position: absolute;
+     inset: 0` into two full-viewport, opaque-white (see these two
+     classes' own `background: #fff` above, outside this media block)
+     siblings with the same implicit (auto) stacking order -- and since
+     neither sheet carries a z-index, the one later in DOM order always
+     painted on top regardless of which one actually held content.
+     RecordListPrintSheet renders after RecordPrintSheet (see their call
+     sites below), so printing one record via the per-row/board-card/
+     calendar-chip "Print" button painted the empty `.print-list-sheet`
+     stub directly over the real, populated `.print-record-sheet`,
+     producing a completely blank printed page/PDF with zero visible
+     content -- "Print list" itself was unaffected, since its own sheet is
+     the later one and painted on top of the (also empty, in that case)
+     earlier `.print-record-sheet` stub. Excluding the truly-empty stub
+     from this rule entirely (it has no child nodes at all, so `:empty`
+     matches it exactly) leaves it at its own base `display: none`,
+     removing it from layout and paint whenever it isn't the sheet
+     actually being printed. */
+  .print-record-sheet:not(:empty),
+  .print-list-sheet:not(:empty) {
     display: block !important;
     position: absolute;
     inset: 0;

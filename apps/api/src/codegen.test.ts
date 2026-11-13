@@ -33148,6 +33148,50 @@ test("the exported app's print sheet and badge color variables reset to light/wh
 });
 
 /**
+ * Round 2013: the exported app's RecordPrintSheet/RecordListPrintSheet
+ * (both always rendered, each an empty `<div className="print-record-
+ * sheet" />`/`<div className="print-list-sheet" />` stub whenever it isn't
+ * the one being printed -- a byte-for-byte port of the live preview's own
+ * EntityPanel.tsx components) carried the identical gap as that live
+ * component, fixed this same round: the generated CSS's `@media print`
+ * overlay rule (`display: block !important; position: absolute; inset:
+ * 0`) matched BOTH classes unconditionally, so the EMPTY sibling stub also
+ * became a full-viewport, opaque-white (its own `background: #fff`, in
+ * the base rule above this media block) overlay. Neither sheet has a
+ * z-index, and RecordListPrintSheet always renders after RecordPrintSheet
+ * (see their own JSX call sites), so printing a single record via the
+ * exported app's per-row "Print" button painted the empty `.print-list-
+ * sheet` stub directly over the real, populated `.print-record-sheet`,
+ * producing a completely blank printed page with zero visible content.
+ * Confirmed against the live preview's own real headless-Chromium repro
+ * (screenshot + page.pdf()) before porting the identical fix here. jsdom
+ * has no paint engine and can't detect a stacking-order bug like this, so
+ * this reads the generated CSS's own source text, the same discipline the
+ * two tests just above already use for this exact file.
+ */
+test("the exported app's empty print sheet stub is excluded from the @media print full-page overlay rule, so it can't paint over the other sheet's real content", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const mediaPrint = stylesCss.match(/@media print \{[^]*?\n\}/)?.[0];
+  assert.ok(mediaPrint, "expected an @media print block in the generated styles.css");
+
+  const overlayRule = mediaPrint!.match(/\.print-record-sheet[^{]*, \.print-list-sheet[^{]*\{ display: block !important;[^}]*\}/)?.[0];
+  assert.ok(overlayRule, "expected the display:block!important/position:absolute overlay rule for .print-record-sheet/.print-list-sheet in the generated @media print block");
+
+  assert.match(
+    overlayRule!,
+    /\.print-record-sheet:not\(:empty\)/,
+    "the exported app's .print-record-sheet must be guarded with :not(:empty) in this rule, or the empty stub (rendered whenever a LIST is being printed instead) becomes a full-page absolute overlay of its own and can paint over the real .print-list-sheet content",
+  );
+  assert.match(
+    overlayRule!,
+    /\.print-list-sheet:not\(:empty\)/,
+    "the exported app's .print-list-sheet must be guarded with :not(:empty) in this rule, or the empty stub (rendered whenever a SINGLE RECORD is being printed instead) becomes a full-page absolute overlay that paints directly over the real .print-record-sheet content -- the exact live-reproduced blank-printout bug this test guards",
+  );
+});
+
+/**
  * New in this round (1376): the exported app's `.entity-undo-toast` is
  * `display: flex` with the delete-undo message text and the "Undo" button
  * as direct flex children, and had no `flex-wrap`/`overflow-wrap` of its
