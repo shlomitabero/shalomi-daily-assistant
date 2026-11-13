@@ -2917,6 +2917,91 @@ test("EntityPanel's Copy button shows a busy label (and disables itself) instead
 });
 
 /**
+ * Round 2016: found via a live Playwright session -- handlePrintList calls
+ * the exact same `await exportAllRecords(...)` as handleExportCsv/
+ * handleExportJson/handleCopy above (a real network round-trip once the
+ * record-cap bypass is active for a truncated entity), but unlike those
+ * three siblings (fixed in rounds 2014/2015), Print list gave zero visual
+ * feedback while it was in flight: no busy label, no disabled state, and
+ * (round 2015's own reentrancy fix never having been ported here either) a
+ * second click mid-flight fired a second, fully redundant GET .../export
+ * request for identical data. Mirrors round 2014/2015's own delayed-fetch-
+ * under-direct-control technique exactly.
+ */
+test("EntityPanel's Print list button shows a busy label (and disables itself) instead of giving no feedback while the uncapped export fetch is in flight", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveExport: (() => void) | null = null;
+    let exportFetchCount = 0;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Deal/export") {
+        exportFetchCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveExport = resolve;
+        });
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Beta Inc", status: "new" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const printListBtn = Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Print list"))!;
+      const idleLabel = printListBtn.textContent;
+
+      act(() => {
+        fireEvent.click(printListBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(printListBtn.textContent ?? "", /Preparing/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.strictEqual(printListBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      // A second click while the first fetch is still in flight (e.g. a
+      // fast double-click racing React's own commit of the disabled
+      // attribute) must not start a second, fully redundant export fetch --
+      // handlePrintList's own `if (printListStatus === "preparing") return`
+      // guard must catch it even though fireEvent bypasses the DOM disabled
+      // attribute.
+      act(() => {
+        fireEvent.click(printListBtn);
+      });
+      assert.strictEqual(exportFetchCount, 1, "a reentrant click while already preparing must not start a second export fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitForCondition(() => document.querySelector(".print-list-sheet")?.textContent?.includes("Beta Inc") === true);
+      const sheetText = document.querySelector(".print-list-sheet")?.textContent ?? "";
+      assert.match(sheetText, /Beta Inc/, "the printed sheet must reflect the full, uncapped export result once the fetch resolves");
+      assert.strictEqual(printListBtn.textContent, idleLabel, "the button must revert to its original idle label once the print sheet has actually opened");
+      assert.strictEqual(printListBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1996: the direct "Print list" sequel to round 1678's test just
  * above -- Export CSV/Export JSON/Copy all route through recordsForExport()
  * to keep the truncated-list hint's "export to CSV to get all of them"

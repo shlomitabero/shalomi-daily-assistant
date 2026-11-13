@@ -33957,6 +33957,118 @@ test("the exported EntityView's Copy button shows a busy label (and disables its
 });
 
 /**
+ * Round 2016: mirrors the live Forge AI preview's own round-2016 fix.
+ * handlePrintList calls the exact same `await exportAllRecords(...)` as the
+ * Export CSV/Copy buttons above (a real network round-trip once the
+ * record-cap bypass is active for a truncated entity), but unlike those two
+ * siblings (fixed in rounds 2014/2015), Print list gave zero visual
+ * feedback while it was in flight -- no busy label, no disabled state, and
+ * a second click mid-flight fired a second, fully redundant export fetch.
+ * Mirrors the Copy button test's own delayed-fetch-under-direct-control and
+ * reentrancy-check technique exactly.
+ */
+test("the exported EntityView's Print list button shows a busy label (and disables itself) instead of giving no feedback while the uncapped export fetch is in flight", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let resolveExport: (() => void) | null = null;
+  let exportFetchCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(
+        JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }], totalCount: 2, truncated: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/Customer/export") {
+      exportFetchCount += 1;
+      await new Promise<void>((resolve) => {
+        resolveExport = resolve;
+      });
+      return new Response(
+        JSON.stringify({
+          records: [
+            { id: 1, name: "Acme Corp", status: "New" },
+            { id: 2, name: "Beta Inc", status: "New" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalPrint = window.print;
+  window.print = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(container.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+      const printListBtn = container.querySelector(".print-list-btn") as HTMLButtonElement;
+      const idleLabel = printListBtn.textContent;
+
+      act(() => {
+        fireEvent.click(printListBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(printListBtn.textContent ?? "", /Preparing/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.equal(printListBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      // A second click while the first fetch is still in flight must not
+      // start a second, fully redundant export fetch -- handlePrintList's
+      // own `if (printListStatus === "preparing") return` guard must catch
+      // it even though fireEvent bypasses the DOM disabled attribute.
+      act(() => {
+        fireEvent.click(printListBtn);
+      });
+      assert.equal(exportFetchCount, 1, "a reentrant click while already preparing must not start a second export fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      for (let i = 0; i < 40; i++) {
+        if ((container.querySelector(".print-list-sheet")?.textContent ?? "").includes("Beta Inc")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const sheetText = container.querySelector(".print-list-sheet")!.textContent ?? "";
+      assert.match(sheetText, /Beta Inc/, "the printed sheet must reflect the full, uncapped export result once the fetch resolves");
+      assert.equal(printListBtn.textContent, idleLabel, "the button must revert to its original idle label once the print sheet has actually opened");
+      assert.equal(printListBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 2004: mirrors the live Forge AI preview's own round-2004 fix.
  * recordsForExport's own round-1678/1685 fix already keeps Export CSV/
  * JSON/Copy's "export to CSV to get all of them" promise once the live

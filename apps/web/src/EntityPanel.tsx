@@ -2100,6 +2100,18 @@ export function EntityPanel({
   const [showImportWarnings, setShowImportWarnings] = useState(false);
   const [recordToPrint, setRecordToPrint] = useState<EntityRecord | null>(null);
   const [showPrintList, setShowPrintList] = useState(false);
+  // Round 2016: mirrors csvExportStatus/jsonExportStatus/copyStatus's own
+  // "idle"/busy idiom (rounds 2014/2015) -- handlePrintList's own
+  // `await exportAllRecords(...)` below is the exact same real,
+  // potentially multi-second network round-trip those three buttons
+  // already show busy feedback for once the record-cap bypass (round
+  // 1678/1996) is active, but this button never got that fix, and (unlike
+  // Copy before round 2015) never even had a reentrancy guard -- a second
+  // click mid-flight fired a second, fully independent export fetch for
+  // identical data. No "done" terminal state like the others: this one
+  // transitions straight into the print sheet opening, so "idle" is the
+  // only resting state there's ever a reason to show again.
+  const [printListStatus, setPrintListStatus] = useState<"idle" | "preparing">("idle");
   // Round 1996: see handlePrintList's own doc comment below for why this
   // exists alongside the sheet's usual, fully-reactive
   // `selectedOrAllRecords(...)` records -- only ever populated for the
@@ -4937,12 +4949,18 @@ export function EntityPanel({
    * selectedOrAllRecords already computes it.
    */
   async function handlePrintList() {
+    // Round 2016: see printListStatus's own declaration above for why this
+    // guard and the busy state around the fetch below exist now.
+    if (printListStatus === "preparing") return;
     if (printRecordsBypassActive) {
+      setPrintListStatus("preparing");
       try {
         const { records: allRecords } = await exportAllRecords(projectId, entity.name);
         setPrintExportRecords(sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, allEntities, relatedRecords, lang), pinnedIds));
       } catch {
         setPrintExportRecords(null);
+      } finally {
+        setPrintListStatus("idle");
       }
     }
     setShowPrintList(true);
@@ -6296,9 +6314,13 @@ export function EntityPanel({
               type="button"
               className="secondary"
               onClick={handlePrintList}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || printListStatus === "preparing"}
             >
-              {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.printList.selected.one" : "entity.printList.selected.many", { count: selectedIds.size }) : t("entity.printList")}
+              {printListStatus === "preparing"
+                ? t("entity.printList.busy")
+                : selectedIds.size > 0
+                  ? t(selectedIds.size === 1 ? "entity.printList.selected.one" : "entity.printList.selected.many", { count: selectedIds.size })
+                  : t("entity.printList")}
             </button>
             <div className="columns-menu-wrapper">
               <button

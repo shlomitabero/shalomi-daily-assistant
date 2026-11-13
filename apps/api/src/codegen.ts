@@ -6528,6 +6528,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // only ever populated for the one bypass case, and only ever read while
   // that same case still holds.
   const [printExportRecords, setPrintExportRecords] = useState(null);
+  // Round 2016: mirrors csvExportStatus/jsonExportStatus/copyStatus's own
+  // busy idiom (rounds 2014/2015) -- see the live preview's own
+  // EntityPanel.tsx printListStatus declaration for the full doc comment.
+  const [printListStatus, setPrintListStatus] = useState("idle");
   // Set right before an Escape-cancel clears editingCell so the input's own
   // blur (which removing it from the DOM can still trigger) finds the flag
   // already set and skips committing, rather than racing a stale closure's
@@ -8520,12 +8524,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     recordListTruncated &&
     !printGroups;
   async function handlePrintList() {
+    // Round 2016: see printListStatus's own declaration above for why this
+    // guard and the busy state around the fetch below exist now.
+    if (printListStatus === "preparing") return;
     if (printRecordsBypassActive) {
+      setPrintListStatus("preparing");
       try {
         const { records: allRecords } = await exportAllRecords(entity.name);
         setPrintExportRecords(sortRecordsByPinned(sortRecordsMulti(allRecords, sortKeys, entity.fields, relatedRecords), pinnedIds));
       } catch {
         setPrintExportRecords(null);
+      } finally {
+        setPrintListStatus("idle");
       }
     }
     setShowPrintList(true);
@@ -9376,9 +9386,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="print-list-btn"
               onClick={handlePrintList}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || printListStatus === "preparing"}
             >
-              {selectedIds.size > 0 ? <>🖨️ Print {selectedIds.size} selected</> : "🖨️ Print list"}
+              {printListStatus === "preparing"
+                ? "Preparing…"
+                : selectedIds.size > 0
+                  ? <>🖨️ Print {selectedIds.size} selected</>
+                  : "🖨️ Print list"}
             </button>
             <div className="columns-menu-wrapper">
               <button type="button" className="columns-menu-btn" onClick={() => setColumnsMenuOpen((v) => !v)} aria-expanded={columnsMenuOpen}>
