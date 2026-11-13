@@ -2721,6 +2721,104 @@ test("EntityPanel's Export CSV button fetches every record via GET .../export wh
 });
 
 /**
+ * Round 2014: found via a live Playwright session -- round 1678's own
+ * uncapped GET .../export fetch (just above) is a real network round-trip,
+ * not just a local blob build, yet the Export CSV button gave zero visual
+ * feedback while it was in flight: no busy label, no disabled state, not
+ * even a transient "done" flash afterward -- the exact same "a multi-second
+ * real file download with nothing shown afterward, easy to miss" gap
+ * App.tsx's own handleExport/handleBackup doc comment already names and
+ * fixes for the project-level Export Code/Backup All Data buttons, never
+ * ported to this (the actual most-used export button in the app). Delays
+ * the mocked GET .../export response under direct control, so the busy
+ * state can be observed and asserted on before letting it resolve.
+ */
+test("EntityPanel's Export CSV button shows a busy label (and briefly a done confirmation) instead of giving no feedback while the uncapped export fetch is in flight", async (t) => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveExport: (() => void) | null = null;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Deal/export") {
+        await new Promise<void>((resolve) => {
+          resolveExport = resolve;
+        });
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Beta Inc", status: "new" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      const idleLabel = exportBtn.textContent;
+
+      // Mock timers enabled from the start (same idiom as this file's other
+      // busy/done-status tests) so the "done" -> "idle" effect's own
+      // setTimeout(…, 2000) -- scheduled once csvExportStatus actually
+      // becomes "done" below -- is one this test can tick forward, instead
+      // of actually waiting 2 real seconds.
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      // The click synchronously runs the whole chain (handleExportCsv ->
+      // recordsForExport -> exportAllRecords -> fetch) down to this test's
+      // own deliberately-suspended Promise -- no microtask flush needed yet
+      // for resolveExport to already be set.
+      act(() => {
+        fireEvent.click(exportBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(exportBtn.textContent ?? "", /Exporting/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.strictEqual(exportBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.ok(capturedBlob, "the download must have actually been triggered once the export fetch resolved");
+      assert.match(exportBtn.textContent ?? "", /Exported/, "the button must show a done confirmation once the download has actually been triggered");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.strictEqual(exportBtn.textContent, idleLabel, "the button must revert to its original idle label 2 seconds after the done confirmation");
+      assert.strictEqual(exportBtn.disabled, false, "the button must re-enable once the done confirmation itself auto-resets back to idle");
+    } finally {
+      t.mock.timers.reset();
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * Round 1996: the direct "Print list" sequel to round 1678's test just
  * above -- Export CSV/Export JSON/Copy all route through recordsForExport()
  * to keep the truncated-list hint's "export to CSV to get all of them"

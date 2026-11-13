@@ -2018,6 +2018,15 @@ export function EntityPanel({
   // twice instead of once (round 544).
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // Round 2014: Export CSV/Export JSON's own busy/done feedback, mirroring
+  // App.tsx's handleExport/handleBackup idiom (exportBusy/exportDone,
+  // backupBusy/backupDone) -- see handleExportCsv's own doc comment for why
+  // this button needed the identical fix: `recordsForExport()` makes a real,
+  // potentially multi-second network round-trip once the record-cap bypass
+  // (round 1678) is active, and without this, the button gave zero visual
+  // indication anything was happening for that entire wait.
+  const [csvExportStatus, setCsvExportStatus] = useState<"idle" | "exporting" | "done">("idle");
+  const [jsonExportStatus, setJsonExportStatus] = useState<"idle" | "exporting" | "done">("idle");
   // Round 1006: the calendar view's "Subscribe" button's own status,
   // mirroring copyStatus's exact idle/copied/failed shape just above.
   const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -4781,21 +4790,38 @@ export function EntityPanel({
     }
   }
 
+  /**
+   * Round 2014: this button gave zero visual feedback while `await
+   * recordsForExport()` was genuinely in flight -- a real network round-trip
+   * (not just a local blob build) once the record-cap bypass (round 1678) is
+   * active for a truncated entity, the exact same "a multi-second real file
+   * download with nothing shown afterward, easy to miss" gap App.tsx's own
+   * handleExport/handleBackup doc comment already names and fixes for the
+   * project-level Export Code/Backup All Data buttons -- never ported to
+   * this, the actual most-used export button in the app. Same busy/done
+   * idiom, scoped to this button alone (reentrancy-guarded the same way).
+   */
   async function handleExportCsv() {
-    // includeId: true -- unlike handleCopy below (pasted into Slack/email,
-    // never re-imported), this is the one CSV this app actually hands back
-    // to handleImportFile, so it needs the id column that lets re-import
-    // update these exact records instead of duplicating them.
-    const csv = recordsToCsv(orderedFields, await recordsForExport(), lang, allEntities, relatedRecords, true);
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${safeDownloadName(entity.name, "export")}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    if (csvExportStatus === "exporting") return;
+    setCsvExportStatus("exporting");
+    try {
+      // includeId: true -- unlike handleCopy below (pasted into Slack/email,
+      // never re-imported), this is the one CSV this app actually hands back
+      // to handleImportFile, so it needs the id column that lets re-import
+      // update these exact records instead of duplicating them.
+      const csv = recordsToCsv(orderedFields, await recordsForExport(), lang, allEntities, relatedRecords, true);
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeDownloadName(entity.name, "export")}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setCsvExportStatus("done");
+    }
   }
 
   /**
@@ -4806,17 +4832,25 @@ export function EntityPanel({
    * enumLabels text, "TRUE"/"FALSE") aren't usable for that, while this
    * preserves each field's real stored value instead.
    */
+  // Round 2014: see handleExportCsv's own identical doc comment just above --
+  // the same gap, same fix, same reentrancy guard.
   async function handleExportJson() {
-    const json = recordsToJson(orderedFields, await recordsForExport());
-    const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${safeDownloadName(entity.name, "export")}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    if (jsonExportStatus === "exporting") return;
+    setJsonExportStatus("exporting");
+    try {
+      const json = recordsToJson(orderedFields, await recordsForExport());
+      const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeDownloadName(entity.name, "export")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setJsonExportStatus("done");
+    }
   }
 
   /**
@@ -4894,6 +4928,22 @@ export function EntityPanel({
     const timer = setTimeout(() => setCopyStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [copyStatus]);
+
+  // Round 2014: same transient "done" flash + auto-reset idiom as
+  // copyStatus just above (and App.tsx's exportDone/backupDone) -- only
+  // fires for the "done" state, "exporting" is cleared by the handler's own
+  // finally block the moment the download is actually triggered.
+  useEffect(() => {
+    if (csvExportStatus !== "done") return;
+    const timer = setTimeout(() => setCsvExportStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [csvExportStatus]);
+
+  useEffect(() => {
+    if (jsonExportStatus !== "done") return;
+    const timer = setTimeout(() => setJsonExportStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [jsonExportStatus]);
 
   /**
    * Round 2004: mirrors recordsForExport's own round-1678/1685 bypass, and
@@ -6121,17 +6171,33 @@ export function EntityPanel({
               type="button"
               className="secondary csv-export-btn"
               onClick={handleExportCsv}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || csvExportStatus === "exporting"}
+              aria-live="polite"
+              aria-atomic="true"
             >
-              {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.exportCsv.selected.one" : "entity.exportCsv.selected.many", { count: selectedIds.size }) : t("entity.exportCsv")}
+              {csvExportStatus === "exporting"
+                ? t("entity.exportCsv.busy")
+                : csvExportStatus === "done"
+                  ? t("entity.exportCsv.done")
+                  : selectedIds.size > 0
+                    ? t(selectedIds.size === 1 ? "entity.exportCsv.selected.one" : "entity.exportCsv.selected.many", { count: selectedIds.size })
+                    : t("entity.exportCsv")}
             </button>
             <button
               type="button"
               className="secondary json-export-btn"
               onClick={handleExportJson}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || jsonExportStatus === "exporting"}
+              aria-live="polite"
+              aria-atomic="true"
             >
-              {selectedIds.size > 0 ? t(selectedIds.size === 1 ? "entity.exportJson.selected.one" : "entity.exportJson.selected.many", { count: selectedIds.size }) : t("entity.exportJson")}
+              {jsonExportStatus === "exporting"
+                ? t("entity.exportJson.busy")
+                : jsonExportStatus === "done"
+                  ? t("entity.exportJson.done")
+                  : selectedIds.size > 0
+                    ? t(selectedIds.size === 1 ? "entity.exportJson.selected.one" : "entity.exportJson.selected.many", { count: selectedIds.size })
+                    : t("entity.exportJson")}
             </button>
             {!readOnly && (
               <button

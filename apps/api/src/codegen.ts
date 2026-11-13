@@ -6370,6 +6370,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // duplicating every selected record twice instead of once (round 544).
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState("idle");
+  // Round 2014: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // -- Export CSV/Export JSON gave zero visual feedback while
+  // recordsForExport() was genuinely in flight (a real network round-trip,
+  // not just a local blob build, once the record-cap bypass is active for a
+  // truncated entity). See handleExportCsv's own doc comment just below.
+  const [csvExportStatus, setCsvExportStatus] = useState("idle");
+  const [jsonExportStatus, setJsonExportStatus] = useState("idle");
   // Round 1010: mirrors the live Forge AI preview's own EntityPanel.tsx
   // subscribeStatus -- "copied"/"failed" feedback for the calendar view's
   // own "Subscribe" button just below, auto-resetting to "idle" the same
@@ -8519,30 +8526,49 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setShowPrintList(true);
   }
 
+  // Round 2014: see the live Forge AI preview's own EntityPanel.tsx
+  // handleExportCsv for the full doc comment -- this button gave zero
+  // visual feedback while recordsForExport() was genuinely in flight (a
+  // real network round-trip once the record-cap bypass is active for a
+  // truncated entity), the identical gap this app's own Export Code/Backup
+  // All Data buttons never had in the first place.
   async function handleExportCsv() {
-    const csv = recordsToCsv(orderedFields, await recordsForExport(), relatedRecords, true);
-    const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = \`\${entity.name}.csv\`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    if (csvExportStatus === "exporting") return;
+    setCsvExportStatus("exporting");
+    try {
+      const csv = recordsToCsv(orderedFields, await recordsForExport(), relatedRecords, true);
+      const blob = new Blob(["\\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = \`\${entity.name}.csv\`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setCsvExportStatus("done");
+    }
   }
 
+  // Round 2014: see handleExportCsv's own identical doc comment just above.
   async function handleExportJson() {
-    const json = recordsToJson(orderedFields, await recordsForExport());
-    const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = \`\${entity.name}.json\`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    if (jsonExportStatus === "exporting") return;
+    setJsonExportStatus("exporting");
+    try {
+      const json = recordsToJson(orderedFields, await recordsForExport());
+      const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = \`\${entity.name}.json\`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setJsonExportStatus("done");
+    }
   }
 
   async function handleCopy() {
@@ -8560,6 +8586,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const timer = setTimeout(() => setCopyStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [copyStatus]);
+
+  // Round 2014: same transient "done" flash + auto-reset idiom as
+  // copyStatus just above -- only fires for the "done" state, "exporting"
+  // is cleared by the handler's own finally block the moment the download
+  // is actually triggered.
+  useEffect(() => {
+    if (csvExportStatus !== "done") return;
+    const timer = setTimeout(() => setCsvExportStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [csvExportStatus]);
+
+  useEffect(() => {
+    if (jsonExportStatus !== "done") return;
+    const timer = setTimeout(() => setJsonExportStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [jsonExportStatus]);
 
   // Round 1010: the calendar view's own "stays live" companion to
   // handleExportIcs's one-shot download just below -- copies a URL a
@@ -9281,17 +9323,33 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="csv-export-btn"
               onClick={handleExportCsv}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || csvExportStatus === "exporting"}
+              aria-live="polite"
+              aria-atomic="true"
             >
-              {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected</> : "⬇️ Export CSV"}
+              {csvExportStatus === "exporting"
+                ? "Exporting…"
+                : csvExportStatus === "done"
+                  ? "✓ Exported"
+                  : selectedIds.size > 0
+                    ? <>⬇️ Export {selectedIds.size} selected</>
+                    : "⬇️ Export CSV"}
             </button>
             <button
               type="button"
               className="json-export-btn"
               onClick={handleExportJson}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || jsonExportStatus === "exporting"}
+              aria-live="polite"
+              aria-atomic="true"
             >
-              {selectedIds.size > 0 ? <>⬇️ Export {selectedIds.size} selected as JSON</> : "⬇️ Export JSON"}
+              {jsonExportStatus === "exporting"
+                ? "Exporting…"
+                : jsonExportStatus === "done"
+                  ? "✓ Exported"
+                  : selectedIds.size > 0
+                    ? <>⬇️ Export {selectedIds.size} selected as JSON</>
+                    : "⬇️ Export JSON"}
             </button>
             <button
               type="button"

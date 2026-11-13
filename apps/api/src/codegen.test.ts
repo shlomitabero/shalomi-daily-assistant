@@ -14417,7 +14417,13 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
 
   const exportBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="csv-export-btn"[\s\S]*?<\/button>/)?.[0];
   assert.ok(exportBtnSrc, "expected to find the csv-export-btn button in generated output");
-  assert.match(exportBtnSrc!, /disabled=\{selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\}/);
+  // Round 2014: also disabled while a busy export fetch is genuinely in
+  // flight -- see this button's own busy/done-status test for the full
+  // reasoning.
+  assert.match(
+    exportBtnSrc!,
+    /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| csvExportStatus === "exporting"\}/,
+  );
   assert.match(exportBtnSrc!, /selectedIds\.size > 0/, "the button label must reflect a real selection count");
 });
 
@@ -14616,7 +14622,13 @@ test("the exported EntityView's Export JSON button routes through selectedOrAllR
 
   const exportJsonBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="json-export-btn"[\s\S]*?<\/button>/)?.[0];
   assert.ok(exportJsonBtnSrc, "expected to find the json-export-btn button in generated output");
-  assert.match(exportJsonBtnSrc!, /disabled=\{selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\}/);
+  // Round 2014: also disabled while a busy export fetch is genuinely in
+  // flight -- see this button's own busy/done-status test for the full
+  // reasoning.
+  assert.match(
+    exportJsonBtnSrc!,
+    /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| jsonExportStatus === "exporting"\}/,
+  );
   assert.match(exportJsonBtnSrc!, /as JSON/, "the selected-count label must say 'as JSON' so it reads distinctly from the CSV button's own 'N selected' text");
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
@@ -33706,6 +33718,119 @@ test("the exported EntityView's Print list button fetches every record via GET /
   } finally {
     globalThis.fetch = originalFetch;
     window.print = originalPrint;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2014: mirrors the live Forge AI preview's own round-2014 fix.
+ * recordsForExport's own uncapped GET .../export fetch (confirmed in the
+ * "Print list" test just above) is a real network round-trip, not just a
+ * local blob build, yet the Export CSV button gave zero visual feedback
+ * while it was in flight -- the identical "nothing shown for a multi-second
+ * real file download, easy to miss" gap this app's own Backup All Data/
+ * Export Code buttons never had in the first place. Delays the mocked
+ * GET /api/Customer/export response under direct control, so the busy
+ * state can actually be observed before letting it resolve.
+ */
+test("the exported EntityView's Export CSV button shows a busy label (and briefly a done confirmation) instead of giving no feedback while the uncapped export fetch is in flight", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let resolveExport: (() => void) | null = null;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(
+        JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }], totalCount: 2, truncated: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/Customer/export") {
+      await new Promise<void>((resolve) => {
+        resolveExport = resolve;
+      });
+      return new Response(
+        JSON.stringify({
+          records: [
+            { id: 1, name: "Acme Corp", status: "New" },
+            { id: 2, name: "Beta Inc", status: "New" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  let capturedBlob: Blob | null = null;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+    capturedBlob = b;
+    return "blob:mock-url";
+  };
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(container.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      const idleLabel = exportBtn.textContent;
+
+      // Mock timers enabled from the start (same idiom as the Copy-button
+      // test above) so the "done" -> "idle" effect's own setTimeout(…,
+      // 2000) -- scheduled once csvExportStatus actually becomes "done"
+      // below -- is one this test can tick forward.
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      act(() => {
+        fireEvent.click(exportBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(exportBtn.textContent ?? "", /Exporting/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.equal(exportBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.ok(capturedBlob, "the download must have actually been triggered once the export fetch resolved");
+      assert.match(exportBtn.textContent ?? "", /Exported/, "the button must show a done confirmation once the download has actually been triggered");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(exportBtn.textContent, idleLabel, "the button must revert to its original idle label 2 seconds after the done confirmation");
+      assert.equal(exportBtn.disabled, false, "the button must re-enable once the done confirmation itself auto-resets back to idle");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }
