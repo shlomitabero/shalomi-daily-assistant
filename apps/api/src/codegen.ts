@@ -8547,13 +8547,42 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return () => clearTimeout(timer);
   }, [subscribeStatus]);
 
+  // Round 2004: mirrors the live Forge AI preview's own round-2004 fix,
+  // itself mirroring recordsForExport's own round-1678/1685 bypass and
+  // handlePrintList's own round-1996 port of it -- icsMonthRecords (above)
+  // is built from the same server-capped visibleRecords the truncation
+  // hint's "export to CSV to get all of them" promise is about. Export
+  // CSV/Export JSON/Copy/Print list all route through a full, uncapped
+  // fetch once genuinely unselected/unsearched/unfiltered/ungrouped;
+  // Export ICS never did, so an OLDER record (pushed past the server's
+  // record cap by newer ones) whose own date still falls in the
+  // currently-viewed month was silently left out of the downloaded .ics
+  // file. Duplicates recordsForExport's own bypass condition rather than
+  // reusing a shared constant, for the identical regex-extraction-test
+  // reason documented on printRecordsBypassActive above.
+  async function monthRecordsForIcsExport() {
+    if (!dateField) return icsMonthRecords;
+    if (selectedIds.size > 0 || search.trim() || Object.values(fieldFilters).some(Boolean) || groupFieldName || !recordListTruncated) {
+      return icsMonthRecords;
+    }
+    try {
+      const { records: allRecords } = await exportAllRecords(entity.name);
+      const days = buildCalendarMonth(allRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth(), endDateField);
+      const flat = days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+      return Array.from(new Map(flat.map((r) => [r.id, r])).values());
+    } catch {
+      return icsMonthRecords;
+    }
+  }
+
   // The calendar view's own "take it with you" action -- exports exactly
   // the records the calendar grid's current month is showing as a real
   // RFC 5545 .ics calendar.
-  function handleExportIcs() {
+  async function handleExportIcs() {
     if (!dateField) return;
     const labelField = calendarLabelField(entity, dateField);
-    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, relatedRecords, new Date(), endDateField, orderedFields);
+    const monthRecords = await monthRecordsForIcsExport();
+    const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, relatedRecords, new Date(), endDateField, orderedFields);
     const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

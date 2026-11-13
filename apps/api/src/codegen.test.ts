@@ -33506,6 +33506,132 @@ test("the exported EntityView's Print list button fetches every record via GET /
 });
 
 /**
+ * Round 2004: mirrors the live Forge AI preview's own round-2004 fix.
+ * recordsForExport's own round-1678/1685 fix already keeps Export CSV/
+ * JSON/Copy's "export to CSV to get all of them" promise once the live
+ * list is truncated, and round 1996 ported the identical fix to Print
+ * list -- but "Export ICS" (the calendar view's own one-shot download)
+ * still built straight from icsMonthRecords, itself derived from the same
+ * server-capped records state, so an older record pushed past the cap by
+ * newer ones, but whose own date still falls in the currently-shown
+ * month, was silently missing from the downloaded .ics file.
+ */
+test("the exported EntityView's Export ICS button fetches every record via GET /api/:entityName/export when the live list is truncated, including one beyond the capped page that falls in the shown month", async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let exportFetched = false;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Appointment") {
+      return new Response(
+        JSON.stringify({ records: [{ id: 1, customerName: "Acme appointment", date: today }], totalCount: 2, truncated: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/Appointment/export") {
+      exportFetched = true;
+      return new Response(
+        JSON.stringify({
+          records: [
+            { id: 1, customerName: "Acme appointment", date: today },
+            { id: 2, customerName: "Beta appointment", date: today },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  let capturedBlob: Blob | null = null;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+    capturedBlob = b;
+    return "blob:mock-url";
+  };
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const appointmentEntity = withDate.spec.entities.find((e) => e.name === "Appointment")!;
+      const props = {
+        entity: appointmentEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(container.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const calendarToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".ics-export-btn")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const icsBtn = container.querySelector(".ics-export-btn") as HTMLButtonElement;
+      assert.equal(icsBtn.disabled, false, "the one already-loaded record is in the current month, so the export button must be enabled");
+      await act(async () => {
+        fireEvent.click(icsBtn);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedBlob !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(exportFetched, "Export ICS must call the uncapped GET /api/:entityName/export route when the live list is truncated");
+      const icsText = await (capturedBlob as unknown as Blob).text();
+      assert.match(icsText, /Acme appointment/, "the one already-loaded record must still be in the export");
+      assert.match(
+        icsText,
+        /Beta appointment/,
+        "a record beyond the capped page, but genuinely in the shown month, must now be included via the uncapped export fetch",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the live preview's EntityPanel.tsx has the identical
  * RecordListPrintSheet call site bug ported here -- it was passing
  * visibleFields (the hidden-filtered column list) instead of orderedFields,

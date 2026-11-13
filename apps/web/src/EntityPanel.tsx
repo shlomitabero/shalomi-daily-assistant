@@ -4854,6 +4854,34 @@ export function EntityPanel({
   }, [copyStatus]);
 
   /**
+   * Round 2004: mirrors recordsForExport's own round-1678/1685 bypass, and
+   * handlePrintList's own round-1996 port of it -- icsMonthRecords (just
+   * above) is built from `visibleRecords`, itself derived from the same
+   * server-capped `records` state the truncation hint's "export to CSV to
+   * get all of them" promise is about. Export CSV/Export JSON/Copy/Print
+   * list all route through a full, uncapped fetch once genuinely
+   * unselected/unsearched/unfiltered/ungrouped; Export ICS never did, so an
+   * OLDER record (pushed past RECORD_LIST_RESPONSE_CAP by newer ones) whose
+   * own date still falls in the currently-viewed month was silently left
+   * out of the downloaded .ics file, with zero indication anything was
+   * missing -- the one calendar action in this toolbar that never got this
+   * fix. Scoped to the identical recordCapBypassActive condition; outside
+   * it, this returns icsMonthRecords exactly as before.
+   */
+  async function monthRecordsForIcsExport(): Promise<EntityRecord[]> {
+    if (!dateField) return [];
+    if (!recordCapBypassActive) return icsMonthRecords;
+    try {
+      const { records: allRecords } = await exportAllRecords(projectId, entity.name);
+      const days = buildCalendarMonth(allRecords, dateField, calendarMonth.getFullYear(), calendarMonth.getMonth(), endDateField);
+      const flat = days.filter((d) => d.inCurrentMonth).flatMap((d) => d.records);
+      return Array.from(new Map(flat.map((r) => [r.id, r])).values());
+    } catch {
+      return icsMonthRecords;
+    }
+  }
+
+  /**
    * The calendar view's own "take it with you" action -- CSV export dumps
    * the whole raw table, but a month of appointments/bookings is exactly
    * what a real business owner wants to drop straight into their phone's
@@ -4861,10 +4889,11 @@ export function EntityPanel({
    * calendar grid is currently showing (this month, respecting the active
    * search/filter via visibleRecords), not the whole entity.
    */
-  function handleExportIcs() {
+  async function handleExportIcs() {
     if (!dateField) return;
     const labelField = calendarChipLabelField(entity, dateField);
-    const ics = buildCalendarIcs(entity, dateField, labelField, icsMonthRecords, allEntities, relatedRecords, new Date(), endDateField, orderedFields, lang, projectId);
+    const monthRecords = await monthRecordsForIcsExport();
+    const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, allEntities, relatedRecords, new Date(), endDateField, orderedFields, lang, projectId);
     downloadCalendarIcs(ics, entity.name);
   }
 

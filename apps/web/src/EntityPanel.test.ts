@@ -6471,6 +6471,81 @@ test("EntityPanel's ICS export emits exactly one VEVENT per ranged record, not o
 });
 
 /**
+ * Round 2004: the Export ICS sequel to round 1678's Export CSV test and
+ * round 1996's Print list test -- icsMonthRecords is built from the same
+ * server-capped `records` state the truncation hint's "export to CSV to
+ * get all of them" promise is about, but Export ICS never routed through
+ * the uncapped GET .../export fetch the way Export CSV/Export JSON/Copy/
+ * Print list all do. An older record pushed past the cap by newer ones,
+ * but whose own date still falls in the currently-shown month, is
+ * therefore reachable via the full export even though it's missing from
+ * the capped page the calendar grid itself is rendering from.
+ */
+test("EntityPanel's Export ICS button fetches every record via GET .../export when the live list is truncated, including one beyond the capped page that falls in the shown month", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const originalFetch = globalThis.fetch;
+    let exportFetched = false;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, title: "Acme appointment", date: today }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Appointment/export") {
+        exportFetched = true;
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, title: "Acme appointment", date: today },
+              { id: 2, title: "Beta appointment", date: today },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+      assert.ok(document.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".ics-export-btn") !== null);
+
+      const icsBtn = document.querySelector(".ics-export-btn") as HTMLButtonElement;
+      assert.equal(icsBtn.disabled, false, "the one already-loaded record is in the current month, so the export button must be enabled");
+      fireEvent.click(icsBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      assert.ok(exportFetched, "Export ICS must call the uncapped GET .../export route when the live list is truncated");
+      const icsText = await (capturedBlob as unknown as Blob).text();
+      assert.match(icsText, /Acme appointment/, "the one already-loaded record must still be in the export");
+      assert.match(
+        icsText,
+        /Beta appointment/,
+        "a record beyond the capped page, but genuinely in the shown month, must now be included via the uncapped export fetch",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * New in round 599: buildCalendarMonth deliberately renders a ranged
  * record's SAME chip on every day it spans (confirmed by the ICS test
  * above), and every one of those chip instances is equally draggable --
