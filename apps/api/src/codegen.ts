@@ -1653,8 +1653,17 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
   }
   // Round 1854: see buildCalendarFeedIcs's own doc comment above -- same
   // "subscribed calendar shows up blank/untitled" gap, for the combined
-  // whole-project feed.
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Forge AI//All Entities//EN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:All Entities"];
+  // whole-project feed. Round 1854 itself hardcoded this to English-only
+  // "All Entities" because "this generated route has no lang parameter at
+  // all" -- true of the function's own parameters, but round 1991 (right
+  // after) added exactly this \`hebrew\` bake-time const to renderServerJs
+  // and already uses it two lines below, inside this very function, to
+  // localize the VALARM reminder text. This X-WR-CALNAME line was never
+  // updated to match, leaving it the one hardcoded-English string left in
+  // an otherwise fully Hebrew-localized combined feed -- mirrors the live
+  // preview's own calendarFeed.ts buildCombinedCalendarFeedIcs, whose
+  // X-WR-CALNAME already reads "כל הישויות" for lang === "he".
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Forge AI//All Entities//EN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:${hebrew ? "כל הישויות" : "All Entities"}"];
   for (const entity of dateBearingEntities) {
     const records = recordsByEntityName[entity.name] || [];
     const dateField = findFeedDateField(entity.fields);

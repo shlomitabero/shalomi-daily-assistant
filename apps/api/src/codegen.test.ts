@@ -577,6 +577,18 @@ test("generated server.js's calendar feed VALARM reminder follows the project's 
           /BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:תזכורת\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT/,
           "a Hebrew-labeled project's combined feed VALARM must read 'תזכורת', not 'Reminder'",
         );
+        // Round 1854 added X-WR-CALNAME to this combined feed but
+        // hardcoded it English-only ("All Entities"), unlike the live
+        // preview's own calendarFeed.ts buildCombinedCalendarFeedIcs
+        // (which already localizes it to "כל הישויות" for a Hebrew
+        // project) and unlike this very feed's own VALARM text two lines
+        // above, which the `hebrew` bake-time const already localizes.
+        assert.match(
+          combinedIcs,
+          /X-WR-CALNAME:כל הישויות\r\n/,
+          "a Hebrew-labeled project's combined feed name must read 'כל הישויות', not the hardcoded English 'All Entities'",
+        );
+        assert.doesNotMatch(combinedIcs, /X-WR-CALNAME:All Entities/);
         return;
       } catch (err) {
         lastErr = err;
