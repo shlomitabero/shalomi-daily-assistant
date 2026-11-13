@@ -6369,6 +6369,11 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // a second, independent batch of createRecord calls for the same ids,
   // duplicating every selected record twice instead of once (round 544).
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
+  // Round 2015: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // -- widened from "idle" | "copied" | "failed" to add a "copying" state.
+  // See handleCopy's own doc comment just below for why this button needed
+  // the identical round-2014 treatment its csvExportStatus/jsonExportStatus
+  // siblings already got, never ported here until now.
   const [copyStatus, setCopyStatus] = useState("idle");
   // Round 2014: mirrors the live Forge AI preview's own EntityPanel.tsx fix
   // -- Export CSV/Export JSON gave zero visual feedback while
@@ -8571,7 +8576,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     }
   }
 
+  // Round 2015: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // -- this button called the exact same \`await recordsForExport()\` as
+  // handleExportCsv/handleExportJson (a real, potentially multi-second
+  // network round-trip once the record-cap bypass is active for a
+  // truncated entity) but, unlike those two siblings fixed in round 2014,
+  // had no busy state and no reentrancy guard at all: the button stayed
+  // reading "Copy", fully clickable, for the entire wait.
   async function handleCopy() {
+    if (copyStatus === "copying") return;
+    setCopyStatus("copying");
     try {
       const csv = recordsToCsv(orderedFields, await recordsForExport(), relatedRecords);
       await navigator.clipboard.writeText(csv);
@@ -8582,7 +8596,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   }
 
   useEffect(() => {
-    if (copyStatus === "idle") return;
+    // Round 2015: only the two terminal outcomes ("copied"/"failed") should
+    // auto-revert -- "copying" is cleared by handleCopy's own finally-less
+    // try/catch the moment the real work finishes, the same way
+    // csvExportStatus/jsonExportStatus's own "done"-only effects below
+    // already treat their "exporting" state.
+    if (copyStatus === "idle" || copyStatus === "copying") return;
     const timer = setTimeout(() => setCopyStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [copyStatus]);
@@ -9307,17 +9326,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="copy-records-btn"
               onClick={handleCopy}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || copyStatus === "copying"}
               aria-live="polite"
               aria-atomic="true"
             >
-              {copyStatus === "copied"
-                ? "✅ Copied!"
-                : copyStatus === "failed"
-                  ? "Copy failed"
-                  : selectedIds.size > 0
-                    ? \`📋 Copy \${selectedIds.size} selected\`
-                    : "📋 Copy"}
+              {copyStatus === "copying"
+                ? "Copying…"
+                : copyStatus === "copied"
+                  ? "✅ Copied!"
+                  : copyStatus === "failed"
+                    ? "Copy failed"
+                    : selectedIds.size > 0
+                      ? \`📋 Copy \${selectedIds.size} selected\`
+                      : "📋 Copy"}
             </button>
             <button
               type="button"

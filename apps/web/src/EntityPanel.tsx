@@ -2017,7 +2017,13 @@ export function EntityPanel({
   // createRecord calls for the same ids, duplicating every selected record
   // twice instead of once (round 544).
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  // Round 2015: widened from "idle" | "copied" | "failed" -- see handleCopy's
+  // own doc comment for why a "copying" state was missing entirely. Every
+  // other status pair in this file that can involve a real network wait
+  // (csvExportStatus/jsonExportStatus just below) already has an in-flight
+  // state between its starting point and its terminal "done"/"copied"/
+  // "failed" outcome; this was the one still missing it.
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
   // Round 2014: Export CSV/Export JSON's own busy/done feedback, mirroring
   // App.tsx's handleExport/handleBackup idiom (exportBusy/exportDone,
   // backupBusy/backupDone) -- see handleExportCsv's own doc comment for why
@@ -4862,8 +4868,27 @@ export function EntityPanel({
    * without downloading a CSV and opening it elsewhere first. Reuses the
    * exact same CSV text handleExportCsv already builds, just written to
    * the clipboard instead of a downloaded file.
+   *
+   * Round 2015: this button called the exact same `await
+   * recordsForExport()` as handleExportCsv/handleExportJson -- a real,
+   * potentially multi-second network round-trip once the record-cap bypass
+   * (round 1678) is active for a truncated entity -- but, unlike those two
+   * siblings (fixed in round 2014), had no busy state and no reentrancy
+   * guard at all: the button stayed reading "📋 Copy", fully clickable,
+   * for the entire wait, with nothing distinguishing "nothing has happened
+   * yet" from "a fetch most of a second entity's worth of records is
+   * already in flight." A fast double-click fired two independent, fully
+   * redundant `GET .../export` requests for the same identical data.
+   * Live-reproduced via Playwright: intercepting the export route with an
+   * artificial 4s delay left the button reading "📋 Copy" and
+   * `disabled === false` throughout the whole delay. Now mirrors
+   * handleExportCsv/handleExportJson's own round-2014 idiom exactly: an
+   * own-click reentrancy guard, a "copying" busy state while the fetch is
+   * in flight, disabling the button for the same window.
    */
   async function handleCopy() {
+    if (copyStatus === "copying") return;
+    setCopyStatus("copying");
     try {
       const csv = recordsToCsv(orderedFields, await recordsForExport(), lang, allEntities, relatedRecords);
       await navigator.clipboard.writeText(csv);
@@ -4924,7 +4949,14 @@ export function EntityPanel({
   }
 
   useEffect(() => {
-    if (copyStatus === "idle") return;
+    // Round 2015: only the two terminal outcomes ("copied"/"failed") should
+    // auto-revert after a couple seconds -- "copying" is cleared by
+    // handleCopy's own try/catch the moment the real work finishes, exactly
+    // like csvExportStatus/jsonExportStatus's own "done"-only effects just
+    // below. Firing this same 2s timer while still "copying" would wrongly
+    // flip a fetch still genuinely in flight back to "idle" (re-enabling the
+    // button, mid-request) if that fetch ever took longer than 2 seconds.
+    if (copyStatus === "idle" || copyStatus === "copying") return;
     const timer = setTimeout(() => setCopyStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [copyStatus]);
@@ -6155,17 +6187,19 @@ export function EntityPanel({
               type="button"
               className="secondary copy-records-btn"
               onClick={handleCopy}
-              disabled={selectedIds.size === 0 && effectivelyVisibleRecords.length === 0}
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || copyStatus === "copying"}
               aria-live="polite"
               aria-atomic="true"
             >
-              {copyStatus === "copied"
-                ? t("entity.copy.copied")
-                : copyStatus === "failed"
-                  ? t("entity.copy.failed")
-                  : selectedIds.size > 0
-                    ? t(selectedIds.size === 1 ? "entity.copy.selected.one" : "entity.copy.selected.many", { count: selectedIds.size })
-                    : t("entity.copy")}
+              {copyStatus === "copying"
+                ? t("entity.copy.busy")
+                : copyStatus === "copied"
+                  ? t("entity.copy.copied")
+                  : copyStatus === "failed"
+                    ? t("entity.copy.failed")
+                    : selectedIds.size > 0
+                      ? t(selectedIds.size === 1 ? "entity.copy.selected.one" : "entity.copy.selected.many", { count: selectedIds.size })
+                      : t("entity.copy")}
             </button>
             <button
               type="button"

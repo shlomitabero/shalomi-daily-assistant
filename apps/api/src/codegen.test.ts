@@ -14541,7 +14541,10 @@ test("the exported EntityView renders a real Copy button that writes the selecti
 
   const copyBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="copy-records-btn"[\s\S]*?<\/button>/)?.[0];
   assert.ok(copyBtnSrc, "expected to find the copy-records-btn button in generated output");
-  assert.match(copyBtnSrc!, /disabled=\{selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\}/);
+  // Round 2015: disabled now also covers the in-flight "copying" state --
+  // see handleCopy's own round-2015 doc comment just above.
+  assert.match(copyBtnSrc!, /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| copyStatus === "copying"\}/);
+  assert.match(copyBtnSrc!, /copyStatus === "copying"/);
   assert.match(copyBtnSrc!, /copyStatus === "copied"/);
   assert.match(copyBtnSrc!, /copyStatus === "failed"/);
 
@@ -33831,6 +33834,123 @@ test("the exported EntityView's Export CSV button shows a busy label (and briefl
     globalThis.fetch = originalFetch;
     if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
     if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2015: mirrors the live Forge AI preview's own round-2015 fix.
+ * handleCopy calls the exact same `await recordsForExport()` as the Export
+ * CSV button just above (a real network round-trip once the record-cap
+ * bypass is active for a truncated entity), but unlike that sibling (fixed
+ * in round 2014), the Copy button gave zero visual feedback while it was
+ * in flight: no busy label, no disabled state. Mirrors the Export CSV
+ * busy-state test's own delayed-fetch-under-direct-control technique, plus
+ * a navigator.clipboard mock since handleCopy's own terminal state is
+ * "copied", not Export CSV's "done".
+ */
+test("the exported EntityView's Copy button shows a busy label (and disables itself) instead of giving no feedback while the uncapped export fetch is in flight", async (t) => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let resolveExport: (() => void) | null = null;
+  let exportFetchCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(
+        JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }], totalCount: 2, truncated: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/Customer/export") {
+      exportFetchCount += 1;
+      await new Promise<void>((resolve) => {
+        resolveExport = resolve;
+      });
+      return new Response(
+        JSON.stringify({
+          records: [
+            { id: 1, name: "Acme Corp", status: "New" },
+            { id: 2, name: "Beta Inc", status: "New" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  let writtenText: string | undefined;
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: async (text: string) => void (writtenText = text) },
+    configurable: true,
+  });
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(container.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+      const copyBtn = container.querySelector(".copy-records-btn") as HTMLButtonElement;
+      const idleLabel = copyBtn.textContent;
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      act(() => {
+        fireEvent.click(copyBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(copyBtn.textContent ?? "", /Copying/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.equal(copyBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      // A second click while the first fetch is still in flight must not
+      // start a second, fully redundant export fetch -- handleCopy's own
+      // `if (copyStatus === "copying") return` guard must catch it even
+      // though fireEvent bypasses the DOM disabled attribute.
+      act(() => {
+        fireEvent.click(copyBtn);
+      });
+      assert.equal(exportFetchCount, 1, "a reentrant click while already copying must not start a second export fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.equal(typeof writtenText, "string", "Copy must actually write to the clipboard once the export fetch resolves");
+      assert.match(writtenText!, /Beta Inc/, "the copied CSV must be the full, uncapped export result, not just the capped list page");
+      assert.match(copyBtn.textContent ?? "", /Copied/, "the button must show the real Copied confirmation once the fetch resolves");
+      assert.equal(copyBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+
+      act(() => {
+        t.mock.timers.tick(2000);
+      });
+      assert.equal(copyBtn.textContent, idleLabel, "the button must revert to its original idle label 2 seconds after the Copied confirmation");
+    });
+  } finally {
+    t.mock.timers.reset();
+    globalThis.fetch = originalFetch;
+    delete (navigator as { clipboard?: unknown }).clipboard;
     cleanup();
     rmSync(dir, { recursive: true, force: true });
   }
