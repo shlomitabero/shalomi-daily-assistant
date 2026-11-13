@@ -10,6 +10,7 @@ import {
   calendarChipLabelField,
   calendarChipLabelValue,
   computeNextFocusedRowId,
+  dedupeImportErrors,
   enterTargetsInteractiveElement,
   findBoardField,
   findDateField,
@@ -4140,6 +4141,45 @@ test("formatImportSummary reproduces the pre-existing hardcoded-plural wording b
   assert.equal(formatImportSummary(5, 0, 3, en), "Imported 5 records, skipped 3 rows.");
   assert.equal(formatImportSummary(5, 2, 0, en), "Imported 5 new records and updated 2 existing records.");
   assert.equal(formatImportSummary(5, 2, 3, en), "Imported 5 new records, updated 2 existing records, skipped 3 rows.");
+});
+
+/**
+ * Round 2011: `writeImportedRecords`' own `serverErrors` (EntityPanel.tsx)
+ * carry no per-row identity at all, unlike `parseErrors` (each already
+ * uniquely prefixed with its own "Row N:") -- a large import that runs
+ * into `recordWriteRateLimiter`'s budget rejects every remaining row with
+ * the identical fixed message, which used to render as that many
+ * byte-identical `<li>`s in the "Show errors" list. Verifies the actual
+ * collapsing behavior: a repeated string collapses to one entry with a
+ * "(xN)" count attached (reusing the real `t()`/`translate` pipeline, not
+ * a hand-rolled format), a string that appears only once passes through
+ * completely unchanged, and first-occurrence order is preserved so an
+ * interleaved repeat doesn't jump to the front of the list.
+ */
+test("dedupeImportErrors collapses repeated identical messages into one line with a count, leaves singletons untouched", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rateLimited = "Too many attempts. Please try again in a few minutes.";
+  const result = dedupeImportErrors(
+    [
+      'Row 1: missing required field "Status".',
+      rateLimited,
+      rateLimited,
+      'Row 7: "9999" isn\'t a valid record id.',
+      rateLimited,
+    ],
+    en,
+  );
+  assert.deepEqual(result, [
+    'Row 1: missing required field "Status".',
+    `${rateLimited} (x3)`,
+    'Row 7: "9999" isn\'t a valid record id.',
+  ]);
+});
+
+test("dedupeImportErrors leaves an all-unique error list completely unchanged", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const errors = ['Row 1: missing required field "Name".', 'Row 2: missing required field "Name".'];
+  assert.deepEqual(dedupeImportErrors(errors, en), errors);
 });
 
 /**

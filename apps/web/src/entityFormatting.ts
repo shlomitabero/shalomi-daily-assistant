@@ -2908,6 +2908,48 @@ export function formatImportSummary(
 }
 
 /**
+ * Round 2011: `writeImportedRecords`' own `importErrors` (EntityPanel.tsx)
+ * mixes two very different kinds of strings -- `parseErrors` (client-side,
+ * from `buildImportRecords`/`buildImportRecordsFromJson`), each already
+ * uniquely prefixed with its own "Row N:", and `serverErrors`, built from
+ * `(r.reason as Error).message` with no row identity attached at all. A
+ * large-but-entirely-legitimate import (this feature's own doc comment
+ * names "migrating off another system" as the motivating case, and round
+ * 35940 sized `recordWriteRateLimiter`'s 500/15-minute budget specifically
+ * to accommodate "a large real import") that runs partway into that limit
+ * has every one of its rate-limited rows rejected with the identical fixed
+ * "Too many attempts..." string -- hundreds or thousands of byte-identical,
+ * undifferentiated copies in the "Show errors" list, burying the one
+ * actionable signal (retry shortly) under its own repetition. This is the
+ * same "a flood of one error type drowns out real signal" shape this
+ * codebase already guards against on the automation-run-history side
+ * (`WHATSAPP_NOT_CONNECTED_ERROR`/`EMAIL_NOT_CONFIGURED_ERROR` retention
+ * buckets, round 951/1032) and the auth rate limiter's own tracked-key
+ * eviction, just never applied here. Collapses repeats of the identical
+ * string (in first-occurrence order, so a genuinely distinct "Row N:" text
+ * never collides with a different row's) into one line with a "(xN)"
+ * count -- a purely cosmetic, render-time-only transform: callers must
+ * keep using the original (undeduped) array's own `.length` for any
+ * created/updated/skipped count, exactly like `writeImportedRecords`'
+ * existing `allErrors.length` already does.
+ */
+export function dedupeImportErrors(
+  errors: string[],
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string[] {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const msg of errors) {
+    if (!counts.has(msg)) order.push(msg);
+    counts.set(msg, (counts.get(msg) ?? 0) + 1);
+  }
+  return order.map((msg) => {
+    const count = counts.get(msg)!;
+    return count > 1 ? t("entity.import.errorRepeated", { message: msg, count }) : msg;
+  });
+}
+
+/**
  * Reverses a calendar grid cell's own local-midnight Date back into the
  * plain "YYYY-MM-DD" a date field actually stores -- using LOCAL getters
  * (getFullYear/getMonth/getDate), matching parseFieldDate's own local

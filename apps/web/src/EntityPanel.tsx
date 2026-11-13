@@ -49,6 +49,7 @@ import {
   calendarChipLabelField,
   calendarChipLabelValue,
   computeNextFocusedRowId,
+  dedupeImportErrors,
   entityDisplayLabel,
   entityLabelOccurrences,
   findBoardField,
@@ -5850,7 +5851,7 @@ export function EntityPanel({
       )}
       {showImportErrors && importErrors.length > 0 && (
         <ul className="csv-import-errors">
-          {importErrors.map((msg, i) => (
+          {dedupeImportErrors(importErrors, t).map((msg, i) => (
             <li key={i}>{msg}</li>
           ))}
         </ul>
