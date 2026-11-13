@@ -149,6 +149,20 @@ function entityMergeKey(name: string): string {
 export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): ProductSpec {
   const mergedEntities: Entity[] = current.entities.map((entity) => ({ ...entity, fields: [...entity.fields] }));
   const entityByLowerName = new Map(mergedEntities.map((entity) => [entityMergeKey(entity.name), entity]));
+  // Round 2009: every entity named here (current's own, plus every entity
+  // candidate.entities carries) is guaranteed to exist in mergedEntities by
+  // the time this function returns -- either it already did, or the
+  // "!existingEntity" branch just below adds it verbatim. A relation field
+  // bolted onto an ALREADY-EXISTING entity by the loop below is only ever
+  // safe when its own relationTo resolves to one of those same names;
+  // otherwise it permanently points at an entity that never existed and
+  // never will (see this function's own round-1973 screens-filtering
+  // comment below for the identical "don't reference an entity name that
+  // didn't survive" concern, just on the other side of the merge).
+  const resolvableEntityKeys = new Set<string>([
+    ...current.entities.map((entity) => entityMergeKey(entity.name)),
+    ...candidate.entities.map((entity) => entityMergeKey(entity.name)),
+  ]);
   for (const candidateEntity of candidate.entities) {
     const existingEntity = entityByLowerName.get(entityMergeKey(candidateEntity.name));
     if (!existingEntity) {
@@ -159,10 +173,33 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
     }
     const fieldNameSet = new Set(existingEntity.fields.map((field) => field.name.toLowerCase()));
     for (const candidateField of candidateEntity.fields) {
-      if (!fieldNameSet.has(candidateField.name.toLowerCase())) {
-        existingEntity.fields.push(candidateField);
-        fieldNameSet.add(candidateField.name.toLowerCase());
+      if (fieldNameSet.has(candidateField.name.toLowerCase())) continue;
+      // Round 2009: domainEntities.ts's own Order rule carries an optional
+      // `courierId` relation to a "Courier" entity that, by that rule's own
+      // explicit design ("when a description only mentions order without a
+      // courier/driver, the Courier entity... won't exist in the spec at
+      // all"), frequently never exists alongside it -- a from-scratch build
+      // tolerates that (the whole spec is generated together, so there's
+      // nothing else for the field to have silently displaced). But when
+      // this exact Order candidate instead arrives here, into an EXISTING
+      // entity that an unrelated refine instruction merely re-triggered
+      // (confirmed live: refining the curated Restaurant Management
+      // template, whose own stored description mentions "orders", with an
+      // unrelated instruction about a different entity entirely), bolting
+      // on a relation to an entity that was never requested and will never
+      // exist in this project is a strictly worse outcome than simply
+      // leaving the field out -- a permanently dead, always-empty relation
+      // picker on every single Order record, forever. Skipping only a
+      // candidate field that is itself new to this entity AND a relation to
+      // an entity absent from both sides of this merge leaves every other
+      // candidate field (including a relation that genuinely does resolve,
+      // e.g. because the SAME refine also introduced/already has that
+      // target entity) merged exactly as before.
+      if (candidateField.type === "relation" && candidateField.relationTo && !resolvableEntityKeys.has(entityMergeKey(candidateField.relationTo))) {
+        continue;
       }
+      existingEntity.fields.push(candidateField);
+      fieldNameSet.add(candidateField.name.toLowerCase());
     }
   }
   const roleSet = new Set(current.roles.map((role) => role.toLowerCase()));

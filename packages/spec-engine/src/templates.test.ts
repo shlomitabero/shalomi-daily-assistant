@@ -384,6 +384,21 @@ test("the Inventory & Products template's Supplier entity has contactPerson and 
  * no way to record which dishes an order actually contains. The rule's own
  * optional `courierId` relation is correctly NOT ported: a restaurant
  * dine-in order has no courier/delivery concept at all.
+ *
+ * Round 2009: this comment's own "correctly NOT ported" claim about
+ * `courierId` only ever addressed what the STATIC template should look
+ * like, not what mergeRefinedSpec does with it on a later refine -- this
+ * round found (and fixed, in index.ts's own mergeRefinedSpec, not here)
+ * that an unrelated refine of this exact template was silently bolting a
+ * dangling `courierId` relation (pointing at a "Courier" entity this
+ * template never has) onto every Order record anyway, the same merge
+ * vulnerability this file's own Customer/Deal/TeamMember/Staff/Appointment
+ * fixes already closed for their own fields. `courierId` is still
+ * correctly excluded from the field list below -- the fix there skips
+ * merging any relation field whose target entity doesn't exist in either
+ * spec being merged, which is the right place to close this specific gap
+ * without permanently cluttering every Restaurant project with a Courier
+ * picker that can never have anything to point at.
  */
 test("the Restaurant Management template's Order entity has an items field, matching domainEntities.ts's own matching Order domain rule", () => {
   const restaurantTemplate = TEMPLATES.find((t) => t.id === "restaurant");
@@ -400,6 +415,71 @@ test("the Restaurant Management template's Order entity has an items field, matc
   const itemsEn = orderEn!.fields.find((f) => f.name === "items");
   assert.ok(itemsEn, "expected the Order specEn entity to have an items field");
   assert.equal(itemsEn!.type, "longtext");
+});
+
+/**
+ * Round 2009: found via a live Playwright session surveying every curated
+ * template's entities against domainEntities.ts's own matching rules (the
+ * same bug class as rounds 1304/1898 (Customer), 1899 (Deal), 1999
+ * (TeamMember/Staff), and 2008 (Appointment)) -- the Restaurant Management
+ * template's own Order entity exact-name-matches domainEntities.ts's own
+ * Order domain rule, whose own `customerName` (text, required) field was
+ * missing here by name the whole time, even though round 1289 already
+ * ported this same rule's `items` field. Live-reproduced: refining a real
+ * build with an unrelated instruction ("Add an isVip field to
+ * RestaurantTable") silently added `customerName` (not the requested field)
+ * to every Order record. Deliberately left optional, not mirroring the
+ * domain rule's `required: true` -- see templates.ts's own comment on this
+ * field for why (this entity already has a real, required `customer`
+ * relation).
+ */
+test("the Restaurant Management template's Order entity has a customerName field, matching domainEntities.ts's own Order domain rule", () => {
+  const restaurantTemplate = TEMPLATES.find((t) => t.id === "restaurant");
+  assert.ok(restaurantTemplate, "expected a \"restaurant\" template to exist");
+
+  const order = restaurantTemplate!.spec.entities.find((e) => e.name === "Order");
+  assert.ok(order, "expected the Restaurant Management template to have an Order entity");
+  const customerName = order!.fields.find((f) => f.name === "customerName");
+  assert.ok(customerName, "expected the Order entity to have a customerName field");
+  assert.equal(customerName!.type, "text");
+  assert.equal(customerName!.required, false, "deliberately optional -- see templates.ts's own comment on this field");
+
+  const orderEn = restaurantTemplate!.specEn.entities.find((e) => e.name === "Order");
+  assert.ok(orderEn, "expected the Restaurant Management specEn to have an Order entity");
+  const customerNameEn = orderEn!.fields.find((f) => f.name === "customerName");
+  assert.ok(customerNameEn, "expected the Order specEn entity to have a customerName field");
+  assert.equal(customerNameEn!.type, "text");
+  assert.equal(customerNameEn!.required, false, "deliberately optional -- see templates.ts's own comment on this field");
+});
+
+/**
+ * Round 2009: the mechanism itself, proven directly against mergeRefinedSpec
+ * and the real heuristic generator rather than just pinning the template's
+ * own field list -- mirrors round 1999's and round 2008's own identical
+ * mechanism tests. Without this, a future change to either the template or
+ * the Order domain rule could silently reopen the exact live bug this round
+ * fixed (an unrelated refine bolting an unrequested field, or a dangling
+ * relation to a nonexistent entity, onto every Order record) with no test
+ * catching it. Also exercises index.ts's own new mergeRefinedSpec fix: the
+ * candidate's `courierId` field (relationTo "Courier", an entity this
+ * template's spec never has) must still be silently skipped, not merged in
+ * as a dangling relation.
+ */
+test("refining a Restaurant Management project with an unrelated instruction mentioning \"orders\" adds no new fields to Order, now that the template already has everything the domain rule would add (and never gains a dangling Courier relation)", async () => {
+  const { HeuristicSpecProvider } = await import("./heuristic.js");
+  const { mergeRefinedSpec } = await import("./index.js");
+  const provider = new HeuristicSpecProvider();
+
+  const restaurant = TEMPLATES.find((t) => t.id === "restaurant")!;
+  const combinedDescription = `${restaurant.description}\n\nAdditional requirement: Add an isVip boolean field to RestaurantTable.`;
+  const candidate = await provider.generate(combinedDescription, false);
+  const merged = mergeRefinedSpec(restaurant.specEn, candidate);
+  const orderBefore = new Set(restaurant.specEn.entities.find((e) => e.name === "Order")!.fields.map((f) => f.name));
+  const orderAfter = merged.entities.find((e) => e.name === "Order")!.fields.map((f) => f.name);
+  for (const name of orderAfter) {
+    assert.ok(orderBefore.has(name), `refining Restaurant Management with an unrelated instruction must not add a new Order field, but added "${name}"`);
+  }
+  assert.ok(!orderAfter.includes("courierId"), "expected courierId to be skipped as a dangling relation to a nonexistent Courier entity");
 });
 
 /**

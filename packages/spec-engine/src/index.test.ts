@@ -344,6 +344,72 @@ test("mergeRefinedSpec adds a new field to an existing entity, but keeps that en
   );
 });
 
+/**
+ * Round 2009: found via a live Playwright session on the curated Restaurant
+ * Management template (templates.ts's own Order entity) -- domainEntities.ts's
+ * Order domain rule carries an optional `courierId` relation to a "Courier"
+ * entity that, by that rule's own design, often doesn't exist alongside it
+ * (a description that only mentions "orders", never "courier"/"driver").
+ * That's fine for a FROM-SCRATCH generate (the whole spec is produced
+ * together, so there's nothing for the dangling field to have silently
+ * replaced) -- but mergeRefinedSpec's own "add any candidate field this
+ * entity doesn't already have" loop used to bolt that same relation onto
+ * an EXISTING entity exactly the same way, even when neither side of the
+ * merge has any entity named "Courier" at all, permanently wiring a
+ * relation picker that can never have anything to point at. Confirmed live
+ * against the real Restaurant Management template before fixing.
+ */
+test("mergeRefinedSpec does not add a relation field whose relationTo names an entity that doesn't exist on either side of the merge", () => {
+  const current = baseSpec({
+    entities: [{ name: "Order", fields: [{ name: "total", type: "number", required: true }] }],
+  });
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          { name: "total", type: "number", required: true },
+          { name: "customerName", type: "text", required: true },
+          { name: "courierId", type: "relation", relationTo: "Courier", required: false },
+        ],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  const order = merged.entities.find((e) => e.name === "Order")!;
+  assert.deepEqual(
+    order.fields.map((f) => f.name).sort(),
+    ["customerName", "total"],
+    "customerName (not a relation) should still merge in; courierId (a dangling relation) should not",
+  );
+});
+
+test("mergeRefinedSpec still adds a relation field whose target entity genuinely exists on either side of the merge", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Order", fields: [{ name: "total", type: "number", required: true }] },
+      { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "Order",
+        fields: [
+          { name: "total", type: "number", required: true },
+          { name: "courierId", type: "relation", relationTo: "Courier", required: false },
+        ],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  const order = merged.entities.find((e) => e.name === "Order")!;
+  assert.ok(
+    order.fields.some((f) => f.name === "courierId"),
+    "courierId should still merge in once a real Courier entity exists in the current spec",
+  );
+});
+
 test("mergeRefinedSpec matches entity/role names case-insensitively, so a mere casing difference doesn't duplicate", () => {
   const current = baseSpec({ roles: ["Admin"], entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }] });
   const candidate = baseSpec({ roles: ["admin"], entities: [{ name: "customer", fields: [{ name: "name", type: "text", required: true }] }] });

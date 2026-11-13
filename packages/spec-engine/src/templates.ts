@@ -284,6 +284,28 @@ const RESTAURANT_ENTITIES: EntitySpec[] = [
       { name: "total", label: "סכום כולל", type: "number" },
       { name: "items", label: "פריטים", type: "longtext" },
       { name: "notes", label: "הערות", type: "longtext" },
+      // Round 2009: round 1289's own comment on this entity (below) already
+      // ported `items` from domainEntities.ts's matching Order domain rule
+      // and deliberately left out that rule's own optional `courierId`
+      // relation -- but never addressed the rule's third field, `customerName`
+      // (text, required), missing here by name the whole time. This
+      // template's own stored description contains "הזמנות"/"orders", so
+      // /refine's combinedDescription re-triggers the Order domain rule on
+      // any future refine of a project built from this template, and
+      // mergeRefinedSpec's exact-name entity match (no alias needed, both
+      // are named "Order") folds the regenerated candidate's missing fields
+      // into this template's own Order entity -- live-reproduced: an
+      // unrelated refine instruction ("Add an isVip field to RestaurantTable")
+      // silently added `customerName` (required text) to every Order
+      // record. Same mechanism as round 2008's identical Appointment fix.
+      // Deliberately left optional here too, for the identical reason round
+      // 2008 gave for Appointment's own customerName: this entity already
+      // has a real, required `customer` relation (richer than the domain
+      // rule's denormalized shape, which has no Customer entity to link to
+      // at all), so a second, required, free-text "whose order is this"
+      // field would force retyping the same customer's name already
+      // captured by the relation picker on every single record.
+      { name: "customerName", label: "שם לקוח", type: "text" },
     ],
   },
 ];
@@ -363,6 +385,11 @@ const RESTAURANT_ENTITIES_EN: EntitySpec[] = [
       { name: "total", label: "Total Amount", type: "number" },
       { name: "items", label: "Items", type: "longtext" },
       { name: "notes", label: "Notes", type: "longtext" },
+      // Round 2009: see the Hebrew RESTAURANT_ENTITIES' own comment above --
+      // same fix, same reasoning (deliberately optional, not a strict mirror
+      // of the domain rule's `required: true`), kept in sync with its own
+      // Order entity.
+      { name: "customerName", label: "Customer Name", type: "text" },
     ],
   },
 ];
