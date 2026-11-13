@@ -5816,6 +5816,91 @@ test("CalendarView flags an overdue/due-soon record's chip the same way the Tabl
 });
 
 /**
+ * Round 2006: a live Playwright browser session (1400px desktop viewport,
+ * not a narrow phone width) found CalendarView's own record chip rendered
+ * down to a single unreadable letter plus a clipped ellipsis -- the always-
+ * visible reschedule/print/duplicate/delete/pin buttons beside it (round
+ * 1351's own comment already documents this exact "unreadable single-glyph
+ * blob" failure mode) leave the flex:1 chip almost no room, and unlike the
+ * `.longtext-cell` span elsewhere in this file (`title={String(value)}`,
+ * always set), the chip's own `title` only ever carried the overdue/due-soon
+ * urgency text -- nothing at all for the common non-urgent case -- so a
+ * sighted hover user had no way to recover the record's real name. Confirms
+ * `title` now always includes the chip's own label text, appending the
+ * urgency text (unchanged from before) only when one applies.
+ */
+test("CalendarView's record chip always carries its own label in its title tooltip, not just the overdue/due-soon urgency text", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: isoDateToday() }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(
+        chip.getAttribute("title"),
+        "Dana's appointment",
+        "a non-urgent record's chip must expose its own label via title, not leave the tooltip empty",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("CalendarView's record chip appends the overdue/due-soon urgency text after its own label in the title tooltip, not in place of it", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+        { name: "status", label: "Status", type: "enum", required: false, enumValues: ["todo", "done"] },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, title: "Overdue task", dueDate: isoDateOffset(-2), status: "todo" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: taskEntity, allEntities: [taskEntity] });
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[2] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelectorAll(".calendar-record-chip").length === 1);
+
+      const chip = document.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(
+        chip.getAttribute("title"),
+        "Overdue task — Overdue",
+        "an overdue record's chip title must combine its own label with the urgency text, not drop the label",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real-DOM coverage for the calendar view's new "Today" button: before this
  * round there was no quick way back to the current month once you'd
  * navigated away with prev/next -- you had to click "prev" or "next"

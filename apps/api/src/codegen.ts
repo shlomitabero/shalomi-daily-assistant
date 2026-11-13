@@ -5359,7 +5359,14 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                   <button
                     type="button"
                     className={\`calendar-record-chip\${record.id === moveErrorId ? " calendar-record-chip-move-error" : ""}\${urgency === "overdue" ? " calendar-record-chip-overdue" : urgency === "dueSoon" ? " calendar-record-chip-due-soon" : ""}\`}
-                    title={urgencyLabel || undefined}
+                    // Round 2006: mirrors the live preview's own round-2006 fix
+                    // (EntityPanel.tsx) -- this chip's visible text (chipLabel)
+                    // is CSS-ellipsis-truncated and can shrink to a single
+                    // unreadable glyph once the row's other always-visible
+                    // action buttons crowd it, yet title only ever carried the
+                    // overdue/due-soon urgency text, never chipLabel itself, so
+                    // there was no way to recover the truncated text on hover.
+                    title={urgencyLabel ? \`\${chipLabel} — \${urgencyLabel}\` : chipLabel}
                     aria-label={urgencyLabel ? \`\${chipLabel} — \${urgencyLabel}\` : undefined}
                     draggable={!bulkActionBusy}
                     onDragStart={(e) => {

@@ -6420,7 +6420,7 @@ test("the exported EntityView's calendar record chips are drag-and-drop-able ont
   // The record chip itself must be a real drag source, not just visually styled.
   assert.match(
     entityViewJsx,
-    /className=\{`calendar-record-chip\$\{record\.id === moveErrorId \? " calendar-record-chip-move-error" : ""\}.*`\}\s*title=\{urgencyLabel \|\| undefined\}\s*aria-label=\{urgencyLabel \? `.*` : undefined\}\s*draggable=\{!bulkActionBusy\}\s*onDragStart=\{\(e\) => \{/,
+    /className=\{`calendar-record-chip\$\{record\.id === moveErrorId \? " calendar-record-chip-move-error" : ""\}.*`\}[\s\S]*?title=\{urgencyLabel \? `\$\{chipLabel\} — \$\{urgencyLabel\}` : chipLabel\}\s*aria-label=\{urgencyLabel \? `.*` : undefined\}\s*draggable=\{!bulkActionBusy\}\s*onDragStart=\{\(e\) => \{/,
   );
   assert.match(entityViewJsx, /e\.dataTransfer\.setData\("text\/plain", `\$\{record\.id\}\|\$\{dayKey\}`\);\s*e\.dataTransfer\.effectAllowed = "move";/);
   // The day cell itself must be a real drop target, highlighted only while actually dragged over --
@@ -31091,6 +31091,168 @@ test("the exported EntityView's Calendar view flags an overdue/due-soon record's
         doneChip.classList.contains("calendar-record-chip-overdue"),
         false,
         "a record whose own status is already 'Done' must not be flagged overdue even with an identical past dueDate",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2006: ports the live preview's own round-2006 fix (EntityPanel.tsx)
+ * to codegen.ts's exported app -- this CalendarView chip's visible text
+ * (chipLabel) is CSS-ellipsis-truncated and, per a live Playwright session
+ * at a normal 1400px desktop viewport (not just a narrow phone width),
+ * really can shrink down to a single unreadable glyph once the row's other
+ * always-visible action buttons crowd it. Before this fix, `title` only
+ * ever carried the overdue/due-soon urgency text (`undefined` for the
+ * common non-urgent case), never the chip's own label, leaving no way to
+ * recover the truncated text on hover. Same Task fixture as the test just
+ * above, reused for the overdue case; a plain Appointment record (no
+ * deadline-named field, so never urgency-flagged) covers the common case.
+ */
+test("the exported EntityView's Calendar record chip always carries its own label in its title tooltip, not just the overdue/due-soon urgency text", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const taskEntity = {
+    name: "Task",
+    label: "Task",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Todo", "Done"] },
+      { name: "dueDate", label: "Due", type: "date", required: false },
+    ],
+  };
+  const records = [{ id: 1, title: "Overdue task", status: "Todo", dueDate: isoDateOffset(-2) }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Task") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: taskEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const calendarToggle = container.querySelectorAll(".view-toggle-btn")[2] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".calendar-record-chip").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const chip = container.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(
+        chip.getAttribute("title"),
+        "Overdue task — Overdue",
+        "an overdue record's chip title must combine its own label with the urgency text, not drop the label",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the exported EntityView's Calendar record chip exposes its own label via title even with no urgency to report", async () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "Appointment",
+          fields: [
+            { name: "title", label: "Title", type: "text", required: true },
+            { name: "date", label: "Date", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const records = [{ id: 1, title: "Dana's appointment", date: new Date().toISOString().slice(0, 10) }];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Appointment") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const appointmentEntity = withDate.spec.entities.find((e) => e.name === "Appointment")!;
+      const props = {
+        entity: appointmentEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const calendarToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".calendar-record-chip").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const chip = container.querySelector(".calendar-record-chip") as HTMLButtonElement;
+      assert.equal(
+        chip.getAttribute("title"),
+        "Dana's appointment",
+        "a non-urgent record's chip must expose its own label via title, not leave the tooltip empty",
       );
     });
   } finally {

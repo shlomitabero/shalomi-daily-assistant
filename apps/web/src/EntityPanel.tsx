@@ -1116,7 +1116,25 @@ function CalendarView({
                     className={`calendar-record-chip${
                       record.id === moveErrorId ? " calendar-record-chip-move-error" : ""
                     }${urgency === "overdue" ? " calendar-record-chip-overdue" : urgency === "dueSoon" ? " calendar-record-chip-due-soon" : ""}`}
-                    title={urgencyLabel ?? undefined}
+                    // Round 2006: this chip's own visible text is `chipLabel`,
+                    // truncated with CSS `text-overflow: ellipsis` (round
+                    // 1351's own comment above already documents it can shrink
+                    // to "an unreadable single-glyph blob" once the row's other
+                    // always-visible action buttons crowd it) -- live Playwright
+                    // session confirmed this happens on a perfectly normal
+                    // 1400px desktop viewport too, not just the narrow phone
+                    // widths round 1351 tested, rendering as little as one
+                    // letter plus a clipped ellipsis. `title` used to be set to
+                    // `urgencyLabel` alone (or nothing at all for the common
+                    // non-overdue case), never `chipLabel` itself, so there was
+                    // no way for a sighted hover user to recover the truncated
+                    // text -- breaking the exact convention this file already
+                    // follows everywhere else text can be clipped (the
+                    // `.longtext-cell` span a few hundred lines up unconditionally
+                    // sets `title={String(value)}`). Now always includes
+                    // `chipLabel`, with the urgency text appended exactly like
+                    // `aria-label` already did below.
+                    title={urgencyLabel ? `${chipLabel} — ${urgencyLabel}` : chipLabel}
                     aria-label={urgencyLabel ? `${chipLabel} — ${urgencyLabel}` : undefined}
                     draggable={!readOnly && !bulkActionBusy}
                     disabled={readOnly}
