@@ -281,7 +281,17 @@ export default function Dashboard() {
         {!sectionErrors.opportunities && activeOpportunities.slice(0, 3).map((o) => (
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-row">
             <span className="opp-title">{o.title}</span>
-            <span className="opp-profit">{o.netProfitMid != null ? formatMoney(o.netProfitMid, 0) : 'חסר מידע'}</span>
+            {/* A losing draft (netProfitMid < 0, a documented real possibility
+                whenever costs exceed a low revenue estimate - see
+                ranking.js's own comment on why a net-loss opportunity must
+                never be recommended as "the next action") rendered in the
+                exact same dim gray as a winning one - the one profit/loss
+                figure in this app that never got the red/green treatment
+                net-profit-box, the cash boxes, and now the status badges all
+                already have. */}
+            <span className={`opp-profit ${o.netProfitMid != null ? (o.netProfitMid >= 0 ? 'positive' : 'negative') : ''}`}>
+              {o.netProfitMid != null ? formatMoney(o.netProfitMid, 0) : 'חסר מידע'}
+            </span>
           </Link>
         ))}
       </section>

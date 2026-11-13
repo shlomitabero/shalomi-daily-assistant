@@ -166,7 +166,15 @@ export default function Opportunities() {
               <span className={`badge badge-${o.status}`}>{STATUS_LABEL[o.status] ?? o.status}</span>
             </div>
             <div className="opp-card-bottom">
-              <span>{o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}</span>
+              {/* A losing draft (netProfitMid < 0, a documented real
+                  possibility whenever costs exceed a low revenue estimate)
+                  read in the exact same dim gray as a winning one - the
+                  same gap just fixed on the dashboard's own equivalent
+                  figure, and on net-profit-box/cash-boxes/status badges
+                  everywhere else in this app. */}
+              <span className={o.netProfitMid != null ? (o.netProfitMid >= 0 ? 'positive' : 'negative') : undefined}>
+                {o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}
+              </span>
               <span>סיכון: {riskLevelLabel(o.riskLevel)}</span>
             </div>
           </Link>
@@ -186,7 +194,9 @@ export default function Opportunities() {
                 <span className={`badge badge-${o.status}`}>{STATUS_LABEL[o.status] ?? o.status}</span>
               </div>
               <div className="opp-card-bottom">
-                <span>{o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}</span>
+                <span className={o.netProfitMid != null ? (o.netProfitMid >= 0 ? 'positive' : 'negative') : undefined}>
+                  {o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}
+                </span>
                 <span>סיכון: {riskLevelLabel(o.riskLevel)}</span>
               </div>
             </Link>
