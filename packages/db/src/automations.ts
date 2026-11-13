@@ -1080,8 +1080,21 @@ export function disableAutomationRulesForEntity(db: ForgeDatabase, projectId: st
  * injection risk from a field name containing a regex metacharacter.
  */
 function templateReferencesField(template: string, fieldName: string): boolean {
+  // Round 2001: case-insensitive, for the identical reason the SQL
+  // comparison in disableAutomationRulesForField below needed the same fix
+  // -- a rule's messageTemplate was written against whatever casing the
+  // field had at the time, and a case-only field rename (reachable via
+  // checkpoint restore, which never disables/rewrites a referencing rule
+  // for one -- see resolveStoredFieldName's own doc comment, apps/api/src/
+  // automations.ts) can leave the CURRENT casing passed in here differing
+  // from the placeholder text a rule's own messageTemplate still carries.
+  // SAFE_FIELD_NAME (packages/shared/src/index.ts) guarantees every field
+  // name is a plain ASCII identifier, so a plain .toLowerCase() comparison
+  // is exact and safe here, the same way it already is everywhere else in
+  // this codebase that compares a field name case-insensitively.
+  const target = fieldName.toLowerCase();
   for (const match of template.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
-    if (match[1] === fieldName) return true;
+    if (match[1].toLowerCase() === target) return true;
   }
   return false;
 }
@@ -1117,6 +1130,36 @@ function templateReferencesField(template: string, fieldName: string): boolean {
  *
  * Returns the number of rules actually disabled, same reason as
  * disableAutomationRulesForEntity's own return value.
+ *
+ * Round 2001: the direct UPDATE's own `fieldName = ? OR toField = ?`
+ * compared both sides as plain SQLite TEXT -- BINARY collation by default,
+ * case-SENSITIVE -- but a rule's own stored fieldName/toField can
+ * legitimately differ in case from the CURRENT casing this function is
+ * called with. A rule created while a field was named "status" keeps that
+ * exact casing in its own row forever; migrate.ts's own case-only-rename
+ * tolerance (prevFieldByLowerName, confirmed by this file's own
+ * resolveStoredFieldName/readRecordField doc comments in apps/api/src/
+ * automations.ts, which exist specifically because this drift is real and
+ * ongoing, resolved dynamically at fire time rather than ever rewritten
+ * here) never updates a referencing rule's stored casing to match --
+ * reachable in practice via a checkpoint restore to an older spec whose
+ * field had a different case (migrate.ts's field loop has no collision
+ * guard forcing an exact-casing match the way its entity-level one does).
+ * So a LATER diffAndMigrate call that narrows that same field's enum
+ * values or changes its type -- precisely the two real callers of this
+ * function that exist specifically to catch "this rule's condition can
+ * never be satisfied again" -- passed the field's CURRENT casing
+ * ("Status") and silently matched zero rows against the rule's own
+ * stale-cased ("status") row, leaving a genuinely broken rule enabled
+ * forever with no warning. Confirmed directly: a field_equals rule
+ * (fieldName: "status") survives an enum-narrowing refine completely
+ * untouched the moment that same refine also case-renames the field to
+ * "Status", while the byte-identical narrowing with no case change
+ * correctly disables it. LOWER() is ASCII-only in stock SQLite (no ICU
+ * extension loaded here), which is exactly sufficient: SAFE_FIELD_NAME
+ * (packages/shared/src/index.ts) guarantees every field name is a plain
+ * ASCII identifier, the same guarantee every other case-insensitive field-
+ * name comparison in this codebase already relies on.
  */
 export function disableAutomationRulesForField(
   db: ForgeDatabase,
@@ -1126,7 +1169,9 @@ export function disableAutomationRulesForField(
 ): number {
   const now = new Date().toISOString();
   const directResult = db
-    .prepare("UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND enabled = 1 AND (fieldName = ? OR toField = ?)")
+    .prepare(
+      "UPDATE automation_rules SET enabled = 0, updatedAt = ? WHERE projectId = ? AND entityName = ? AND enabled = 1 AND (LOWER(fieldName) = LOWER(?) OR LOWER(toField) = LOWER(?))",
+    )
     .run(now, projectId, entityName, fieldName, fieldName);
   // A second, separate pass: only the rules the direct UPDATE above didn't
   // already catch (enabled = 1 still holds, since that update just ran)

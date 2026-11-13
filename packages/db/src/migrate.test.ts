@@ -2227,6 +2227,63 @@ test("diffAndMigrate disables a field_equals automation rule whose stored fieldV
   assert.equal(getAutomationRule(db, "proj1", deadRule.id)!.enabled, false);
 });
 
+/**
+ * Round 2001: the exact same enum-narrowing disable as the test just above,
+ * except the field ALSO underwent a case-only rename ("status" -> "Status")
+ * in the same refine -- a benign no-op diffAndMigrate's own
+ * prevFieldByLowerName fallback already treats as "the same field,
+ * survived" (so the rule above correctly still sees this as a surviving
+ * field, not a removed one). The rule's own stored `fieldName` column keeps
+ * whatever casing existed when it was created ("status") -- migrate.ts
+ * never rewrites it on a case-only rename (see resolveStoredFieldName's own
+ * doc comment, apps/api/src/automations.ts, for why that drift is real and
+ * deliberately left for dynamic resolution at fire time instead).
+ * disableAutomationRulesForField (packages/db/src/automations.ts) used to
+ * compare `fieldName = ?`/`toField = ?` with plain SQLite BINARY (case-
+ * sensitive) equality against the field's CURRENT casing ("Status") --
+ * silently matching zero rows against this rule's own stale-cased
+ * ("status") row, leaving a rule whose matchValue can never be satisfied
+ * again enabled forever, with no warning anywhere.
+ */
+test("diffAndMigrate still disables a field_equals automation rule over a lost enum value even when that same refine also case-renames the field", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  applyMigrations(db, "proj1", spec);
+  const deadRule = insertAutomationRule(db, {
+    projectId: "proj1",
+    entityName: "Customer",
+    trigger: "field_equals",
+    fieldName: "status",
+    fieldValue: "New",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "+15550001111",
+    messageTemplate: "Status changed!",
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        ...spec.entities[0],
+        fields: spec.entities[0].fields.map((f) => (f.name === "status" ? { ...f, name: "Status", enumValues: ["Won"] } : f)),
+      },
+      spec.entities[1],
+    ],
+  };
+  const changes = diffAndMigrate(db, "proj1", spec, nextSpec);
+
+  assert.ok(
+    !changes.some((c) => c.type === "new_column" || c.type === "type_changed"),
+    "a case-only field rename combined with an enum narrowing must still be treated as the same surviving column, not a new/retyped one",
+  );
+  assert.equal(
+    getAutomationRule(db, "proj1", deadRule.id)!.enabled,
+    false,
+    "the rule's own stale-cased fieldName must still be matched and disabled, not silently skipped over a casing mismatch",
+  );
+});
+
 test("diffAndMigrate leaves a field_equals automation rule enabled when an enum field's enumValues change without dropping the rule's own value", () => {
   const db = openDatabase(":memory:");
   ensureAutomationRulesTable(db);
