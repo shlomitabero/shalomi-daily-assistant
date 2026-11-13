@@ -20408,6 +20408,100 @@ test("changing a field's type pre-build disables a field_equals automation rule 
 });
 
 /**
+ * Round 2002: the PATCH .../fields/:fieldName/type route's own round-1100/
+ * 1492 revalidation loop above (`rule.fieldName === field.name`,
+ * `rule.toField === field.name`, `rule.fieldOperator` check) compares a
+ * rule's stored field name against the field's CURRENT name with plain,
+ * case-sensitive `===` -- unlike every other place in this codebase that
+ * resolves a rule's stored field name (`resolveStoredFieldName`,
+ * apps/api/src/automations.ts, and this same route's own sibling
+ * `disableAutomationRulesForField`/`templateReferencesField`,
+ * packages/db/src/automations.ts, fixed for this identical drift in round
+ * 2001). A rule's own stored casing is never rewritten on a case-only field
+ * rename -- diffAndMigrate's own field-level sweep (packages/db/src/
+ * migrate.ts, prevFieldByLowerName / nextFieldNamesLower) deliberately
+ * treats that as a benign no-op survival, by design, so the rule keeps
+ * referencing the OLD-cased name forever. Reproduced here exactly like
+ * round 2001's own migrate.test.ts case: a real refine case-renames
+ * "score" -> "Score" (diffAndMigrate correctly leaves the rule alone, and
+ * enabled, since nothing was actually removed), then a later PATCH to this
+ * very field's type breaks its fieldOperator (number -> text, the same
+ * break round 1492's own test above uses) -- but since `rule.fieldName`
+ * ("score") !== `field.name` ("Score"), this loop's own fieldOperator
+ * re-check never runs, and the now-permanently-dead rule is never disabled.
+ */
+test("changing a field's type disables a referencing automation rule even when the rule's stored fieldName casing has drifted from the field's current name via an earlier case-only rename", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `prebuild-type-change-casedrift-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const specV1: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Lead",
+          fields: [
+            { name: "score", type: "number", required: true },
+            { name: "email", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Leads", description: "test", spec: specV1 });
+    diffAndMigrate(db, projectId, undefined, specV1);
+
+    const baseRule = { trigger: "field_equals", actionType: "send_whatsapp", toMode: "static", toNumber: "972500000000", messageTemplate: "New lead!" };
+    const createScoreRule = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ...baseRule, fieldName: "score", fieldValue: "50", fieldOperator: "greater_than" }),
+    });
+    assert.equal(createScoreRule.status, 201);
+    const { rule: scoreRule } = (await createScoreRule.json()) as { rule: { id: string } };
+
+    // A real refine that only changes "score"'s letter-case to "Score" --
+    // diffAndMigrate must leave the rule alone (same field, same data), the
+    // same no-op survival round 2001's own write-up documents.
+    const specV2: ProductSpec = { ...specV1, entities: [{ ...specV1.entities[0], fields: specV1.entities[0].fields.map((f) => (f.name === "score" ? { ...f, name: "Score" } : f)) }] };
+    diffAndMigrate(db, projectId, specV1, specV2);
+    updateProjectSpec(db, projectId, specV2);
+
+    const listAfterRenameRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules: rulesAfterRename } = (await listAfterRenameRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    assert.equal(
+      rulesAfterRename.find((r) => r.id === scoreRule.id)!.enabled,
+      true,
+      "sanity check: a pure case-only rename must not disable the rule",
+    );
+
+    // Breaks the score rule's own fieldOperator (number -> text has no
+    // numeric ordering at all) -- identical to round 1492's own test, just
+    // addressed through the field's new "Score" casing instead of "score".
+    const breakRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead/fields/Score/type`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ type: "text" }),
+    });
+    assert.equal(breakRes.status, 200);
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules } = (await listRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    assert.equal(
+      rules.find((r) => r.id === scoreRule.id)!.enabled,
+      false,
+      "the rule whose fieldOperator the new type actually breaks must be disabled, even though its stored fieldName (\"score\") differs from the field's current name (\"Score\") only by letter case",
+    );
+  });
+});
+
+/**
  * Round 967: a schedule rule's scheduleTimeUtc/scheduleDaysOfWeek are now
  * wall-clock values in its own scheduleTimezone (see isScheduledRuleDue's
  * own doc comment, apps/api/src/automations.ts), not literal UTC --

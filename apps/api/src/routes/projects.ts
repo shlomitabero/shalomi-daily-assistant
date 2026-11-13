@@ -4894,14 +4894,23 @@ export function createProjectsRouter(
           for (const rule of listAutomationRules(db, project.id)) {
             if (rule.entityName !== entity.name || !rule.enabled) continue;
             let stillValid = true;
-            if (rule.fieldName === field.name && rule.fieldValue) {
+            // Round 2002: case-insensitive, same reason and same fix as
+            // packages/db/src/automations.ts's disableAutomationRulesForField/
+            // templateReferencesField got in round 2001 -- a rule's stored
+            // fieldName/toField is never rewritten on a case-only field
+            // rename (migrate.ts's own prevFieldByLowerName/nextFieldNamesLower
+            // leniency treats that as a benign no-op survival), so a plain
+            // `===` here missed every rule whose casing had drifted,
+            // silently skipping the very re-validation this loop exists to
+            // perform.
+            if (rule.fieldName && rule.fieldName.toLowerCase() === field.name.toLowerCase() && rule.fieldValue) {
               try {
                 validateAutomationFieldValue(nextField, rule.fieldValue);
               } catch {
                 stillValid = false;
               }
             }
-            if (stillValid && rule.toField === field.name) {
+            if (stillValid && rule.toField && rule.toField.toLowerCase() === field.name.toLowerCase()) {
               try {
                 validateAutomationToField(nextField);
               } catch {
@@ -4922,7 +4931,7 @@ export function createProjectsRouter(
             // The exact same "permanently, silently dead rule" failure shape
             // this loop exists to prevent for fieldValue/toField, reopened by
             // the one field it didn't know about.
-            if (stillValid && rule.fieldName === field.name && rule.fieldOperator) {
+            if (stillValid && rule.fieldName && rule.fieldName.toLowerCase() === field.name.toLowerCase() && rule.fieldOperator) {
               try {
                 validateAutomationFieldOperator(nextField, rule.fieldOperator);
               } catch {
