@@ -517,6 +517,34 @@ const CRM_ENTITIES_EN: EntitySpec[] = [
 
 const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
   {
+    // Round 1999: TeamMember's field set is the matching domainEntities.ts
+    // Employee domain rule's own field set (name/role/email/phone/active)
+    // minus `role`/`active` -- a strict subset, the exact bug class rounds
+    // 1898/1899 already fixed for the Restaurant/Appointments Customer
+    // entity and the CRM Deal entity. This template's own stored
+    // description ("Projects, milestones, tasks and team members.") contains
+    // the bare substring "team member", one of the Employee rule's own
+    // keywords -- so /refine's combinedDescription re-triggers it on every
+    // single refine of a project built from this template, regardless of
+    // what the new instruction actually asks for. Before round 1911, that
+    // regenerated "Employee" candidate was added as an unrelated, duplicate
+    // entity (fixed there); round 1911's own entityMergeKey/ENTITY_ALIAS_GROUPS
+    // fix made it correctly fold into this TeamMember entity instead -- but
+    // that round's own doc comment explicitly treats the resulting field
+    // bolt-on ("gaining any genuinely new fields like role/active") as
+    // expected, normal merge behavior, never circling back to apply the
+    // same preemptive-field-parity fix rounds 1898/1899 already established
+    // for this exact symptom. Confirmed live via mergeRefinedSpec +
+    // HeuristicSpecProvider.generate against this template's own real
+    // description: an unrelated refine instruction ("Add a Notes field to
+    // Milestone") silently added both `role` and `active` to every
+    // TeamMember record. `active` is added here verbatim; `jobTitle`
+    // already covers the same real-world concept `role` otherwise would
+    // (both describe a team member's position), but merges by exact field
+    // NAME, not meaning, so a bare `role` field is still added below to
+    // fully close the gap -- the identical "mirror the domain rule's field
+    // list" approach every round in this family uses, with no exception for
+    // a near-synonymous existing field.
     name: "TeamMember",
     label: "איש צוות",
     fields: [
@@ -524,6 +552,8 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
       { name: "email", label: "אימייל", type: "text" },
       { name: "phone", label: "טלפון", type: "text" },
       { name: "jobTitle", label: "תפקיד", type: "text" },
+      { name: "role", label: "תפקיד", type: "text" },
+      { name: "active", label: "פעיל/ה", type: "boolean" },
     ],
   },
   {
@@ -589,6 +619,7 @@ const PROJECT_TRACKER_ENTITIES: EntitySpec[] = [
 
 const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
   {
+    // Round 1999: see the Hebrew PROJECT_TRACKER_ENTITIES' own comment above.
     name: "TeamMember",
     label: "Team Member",
     fields: [
@@ -596,6 +627,8 @@ const PROJECT_TRACKER_ENTITIES_EN: EntitySpec[] = [
       { name: "email", label: "Email", type: "text" },
       { name: "phone", label: "Phone", type: "text" },
       { name: "jobTitle", label: "Job Title", type: "text" },
+      { name: "role", label: "Role", type: "text" },
+      { name: "active", label: "Active", type: "boolean" },
     ],
   },
   {
@@ -767,6 +800,14 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
     ],
   },
   {
+    // Round 1999: see PROJECT_TRACKER_ENTITIES's own TeamMember comment --
+    // this template's own description ("Clients, staff, services and
+    // scheduled appointments.") contains the bare word "staff", one of the
+    // same Employee domain rule's own keywords (round 1911's own write-up
+    // already names this exact second alias), so this entity has the
+    // identical gap. Unlike TeamMember, Staff has no existing field that
+    // already covers "role" (no jobTitle-style field at all), so both
+    // fields are added here with zero redundancy.
     name: "Staff",
     label: "צוות",
     fields: [
@@ -774,6 +815,8 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
       { name: "specialty", label: "תחום התמחות", type: "text" },
       { name: "phone", label: "טלפון", type: "text" },
       { name: "email", label: "אימייל", type: "text" },
+      { name: "role", label: "תפקיד", type: "text" },
+      { name: "active", label: "פעיל/ה", type: "boolean" },
     ],
   },
   {
@@ -833,6 +876,7 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
     ],
   },
   {
+    // Round 1999: see the Hebrew APPOINTMENTS_ENTITIES' own Staff comment above.
     name: "Staff",
     label: "Staff",
     fields: [
@@ -840,6 +884,8 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
       { name: "specialty", label: "Specialty", type: "text" },
       { name: "phone", label: "Phone", type: "text" },
       { name: "email", label: "Email", type: "text" },
+      { name: "role", label: "Role", type: "text" },
+      { name: "active", label: "Active", type: "boolean" },
     ],
   },
   {

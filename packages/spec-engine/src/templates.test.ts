@@ -687,6 +687,118 @@ test("the CRM template's Deal entity has an owner field, matching domainEntities
 });
 
 /**
+ * Round 1999: the identical "curated template entity field-set is a strict
+ * subset of its own matching domainEntities.ts rule" bug class as the
+ * Customer (rounds 1304/1898) and Deal (round 1899) fixes above -- but
+ * reachable only via round 1911's own entityMergeKey/ENTITY_ALIAS_GROUPS
+ * alias ("employee"/"teammember"/"staff" all fold into one merge key), so
+ * neither of those rounds' exact-entity-name surveys would ever have
+ * matched it. The Project & Team Tracker template's own stored description
+ * ("Projects, milestones, tasks and team members.") contains the bare
+ * substring "team member", one of the Employee domain rule's own keywords
+ * -- so /refine's combinedDescription re-triggers it on every refine of a
+ * project built from this template, and mergeRefinedSpec's alias-aware
+ * entity match (round 1911) folds the regenerated "Employee" candidate's
+ * fields into this template's own "TeamMember" entity, silently adding
+ * `role`/`active` regardless of what the refine instruction actually
+ * asked for. Confirmed live via a direct HeuristicSpecProvider.generate +
+ * mergeRefinedSpec repro against this exact template before the fix: an
+ * unrelated refine instruction ("Add a Notes field to Milestone") added
+ * both fields to every TeamMember record.
+ */
+test("the Project Tracker template's TeamMember entity has role/active fields, matching domainEntities.ts's own Employee domain rule (the entity round 1911's TeamMember/Employee alias merges it with)", () => {
+  const projectTrackerTemplate = TEMPLATES.find((t) => t.id === "project-tracker");
+  assert.ok(projectTrackerTemplate, 'expected a "project-tracker" template to exist');
+
+  const teamMember = projectTrackerTemplate!.spec.entities.find((e) => e.name === "TeamMember");
+  assert.ok(teamMember, "expected the Project Tracker template to have a TeamMember entity");
+  const role = teamMember!.fields.find((f) => f.name === "role");
+  assert.ok(role, "expected the TeamMember entity to have a role field");
+  assert.equal(role!.type, "text");
+  const active = teamMember!.fields.find((f) => f.name === "active");
+  assert.ok(active, "expected the TeamMember entity to have an active field");
+  assert.equal(active!.type, "boolean");
+
+  const teamMemberEn = projectTrackerTemplate!.specEn.entities.find((e) => e.name === "TeamMember");
+  assert.ok(teamMemberEn, "expected the Project Tracker specEn to have a TeamMember entity");
+  const roleEn = teamMemberEn!.fields.find((f) => f.name === "role");
+  assert.ok(roleEn, "expected the Project Tracker specEn TeamMember entity to have a role field");
+  assert.equal(roleEn!.type, "text");
+  const activeEn = teamMemberEn!.fields.find((f) => f.name === "active");
+  assert.ok(activeEn, "expected the Project Tracker specEn TeamMember entity to have an active field");
+  assert.equal(activeEn!.type, "boolean");
+});
+
+/**
+ * Round 1999: the identical gap one entity over -- the Appointments &
+ * Clients template's own Staff entity is the SECOND alias round 1911's own
+ * write-up names (`/\bstaff\b/` is also one of the Employee domain rule's
+ * own keywords, and this template's own description, "Clients, staff,
+ * services and scheduled appointments.", contains it). Unlike TeamMember,
+ * Staff has no existing field that already covers "role" at all, so this
+ * is a clean addition with no near-duplicate field to consider.
+ */
+test("the Appointments template's Staff entity has role/active fields, matching domainEntities.ts's own Employee domain rule (the entity round 1911's Staff/Employee alias merges it with)", () => {
+  const appointmentsTemplate = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointmentsTemplate, 'expected an "appointments" template to exist');
+
+  const staff = appointmentsTemplate!.spec.entities.find((e) => e.name === "Staff");
+  assert.ok(staff, "expected the Appointments template to have a Staff entity");
+  const role = staff!.fields.find((f) => f.name === "role");
+  assert.ok(role, "expected the Staff entity to have a role field");
+  assert.equal(role!.type, "text");
+  const active = staff!.fields.find((f) => f.name === "active");
+  assert.ok(active, "expected the Staff entity to have an active field");
+  assert.equal(active!.type, "boolean");
+
+  const staffEn = appointmentsTemplate!.specEn.entities.find((e) => e.name === "Staff");
+  assert.ok(staffEn, "expected the Appointments specEn to have a Staff entity");
+  const roleEn = staffEn!.fields.find((f) => f.name === "role");
+  assert.ok(roleEn, "expected the Appointments specEn Staff entity to have a role field");
+  assert.equal(roleEn!.type, "text");
+  const activeEn = staffEn!.fields.find((f) => f.name === "active");
+  assert.ok(activeEn, "expected the Appointments specEn Staff entity to have an active field");
+  assert.equal(activeEn!.type, "boolean");
+});
+
+/**
+ * Round 1999: the mechanism itself, proven directly against mergeRefinedSpec
+ * and the real heuristic generator rather than just pinning the template's
+ * own field list -- without this, a future change to either the template or
+ * the Employee domain rule could silently reopen the exact live bug this
+ * round fixed (an unrelated refine bolting unrequested fields onto every
+ * TeamMember/Staff record) with no test catching it, the same "field-list
+ * assertion alone doesn't prove the merge gap is closed" gap this family's
+ * other tests don't need to worry about (they fix a field that was purely
+ * missing, never reachable via an alias merge in the first place).
+ */
+test("refining a Project/Team Tracker or Appointments project with an unrelated instruction adds no new fields to TeamMember/Staff, now that the template already has everything the aliased Employee domain rule would add", async () => {
+  const { HeuristicSpecProvider } = await import("./heuristic.js");
+  const { mergeRefinedSpec } = await import("./index.js");
+  const provider = new HeuristicSpecProvider();
+
+  const projectTracker = TEMPLATES.find((t) => t.id === "project-tracker")!;
+  const combinedDescription1 = `${projectTracker.description}\nAdd a "Notes" long text field to Milestone.`;
+  const candidate1 = await provider.generate(combinedDescription1, false);
+  const merged1 = mergeRefinedSpec(projectTracker.specEn, candidate1);
+  const teamMemberBefore = new Set(projectTracker.specEn.entities.find((e) => e.name === "TeamMember")!.fields.map((f) => f.name));
+  const teamMemberAfter = merged1.entities.find((e) => e.name === "TeamMember")!.fields.map((f) => f.name);
+  for (const name of teamMemberAfter) {
+    assert.ok(teamMemberBefore.has(name), `refining Project Tracker with an unrelated instruction must not add a new TeamMember field, but added "${name}"`);
+  }
+
+  const appointments = TEMPLATES.find((t) => t.id === "appointments")!;
+  const combinedDescription2 = `${appointments.description}\nAdd a "notes" field to Service.`;
+  const candidate2 = await provider.generate(combinedDescription2, false);
+  const merged2 = mergeRefinedSpec(appointments.specEn, candidate2);
+  const staffBefore = new Set(appointments.specEn.entities.find((e) => e.name === "Staff")!.fields.map((f) => f.name));
+  const staffAfter = merged2.entities.find((e) => e.name === "Staff")!.fields.map((f) => f.name);
+  for (const name of staffAfter) {
+    assert.ok(staffBefore.has(name), `refining Appointments with an unrelated instruction must not add a new Staff field, but added "${name}"`);
+  }
+});
+
+/**
  * Round 1305: the Project Tracker template's own Project entity (name/
  * description/status/deadline/budget/owner) is missing a `client` field,
  * unlike domainEntities.ts's matching Project domain rule -- whose own
