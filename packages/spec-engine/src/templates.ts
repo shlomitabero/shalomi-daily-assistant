@@ -851,6 +851,30 @@ const APPOINTMENTS_ENTITIES: EntitySpec[] = [
         enumLabels: { scheduled: "מתוכנן", completed: "הושלם", cancelled: "בוטל", "no-show": "לא הגיע" },
       },
       { name: "notes", label: "הערות", type: "longtext" },
+      // Round 2008: this entity's own description ("פגישה מתוזמנת עם לקוח.")
+      // and this template's own stored description ("לקוחות, צוות, שירותים
+      // ותורים מתוזמנים.") both contain the bare word "תור"/"appointment",
+      // one of domainEntities.ts's own Appointment domain rule's keywords --
+      // so /refine's combinedDescription re-triggers that rule on literally
+      // any future refine of a project built from this template, and
+      // mergeRefinedSpec's exact-name entity match (no alias needed, both
+      // are named "Appointment") folds the regenerated candidate's fields
+      // into this template's own Appointment entity, same mechanism as
+      // round 1999's TeamMember/Staff fix. The domain rule's own `customerName`
+      // (text, required) field was missing here by name -- unlike TeamMember/
+      // role, it can't just be mirrored verbatim as `required: true`: this
+      // entity already has a real `customer` relation (richer than the
+      // domain rule's denormalized shape, which has no Customer entity to
+      // link to at all), and making a second, required, free-text "who is
+      // this appointment for" field would force retyping the same customer's
+      // name on every single record already identified by the relation
+      // picker just above. Added here anyway, but deliberately left
+      // optional, to close the real, live-reproduced bug (confirmed via a
+      // direct HeuristicSpecProvider.generate + mergeRefinedSpec repro: an
+      // unrelated refine instruction silently added a required `customerName`
+      // text field to every Appointment record) without the required-field
+      // UX regression a strict mirror would add.
+      { name: "customerName", label: "שם לקוח", type: "text" },
     ],
   },
 ];
@@ -917,6 +941,11 @@ const APPOINTMENTS_ENTITIES_EN: EntitySpec[] = [
         enumLabels: { scheduled: "Scheduled", completed: "Completed", cancelled: "Cancelled", "no-show": "No-show" },
       },
       { name: "notes", label: "Notes", type: "longtext" },
+      // Round 2008: see the Hebrew APPOINTMENTS_ENTITIES' own comment above --
+      // same fix, same reasoning (deliberately optional, not a strict mirror
+      // of the domain rule's `required: true`), kept in sync with its own
+      // Appointment entity.
+      { name: "customerName", label: "Customer Name", type: "text" },
     ],
   },
 ];

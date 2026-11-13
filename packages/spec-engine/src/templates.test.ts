@@ -1319,3 +1319,71 @@ test("the Inventory & Products template's PurchaseOrder and StockMovement entiti
     assert.equal(productSupplier!.required, false, "a product with no tracked supplier yet is a normal, legitimate state -- deliberately left optional");
   }
 });
+
+/**
+ * Round 2008: the identical "curated template entity field-set is a strict
+ * subset of its own matching domainEntities.ts rule" bug class as the
+ * Customer (rounds 1304/1898), Deal (round 1899), and TeamMember/Staff
+ * (round 1999) fixes above -- found via a live Playwright session (a real
+ * signup, a real "Appointments & Clients" build, then two real refines
+ * against the real heuristic provider). This template's own Appointment
+ * entity ("customer"/"staff"/"service"/"date"/"status"/"notes") is an
+ * exact-name match (no alias needed) for domainEntities.ts's own
+ * Appointment domain rule, whose own `customerName` (text) field was
+ * missing here by name -- so any refine instruction merely containing the
+ * word "appointment" (trivially likely, since the entity itself is named
+ * that) re-triggers the domain rule via /refine's combinedDescription and
+ * mergeRefinedSpec silently bolts `customerName` onto every Appointment
+ * record, regardless of what the instruction actually asked for. Live-
+ * reproduced: refining a real "Appointments & Clients" project with "Add a
+ * reminderSent boolean field to Appointment" added `customerName` (not
+ * `reminderSent`) to the Appointment entity. Unlike TeamMember/role, this
+ * field is deliberately left optional rather than mirroring the domain
+ * rule's `required: true` -- see templates.ts's own comment on this field
+ * for why (it would otherwise force retyping the same customer's name
+ * already captured by this entity's own `customer` relation, on every
+ * single record).
+ */
+test("the Appointments template's Appointment entity has a customerName field, matching domainEntities.ts's own Appointment domain rule", () => {
+  const appointmentsTemplate = TEMPLATES.find((t) => t.id === "appointments");
+  assert.ok(appointmentsTemplate, 'expected an "appointments" template to exist');
+
+  const appointment = appointmentsTemplate!.spec.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointment, "expected the Appointments template to have an Appointment entity");
+  const customerName = appointment!.fields.find((f) => f.name === "customerName");
+  assert.ok(customerName, "expected the Appointment entity to have a customerName field");
+  assert.equal(customerName!.type, "text");
+  assert.equal(customerName!.required, false, "deliberately optional -- see templates.ts's own comment on this field");
+
+  const appointmentEn = appointmentsTemplate!.specEn.entities.find((e) => e.name === "Appointment");
+  assert.ok(appointmentEn, "expected the Appointments specEn to have an Appointment entity");
+  const customerNameEn = appointmentEn!.fields.find((f) => f.name === "customerName");
+  assert.ok(customerNameEn, "expected the Appointments specEn Appointment entity to have a customerName field");
+  assert.equal(customerNameEn!.type, "text");
+  assert.equal(customerNameEn!.required, false, "deliberately optional -- see templates.ts's own comment on this field");
+});
+
+/**
+ * Round 2008: the mechanism itself, proven directly against mergeRefinedSpec
+ * and the real heuristic generator rather than just pinning the template's
+ * own field list -- mirrors round 1999's own identical mechanism test for
+ * TeamMember/Staff. Without this, a future change to either the template or
+ * the Appointment domain rule could silently reopen the exact live bug this
+ * round fixed (an unrelated refine bolting an unrequested field onto every
+ * Appointment record) with no test catching it.
+ */
+test("refining an Appointments & Clients project with an unrelated instruction mentioning \"appointment\" adds no new fields to Appointment, now that the template already has everything the domain rule would add", async () => {
+  const { HeuristicSpecProvider } = await import("./heuristic.js");
+  const { mergeRefinedSpec } = await import("./index.js");
+  const provider = new HeuristicSpecProvider();
+
+  const appointments = TEMPLATES.find((t) => t.id === "appointments")!;
+  const combinedDescription = `${appointments.description}\n\nAdditional requirement: Add a reminderSent boolean field to Appointment.`;
+  const candidate = await provider.generate(combinedDescription, false);
+  const merged = mergeRefinedSpec(appointments.specEn, candidate);
+  const appointmentBefore = new Set(appointments.specEn.entities.find((e) => e.name === "Appointment")!.fields.map((f) => f.name));
+  const appointmentAfter = merged.entities.find((e) => e.name === "Appointment")!.fields.map((f) => f.name);
+  for (const name of appointmentAfter) {
+    assert.ok(appointmentBefore.has(name), `refining Appointments with an unrelated instruction must not add a new Appointment field, but added "${name}"`);
+  }
+});
