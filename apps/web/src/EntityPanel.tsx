@@ -2033,6 +2033,15 @@ export function EntityPanel({
   // indication anything was happening for that entire wait.
   const [csvExportStatus, setCsvExportStatus] = useState<"idle" | "exporting" | "done">("idle");
   const [jsonExportStatus, setJsonExportStatus] = useState<"idle" | "exporting" | "done">("idle");
+  // Round 2017: handleExportIcs's own busy/done feedback, mirroring
+  // csvExportStatus/jsonExportStatus's exact idiom just above -- see
+  // handleExportIcs's own doc comment for why this button needed the
+  // identical fix: monthRecordsForIcsExport() makes the same real,
+  // potentially multi-second network round-trip once the record-cap bypass
+  // (round 1678) is active, and this button (unlike its siblings) still
+  // gave zero visual indication anything was happening for that entire
+  // wait, with no reentrancy guard either.
+  const [icsExportStatus, setIcsExportStatus] = useState<"idle" | "exporting" | "done">("idle");
   // Round 1006: the calendar view's "Subscribe" button's own status,
   // mirroring copyStatus's exact idle/copied/failed shape just above.
   const [subscribeStatus, setSubscribeStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -4995,6 +5004,16 @@ export function EntityPanel({
     return () => clearTimeout(timer);
   }, [jsonExportStatus]);
 
+  // Round 2017: same transient "done" flash + auto-reset idiom as
+  // csvExportStatus/jsonExportStatus just above -- "exporting" is cleared by
+  // handleExportIcs's own finally block the moment the download is actually
+  // triggered.
+  useEffect(() => {
+    if (icsExportStatus !== "done") return;
+    const timer = setTimeout(() => setIcsExportStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [icsExportStatus]);
+
   /**
    * Round 2004: mirrors recordsForExport's own round-1678/1685 bypass, and
    * handlePrintList's own round-1996 port of it -- icsMonthRecords (just
@@ -5030,13 +5049,29 @@ export function EntityPanel({
    * real calendar app, which CSV can't do. Exports only the records the
    * calendar grid is currently showing (this month, respecting the active
    * search/filter via visibleRecords), not the whole entity.
+   *
+   * Round 2017: unlike its Export CSV/JSON/Copy/Print-list siblings in this
+   * same toolbar (all fixed in rounds 2014-2016), this button gave zero
+   * visual feedback while `await monthRecordsForIcsExport()` was genuinely
+   * in flight -- the same real, potentially multi-second network round-trip
+   * once the record-cap bypass (round 1678, ported to this button in round
+   * 2004) is active -- and had no reentrancy guard, so a second click
+   * mid-flight fired a second, fully redundant export fetch. Same busy/
+   * done idiom as handleExportCsv/handleExportJson just above, scoped to
+   * this button alone.
    */
   async function handleExportIcs() {
     if (!dateField) return;
-    const labelField = calendarChipLabelField(entity, dateField);
-    const monthRecords = await monthRecordsForIcsExport();
-    const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, allEntities, relatedRecords, new Date(), endDateField, orderedFields, lang, projectId);
-    downloadCalendarIcs(ics, entity.name);
+    if (icsExportStatus === "exporting") return;
+    setIcsExportStatus("exporting");
+    try {
+      const labelField = calendarChipLabelField(entity, dateField);
+      const monthRecords = await monthRecordsForIcsExport();
+      const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, allEntities, relatedRecords, new Date(), endDateField, orderedFields, lang, projectId);
+      downloadCalendarIcs(ics, entity.name);
+    } finally {
+      setIcsExportStatus("done");
+    }
   }
 
   /**
@@ -6182,7 +6217,7 @@ export function EntityPanel({
                 type="button"
                 className="secondary ics-export-btn"
                 onClick={handleExportIcs}
-                disabled={icsMonthRecords.length === 0}
+                disabled={icsMonthRecords.length === 0 || icsExportStatus === "exporting"}
               >
                 {/* Round 937: unlike its sibling Export CSV button right
                     next to it (which already says "Export N selected" when
@@ -6191,9 +6226,13 @@ export function EntityPanel({
                     silently missing every other month's records with no
                     warning, confusing anyone expecting "export my bookings"
                     the way Export CSV means "export my records". */}
-                {t("entity.exportIcs.month", {
-                  month: calendarMonth.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" }),
-                })}
+                {icsExportStatus === "exporting"
+                  ? t("entity.exportIcs.busy")
+                  : icsExportStatus === "done"
+                    ? t("entity.exportIcs.done")
+                    : t("entity.exportIcs.month", {
+                        month: calendarMonth.toLocaleDateString(LOCALE[lang], { month: "long", year: "numeric" }),
+                      })}
               </button>
             )}
             {viewMode === "calendar" && dateField && (

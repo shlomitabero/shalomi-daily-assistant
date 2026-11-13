@@ -6382,6 +6382,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // truncated entity). See handleExportCsv's own doc comment just below.
   const [csvExportStatus, setCsvExportStatus] = useState("idle");
   const [jsonExportStatus, setJsonExportStatus] = useState("idle");
+  // Round 2017: handleExportIcs's own busy/done feedback, mirroring
+  // csvExportStatus/jsonExportStatus's exact idiom just above -- see
+  // handleExportIcs's own doc comment for the full gap this closes.
+  const [icsExportStatus, setIcsExportStatus] = useState("idle");
   // Round 1010: mirrors the live Forge AI preview's own EntityPanel.tsx
   // subscribeStatus -- "copied"/"failed" feedback for the calendar view's
   // own "Subscribe" button just below, auto-resetting to "idle" the same
@@ -8632,6 +8636,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     return () => clearTimeout(timer);
   }, [jsonExportStatus]);
 
+  // Round 2017: same transient "done" flash + auto-reset idiom as
+  // csvExportStatus/jsonExportStatus just above.
+  useEffect(() => {
+    if (icsExportStatus !== "done") return;
+    const timer = setTimeout(() => setIcsExportStatus("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [icsExportStatus]);
+
   // Round 1010: the calendar view's own "stays live" companion to
   // handleExportIcs's one-shot download just below -- copies a URL a
   // calendar app (Google/Apple Calendar, a phone) re-fetches on its own
@@ -8697,20 +8709,32 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // The calendar view's own "take it with you" action -- exports exactly
   // the records the calendar grid's current month is showing as a real
   // RFC 5545 .ics calendar.
+  //
+  // Round 2017: mirrors the live Forge AI preview's own EntityPanel.tsx fix
+  // -- unlike its Export CSV/JSON/Copy/Print-list siblings in this same
+  // toolbar (all fixed in rounds 2014-2016), this button gave zero visual
+  // feedback while \`await monthRecordsForIcsExport()\` was genuinely in
+  // flight, and had no reentrancy guard either.
   async function handleExportIcs() {
     if (!dateField) return;
-    const labelField = calendarLabelField(entity, dateField);
-    const monthRecords = await monthRecordsForIcsExport();
-    const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, relatedRecords, new Date(), endDateField, orderedFields);
-    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = \`\${entity.name}.ics\`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    if (icsExportStatus === "exporting") return;
+    setIcsExportStatus("exporting");
+    try {
+      const labelField = calendarLabelField(entity, dateField);
+      const monthRecords = await monthRecordsForIcsExport();
+      const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, relatedRecords, new Date(), endDateField, orderedFields);
+      const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = \`\${entity.name}.ics\`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIcsExportStatus("done");
+    }
   }
 
   // The complement to CSV export: parses an uploaded file, converts it to
@@ -9323,8 +9347,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               </div>
             )}
             {viewMode === "calendar" && dateField && (
-              <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0}>
-                {\`📅 Export \${calendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })} to Calendar (ICS)\`}
+              <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0 || icsExportStatus === "exporting"}>
+                {icsExportStatus === "exporting"
+                  ? "Exporting…"
+                  : icsExportStatus === "done"
+                    ? "✓ Exported"
+                    : \`📅 Export \${calendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })} to Calendar (ICS)\`}
               </button>
             )}
             {viewMode === "calendar" && dateField && (

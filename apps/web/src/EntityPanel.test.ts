@@ -6912,6 +6912,99 @@ test("EntityPanel's Export ICS button fetches every record via GET .../export wh
 });
 
 /**
+ * Round 2017: the Export ICS sequel to rounds 2014/2015/2016's own Export
+ * CSV/JSON, Copy, and Print list busy-state fixes -- handleExportIcs calls
+ * the exact same `await monthRecordsForIcsExport()` (itself a real
+ * `GET .../export` network round-trip once the record-cap bypass is active
+ * for a truncated entity, per round 2004's own fix just above), but unlike
+ * those three siblings, gave zero visual feedback while that fetch was in
+ * flight: no busy label, no disabled state, and a second click mid-flight
+ * fired a second, fully redundant export fetch. Mirrors round 2016's own
+ * delayed-fetch-under-direct-control and reentrancy-check technique exactly.
+ */
+test("EntityPanel's Export ICS button shows a busy label (and disables itself) instead of giving no feedback while the uncapped export fetch is in flight", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const originalFetch = globalThis.fetch;
+    let resolveExport: (() => void) | null = null;
+    let exportFetchCount = 0;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, title: "Acme appointment", date: today }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Appointment/export") {
+        exportFetchCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveExport = resolve;
+        });
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, title: "Acme appointment", date: today },
+              { id: 2, title: "Beta appointment", date: today },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+      assert.ok(document.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".ics-export-btn") !== null);
+
+      const icsBtn = document.querySelector(".ics-export-btn") as HTMLButtonElement;
+      const idleLabel = icsBtn.textContent;
+
+      act(() => {
+        fireEvent.click(icsBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(icsBtn.textContent ?? "", /Exporting/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.strictEqual(icsBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      // A second click while the first fetch is still in flight must not
+      // start a second, fully redundant export fetch -- handleExportIcs's
+      // own `if (icsExportStatus === "exporting") return` guard must catch
+      // it even though fireEvent bypasses the DOM disabled attribute.
+      act(() => {
+        fireEvent.click(icsBtn);
+      });
+      assert.strictEqual(exportFetchCount, 1, "a reentrant click while already exporting must not start a second export fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitForCondition(() => icsBtn.textContent !== idleLabel);
+      assert.match(icsBtn.textContent ?? "", /Exported/, "the button must briefly confirm the export succeeded once the fetch resolves");
+      assert.strictEqual(icsBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * Round 2005: round 804's own fix (see effectivelyVisibleRecords' own doc
  * comment, EntityPanel's recordGroups/effectivelyVisibleRecords definitions)
  * taught effectivelyVisibleRecords to stop applying Table view's

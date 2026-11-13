@@ -34195,6 +34195,148 @@ test("the exported EntityView's Export ICS button fetches every record via GET /
 });
 
 /**
+ * Round 2017: mirrors the live Forge AI preview's own round-2017 fix.
+ * handleExportIcs calls the exact same \`await monthRecordsForIcsExport()\`
+ * as the Export CSV/JSON/Copy/Print-list buttons above (a real network
+ * round-trip once the record-cap bypass is active for a truncated entity),
+ * but unlike those siblings (fixed in rounds 2014-2016), Export ICS gave
+ * zero visual feedback while it was in flight -- no busy label, no disabled
+ * state, and a second click mid-flight fired a second, fully redundant
+ * export fetch. Mirrors the Print list button test's own delayed-fetch-
+ * under-direct-control and reentrancy-check technique exactly.
+ */
+test("the exported EntityView's Export ICS button shows a busy label (and disables itself) instead of giving no feedback while the uncapped export fetch is in flight", async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let resolveExport: (() => void) | null = null;
+  let exportFetchCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Appointment") {
+      return new Response(
+        JSON.stringify({ records: [{ id: 1, customerName: "Acme appointment", date: today }], totalCount: 2, truncated: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/Appointment/export") {
+      exportFetchCount += 1;
+      await new Promise<void>((resolve) => {
+        resolveExport = resolve;
+      });
+      return new Response(
+        JSON.stringify({
+          records: [
+            { id: 1, customerName: "Acme appointment", date: today },
+            { id: 2, customerName: "Beta appointment", date: today },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const appointmentEntity = withDate.spec.entities.find((e) => e.name === "Appointment")!;
+      const props = {
+        entity: appointmentEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(container.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const calendarToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".ics-export-btn")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const icsBtn = container.querySelector(".ics-export-btn") as HTMLButtonElement;
+      const idleLabel = icsBtn.textContent;
+
+      await act(async () => {
+        fireEvent.click(icsBtn);
+      });
+
+      assert.ok(resolveExport, "the uncapped export fetch must have actually started");
+      assert.match(icsBtn.textContent ?? "", /Exporting/, "the button must show a busy label while the uncapped export fetch is genuinely in flight, not its unchanged idle label");
+      assert.equal(icsBtn.disabled, true, "the button must disable itself while the export is in flight, guarding against a reentrant double-click starting a second fetch");
+
+      // A second click while the first fetch is still in flight must not
+      // start a second, fully redundant export fetch -- handleExportIcs's
+      // own \`if (icsExportStatus === "exporting") return\` guard must catch
+      // it even though fireEvent bypasses the DOM disabled attribute.
+      await act(async () => {
+        fireEvent.click(icsBtn);
+      });
+      assert.equal(exportFetchCount, 1, "a reentrant click while already exporting must not start a second export fetch");
+
+      await act(async () => {
+        resolveExport!();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      for (let i = 0; i < 40; i++) {
+        if (icsBtn.textContent !== idleLabel) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.match(icsBtn.textContent ?? "", /Exported/, "the button must briefly confirm the export succeeded once the fetch resolves");
+      assert.equal(icsBtn.disabled, false, "the button must re-enable once the fetch has resolved");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 2005: mirrors the live Forge AI preview's own round-2005 fix.
  * Round 804's own fix (the "even with a group still collapsed from before"
  * test above) taught effectivelyVisibleRecords to stop applying Table
