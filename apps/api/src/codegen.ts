@@ -9158,7 +9158,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       ) : records.length === 0 ? (
         loadError ? null : (
           <div className="empty-state">
-            <p>No records yet — add the first one above.</p>
+            {/* Round 2020: this exported app has no i18n (see
+                formatEntityRecordCount's own doc comment above), so for a
+                Hebrew project this hardcoded-English sentence sits bare
+                inside <html dir="rtl"> with no bidi isolation -- the same
+                failure mode round 1716 found and fixed for phone-number
+                cells (EntityPanel.tsx), just never ported to this file's
+                own untranslated UI chrome. <bdi dir="ltr"> keeps the
+                sentence's own internal LTR word order intact regardless of
+                the surrounding RTL paragraph direction. */}
+            <p><bdi dir="ltr">No records yet — add the first one above.</bdi></p>
           </div>
         )
       ) : (
@@ -9177,8 +9186,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 ✕
               </button>
             )}
+            {/* Round 2020: see the empty-state message's own identical doc
+                comment just above -- same gap, same fix. */}
             <span className="muted entity-record-count">
-              {formatEntityRecordCount(visibleRecords.length, records.length)}
+              <bdi dir="ltr">{formatEntityRecordCount(visibleRecords.length, records.length)}</bdi>
             </span>
             {filterableFields.map((f) => {
               // A filter already set to a related record's id, with that

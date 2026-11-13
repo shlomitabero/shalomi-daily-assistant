@@ -29356,6 +29356,108 @@ test("the exported EntityView shows a record count next to the search box, and i
 });
 
 /**
+ * Round 2020: this exported app has no i18n (formatEntityRecordCount's own
+ * doc comment above), so for a Hebrew project the record-count badge and
+ * the "No records yet" empty-state message stay hardcoded English while
+ * sitting inside <html dir="rtl"> -- the exact same failure mode round
+ * 1716 found and fixed for phone-number cells (EntityPanel.tsx: a bare
+ * digit-and-Latin-script string inside an RTL document gets visually
+ * reordered by the browser's Unicode Bidi Algorithm, e.g. "2 records"
+ * rendering as "records 2"), just never ported to this file's own
+ * untranslated UI chrome. jsdom doesn't implement actual bidi reordering,
+ * so this only checks that both strings are now wrapped in the same
+ * bidi-isolating <bdi dir="ltr"> round 1716 already established as this
+ * codebase's fix for the identical mechanism, exactly as a live-rendered
+ * screenshot of the real exported app (built, installed, and run as its
+ * own standalone server) confirmed was needed.
+ */
+test("the exported EntityView's empty-state message is bidi-isolated against the surrounding RTL document", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ records: [] }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".empty-state")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const emptyStateBdi = container.querySelector(".empty-state bdi[dir='ltr']");
+      assert.ok(emptyStateBdi, "the empty-state message must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(emptyStateBdi!.textContent, "No records yet — add the first one above.");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** Round 2020: see the empty-state test's own doc comment just above -- the record-count badge has the identical gap and the identical fix. */
+test("the exported EntityView's record count badge is bidi-isolated against the surrounding RTL document", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Won" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".entity-record-count")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const recordCountBdi = container.querySelector(".entity-record-count bdi[dir='ltr']");
+      assert.ok(recordCountBdi, "the record-count badge must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(recordCountBdi!.textContent, "2 records");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the live preview's search box (EntityPanel.tsx)
  * wraps the real matched substring in a `<mark className="search-match">`
  * inside each visible cell -- for both a plain text field and an enum
