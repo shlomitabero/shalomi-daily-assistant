@@ -33632,6 +33632,135 @@ test("the exported EntityView's Export ICS button fetches every record via GET /
 });
 
 /**
+ * Round 2005: mirrors the live Forge AI preview's own round-2005 fix.
+ * Round 804's own fix (the "even with a group still collapsed from before"
+ * test above) taught effectivelyVisibleRecords to stop applying Table
+ * view's collapsed-group filter once the user leaves Table view, since
+ * groupFieldName/collapsedGroups are view-mode-agnostic state that survives
+ * switching to Board/Calendar. recordsForExport/printRecordsBypassActive/
+ * monthRecordsForIcsExport (round 1678/1996/2004) each check groupFieldName
+ * on their own, with no matching viewMode check -- so they fire whenever
+ * ANY group-by field is set, in ANY view, even though grouping/collapsing
+ * has zero effect on effectivelyVisibleRecords outside Table view.
+ * Grouping by "status" in Table view, then switching to Board view -- which
+ * has no collapsed-group concept of its own to re-exclude from an uncapped
+ * fetch at all -- still silently disabled the uncapped bypass, defeating
+ * the truncated-list hint's own "export to CSV to get all of them" promise
+ * for a reason that has nothing to do with the view the user is actually
+ * in.
+ */
+test("the exported EntityView's Export CSV button still bypasses the record cap once the user leaves Table view, even with a 'Group by' field still set from before", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  let exportFetched = false;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(
+        JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }], totalCount: 2, truncated: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (method === "GET" && input === "/api/Customer/export") {
+      exportFetched = true;
+      return new Response(
+        JSON.stringify({
+          records: [
+            { id: 1, name: "Acme Corp", status: "New" },
+            { id: 2, name: "Beta Inc", status: "Won" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  let capturedBlob: Blob | null = null;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+    capturedBlob = b;
+    return "blob:mock-url";
+  };
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(container.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const groupBySelect = container.querySelector(".entity-group-by") as HTMLSelectElement;
+      await act(async () => {
+        fireEvent.change(groupBySelect, { target: { value: "status" } });
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".entity-group-header-row").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const boardToggle = container.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(boardToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll(".board-card").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const exportBtn = container.querySelector(".csv-export-btn") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(exportBtn);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedBlob !== null) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      assert.ok(
+        exportFetched,
+        "Export CSV must still call the uncapped GET /api/:entityName/export route once the user has left Table view, even with a 'Group by' field still set from before",
+      );
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one already-loaded record must still be in the export");
+      assert.match(
+        csvText,
+        /Beta Inc/,
+        "a record beyond the capped page must now be included via the uncapped export fetch, even with a stale 'Group by' field set from Table view",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the live preview's EntityPanel.tsx has the identical
  * RecordListPrintSheet call site bug ported here -- it was passing
  * visibleFields (the hidden-filtered column list) instead of orderedFields,

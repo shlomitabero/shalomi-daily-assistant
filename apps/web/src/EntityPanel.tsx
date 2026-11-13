@@ -4720,7 +4720,30 @@ export function EntityPanel({
   // Round 1996: pulled out of recordsForExport's own `if` below so
   // handlePrintList (and the print-list sheet's own records prop) can
   // reuse the identical condition without duplicating it a third time.
-  const recordCapBypassActive = selectedIds.size === 0 && !search.trim() && !Object.values(fieldFilters).some(Boolean) && !groupFieldName && recordListTruncated;
+  //
+  // Round 2005: `groupFieldName` alone, with no `viewMode` check, repeats
+  // the exact mistake round 804 already fixed for effectivelyVisibleRecords
+  // (see its own doc comment a few hundred lines above) -- groupFieldName/
+  // collapsedGroups are view-mode-agnostic state that survives switching to
+  // Board/Calendar, but grouping/collapsing only ever affects
+  // effectivelyVisibleRecords while still in Table view (round 804's own
+  // `viewMode === "table" && recordGroups` gate). So grouping by e.g.
+  // "Status" in Table view, then switching to Board or Calendar view --
+  // where there is no collapsed-group concept left to "re-exclude" from an
+  // uncapped fetch at all -- still silently forced this condition false,
+  // defeating the truncated-list hint's own "export to CSV to get all of
+  // them" promise for Export CSV/JSON/Copy/Print list/Export ICS alike, for
+  // a reason that has nothing to do with the view the user is actually in.
+  // Scoping the exclusion to `viewMode === "table"` (matching round 804's
+  // own gate exactly) keeps today's behavior unchanged inside Table view,
+  // and lets every one of these actions bypass the cap once grouping no
+  // longer has anything to reconcile.
+  const recordCapBypassActive =
+    selectedIds.size === 0 &&
+    !search.trim() &&
+    !Object.values(fieldFilters).some(Boolean) &&
+    !(viewMode === "table" && groupFieldName) &&
+    recordListTruncated;
   // Round 1996: the Print-list-specific narrowing of the condition above --
   // see handlePrintList's own doc comment for why a grouped print (table
   // grouping OR Board view's own columns, `printGroups` above) is excluded

@@ -6546,6 +6546,93 @@ test("EntityPanel's Export ICS button fetches every record via GET .../export wh
 });
 
 /**
+ * Round 2005: round 804's own fix (see effectivelyVisibleRecords' own doc
+ * comment, EntityPanel's recordGroups/effectivelyVisibleRecords definitions)
+ * taught effectivelyVisibleRecords to stop applying Table view's
+ * collapsed-group filter once the user leaves Table view, since
+ * groupFieldName/collapsedGroups are view-mode-agnostic state that survives
+ * switching to Board/Calendar. recordCapBypassActive (round 1678, added
+ * after round 804) never got that same `viewMode === "table"` gating on
+ * its own `groupFieldName` check -- it fires whenever ANY group-by field is
+ * set, in ANY view, even though grouping/collapsing has zero effect on
+ * effectivelyVisibleRecords outside Table view. So grouping by "Status" in
+ * Table view, then switching to Board view -- which has no collapsed-group
+ * concept of its own to "re-exclude" from an uncapped fetch at all -- still
+ * silently disabled the uncapped bypass for Export CSV/JSON/Copy/Print
+ * list/Export ICS alike, defeating the truncated-list hint's own "export to
+ * CSV to get all of them" promise for a reason that has nothing to do with
+ * the view the user is actually in.
+ */
+test("EntityPanel's Export CSV button still bypasses the record cap once the user leaves Table view, even with a 'Group by' field still set from before", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let exportFetched = false;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Deal") {
+        return new Response(
+          JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "new" }], totalCount: 2, truncated: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (input === "/api/projects/proj1/entities/Deal/export") {
+        exportFetched = true;
+        return new Response(
+          JSON.stringify({
+            records: [
+              { id: 1, name: "Acme Corp", status: "new" },
+              { id: 2, name: "Beta Inc", status: "won" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    let capturedBlob: Blob | null = null;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
+      capturedBlob = b;
+      return "blob:mock-url";
+    };
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      assert.ok(document.querySelector(".record-list-truncated-hint"), "the list must actually be truncated for this test to mean anything");
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 1);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+
+      const exportBtn = document.querySelector(".csv-export-btn") as HTMLButtonElement;
+      fireEvent.click(exportBtn);
+
+      await waitForCondition(() => capturedBlob !== null);
+      assert.ok(
+        exportFetched,
+        "Export CSV must still call the uncapped GET .../export route once the user has left Table view, even with a 'Group by' field still set from before",
+      );
+      const csvText = await (capturedBlob as unknown as Blob).text();
+      assert.match(csvText, /Acme Corp/, "the one already-loaded record must still be in the export");
+      assert.match(
+        csvText,
+        /Beta Inc/,
+        "a record beyond the capped page must now be included via the uncapped export fetch, even with a stale 'Group by' field set from Table view",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+});
+
+/**
  * New in round 599: buildCalendarMonth deliberately renders a ranged
  * record's SAME chip on every day it spans (confirmed by the ICS test
  * above), and every one of those chip instances is equally draggable --

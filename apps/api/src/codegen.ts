@@ -8408,16 +8408,34 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // "export to CSV to get all of them" -- but reusing the same capped
   // records state here would make that false. Scoped to the exact case the
   // promise is about: no selection, no active search or column filter, no
-  // grouping (so no collapsed-group exclusion to re-apply), and the live
-  // list genuinely truncated. Outside that scope, nothing changes:
-  // selectedOrAllRecords runs exactly as it always has.
+  // grouping while still in Table view (so no collapsed-group exclusion to
+  // re-apply), and the live list genuinely truncated. Outside that scope,
+  // nothing changes: selectedOrAllRecords runs exactly as it always has.
   async function recordsForExport() {
     // Round 1685: fieldFilters is search's own sibling here -- effectivelyVisibleRecords
     // (just above) filters by both, and this guard's job is "does the capped
     // table on screen already reflect everything the user asked to narrow it
     // to"; checking search alone let a column filter with an empty search
     // box silently bypass straight to the full unfiltered dataset.
-    if (selectedIds.size > 0 || search.trim() || Object.values(fieldFilters).some(Boolean) || groupFieldName || !recordListTruncated) {
+    //
+    // Round 2005: mirrors the live Forge AI preview's own round-2005 fix --
+    // groupFieldName alone, with no viewMode check, repeated the exact
+    // mistake round 804 already fixed for effectivelyVisibleRecords just
+    // above (its own viewMode === "table" && recordGroups gate):
+    // groupFieldName/collapsedGroups survive switching to Board/Calendar,
+    // but grouping/collapsing only ever affects effectivelyVisibleRecords
+    // while still in Table view. Grouping by a field in Table view, then
+    // switching to Board or Calendar (where there is no collapsed-group
+    // concept left to re-exclude at all), still silently forced this
+    // bypass off for a reason that has nothing to do with the view the
+    // user is actually in.
+    if (
+      selectedIds.size > 0 ||
+      search.trim() ||
+      Object.values(fieldFilters).some(Boolean) ||
+      (viewMode === "table" && groupFieldName) ||
+      !recordListTruncated
+    ) {
       return selectedOrAllRecords(records, effectivelyVisibleRecords, selectedIds);
     }
     try {
@@ -8467,9 +8485,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
    * already-loaded records, fetching the full, unsorted-by-group set
    * would print a flat records.length/footer count that no longer
    * matches the sum of each group's own (still-capped) rows.
+   *
+   * Round 2005: mirrors recordsForExport's own round-2005 fix just above --
+   * groupFieldName is only relevant to this exclusion while still in
+   * Table view (printGroups above already understands this: it's null
+   * outside Table/Board view with an actual group to mirror), so this
+   * condition's own groupFieldName term is scoped the same way, instead
+   * of unconditionally forcing the bypass off in Board/Calendar view too.
    */
   const printRecordsBypassActive =
-    selectedIds.size === 0 && !search.trim() && !Object.values(fieldFilters).some(Boolean) && !groupFieldName && recordListTruncated && !printGroups;
+    selectedIds.size === 0 &&
+    !search.trim() &&
+    !Object.values(fieldFilters).some(Boolean) &&
+    !(viewMode === "table" && groupFieldName) &&
+    recordListTruncated &&
+    !printGroups;
   async function handlePrintList() {
     if (printRecordsBypassActive) {
       try {
@@ -8560,9 +8590,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // file. Duplicates recordsForExport's own bypass condition rather than
   // reusing a shared constant, for the identical regex-extraction-test
   // reason documented on printRecordsBypassActive above.
+  //
+  // Round 2005: mirrors recordsForExport's own round-2005 fix -- the
+  // groupFieldName term only matters while still in Table view (see its
+  // own doc comment above), so it's scoped the same way here too, instead
+  // of unconditionally forcing this bypass off in Board/Calendar view.
   async function monthRecordsForIcsExport() {
     if (!dateField) return icsMonthRecords;
-    if (selectedIds.size > 0 || search.trim() || Object.values(fieldFilters).some(Boolean) || groupFieldName || !recordListTruncated) {
+    if (
+      selectedIds.size > 0 ||
+      search.trim() ||
+      Object.values(fieldFilters).some(Boolean) ||
+      (viewMode === "table" && groupFieldName) ||
+      !recordListTruncated
+    ) {
       return icsMonthRecords;
     }
     try {
