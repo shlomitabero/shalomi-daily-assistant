@@ -88,7 +88,7 @@ export default function Approvals() {
           <div key={a.id} className="card">
             <div className="opp-card-top">
               <span className="opp-title">{opp?.title ?? a.opportunityId}</span>
-              <span className="badge">{STATUS_LABEL[a.status] ?? a.status}</span>
+              <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status] ?? a.status}</span>
             </div>
             <p className="hint">פעולה: {actionTypeLabel(a.actionType)}{opp?.status === 'published' && ' — כבר בוצעה'}</p>
             <div className="field-row">

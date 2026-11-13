@@ -163,7 +163,7 @@ export default function Opportunities() {
           <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-card">
             <div className="opp-card-top">
               <span className="opp-title">{o.title}</span>
-              <span className="badge">{STATUS_LABEL[o.status] ?? o.status}</span>
+              <span className={`badge badge-${o.status}`}>{STATUS_LABEL[o.status] ?? o.status}</span>
             </div>
             <div className="opp-card-bottom">
               <span>{o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}</span>
@@ -183,7 +183,7 @@ export default function Opportunities() {
             <Link key={o.id} to={`/opportunities/${o.id}`} className="opp-card">
               <div className="opp-card-top">
                 <span className="opp-title">{o.title}</span>
-                <span className="badge">{STATUS_LABEL[o.status] ?? o.status}</span>
+                <span className={`badge badge-${o.status}`}>{STATUS_LABEL[o.status] ?? o.status}</span>
               </div>
               <div className="opp-card-bottom">
                 <span>{o.netProfitMid != null ? `רווח משוער: ${formatMoney(o.netProfitMid, 0)}` : 'חסר מידע לחישוב רווח'}</span>

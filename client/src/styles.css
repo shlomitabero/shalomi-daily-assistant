@@ -118,6 +118,22 @@ input, select, textarea {
 .opp-card-top { display: flex; justify-content: space-between; margin-bottom: 6px; }
 .opp-card-bottom { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); }
 .badge { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 11px; }
+/* Opportunities.jsx/Approvals.jsx pair this base .badge class with the raw
+   status value (badge-published, badge-approved, badge-rejected), but until
+   now none of those modifiers had a rule of their own - every status badge
+   in this app (draft, published, rejected, approved) rendered in the exact
+   same flat neutral style, the one status-like indicator in this app that
+   never got the positive/negative treatment every other one already has
+   (net-profit-box, dot-on/dot-off, log-result, cash-in/cash-out above).
+   published/approved both mean "this is working, real money" - same green
+   tint as everywhere else. rejected is a deliberate, intentional owner
+   decision, not a failure or alarm - muted gray, same reasoning already
+   established for a safety block in the activity log (a rejected
+   opportunity isn't a problem, it's the system/owner working as intended).
+   draft has no modifier - the plain neutral .badge above already fits a
+   still-pending state. */
+.badge-published, .badge-approved { background: rgba(61, 220, 151, 0.12); border-color: var(--positive); color: var(--positive); }
+.badge-rejected { background: var(--bg-elev); border-color: var(--border); color: var(--text-dim); }
 .demo-badge { background: #4d57ff; color: white; font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 700; margin-right: 6px; }
 
 .guide-preview { white-space: pre-wrap; color: var(--text-dim); font-size: 13px; max-height: 160px; overflow-y: auto; }
