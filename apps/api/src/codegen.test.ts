@@ -29592,6 +29592,90 @@ test("the exported EntityView's Print list sheet footer count is bidi-isolated a
 });
 
 /**
+ * Round 2029: handleBulkDuplicate/handleBulkUpdate/handleUndoDelete's own
+ * partial-failure messages ("N of M records could not be
+ * duplicated/updated/deleted.") have the identical hardcoded-English,
+ * digit-first, no-i18n bidi gap round 1716/2020/2021 already fixed for the
+ * record-count badge, empty-state message, bulk-select count, and
+ * print-list footer -- just never ported to this shared error banner.
+ * Exercises the real handleBulkDuplicate path end-to-end (select two rows,
+ * click "Duplicate selected", one create request genuinely rejects)
+ * rather than extracting the handler in isolation (as the existing
+ * handleBulkDuplicate/handleBulkUpdate partial-failure test above does),
+ * so this also proves the banner that actually renders the message is
+ * wrapped, not just that the string itself is correct.
+ */
+test("the exported EntityView's bulk-partial-failure error banner is bidi-isolated against the surrounding RTL document", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  const entityName = project.spec.entities[0].name;
+  const store = [
+    { id: 1, name: "Alice", status: "New" },
+    { id: 2, name: "Bob", status: "Won" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === `/api/${entityName}`) {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === `/api/${entityName}`) {
+      const body = JSON.parse(init!.body as string);
+      if (body.name === "Bob") {
+        return new Response(JSON.stringify({ error: "duplicate failed" }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ id: 99, ...body }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: project.spec.entities[0],
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr input[type='checkbox']").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const checkboxes = container.querySelectorAll("tbody tr input[type='checkbox']");
+      await act(async () => {
+        fireEvent.click(checkboxes[0]);
+        fireEvent.click(checkboxes[1]);
+      });
+
+      const duplicateButton = Array.from(container.querySelectorAll(".bulk-actions-bar button")).find((b) => b.textContent?.includes("Duplicate"))!;
+      await act(async () => {
+        fireEvent.click(duplicateButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector(".error")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      const errorBdi = container.querySelector(".error bdi[dir='ltr']");
+      assert.ok(errorBdi, "the error banner's partial-failure message must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(errorBdi!.textContent, "1 of 2 records could not be duplicated.");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * New in this round: the live preview's search box (EntityPanel.tsx)
  * wraps the real matched substring in a `<mark className="search-match">`
  * inside each visible cell -- for both a plain text field and an enum

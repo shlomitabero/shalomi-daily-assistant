@@ -9095,7 +9095,20 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           )}
         </div>
       </form>
-      {error && <p className="error" role="status" id={"entity-form-error-" + entity.name}>{error}</p>}
+      {/* Round 2029: handleUndoDelete/handleBulkDuplicate/handleBulkUpdate's
+          own partial-failure messages ("3 of 5 records could not be
+          deleted/duplicated/updated.") are hardcoded English, digit-first,
+          and rendered bare here inside this exported app's <html dir="rtl">
+          for a Hebrew project -- the exact failure mode round 1716/2020/2021
+          already fixed for the record-count badge, empty-state message,
+          bulk-select count, and print-list footer, just never ported to
+          this shared error banner. Wrapping {error} itself here (rather
+          than each setError call site) covers all three strings at their
+          one shared render point, and is a no-op for every other error
+          message this banner displays (quoted field-validation errors,
+          server err.message text), since <bdi dir="ltr"> only pins down
+          internal word order and is invisible when nothing reorders it. */}
+      {error && <p className="error" role="status" id={"entity-form-error-" + entity.name}><bdi dir="ltr">{error}</bdi></p>}
       {loadError && (
         <div className="error-retry-row">
           <p className="error" role="status">{loadError}</p>
