@@ -910,9 +910,26 @@ export function isAllowedWebhookUrl(raw: string): boolean {
  */
 const webhookSendQueue = new Map<string, Promise<void>>();
 const WEBHOOK_SEND_SPACING_MS = 600;
+const WEBHOOK_REQUEST_TIMEOUT_MS = 10_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Round 2030: mirrors email.ts's own ResendTimeoutError exactly (thrown by
+ * performSend, which -- like queuedWebhookFetch below -- only creates its
+ * AbortController/setTimeout once its own queue turn actually arrives) --
+ * lets fireWebhookAction's catch block below tell "the destination never
+ * responded within WEBHOOK_REQUEST_TIMEOUT_MS of actually being dialed"
+ * apart from any other rejection via `instanceof`, the same way
+ * `instanceof ResendTimeoutError` already does for email (round 1764).
+ */
+class WebhookTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WebhookTimeoutError";
+  }
 }
 
 /**
@@ -927,8 +944,8 @@ function delay(ms: number): Promise<void> {
  *
  * Round 1096: fixes the identical gap found and fixed in that same
  * ResendEmailSender queue -- `fetch` itself rejects (not just resolves
- * with a non-ok Response) on a real network failure or on
- * fireWebhookAction's own 10s AbortController timeout for a hanging
+ * with a non-ok Response) on a real network failure or on this function's
+ * own WEBHOOK_REQUEST_TIMEOUT_MS AbortController timeout for a hanging
  * destination, so `queuedFetch` can reject here too. The old
  * `queuedFetch.then(() => delay(...)).catch(() => {})` shape only ran its
  * delay on the fulfilled path -- a rejection skipped straight to the
@@ -936,10 +953,39 @@ function delay(ms: number): Promise<void> {
  * failure (an unreachable or timed-out destination) most likely to
  * recur on an immediate retry. Running the delay on both the fulfilled
  * and rejected paths closes that the same way.
+ *
+ * Round 2030: the AbortController/setTimeout used to be created by
+ * fireWebhookAction itself, BEFORE this function was ever called -- which
+ * meant the 10s deadline started counting from the moment a delivery was
+ * requested, not from when its own turn in webhookSendQueue arrived. A
+ * bulk update matching N rows against one rule (this queue's own reason
+ * for existing, round 1076's doc comment above) spaces each send
+ * WEBHOOK_SEND_SPACING_MS=600ms apart, so a tail delivery queued behind
+ * ~17 others had its 10s clock expire before fetch() was ever called for
+ * it, aborting a signal that was already dead on arrival -- recorded as
+ * WEBHOOK_TIMEOUT_ERROR (implying the destination was reached but slow)
+ * for a delivery this server never actually attempted to send. Creating
+ * the controller/timeout HERE instead, right before the real `fetch`
+ * call, mirrors exactly where email.ts's own performSend creates its
+ * (only once dequeued) and makes the 10s budget measure actual
+ * destination latency regardless of how deep the queue is.
  */
 function queuedWebhookFetch(url: string, init: RequestInit): Promise<Response> {
   const previousInQueue = webhookSendQueue.get(url) ?? Promise.resolve();
-  const queuedFetch = previousInQueue.then(() => fetch(url, init));
+  const queuedFetch = previousInQueue.then(async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), WEBHOOK_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new WebhookTimeoutError(`Webhook request timed out after ${WEBHOOK_REQUEST_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
   const nextInQueue = queuedFetch.then(
     () => delay(WEBHOOK_SEND_SPACING_MS),
     () => delay(WEBHOOK_SEND_SPACING_MS),
@@ -1039,8 +1085,6 @@ async function fireWebhookAction(
     message,
     record: entity && record && baseUrl ? resolveFileFieldsForWebhook(entity, record, baseUrl) : record ?? null,
   };
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
     // Round 859: isAllowedWebhookUrl above only ever validates rule.webhookUrl
     // itself -- without redirect: "manual", Node's own fetch (undici)
@@ -1088,13 +1132,13 @@ async function fireWebhookAction(
       method: "POST",
       headers,
       body: bodyString,
-      signal: controller.signal,
       redirect: "manual",
     });
     // Same re-check-after-await hazard fireRule's own WhatsApp branch
     // already documents (its own comment a few dozen lines above) --
-    // queuedWebhookFetch is a genuine network round-trip (up to the 10s
-    // timeout below), during which this project could have been deleted.
+    // queuedWebhookFetch is a genuine network round-trip (its own queue
+    // wait, plus up to WEBHOOK_REQUEST_TIMEOUT_MS), during which this
+    // project could have been deleted.
     // deleteProject's own deleteAutomationRulesForProject already removed
     // every automation_runs row for this project synchronously; without
     // this check, recordAutomationRun below would silently recreate one
@@ -1138,17 +1182,23 @@ async function fireWebhookAction(
     // error can evict a genuinely different, older failure for this rule.
     // Round 1450: a webhook URL that's simply unreachable (wrong domain,
     // dead server, closed port, DNS/TLS failure) fails Node's fetch
-    // immediately, well before the 10s abort timeout above ever fires,
-    // with a TypeError whose message is always the fixed literal
-    // "fetch failed" regardless of the actual underlying cause --
-    // confirmed directly against the runtime for both a connection-refused
-    // and a DNS-failure target. Normalized to its own shared constant the
+    // immediately, well before the timeout below could ever fire, with a
+    // TypeError whose message is always the fixed literal "fetch failed"
+    // regardless of the actual underlying cause -- confirmed directly
+    // against the runtime for both a connection-refused and a
+    // DNS-failure target. Normalized to its own shared constant the
     // same way the timeout case already was (round 1442), so this module
     // and recordAutomationRun's own retention pruning agree on one
     // literal instead of a flood of "fetch failed" rows evicting a
     // genuinely different, older failure for this rule.
+    // Round 2030: recognizing the timeout via `instanceof
+    // WebhookTimeoutError` (thrown only by queuedWebhookFetch's own
+    // dequeued AbortController, never by one started before this
+    // delivery's queue turn arrived) rather than re-checking a
+    // `controller` this function no longer owns -- mirrors round 1764's
+    // identical `instanceof ResendTimeoutError` switch for email.
     const message =
-      controller.signal.aborted
+      err instanceof WebhookTimeoutError
         ? WEBHOOK_TIMEOUT_ERROR
         : err instanceof TypeError && err.message === "fetch failed"
           ? WEBHOOK_UNREACHABLE_ERROR
@@ -1170,8 +1220,6 @@ async function fireWebhookAction(
       deliveryId,
       skipRuleSummaryUpdate,
     );
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -1358,8 +1406,9 @@ async function fireEmailAction(
     if (!getProject(db, project.id)) return;
     // Round 1459: mirrors fireWebhookAction's own identical normalization
     // just above -- email.ts's ResendEmailSender.performSend throws a
-    // ResendTimeoutError on its own AbortController timeout (no signal to
-    // re-check here, unlike fireWebhookAction's own inline controller), and
+    // ResendTimeoutError on its own AbortController timeout (round 2030
+    // made queuedWebhookFetch's own WebhookTimeoutError, checked via the
+    // same `instanceof` pattern, follow this exact shape too), and
     // re-throws any other fetch rejection as-is, which Node's fetch/undici
     // always renders as the identical TypeError "fetch failed" for a
     // destination that's simply unreachable. Normalizing the latter into
@@ -1939,17 +1988,23 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * 951 already closed once for the WhatsApp bucket. Lookback widened from
  * 3x to 4x to match the now-four independently-retained buckets.
  *
- * Round 1444: WEBHOOK_TIMEOUT_ERROR (fireWebhookAction's own 10s
- * AbortController firing, round 1327) is excluded too, for the same
- * self-healing reason as the WhatsApp/email cases above -- but on a
- * narrower basis, since unlike those two (a pre-send check on OUR OWN
- * state, never even reaching the destination), a webhook timeout only
- * fires after an actual network attempt to the rule's own destination.
- * The distinction that still matters: a destination that's permanently
- * wrong or refuses the connection never produces this literal in the
- * first place -- fireWebhookAction's catch block only reaches
- * WEBHOOK_TIMEOUT_ERROR when controller.signal.aborted is true (the 10s
- * deadline itself fired with no response yet); any other network failure
+ * Round 1444: WEBHOOK_TIMEOUT_ERROR (queuedWebhookFetch's own
+ * WEBHOOK_REQUEST_TIMEOUT_MS AbortController firing, round 1327) is
+ * excluded too, for the same self-healing reason as the WhatsApp/email
+ * cases above -- but on a narrower basis, since unlike those two (a
+ * pre-send check on OUR OWN state, never even reaching the destination),
+ * a webhook timeout only fires after an actual network attempt to the
+ * rule's own destination. (Round 2030: this was only true in intent until
+ * that round -- the timer used to start in fireWebhookAction, before its
+ * delivery's own turn in webhookSendQueue even arrived, so a deep queue
+ * could expire it before any `fetch` call was made at all. Moving the
+ * timer into queuedWebhookFetch itself, created right before the real
+ * `fetch`, makes this comment's claim actually hold.) The distinction
+ * that still matters: a destination that's permanently wrong or refuses
+ * the connection never produces this literal in the first place --
+ * fireWebhookAction's catch block only reaches WEBHOOK_TIMEOUT_ERROR via
+ * `instanceof WebhookTimeoutError` (the 10s deadline itself fired with no
+ * response yet); any other network failure
  * (DNS, connection refused) gets err.message instead, and a non-2xx
  * response gets its own `Webhook responded with status N` string -- both
  * still count toward this cap exactly as before. So excluding only the

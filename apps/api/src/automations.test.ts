@@ -4423,6 +4423,106 @@ test("a webhook send that REJECTS (network failure, not just a non-2xx response)
   assert.equal(getAutomationRule(db, project.id, ruleB.id)!.lastStatus, "sent");
 });
 
+/**
+ * Round 2030 regression test: see queuedWebhookFetch's own doc comment in
+ * automations.ts for the full bug description -- its AbortController/
+ * setTimeout used to be created by fireWebhookAction itself, BEFORE a
+ * delivery's own turn in webhookSendQueue arrived, so a tail delivery's
+ * 10s budget could expire purely from queue wait, never from its own
+ * destination being slow. This simulates exactly that shape: ruleA's
+ * destination takes 9.8s to respond (slow, but still well inside its own
+ * 10s budget, so ruleA must succeed either way) and is resolved manually
+ * (not via a mocked timer) so this test controls precisely when it
+ * finishes; ruleB, queued behind it to the SAME URL, doesn't get its own
+ * turn until ruleA's send plus the queue's own 600ms spacing delay have
+ * both elapsed -- 10.4s after the run started, 0.4s past the OLD, eagerly
+ * -armed timer's 10s deadline. ruleB's own destination responds instantly
+ * once actually asked (resolved synchronously, no delay at all), so it
+ * must succeed too; before this round's fix, it was recorded as timed
+ * out regardless, because its signal was already aborted by the time its
+ * queued fetch() call was finally made. Uses node's mock timers for the
+ * queue-wait math (never a real multi-second wait) -- mirrors
+ * apps/web/src/api.test.ts's own identical AbortSignal-honoring fetch
+ * stub and mock-timer-driven abort test.
+ */
+test("a webhook delivery queued behind a slow-but-legitimate earlier send to the same URL gets its own fresh timeout budget, not one that started back when it was first requested", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { db, project } = setupProject();
+  const makeRule = (messageTemplate: string) =>
+    insertAutomationRule(db, {
+      projectId: project.id,
+      entityName: "Order",
+      trigger: "schedule",
+      scheduleTimeUtc: "09:00",
+      actionType: "webhook",
+      webhookUrl: "https://hooks.example.com/forge-queue-timeout-budget",
+      toMode: "static",
+      messageTemplate,
+    });
+  const ruleA = makeRule("one");
+  const ruleB = makeRule("two");
+
+  const flush = async (n = 8) => {
+    for (let i = 0; i < n; i++) await Promise.resolve();
+  };
+
+  let fetchCallCount = 0;
+  let resolveA: ((res: Response) => void) | null = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_url: string, init?: RequestInit) => {
+    fetchCallCount++;
+    const callIndex = fetchCallCount;
+    if (init?.signal?.aborted) {
+      const err = new Error("The operation was aborted.");
+      err.name = "AbortError";
+      return Promise.reject(err);
+    }
+    if (callIndex === 1) {
+      return new Promise<Response>((resolve, reject) => {
+        resolveA = resolve;
+        init?.signal?.addEventListener("abort", () => {
+          const abortErr = new Error("The operation was aborted.");
+          abortErr.name = "AbortError";
+          reject(abortErr);
+        });
+      });
+    }
+    // ruleB's own destination, once actually asked, responds immediately.
+    return Promise.resolve(new Response(null, { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    const pending = Promise.allSettled([
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleA),
+      fireScheduledRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, ruleB),
+    ]);
+    await flush();
+    assert.equal(fetchCallCount, 1, "ruleB must still be waiting behind ruleA in the queue, not yet calling fetch");
+    assert.ok(resolveA, "expected ruleA's own fetch to have been called and its resolver captured");
+
+    t.mock.timers.tick(9800);
+    await flush();
+    resolveA!(new Response(null, { status: 200 }));
+    await flush();
+
+    // Crosses both the OLD code's eagerly-armed 10s deadline for ruleB
+    // (10.0s from the run's start) and the queue's own 600ms spacing
+    // delay after ruleA's send (due at 9.8s + 0.6s = 10.4s), letting
+    // ruleB's own queued turn actually begin.
+    t.mock.timers.tick(700);
+    await flush();
+    await pending;
+  } finally {
+    globalThis.fetch = originalFetch;
+    t.mock.timers.reset();
+  }
+
+  assert.equal(fetchCallCount, 2, "ruleB's own destination must actually have been asked");
+  assert.equal(getAutomationRule(db, project.id, ruleA.id)!.lastStatus, "sent");
+  assert.equal(getAutomationRule(db, project.id, ruleB.id)!.lastStatus, "sent", "ruleB's own destination responded instantly once asked -- it must not be recorded as timed out just because its turn in the queue arrived past the old 10s mark");
+  assert.equal(getAutomationRule(db, project.id, ruleB.id)!.lastError, null);
+});
+
 test("fireScheduledRule's webhook action sends messageTemplate verbatim with a null record/entity in the payload (there's no triggering record)", async () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, {
