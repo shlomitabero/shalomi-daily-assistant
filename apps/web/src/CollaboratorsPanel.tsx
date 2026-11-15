@@ -1167,47 +1167,73 @@ export function CollaboratorsPanel({
           </button>
         </div>
 
-        {isOwner && (
-          <div className="collab-calendar-feed-section">
-            <h3>{t("collab.calendarFeed.heading")}</h3>
-            <p className="muted small">{t("collab.calendarFeed.description")}</p>
-            <button
-              type="button"
-              className="secondary"
-              onClick={handleRegenerateCalendarFeedToken}
-              disabled={regeneratingFeedToken || checkingLastCalendarFeedFetch}
-            >
-              {regeneratingFeedToken ? t("collab.calendarFeed.regenerate.busy") : t("collab.calendarFeed.regenerate")}
-            </button>
-            {regenerateFeedTokenInfo && (
-              <p className="muted small" role="status">
-                {regenerateFeedTokenInfo}
-              </p>
-            )}
-            {/*
-              Round 1970: a second, independent action in this same
-              section -- deliberately NOT auto-fetched on mount (see
-              handleCheckLastCalendarFeedFetch's own doc comment),
-              mirroring the inbound-webhook section's own identical
-              "Check last delivery" button/status placement below.
-            */}
-            <button
-              type="button"
-              className="secondary"
-              onClick={handleCheckLastCalendarFeedFetch}
-              disabled={checkingLastCalendarFeedFetch || regeneratingFeedToken}
-            >
-              {checkingLastCalendarFeedFetch ? t("collab.calendarFeed.checkLastFetched.busy") : t("collab.calendarFeed.checkLastFetched")}
-            </button>
-            {lastCalendarFeedFetchAt !== undefined && (
-              <p className="muted small" role="status">
-                {lastCalendarFeedFetchAt
-                  ? t("collab.calendarFeed.lastFetched.some", { time: new Date(lastCalendarFeedFetchAt).toLocaleString(LOCALE[lang]) })
-                  : t("collab.calendarFeed.lastFetched.never")}
-              </p>
-            )}
-          </div>
-        )}
+        {/*
+          Round 2031: this whole section used to be isOwner-only, but GET
+          .../calendar-feed-token (routes/projects.ts) itself uses
+          requireProjectAccess -- open to every collaborator, viewers
+          included, same boundary the "Subscribe (all calendars)" button
+          just above already uses (round 1247's own comment there). An
+          editor (or viewer) who already subscribed via that button had no
+          way anywhere in this app to check whether their subscription is
+          actually still being fetched successfully, the identical gap
+          round 1620 already found and fixed for the inbound-webhook
+          section just below -- that fix widened only the read-only
+          diagnostic to match its own GET route's boundary while leaving
+          the destructive regenerate action owner-only; this section never
+          got the same treatment when round 1970 added its own "Check last
+          fetched" diagnostic, because it mirrored this section's
+          pre-round-1620 (isOwner-only) shape instead. Since this route is
+          open to viewers too, not just editors, the diagnostic itself
+          carries no access gate at all here -- stricter than the webhook
+          sibling's `!readOnly` only because this GET route is itself more
+          permissive than that one.
+        */}
+        <div className="collab-calendar-feed-section">
+          <h3>{t("collab.calendarFeed.heading")}</h3>
+          <p className="muted small">{t("collab.calendarFeed.description")}</p>
+          {isOwner && (
+            <>
+              <button
+                type="button"
+                className="secondary"
+                onClick={handleRegenerateCalendarFeedToken}
+                disabled={regeneratingFeedToken || checkingLastCalendarFeedFetch}
+              >
+                {regeneratingFeedToken ? t("collab.calendarFeed.regenerate.busy") : t("collab.calendarFeed.regenerate")}
+              </button>
+              {regenerateFeedTokenInfo && (
+                <p className="muted small" role="status">
+                  {regenerateFeedTokenInfo}
+                </p>
+              )}
+            </>
+          )}
+          {/*
+            Round 1970: a second, independent action in this same
+            section -- deliberately NOT auto-fetched on mount (see
+            handleCheckLastCalendarFeedFetch's own doc comment),
+            mirroring the inbound-webhook section's own identical
+            "Check last delivery" button/status placement below. Round
+            2031: now the only control in this section for a non-owner
+            collaborator, since the regenerate button just above is still
+            isOwner-only.
+          */}
+          <button
+            type="button"
+            className="secondary"
+            onClick={handleCheckLastCalendarFeedFetch}
+            disabled={checkingLastCalendarFeedFetch || regeneratingFeedToken}
+          >
+            {checkingLastCalendarFeedFetch ? t("collab.calendarFeed.checkLastFetched.busy") : t("collab.calendarFeed.checkLastFetched")}
+          </button>
+          {lastCalendarFeedFetchAt !== undefined && (
+            <p className="muted small" role="status">
+              {lastCalendarFeedFetchAt
+                ? t("collab.calendarFeed.lastFetched.some", { time: new Date(lastCalendarFeedFetchAt).toLocaleString(LOCALE[lang]) })
+                : t("collab.calendarFeed.lastFetched.never")}
+            </p>
+          )}
+        </div>
 
         {/*
           Round 1620: this whole section used to be isOwner-only, but

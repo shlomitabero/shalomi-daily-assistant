@@ -1448,8 +1448,20 @@ test("CollaboratorsPanel's Resend invite button silently drops a collaborator's 
  * only ever renders for the owner -- a plain collaborator, who can't take
  * this action server-side either (requireProjectOwner), must never be
  * shown a button that would just 404 if clicked.
+ *
+ * Round 2031: narrowed from "the whole section only renders for the owner"
+ * to "only the regenerate button does" -- GET .../calendar-feed-token
+ * itself (routes/projects.ts) uses requireProjectAccess, not
+ * requireProjectOwner, so a plain editor collaborator (isOwner=false,
+ * readOnly=false) must still see the section and its "Check last fetched"
+ * diagnostic, matching the access that route already grants them --
+ * mirrors the identical fix round 1620 already applied to the
+ * inbound-webhook section's own equivalent test. Unlike that section
+ * (hidden entirely for a read-only viewer, confirmed in the test just
+ * below), this one stays visible for a viewer too, since this GET route
+ * is open to every collaborator, viewers included.
  */
-test("CollaboratorsPanel's calendar-feed regenerate button only renders for the owner", async () => {
+test("CollaboratorsPanel's calendar-feed regenerate button only renders for the owner, but the section itself (and its Check-last-fetched diagnostic) also renders for a plain editor collaborator", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string, init?: RequestInit) => {
@@ -1463,15 +1475,53 @@ test("CollaboratorsPanel's calendar-feed regenerate button only renders for the 
     try {
       renderPanel(true);
       await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+      const ownerButtons = Array.from(document.querySelectorAll(".collab-calendar-feed-section button"));
+      assert.equal(ownerButtons.length, 2, "the owner must still see both the regenerate button and the Check-last-fetched button");
+      assert.match(ownerButtons[0].textContent ?? "", /invalidate/i, "the regenerate button must still come first for the owner");
       cleanup();
 
       renderPanel(false);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      assert.equal(
-        document.querySelector(".collab-calendar-feed-section"),
-        null,
-        "a plain collaborator (not the owner) must never see the regenerate affordance at all",
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+      const editorButtons = Array.from(document.querySelectorAll(".collab-calendar-feed-section button"));
+      assert.equal(editorButtons.length, 1, "an editor (not the owner) must see exactly the Check-last-fetched button, not the regenerate one");
+      assert.doesNotMatch(
+        editorButtons[0].textContent ?? "",
+        /invalidate/i,
+        "a plain collaborator (not the owner) must never see the regenerate affordance",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2031: the other half of the boundary just above -- unlike the
+ * inbound-webhook section (hidden entirely for a viewer, since its own GET
+ * route uses requireProjectWriteAccess), GET .../calendar-feed-token uses
+ * requireProjectAccess, the exact same boundary the "Subscribe (all
+ * calendars)" button right above this section already uses -- so a
+ * read-only viewer must still see this section's own Check-last-fetched
+ * diagnostic (never the regenerate button, which stays owner-only
+ * regardless of readOnly).
+ */
+test("CollaboratorsPanel's calendar-feed section (and its Check-last-fetched diagnostic) also renders for a read-only viewer, unlike the stricter inbound-webhook section", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderPanel(false, undefined, undefined, undefined, undefined, true);
+      await waitForCondition(() => document.querySelector(".collab-calendar-feed-section") !== null);
+      const viewerButtons = Array.from(document.querySelectorAll(".collab-calendar-feed-section button"));
+      assert.equal(viewerButtons.length, 1, "a read-only viewer must see exactly the Check-last-fetched button");
+      assert.doesNotMatch(viewerButtons[0].textContent ?? "", /invalidate/i, "a read-only viewer must never see the regenerate affordance");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2092,12 +2142,17 @@ test("CollaboratorsPanel cross-gates \"Check last delivery\" against \"Regenerat
 /**
  * Round 1247: the "Subscribe to a combined calendar" button, the
  * project-wide counterpart to EntityPanel.tsx's own per-entity subscribe
- * button. Unlike the regenerate section just above (owner-only, since
- * rotating the token breaks every collaborator's subscription), this one
- * must be visible and usable for a plain, non-owner collaborator too --
+ * button. Unlike the regenerate button in the section just below (owner-only,
+ * since rotating the token breaks every collaborator's subscription), this
+ * one must be visible and usable for a plain, non-owner collaborator too --
  * GET .../calendar-feed-token (which this button calls) uses
  * requireProjectAccess, not requireProjectOwner, the exact same access any
  * collaborator already has to EntityPanel.tsx's own per-entity button.
+ *
+ * Round 2031: the calendar-feed section itself (not just this subscribe
+ * button) is no longer owner-only either -- see its own doc comment in
+ * CollaboratorsPanel.tsx for the full gap this closed (only the regenerate
+ * button inside it still is).
  */
 test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible to a plain collaborator (not just the owner), and copies the real all/feed.ics URL built from the real token", async () => {
   await withJsdom(async () => {
@@ -2125,10 +2180,12 @@ test("CollaboratorsPanel's \"Subscribe to combined calendar\" button is visible 
       // Not the owner -- confirms this button is reachable for a plain collaborator too.
       renderPanel(false);
       await waitForCondition(() => document.querySelector(".collab-calendar-subscribe-all-section") !== null);
-      assert.equal(
-        document.querySelector(".collab-calendar-feed-section"),
-        null,
-        "a plain collaborator must still never see the owner-only regenerate section",
+      const nonOwnerCalendarButtons = Array.from(document.querySelectorAll(".collab-calendar-feed-section button"));
+      assert.equal(nonOwnerCalendarButtons.length, 1, "a plain collaborator must see exactly the Check-last-fetched button, not the owner-only regenerate one");
+      assert.doesNotMatch(
+        nonOwnerCalendarButtons[0].textContent ?? "",
+        /invalidate/i,
+        "a plain collaborator (not the owner) must never see the regenerate affordance",
       );
 
       const button = document.querySelector(".collab-calendar-subscribe-all-section button") as HTMLButtonElement;
