@@ -92,6 +92,7 @@ function renderTwinPanel(
   onJumpToRecord: (entityName: string, recordId: number) => void = () => {},
   entities: Entity[] = [],
   userId = "user1",
+  readOnly = false,
 ) {
   return render(
     React.createElement(
@@ -105,6 +106,7 @@ function renderTwinPanel(
           projectName: "Test CRM",
           entities,
           userId,
+          readOnly,
           onClose: () => {},
           onJumpToEntity,
           onJumpToRecord,
@@ -1084,6 +1086,47 @@ test("BusinessTwinPanel's Dashboard view shows an empty-state message when there
 });
 
 /**
+ * Round 2032: the empty-state message just above tells the reader to "try
+ * adding a few records" -- true for an owner/editor, but every
+ * record-creation path in this app (EntityPanel.tsx's own create-record
+ * form, suppressed outright for a read-only viewer) is unreachable for
+ * that role. Unlike EntityPanel.tsx and AutomationsPanel.tsx (round
+ * 2025/2024's own identical fixes), this panel had no `readOnly` prop at
+ * all until this round -- App.tsx never threaded it through, unlike its
+ * sibling overlay panels (WhatsAppPanel, AutomationsPanel), both of which
+ * already receive `readOnly={myRole === "viewer"}` right next to where
+ * this one is rendered.
+ */
+test("BusinessTwinPanel's Dashboard empty-state message never tells a read-only viewer to add records they can't add anywhere in the app", async () => {
+  await withJsdom(async () => {
+    const twinWithOnlyObservations: BusinessTwin = { ...TWIN, observations: ["No real data has been entered yet."] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input.startsWith("/api/projects/proj1/twin")) {
+        return new Response(JSON.stringify({ twin: twinWithOnlyObservations }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+    try {
+      renderTwinPanel(() => {}, () => {}, [], "user1", true);
+      await waitForCondition(() => document.querySelector(".twin-view-toggle") !== null);
+
+      const dashboardButton = Array.from(document.querySelectorAll(".twin-view-toggle button")).find((b) => b.textContent?.includes("Dashboard"));
+      fireEvent.click(dashboardButton!);
+
+      await waitForCondition(() => document.body.textContent?.includes("Not enough data yet for the dashboard view") ?? false);
+      assert.equal(
+        document.body.textContent?.includes("try adding a few records"),
+        false,
+        "a read-only viewer must never be told to add records they can't add anywhere in this app",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1329: before this round, a project whose only dashboard-worthy
  * facts were overdue/due-soon deadlines (no numeric aggregates, no enum
  * distributions) fell through to the empty-state message above even
@@ -1413,6 +1456,7 @@ test("BusinessTwinPanel's per-entity stat tile calls onJumpToEntity with the ent
               projectName: "Test CRM",
               entities: [{ ...customerEntity, name: "CUSTOMER" }, orderEntity],
               userId: "user1",
+              readOnly: false,
               onClose: () => {},
               onJumpToEntity: (entityName: string) => {
                 jumpedToEntity = entityName;

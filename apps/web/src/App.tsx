@@ -3639,6 +3639,7 @@ function AppContent() {
               projectName={project.name}
               entities={orderedEntities}
               userId={user.id}
+              readOnly={myRole === "viewer"}
               onClose={() => setShowTwin(false)}
               onJumpToEntity={(entityName, dateFilter) => {
                 setActiveEntity(entityName);

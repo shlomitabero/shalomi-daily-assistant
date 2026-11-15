@@ -82,6 +82,7 @@ export function BusinessTwinPanel({
   projectName,
   entities,
   userId,
+  readOnly,
   onClose,
   onJumpToEntity,
   onJumpToRecord,
@@ -89,6 +90,16 @@ export function BusinessTwinPanel({
   projectId: string;
   projectName: string;
   userId: string;
+  /**
+   * Round 2032: unlike this panel's sibling overlay panels (WhatsAppPanel,
+   * AutomationsPanel), App.tsx never threaded this through -- the
+   * dashboard's own empty-state message (below) told every viewer to "try
+   * adding a few records", something no viewer can do anywhere in this
+   * app. Mirrors EntityPanel.tsx's own entity.noRecords/
+   * entity.noRecords.readOnly split (round 2025) and AutomationsPanel's
+   * own automations.empty/automations.empty.readOnly split (round 2024).
+   */
+  readOnly: boolean;
   /**
    * Round 1532: unlike its sibling jump-capable panels (GlobalSearchPanel,
    * WhatsAppPanel), this panel's `twin` state is fetched once on mount and
@@ -385,7 +396,9 @@ export function BusinessTwinPanel({
               twin.distributions.length === 0 &&
               twin.numericStats.length === 0 &&
               twin.overdueStats.length === 0 &&
-              twin.dueSoonStats.length === 0 && <p className="muted small">{t("twin.dashboard.empty")}</p>}
+              twin.dueSoonStats.length === 0 && (
+                <p className="muted small">{t(readOnly ? "twin.dashboard.empty.readOnly" : "twin.dashboard.empty")}</p>
+              )}
 
             {view === "report" && (twin.observations.length > 0 ||
               twin.jumpableObservations.length > 0 ||
