@@ -1271,7 +1271,7 @@ export function createRecord(
   entityName: string,
   data: Record<string, unknown>,
   options?: { suppressAutomations?: boolean },
-): Promise<{ record: EntityRecord }> {
+): Promise<{ record: EntityRecord; ignoredFields?: string[] }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}`, {
     method: "POST",
     headers: {
@@ -1351,7 +1351,7 @@ export function updateRecord(
   recordId: number,
   data: Record<string, unknown>,
   options?: { suppressAutomations?: boolean },
-): Promise<{ record: EntityRecord }> {
+): Promise<{ record: EntityRecord; ignoredFields?: string[] }> {
   return request(`/projects/${projectId}/entities/${encodeURIComponent(entityName)}/${recordId}`, {
     method: "PATCH",
     headers: {

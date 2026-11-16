@@ -891,6 +891,29 @@ export function computeChangedFields(
 }
 
 /**
+ * Round 2085: insertRecord/updateRecord (packages/db/src/repository.ts)
+ * only ever write a key in the caller's own `data` that matches one of
+ * the entity's CURRENT fields -- anything else in `data` is never
+ * looked at, not validated, not written, and (before this round) not
+ * reported either. Checkpoint restore is the one real, post-build way
+ * for a built entity's own field set to shrink (migrations are
+ * additive-only, so the restoring caller gets their own
+ * `migrationWarning`, but a DIFFERENT tab/collaborator whose record-edit
+ * form was already open against the now-stale field list -- nothing
+ * polls project.spec for them -- gets no signal at all): submitting that
+ * stale form used to come back a plain 200 with the edit to the
+ * now-gone field silently and permanently discarded, with every OTHER
+ * field on the same submit still applying normally. Lets the route
+ * surface exactly which of the caller's own submitted keys were never
+ * reachable, instead of a success response that quietly did less than
+ * it claimed.
+ */
+export function computeIgnoredFields(entity: Entity, data: Record<string, unknown>): string[] {
+  const fieldNames = new Set(entity.fields.map((f) => f.name));
+  return Object.keys(data).filter((key) => !fieldNames.has(key));
+}
+
+/**
  * Round 1162: a relation field's own relationTo can permanently differ in
  * letter case from its real target entity's name (see migrate.ts's own
  * round-1159 doc comment -- an AI-generated or Debug-Agent-repaired spec
@@ -4277,7 +4300,8 @@ export function createProjectsRouter(
               `X-Suppress-Automations: record ${record.id} created on entity "${entity.name}" of project ${project.id} by user ${req.userId} with automations suppressed`,
             );
           }
-          return { status: 201, body: { record } };
+          const ignoredFields = computeIgnoredFields(entity, req.body ?? {});
+          return { status: 201, body: ignoredFields.length > 0 ? { record, ignoredFields } : { record } };
         },
       );
       res.status(status).json(body);
@@ -5967,7 +5991,8 @@ export function createProjectsRouter(
               `X-Suppress-Automations: record ${record.id} updated on entity "${entity.name}" of project ${project.id} by user ${req.userId} with automations suppressed`,
             );
           }
-          return { status: 200, body: { record } };
+          const ignoredFields = computeIgnoredFields(entity, req.body ?? {});
+          return { status: 200, body: ignoredFields.length > 0 ? { record, ignoredFields } : { record } };
         },
       );
       res.status(status).json(body);

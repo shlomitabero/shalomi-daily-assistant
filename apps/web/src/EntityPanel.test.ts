@@ -22023,6 +22023,66 @@ test("EntityPanel closes the edit form when Save discovers, via a 404 ENTITY_NOT
 });
 
 /**
+ * Round 2085: another tab/collaborator restoring a Time Machine checkpoint
+ * can shrink THIS entity's own live field set while this form, built from
+ * an earlier (now-stale) `entity` prop, is still open -- unlike the whole
+ * entity vanishing (the ENTITY_NOT_FOUND case just above), the PATCH here
+ * still succeeds (every field that IS current still applies), but
+ * repository.ts's updateRecord silently drops any key the caller
+ * submitted for a field that's no longer current. The server now reports
+ * which key(s) got dropped via `ignoredFields` on the same 200 response
+ * (routes/projects.ts's computeIgnoredFields); confirms Save surfaces
+ * that as a clear warning instead of a bare, misleadingly-complete success
+ * -- and still completes the normal success reset, since there's nothing
+ * left to retry for a field that's genuinely gone.
+ */
+test("EntityPanel's Save warns that a field's own edit wasn't saved when the server reports it as ignoredFields, instead of showing a bare, misleadingly-complete success", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id);
+        Object.assign(record!, JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record, ignoredFields: ["dueDate"] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Acme Corp");
+      const nameInput = document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Acme Corp (renamed)" } });
+      fireEvent.submit(document.querySelector(".record-form") as HTMLFormElement);
+
+      await waitForCondition(
+        () => (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement | null)?.textContent === "Add",
+      );
+      assert.equal(
+        (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement).value,
+        "",
+        "the save itself succeeded for the still-current field, so the normal success reset must still happen -- this is a warning, not a stuck form",
+      );
+      const errorBanner = document.getElementById("entity-form-error-Deal");
+      assert.ok(errorBanner, "a warning must be shown naming the field whose edit was silently dropped");
+      assert.match(errorBanner!.textContent ?? "", /dueDate/, "the warning must name the actual ignored field, not a generic message");
+      assert.match(document.querySelector("table")!.textContent ?? "", /Acme Corp \(renamed\)/, "the still-current field's own edit must have actually applied");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1873: the exact same cross-tab race round 1864 fixed for the
  * single-record add/edit form's Save button, left open for commitInlineEdit
  * (double-click-a-cell inline editing) and handleMoveFields (the board

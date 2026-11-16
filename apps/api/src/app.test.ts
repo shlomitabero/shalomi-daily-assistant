@@ -18210,6 +18210,147 @@ test("restoring a checkpoint surfaces a migrationWarning when a reused column's 
 });
 
 /**
+ * Round 2085: insertRecord/updateRecord (packages/db/src/repository.ts)
+ * only ever write a key in the caller's own request body that matches one
+ * of the entity's CURRENT fields -- anything else in the body is never
+ * looked at, not validated, not written, and (before this round) not
+ * reported either. A checkpoint restore is the one real, post-build way
+ * for a built entity's own live field set to shrink (the restoring caller
+ * gets their own migrationWarning, per the test above, but nothing polls
+ * project.spec for a DIFFERENT tab/collaborator whose record-edit form was
+ * already open against the now-stale field list), so submitting that
+ * stale form used to come back a plain success with the edit to the
+ * now-gone field silently and permanently discarded, with every other
+ * field on the same submit still applying normally -- exactly the kind of
+ * "succeeded but did less than it claimed" response this round's own fix
+ * (computeIgnoredFields, routes/projects.ts) now surfaces explicitly.
+ * Engineered directly via the DB layer for the field-removal step (not a
+ * real /refine, which can only ever ADD fields -- mergeRefinedSpec,
+ * packages/spec-engine/src/index.ts -- never remove or retype one), the
+ * same documented reason the test above engineers its own type-mismatch
+ * scenario this way.
+ */
+test("a stale record-edit submitted after a checkpoint restore shrinks the live schema reports the now-gone field as ignored, instead of silently discarding that one edit", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `stale-edit-after-restore-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+
+    const specWithoutDueDate: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Task",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithDueDate: ProductSpec = {
+      ...specWithoutDueDate,
+      entities: [
+        {
+          ...specWithoutDueDate.entities[0],
+          fields: [...specWithoutDueDate.entities[0].fields, { name: "dueDate", type: "date", required: false }],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: findUserByEmail(db, email)!.id,
+      name: "Task tracker",
+      description: "A task tracker.",
+      spec: specWithoutDueDate,
+    });
+    diffAndMigrate(db, projectId, undefined, specWithoutDueDate);
+    markProjectBuilt(db, projectId);
+    const checkpoint = insertCheckpoint(db, {
+      id: randomUUID(),
+      projectId,
+      label: "Initial build",
+      kind: "build",
+      spec: specWithoutDueDate,
+    });
+
+    // Simulates a later refine that adds "dueDate" -- diffAndMigrate adds
+    // the physical column, and the spec pointer moves on, exactly like
+    // /refine's own route does.
+    diffAndMigrate(db, projectId, specWithoutDueDate, specWithDueDate);
+    updateProjectSpec(db, projectId, specWithDueDate);
+
+    // A real record is created through the real HTTP route while the spec
+    // still has dueDate, so it genuinely has a stored value for it.
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Task`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Write report", status: "In progress", dueDate: "2026-12-01" }),
+    });
+    assert.equal(createRes.status, 201);
+    const { record: created } = (await createRes.json()) as { record: { id: number; dueDate: string } };
+    assert.equal(created.dueDate, "2026-12-01", "sanity check: the record really has a stored dueDate for this test to mean anything");
+
+    // "Tab 2": restores the checkpoint from before dueDate existed --
+    // shrinking the LIVE schema out from under "tab 1"'s still-open form,
+    // exactly like the migrationWarning test above, just for a field
+    // removal instead of a retype.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreBody = (await restoreRes.json()) as { project: { spec: ProductSpec } };
+    assert.ok(
+      !restoreBody.project.spec.entities[0].fields.some((f) => f.name === "dueDate"),
+      "the restore itself must actually remove dueDate from the live spec for this test to mean anything",
+    );
+
+    // "Tab 1" (never saw the restore): submits its already-open stale
+    // form, editing both the still-current "title" and the now-gone
+    // "dueDate".
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Task/${created.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Write report (final draft)", dueDate: "2026-12-25" }),
+    });
+    assert.equal(patchRes.status, 200, "the write must still succeed for every field that IS current, not be rejected outright");
+    const patchBody = (await patchRes.json()) as { record: { title: string; dueDate?: string }; ignoredFields?: string[] };
+    assert.equal(patchBody.record.title, "Write report (final draft)", "the still-current field's edit must still apply");
+    assert.equal(patchBody.record.dueDate, undefined, "the now-gone field must not be echoed back as if it were saved");
+    assert.deepEqual(patchBody.ignoredFields, ["dueDate"], "the now-gone field the caller tried to edit must be reported, not silently swallowed");
+
+    // Cross-checks the raw stored row directly (not just this response) --
+    // the physical dueDate column (migrations are additive-only, so it
+    // still exists) must still hold its ORIGINAL value, proving the
+    // attempted "2026-12-25" was never written anywhere, not even to a
+    // now-unreachable column.
+    const table = tableNameFor(projectId, "Task");
+    const rawRow = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} WHERE id = ?`).get(created.id) as { dueDate: string };
+    assert.equal(rawRow.dueDate, "2026-12-01", "the stale edit's attempted new value must never reach the database, not even the now-unreachable column");
+
+    // The identical gap on the CREATE side: a stale "new record" form
+    // built against the pre-restore field list submits the same now-gone
+    // key.
+    const staleCreateRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Task`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Second task", status: "New", dueDate: "2027-01-01" }),
+    });
+    assert.equal(staleCreateRes.status, 201);
+    const staleCreateBody = (await staleCreateRes.json()) as { record: { dueDate?: string }; ignoredFields?: string[] };
+    assert.equal(staleCreateBody.record.dueDate, undefined);
+    assert.deepEqual(staleCreateBody.ignoredFields, ["dueDate"]);
+  });
+});
+
+/**
  * Round 977: diffAndMigrate's own type_changed detection never touches a
  * retyped field's existing column DATA (by design -- same test file's own
  * migrationWarning tests just above confirm that), but it also never

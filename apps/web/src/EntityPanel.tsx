@@ -4123,6 +4123,7 @@ export function EntityPanel({
     const formInstanceAtSubmitTime = formInstanceKeyRef.current;
     setSubmitBusy(true);
     try {
+      let saveResult: { record: EntityRecord; ignoredFields?: string[] };
       if (editingId != null) {
         // Round 644: `form` holds a value for EVERY field, including every
         // one the user never touched -- startEdit below just snapshots the
@@ -4148,9 +4149,9 @@ export function EntityPanel({
             changedOnly[f.name] = form[f.name];
           }
         }
-        await updateRecord(projectId, entity.name, editingId, changedOnly);
+        saveResult = await updateRecord(projectId, entity.name, editingId, changedOnly);
       } else {
-        await createRecord(projectId, entity.name, form);
+        saveResult = await createRecord(projectId, entity.name, form);
       }
       if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
         setForm(emptyForm(entity));
@@ -4159,6 +4160,22 @@ export function EntityPanel({
         bumpFormInstanceKey();
       }
       await refresh();
+      // Round 2085: another tab/collaborator restoring a Time Machine
+      // checkpoint can shrink THIS entity's own live field set while this
+      // form, built from an earlier (now-stale) `entity` prop, is still
+      // open -- nothing polls project.spec to warn this tab. Without this,
+      // the server (repository.ts's updateRecord/insertRecord, which only
+      // ever look at the entity's CURRENT fields) silently and permanently
+      // dropped the edit to the now-gone field, with the save still
+      // reporting a plain success and every other field still applying.
+      const ignoredFields = saveResult.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        setError(
+          ignoredFields.length === 1
+            ? t("entity.form.fieldNoLongerExists.one", { field: ignoredFields[0] })
+            : t("entity.form.fieldNoLongerExists.many", { fields: ignoredFields.join(", ") }),
+        );
+      }
     } catch (err) {
       const error = err as Error & { code?: string };
       // Round 1864: another tab (or collaborator) can delete the record
