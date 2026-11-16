@@ -397,7 +397,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // ordinary app descriptions than all of those combined.
       /(?<!\bin\s)\border(s)?\b|\border(s)?\b(?!\s+to\b)/, "purchase", "checkout page", "checkout flow", "online checkout",
       "delivery", "deliveries", "wolt",
-      "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים",
+      // "הזמנה"/"הזמנות" is a true Hebrew homograph: it means both "order"
+      // (a purchase) and "invitation" (a wedding/party/event invitation --
+      // "הזמנה לחתונה", "הזמנות למסיבה"). Excludes the idiomatic "invitation
+      // to X" phrasing (including construct-state forms) while still
+      // matching every genuine order/purchase use.
+      /הזמנ(?:ה|ות)(?!\s*ל(?:חתונה|חתונת|חתונות|אירוע|אירועי|אירועים|מסיבה|מסיבת|מסיבות|כנס|יום\s*הולדת))/,
+      "רכישה", "רכישות", "משלוח", "משלוחים",
       // "וולט" is the Hebrew transliteration of both the Wolt delivery
       // app and the electrical unit "volt" -- identical spelling, no way
       // to tell them apart by spelling alone. Excludes the unit sense via

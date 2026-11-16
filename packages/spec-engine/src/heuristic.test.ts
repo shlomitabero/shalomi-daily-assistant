@@ -1150,6 +1150,28 @@ test("a genuine Hebrew mention of the Wolt delivery brand still produces an Orde
   assert.ok(entityNames.includes("Order"), `Expected an Order entity for a genuine Wolt-brand mention, got: ${entityNames}`);
 });
 
+// Regression test: "הזמנה"/"הזמנות" is a true Hebrew homograph -- it means
+// both "order" (a purchase) and "invitation" (a wedding/party/event
+// invitation). A bare, unguarded keyword match spuriously tagged a
+// wedding/party-invitation description with an unrelated Order entity,
+// the same bare-substring/homograph-collision bug family as round 2059.
+test("a wedding/event-invitation description does not spuriously get an Order entity", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const weddingSpec = await provider.generate("אפליקציה לניהול רשימת הזמנות לחתונה ומעקב אישורי הגעה של האורחים");
+  assert.ok(!weddingSpec.entities.map((e) => e.name).includes("Order"), `Wedding-invitation app must not get a spurious Order entity: ${weddingSpec.entities.map((e) => e.name)}`);
+
+  const conferenceSpec = await provider.generate("מערכת לשליחת הזמנה לכנס השנתי של החברה ומעקב אחרי אישורי הגעה");
+  assert.ok(!conferenceSpec.entities.map((e) => e.name).includes("Order"), `Conference-invitation app must not get a spurious Order entity: ${conferenceSpec.entities.map((e) => e.name)}`);
+});
+
+test("a genuine Hebrew order/purchase description still produces an Order entity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("מערכת לניהול הזמנות של לקוחות בחנות אונליין ומעקב משלוחים");
+  const entityNames = spec.entities.map((e) => e.name);
+  assert.ok(entityNames.includes("Order"), `Expected an Order entity for a genuine order/purchase description, got: ${entityNames}`);
+});
+
 test("a restaurant-with-delivery description produces menu, order, and courier entities together", async () => {
   const provider = new HeuristicSpecProvider();
   const spec = await provider.generate("An order-management app for a restaurant with delivery, including a menu and couriers.");
