@@ -4036,7 +4036,13 @@ function parseCsv(text) {
       i++;
       continue;
     }
-    if (ch === '"') {
+    // Round 2072: mirrors the live app's own identical fix -- RFC 4180
+    // only treats a quote as starting a quoted field when it's the
+    // field's own leading character; this used to enter quoted mode on
+    // ANY literal quote (e.g. an inches mark like \`3" steel rod\`),
+    // silently merging an arbitrary number of real rows into one
+    // garbled field.
+    if (ch === '"' && field === "") {
       inQuotes = true;
       i++;
       continue;

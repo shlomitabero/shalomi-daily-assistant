@@ -2353,6 +2353,26 @@ test("parseCsv handles quoted fields with embedded commas, newlines, and doubled
   ]);
 });
 
+/**
+ * Round 2072: a live-interaction survey agent found that parseCsv used to
+ * enter "quoted field" mode on ANY literal `"`, not just one at the very
+ * start of a field (RFC 4180's actual rule). A stray quote mid-field --
+ * an ordinary inches mark like `3" steel rod`, or any hand-edited/
+ * externally-exported CSV that doesn't double-escape an embedded quote
+ * the way this file's own csvEscape always does -- silently merged an
+ * arbitrary number of following rows into one garbled field and shifted
+ * every column after it, with zero error or warning surfaced.
+ */
+test("parseCsv treats a stray mid-field quote as literal content, not the start of a quoted field that swallows following rows", () => {
+  const csv = 'name,note,age\r\nRod A,3" steel rod,10\r\nRod B,ordinary note,20\r\n';
+  const rows = parseCsv(csv);
+  assert.deepEqual(rows, [
+    ["name", "note", "age"],
+    ["Rod A", '3" steel rod', "10"],
+    ["Rod B", "ordinary note", "20"],
+  ]);
+});
+
 test("parseCsv round-trips output produced by recordsToCsv", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },

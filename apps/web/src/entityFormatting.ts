@@ -1991,7 +1991,19 @@ export function parseCsv(text: string): string[][] {
       i++;
       continue;
     }
-    if (ch === '"') {
+    // Round 2072: RFC 4180 only treats a `"` as starting a quoted field
+    // when it's the field's own leading character -- this used to enter
+    // quoted mode on ANY literal `"`, including one appearing after other
+    // content already written to this field (e.g. an inches mark like
+    // `3" steel rod`, or any hand-edited/externally-exported CSV that
+    // doesn't double-escape an embedded quote the way this file's own
+    // csvEscape always does). Once wrongly "inside a quote", every
+    // following character -- commas, row-ending newlines -- was consumed
+    // as literal field content until the NEXT literal `"` anywhere later
+    // in the file, silently merging an arbitrary number of real rows into
+    // one garbled field and shifting every column after it, with zero
+    // error or warning ever surfaced.
+    if (ch === '"' && field === "") {
       inQuotes = true;
       i++;
       continue;

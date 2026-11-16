@@ -16660,6 +16660,35 @@ test("the exported EntityView renders a real CSV import (the complement to CSV e
   assert.match(stylesCss, /\.csv-import-errors/);
 });
 
+/**
+ * Round 2072: mirrors the live preview's own identical fix -- the
+ * exported app's own parseCsv copy used to enter "quoted field" mode on
+ * ANY literal `"`, not just one at the very start of a field (RFC 4180's
+ * actual rule). A stray quote mid-field (e.g. an inches mark like `3"
+ * steel rod`, or any hand-edited/externally-exported CSV that doesn't
+ * double-escape an embedded quote) silently merged an arbitrary number
+ * of following rows into one garbled field, with zero error surfaced.
+ * Executes the actual generated parseCsv function (extracted from real
+ * codegen output, not reimplemented here).
+ */
+test("the exported EntityView's own generated parseCsv treats a stray mid-field quote as literal content, not the start of a quoted field", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(parseCsvSrc, "expected to find parseCsv in generated output");
+
+  const { parseCsv } = new Function(`${parseCsvSrc}\nreturn { parseCsv };`)();
+
+  const csv = 'name,note,age\r\nRod A,3" steel rod,10\r\nRod B,ordinary note,20\r\n';
+  const rows = parseCsv(csv);
+
+  assert.deepEqual(rows, [
+    ["name", "note", "age"],
+    ["Rod A", '3" steel rod', "10"],
+    ["Rod B", "ordinary note", "20"],
+  ]);
+});
+
 // Regression test: the exported app's CSV import validates numbers and enum
 // values client-side (a row-numbered error before anything is even sent to
 // the server) but, until now, silently accepted any string at all for a
