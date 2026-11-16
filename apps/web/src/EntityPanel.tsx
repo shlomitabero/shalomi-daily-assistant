@@ -1922,6 +1922,23 @@ export function EntityPanel({
   // refreshRequestId below needs its own ref rather than reading
   // formInstanceKey's state directly.
   const formInstanceKeyRef = useRef(0);
+  // Round 2048: set by startCreateNew (below) right before bumpFormInstanceKey,
+  // consumed by the effect right after bumpFormInstanceKey's own definition.
+  // The "n" shortcut's own deferred-focus call used to be a bare
+  // setTimeout(fn, 0) racing React's own commit of the just-bumped
+  // formInstanceKey -- a macrotask has no ordering guarantee relative to
+  // React 18's own (Scheduler-driven) commit timing, so it could fire
+  // BEFORE the remount, grab the OLD, about-to-be-replaced field, and focus
+  // it; React then tears that node down when it does commit moments later,
+  // permanently dropping focus to document.body with nothing left to
+  // re-focus the real new field. Confirmed empirically in the exported
+  // app's own identical copy of this mechanism (codegen.ts, same round):
+  // logging the field setTimeout(0) actually found showed it was still the
+  // stale node (mid-edit value still present), and focus never recovered
+  // even after further ticks. A useEffect keyed on formInstanceKey instead
+  // runs only once React has actually committed and painted the remounted
+  // field, so there is no race to lose.
+  const pendingCreateFocusRef = useRef(false);
   // Round 1499: which field (if any) handleSubmit's own missingField/
   // invalidField checks most recently rejected -- lets the one specific
   // <input>/<select>/<textarea> that actually failed carry aria-invalid
@@ -1941,6 +1958,17 @@ export function EntityPanel({
     // session its own fields had nothing to do with.
     setInvalidFieldName(null);
   }
+  // Round 2048: runs only once React has actually committed and painted
+  // the record-form's remounted fields (keyed on formInstanceKey) -- see
+  // pendingCreateFocusRef's own doc comment above for why a plain
+  // setTimeout(fn, 0) isn't a safe substitute for this.
+  useEffect(() => {
+    if (!pendingCreateFocusRef.current) return;
+    pendingCreateFocusRef.current = false;
+    const firstField = formRef.current?.querySelector<HTMLElement>("input, select, textarea");
+    firstField?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formInstanceKey]);
   // Round 1333: the record-form's own create/edit draft is this app's
   // highest-traffic typed input of all, yet unlike the 6 dialogs
   // useBeforeUnloadWarning.ts already covers (round 1331), it had no
@@ -4191,20 +4219,16 @@ export function EntityPanel({
     setEditingId(null);
     setForm(emptyForm(entity));
     editingOriginalRef.current = null;
+    // Round 2048: a plain setTimeout(fn, 0) here used to race React's own
+    // commit of the formInstanceKey bump just below -- see
+    // pendingCreateFocusRef's own doc comment for the full mechanism and
+    // how this was confirmed to actually drop focus to document.body, not
+    // just a theoretical risk. Setting this ref and letting the
+    // formInstanceKey effect (also above) do the focusing guarantees the
+    // remount has actually committed first.
+    pendingCreateFocusRef.current = true;
     bumpFormInstanceKey();
     scrollIntoViewRespectingMotion(formRef.current, { behavior: "smooth", block: "start" });
-    // formRef.current itself never remounts, but the fields inside it now
-    // do (keyed on formInstanceKey, just incremented above) -- querying
-    // for the first field synchronously here would still find the OLD,
-    // about-to-be-replaced node (React's own state updates, including
-    // this one, only commit after this synchronous handler returns), so
-    // the focus would land on an element about to be torn down instead of
-    // the real new one. Deferred one tick, matching this file's own
-    // existing "wait for the browser to actually render first" pattern.
-    setTimeout(() => {
-      const firstField = formRef.current?.querySelector<HTMLElement>("input, select, textarea");
-      firstField?.focus();
-    }, 0);
   }
 
   /**

@@ -6222,6 +6222,21 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // that specific submit began. Mirrors the live Forge AI preview's own
   // EntityPanel.tsx.
   const formInstanceKeyRef = useRef(0);
+  // Round 2048: set by startCreateNew (below) right before bumpFormInstanceKey,
+  // consumed by the effect just after it. The "n" shortcut's own deferred-
+  // focus call used to be a bare setTimeout(fn, 0) racing React's own commit
+  // of the just-bumped formInstanceKey -- a macrotask has no ordering
+  // guarantee relative to React 18's own (Scheduler-driven) commit timing,
+  // so it could fire BEFORE the remount, grab the OLD, about-to-be-replaced
+  // field, and focus it; React then tears that node down when it does
+  // commit moments later, permanently dropping focus to <body> with nothing
+  // left to re-focus the real new field. Confirmed empirically (not just
+  // reasoned about): logging the field setTimeout(0) actually found showed
+  // it was still the stale node (value "Globex" mid-edit), and focus never
+  // recovered even after further ticks. A useEffect keyed on
+  // formInstanceKey instead runs only once React has actually committed
+  // and painted the remounted field, so there is no race to lose.
+  const pendingCreateFocusRef = useRef(false);
   // Round 1500: which field (if any) handleSubmit's own missingField/
   // invalidField checks most recently rejected -- mirrors the live
   // preview's own identical fix (EntityPanel.tsx, round 1499). Cleared
@@ -6234,6 +6249,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setFormInstanceKey(formInstanceKeyRef.current);
     setInvalidFieldName(null);
   }
+  // Round 2048: runs only once React has actually committed and painted
+  // the record-form's remounted fields (keyed on formInstanceKey) --
+  // see pendingCreateFocusRef's own doc comment above for why a plain
+  // setTimeout(fn, 0) isn't a safe substitute for this.
+  useEffect(() => {
+    if (!pendingCreateFocusRef.current) return;
+    pendingCreateFocusRef.current = false;
+    const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
+    firstField?.focus();
+  }, [formInstanceKey]);
   // Round 1500: moves real focus to the field handleSubmit's own
   // missingField/invalidField check just rejected, mirroring
   // startCreateNew's own focus convention just below. Each FieldInput's
@@ -7872,18 +7897,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   function startCreateNew() {
     setEditingId(null);
     setForm(emptyForm(entity));
+    // Round 2048: a plain setTimeout(fn, 0) here used to race React's own
+    // commit of the formInstanceKey bump just below -- see
+    // pendingCreateFocusRef's own doc comment for the full mechanism and
+    // how this was confirmed to actually drop focus to <body>, not just a
+    // theoretical risk. Setting this ref and letting the formInstanceKey
+    // effect (also above) do the focusing guarantees the remount has
+    // actually committed first.
+    pendingCreateFocusRef.current = true;
     bumpFormInstanceKey();
-    const formEl = document.querySelector(".record-form");
-    scrollIntoViewRespectingMotion(formEl, { behavior: "smooth", block: "start" });
-    // The record form's own fields now remount on every target switch
-    // (keyed on formInstanceKey, just incremented above) -- querying for
-    // the first field synchronously here would still find the OLD,
-    // about-to-be-replaced node, since React's own state updates only
-    // commit after this synchronous handler returns. Deferred one tick.
-    setTimeout(() => {
-      const firstField = document.querySelector(".record-form input, .record-form select, .record-form textarea");
-      firstField?.focus();
-    }, 0);
+    scrollIntoViewRespectingMotion(document.querySelector(".record-form"), { behavior: "smooth", block: "start" });
   }
 
   // Toggles one group's collapsed state and persists the full updated set.

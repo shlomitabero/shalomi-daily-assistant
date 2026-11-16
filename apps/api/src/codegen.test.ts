@@ -13887,7 +13887,16 @@ test("the exported EntityView's 'n' shortcut discards an in-progress edit, reset
       const nameInputAfter = container.querySelector('input[type="text"]') as HTMLInputElement;
       assert.equal(nameInputAfter.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
       assert.match(container.querySelector("form")?.textContent ?? "", /Add/, "'n' must flip the submit button back to its add-record label");
-      assert.equal(document.activeElement, nameInputAfter, "'n' must focus the form's first field");
+      // Deliberately compared as a boolean, not `assert.equal(element1,
+      // element2, ...)` -- the sibling regression-proof three tests above
+      // (the bulk-actions-bar one) already documents why: when this kind of
+      // assertion actually fails, node:assert's default diff formatter
+      // tries to serialize the real DOM element(s) for the error message,
+      // which hangs indefinitely (observed: runaway memory growth into the
+      // multi-GB range before the OS OOM-kills the process) on jsdom's
+      // circular/huge node structure, taking down the entire test run
+      // instead of just failing this one test.
+      assert.equal(document.activeElement === nameInputAfter, true, "'n' must focus the form's first field");
     });
   } finally {
     globalThis.fetch = originalFetch;

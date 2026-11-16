@@ -14860,6 +14860,63 @@ test("EntityPanel's 'n' shortcut jumps to a blank add-record form and focuses it
 });
 
 /**
+ * Round 2048: startCreateNew's deferred focus call used to be a bare
+ * setTimeout(fn, 0) racing React's own commit of the formInstanceKey bump
+ * that remounts the record-form's fields -- a macrotask has no ordering
+ * guarantee relative to React 18's own commit timing, so it could fire
+ * BEFORE the remount, grab the OLD, about-to-be-replaced field, and focus
+ * it; React then tears that node down when it does commit moments later,
+ * permanently dropping focus to document.body with nothing left to
+ * re-focus the real new field. The sibling test just above doesn't
+ * reliably expose this: its retry loop re-fires "n" and lets whatever
+ * timing happens to land. Wrapping the keyDown and its following tick in
+ * an explicit act() -- the same style that exposed this race in the
+ * exported app's own identical copy of this mechanism (codegen.ts, same
+ * round) -- pins down the exact commit-vs-macrotask ordering this test
+ * needs to actually exercise the race, rather than happening to dodge it.
+ */
+test("EntityPanel's 'n' shortcut correctly focuses the remounted field even when its deferred focus call could otherwise race React's own commit", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex row");
+      await act(async () => {
+        fireEvent.click(globexEdit!);
+      });
+      await waitForCondition(() => (document.querySelector(".record-form input[type=text]") as HTMLInputElement)?.value === "Globex");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "n" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      const nameInputAfterN = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInputAfterN.value, "", "'n' must reset the form back to blank, discarding the in-progress edit");
+      // Deliberately compared as a boolean, not `assert.equal(element1,
+      // element2, ...)` -- when this kind of assertion actually fails,
+      // node:assert's default diff formatter tries to serialize the real
+      // DOM element(s) for the error message, which hangs indefinitely on
+      // jsdom's circular/huge node structure (confirmed in the exported
+      // app's own equivalent test, codegen.ts's codegen.test.ts, same
+      // round: runaway memory growth into the multi-GB range before the
+      // OS OOM-kills the process).
+      assert.equal(document.activeElement === nameInputAfterN, true, "'n' must focus the remounted field, not leave focus stuck on document.body");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 644: startEdit snapshots EVERY field of the record into `form`,
  * and the old handleSubmit sent that whole snapshot back on save -- not
  * just the field(s) the user actually edited. If another tab (or a
