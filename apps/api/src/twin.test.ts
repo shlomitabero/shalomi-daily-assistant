@@ -2227,6 +2227,38 @@ test("computeBusinessTwin's overdue-deadline observation excludes a record resol
   assert.match(overdue!.text, /1 of 1 record in/, `a task resolved via 'cancelled' alone (with 'done' still false) must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
 });
 
+test("computeBusinessTwin's overdue-deadline observation excludes a record resolved via its SECOND-declared status/stage enum field, not just its first (round 2068)", () => {
+  const dealProject: Project = {
+    ...project,
+    description: "Deals with independent status/stage enums",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Deal",
+          label: "Deals",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "closeDeadline", label: "Close deadline", type: "date", required: false },
+            { name: "status", type: "enum", enumValues: ["active", "inactive"], required: false },
+            { name: "stage", type: "enum", enumValues: ["lead", "qualified", "won", "lost"], required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, dealProject.id, dealProject.spec);
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, dealProject.id, dealProject.spec.entities[0], { title: "Still open", closeDeadline: "2026-01-01", status: "active", stage: "lead" }); // genuinely overdue
+  insertRecord(db, dealProject.id, dealProject.spec.entities[0], { title: "Won", closeDeadline: "2026-01-01", status: "active", stage: "won" }); // resolved via the later-declared field
+
+  const twin = computeBusinessTwin(db, dealProject, today);
+  const overdue = twin.jumpableObservations.find((o) => o.text.includes("Close deadline"));
+  assert.ok(overdue, `expected an overdue-deadline observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(overdue!.text, /1 of 1 record in/, `a deal resolved via 'stage':'won' alone (with 'status' still 'active') must be excluded from both the numerator and denominator, got: "${overdue!.text}"`);
+});
+
 /**
  * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be gathered
  * from every status enum this file's own domain library actually ships,

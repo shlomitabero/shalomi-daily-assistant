@@ -32185,6 +32185,84 @@ test("the exported EntityView does not flag a record as overdue when it is resol
 });
 
 /**
+ * Round 2068: the exact same bug class round 1969 just fixed above for the
+ * boolean doneFields check, but on the enum statusField check a few lines
+ * above it in the same function -- that check used `fields.find(...)`,
+ * stopping at the FIRST field named "status" or "stage" (declaration
+ * order) and checking only that one. Nothing in FieldSchema/EntitySchema
+ * stops an entity from declaring BOTH a "status" enum and a "stage" enum
+ * (an ordinary ask for a Deal-shaped entity with an activity status and a
+ * pipeline stage). A record whose first-declared enum ("status") held a
+ * non-terminal value had its second-declared enum ("stage", holding a
+ * genuinely terminal value like "won") silently ignored.
+ */
+test("the exported EntityView does not flag a record as overdue when it is resolved via its SECOND-declared status/stage enum field, not just its first", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+
+  function isoDateOffset(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  const dealEntity = {
+    name: "Deal",
+    label: "Deal",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "closeDeadline", label: "Close deadline", type: "date", required: false },
+      { name: "status", label: "Status", type: "enum", enumValues: ["active", "inactive"], required: false },
+      { name: "stage", label: "Stage", type: "enum", enumValues: ["lead", "qualified", "won", "lost"], required: false },
+    ],
+  };
+  const records = [
+    { id: 1, title: "Still open", closeDeadline: isoDateOffset(-5), status: "active", stage: "lead" },
+    { id: 2, title: "Won deal", closeDeadline: isoDateOffset(-5), status: "active", stage: "won" },
+  ];
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Deal") {
+      return new Response(JSON.stringify({ records }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: dealEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const rows = Array.from(container.querySelectorAll("tbody tr"));
+      const openRow = rows.find((r) => /Still open/.test(r.textContent ?? ""))!;
+      const wonRow = rows.find((r) => /Won deal/.test(r.textContent ?? ""))!;
+
+      assert.ok(openRow.querySelector(".date-overdue"), "a record with status:active and stage:lead (neither terminal) must still be flagged overdue");
+      assert.equal(wonRow.querySelector(".date-overdue") === null, true, "a record resolved via its SECOND-declared enum field ('stage':'won', with the earlier-declared 'status' still 'active') must not be flagged overdue");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1951: CLOSED_STATUS_VALUES's exported-app copy claims (in its own
  * doc comment) to be gathered from every status enum this project's domain
  * library actually ships, but "returned" (the built-in Rental entity's own

@@ -845,11 +845,16 @@ const CLOSED_STATUS_VALUES = new Set([
   "returned", "sold", "hired", "graduated", "rented", "published", "received",
 ]);
 function isRecordClosedStatus(record: EntityRecord, fields: Entity["fields"]): boolean {
-  const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
-  if (statusField) {
-    const value = record[statusField.name];
-    if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
-  }
+  // Round 2068: mirrors entityFormatting.ts's own identical fix -- this
+  // used to be `fields.find(...)`, stopping at the FIRST field named
+  // "status" or "stage" (declaration order) and checking only that one.
+  // Nothing stops an entity from declaring BOTH a "status" enum and a
+  // "stage" enum, so a record whose first-declared field held a
+  // non-terminal value silently had its second, genuinely-terminal
+  // enum field ignored. Now every qualifying enum field is checked, not
+  // just the first match.
+  const statusFields = fields.filter((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
+  if (statusFields.some((f) => typeof record[f.name] === "string" && CLOSED_STATUS_VALUES.has((record[f.name] as string).toLowerCase()))) return true;
   // Round 1889: widened to also recognize "cancelled"/"canceled" (and their
   // "is"-prefixed forms), mirroring CLOSED_STATUS_VALUES's own synonym
   // pairing for the enum case above and entityFormatting.ts's own matching

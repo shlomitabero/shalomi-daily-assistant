@@ -517,11 +517,21 @@ const CLOSED_STATUS_VALUES = new Set([
  * the exact same reason a "Paid" Invoice or "Won" Deal is exempted above.
  */
 export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boolean {
-  const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
-  if (statusField) {
-    const value = record[statusField.name];
-    if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
-  }
+  // Round 2068: this used to be `fields.find(...)`, which stops at the
+  // FIRST field named "status" or "stage" (in declaration order) and
+  // checks only that one. Nothing in FieldSchema/EntitySchema stops an
+  // entity from declaring BOTH a "status" enum and a "stage" enum
+  // (only exact-name collisions are blocked) -- the doneFields comment
+  // below used to claim "at most one lifecycle field is a safe
+  // assumption" for this enum case, but that assumption doesn't hold: a
+  // Deal entity with an activity "status" and a pipeline "stage" is an
+  // ordinary ask. If "status" was declared first and held a non-terminal
+  // value while "stage" (declared second) held a real terminal one like
+  // "won", `.find()` silently ignored "stage" entirely. Now every
+  // qualifying enum field is checked, not just the first match --
+  // mirroring the `doneFields`/`.some()` pattern just below.
+  const statusFields = fields.filter((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
+  if (statusFields.some((f) => typeof record[f.name] === "string" && CLOSED_STATUS_VALUES.has((record[f.name] as string).toLowerCase()))) return true;
   // Round 1889: widened to also recognize "cancelled"/"canceled" (and their
   // "is"-prefixed forms), mirroring CLOSED_STATUS_VALUES's own synonym
   // pairing for the enum case above -- a boolean `cancelled`/`isCancelled`
@@ -541,9 +551,9 @@ export function isRecordClosedStatus(record: EntityRecord, fields: Field[]): boo
   // that single field's value. An entity can declare two independent
   // boolean flags that both match (e.g. a `done` flag for ordinary
   // completion and a separate `cancelled` flag for abandonment) --
-  // unlike the enum status/stage check above, where "at most one
-  // lifecycle field" is a safe assumption, nothing stops a second
-  // completion-ish boolean from coexisting. If the record has
+  // -- the same bug class round 2068 fixed just above for the enum
+  // status/stage check, since nothing stops a second completion-ish
+  // boolean from coexisting either. If the record has
   // `done: false, cancelled: true`, `.find()` returned `done` first
   // (declaration order), checked only it, and wrongly reported "not
   // closed" even though `cancelled` was true on the same record. Now

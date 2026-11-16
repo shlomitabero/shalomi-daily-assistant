@@ -4988,6 +4988,31 @@ test("isRecordClosedStatus checks EVERY qualifying boolean field, not just the f
 });
 
 /**
+ * Round 2068: the exact same bug class round 1969 just fixed above for the
+ * boolean doneFields check, but on the enum statusField check instead --
+ * nothing stops an entity from declaring BOTH a "status" enum and a
+ * "stage" enum (e.g. a Deal with an activity status and a pipeline stage),
+ * and the old `fields.find(...)` stopped at whichever was declared first.
+ */
+test("isRecordClosedStatus checks EVERY qualifying status/stage enum field, not just the first name match (round 2068)", () => {
+  const dealFields: Field[] = [
+    { name: "closeDeadline", type: "date", required: false },
+    { name: "status", type: "enum", enumValues: ["active", "inactive"], required: false },
+    { name: "stage", type: "enum", enumValues: ["lead", "qualified", "won", "lost"], required: false },
+  ];
+  assert.equal(
+    isRecordClosedStatus({ id: 1, closeDeadline: "2020-01-01", status: "active", stage: "won" }, dealFields),
+    true,
+    "a deal won via its own 'stage' field must be resolved even though the earlier-declared 'status' field is still 'active'",
+  );
+  assert.equal(
+    isRecordClosedStatus({ id: 1, closeDeadline: "2020-01-01", status: "active", stage: "lead" }, dealFields),
+    false,
+    "a deal that is neither status-terminal nor stage-terminal leaves the date-only overdue classification untouched",
+  );
+});
+
+/**
  * Round 1951: CLOSED_STATUS_VALUES's own doc comment claims to be "gathered
  * from every status enum this file's own domain library actually ships",
  * but "returned" (Rental.status), "sold" (Property.status), "hired"

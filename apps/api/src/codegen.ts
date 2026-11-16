@@ -3385,11 +3385,13 @@ const CLOSED_STATUS_VALUES = new Set([
   "returned", "sold", "hired", "graduated", "rented", "published", "received",
 ]);
 function isRecordClosedStatus(record, fields) {
-  const statusField = fields.find((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
-  if (statusField) {
-    const value = record[statusField.name];
-    if (typeof value === "string" && CLOSED_STATUS_VALUES.has(value.toLowerCase())) return true;
-  }
+  // Round 2068: mirrors the live app's own identical fix -- this used to
+  // be \`fields.find(...)\`, stopping at the FIRST field named "status" or
+  // "stage" (declaration order) and checking only that one, silently
+  // ignoring a second qualifying enum field (e.g. a "stage" field holding
+  // "won" when "status" was declared first and held a non-terminal value).
+  const statusFields = fields.filter((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
+  if (statusFields.some((f) => typeof record[f.name] === "string" && CLOSED_STATUS_VALUES.has(record[f.name].toLowerCase()))) return true;
   // Round 1889: widened to also recognize "cancelled"/"canceled" (and their
   // "is"-prefixed forms), mirroring the live app's own matching widening.
   // Round 1968: mirrors the live app's own identical fix -- every OTHER
