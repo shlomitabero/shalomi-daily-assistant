@@ -191,6 +191,7 @@ export interface BaileysIncomingMessage {
     callLogMesssage?: { isVideo?: boolean; callOutcome?: number; durationSecs?: number };
     questionResponseMessage?: { text?: string };
     statusQuestionAnswerMessage?: { text?: string };
+    statusQuotedMessage?: { text?: string };
     commentMessage?: { message?: BaileysIncomingMessage["message"] };
     encCommentMessage?: Record<string, never>;
     statusMentionMessage?: { message?: BaileysIncomingMessage["message"] };
@@ -1182,6 +1183,23 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   // zero trace.
   if (message.statusQuestionAnswerMessage) {
     const text = message.statusQuestionAnswerMessage.text;
+    return text ? `[Status Q&A reply] ${text}` : "[Status Q&A reply]";
+  }
+  // Round 2047: `statusQuotedMessage` is yet another distinct WAProto
+  // field in this same "Status Q&A sticker" family -- confirmed against
+  // the installed Baileys protobuf (WAProto/index.d.ts:
+  // IStatusQuotedMessage is `{ type?, text?, thumbnail?, originalStatusId?
+  // }`, with `type` a single-value enum, QUESTION_ANSWER=1) -- a contact
+  // quoting/resharing a Status Q&A answer carries the exact same plaintext
+  // `text` field as questionResponseMessage/statusQuestionAnswerMessage
+  // just above, no decryption needed, same bar. Round 1948's own write-up
+  // explicitly enumerated every other field in this cluster
+  // (statusMentionMessage/statusQuestionAnswerMessage/questionResponseMessage)
+  // to distinguish statusStickerInteractionMessage from them, but never
+  // mentioned this field -- it had no handling anywhere and fell through
+  // to the final `return null` below, vanishing with zero trace.
+  if (message.statusQuotedMessage) {
+    const text = message.statusQuotedMessage.text;
     return text ? `[Status Q&A reply] ${text}` : "[Status Q&A reply]";
   }
   // Round 1948: WhatsApp's "react to a Status update with a sticker"

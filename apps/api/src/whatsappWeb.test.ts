@@ -3237,6 +3237,45 @@ test("an incoming WhatsApp Status Q&A sticker reply delivered as statusQuestionA
 });
 
 /**
+ * Round 2047: `statusQuotedMessage` is yet another distinct WAProto field
+ * (index.d.ts: IStatusQuotedMessage) in this same "Status Q&A sticker"
+ * family as questionResponseMessage/statusQuestionAnswerMessage above --
+ * confirmed directly against the installed Baileys protobuf to have the
+ * exact same plaintext `text` field, plus `type`/`thumbnail`/
+ * `originalStatusId`, no decryption needed, same bar. Round 1948's own
+ * write-up explicitly enumerated every other field in this cluster
+ * (statusMentionMessage/statusQuestionAnswerMessage/questionResponseMessage)
+ * but never mentioned this one; it had no handling anywhere and fell
+ * through to the final `return null`, vanishing with zero trace.
+ */
+test("an incoming WhatsApp Status Q&A sticker reply delivered as statusQuotedMessage is logged with the customer's actual answer text, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { statusQuotedMessage: { text: "Count me in!" } } },
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { statusQuotedMessage: {} } },
+    ],
+  });
+
+  // listWhatsAppMessages orders newest-first, the reverse of emission order.
+  const { messages: quotedMessages } = listWhatsAppMessages(db, project.id);
+  assert.equal(quotedMessages.length, 2);
+  assert.equal(quotedMessages[0].body, "[Status Q&A reply]");
+  assert.equal(quotedMessages[1].body, "[Status Q&A reply] Count me in!");
+  for (const m of quotedMessages) {
+    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
+  }
+});
+
+/**
  * Round 1948: `statusStickerInteractionMessage` is WhatsApp's "react to a
  * Status update with a sticker" feature -- confirmed against the installed
  * Baileys protobuf (WAProto/index.d.ts: IStatusStickerInteractionMessage is
