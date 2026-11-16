@@ -931,6 +931,80 @@ test("an entity summary surfaces a real removal error (e.g. a dependent-relation
 });
 
 /**
+ * Round 2093: this screen (pre-build spec review) has no Collaborators
+ * button at all, so the realistic trigger is the same user with two tabs
+ * open on their own not-yet-built project -- one tab already removed this
+ * exact entity, and this tab's own remove button fires on the stale copy
+ * it still shows. routes/projects.ts's findEntity throws ENTITY_NOT_FOUND
+ * for that, the identical "ghost target" shape rounds 1884/1885/1890/1891/
+ * 1892 already close for every other deferred action in this app, just
+ * never ported to this shared hook. A retry can never succeed once the
+ * entity is genuinely gone, so this confirms no stuck, endlessly-
+ * repeatable error banner is shown, unlike the real removal-error test
+ * just above.
+ */
+test("an entity summary's remove button swallows ENTITY_NOT_FOUND instead of showing a stuck error, when another tab already removed this exact entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const removedProjects: Project[] = [];
+      renderEntitySummaryItem((p) => removedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-summary-remove") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".entity-summary-remove") as HTMLButtonElement).disabled === false);
+
+      assert.equal(removedProjects.length, 0, "onRemoved must not fire for a target that never actually existed to remove");
+      // Round 666's own established rule: never assert a DOM node directly
+      // against null/undefined -- util.inspect's attempt to pretty-print a
+      // live jsdom Element for the failure message can hang/OOM on its
+      // circular reference graph. Always compare as a boolean.
+      assert.equal(document.querySelector(".entity-summary .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2093: same race as the remove test just above, but on the
+ * Duplicate button -- duplicateEntity hits the identical findEntity check
+ * server-side, so duplicating an entity another tab already removed gets
+ * the same ENTITY_NOT_FOUND. duplicate's own error state (duplicateError)
+ * is entirely separate from remove's, so this needs its own ghostCodes
+ * wiring, not just remove's.
+ */
+test("an entity summary's duplicate button swallows ENTITY_NOT_FOUND instead of showing a stuck error, when another tab already removed this exact entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const renamedProjects: Project[] = [];
+      renderEntitySummaryItem(() => {}, true, (p) => renamedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".entity-summary-duplicate") as HTMLButtonElement);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(renamedProjects.length, 0, "onRenamed (duplicate's own success callback) must not fire for a target that never existed");
+      // Round 666's own established rule: compare as a boolean, never a raw DOM node.
+      assert.equal(document.querySelector(".entity-summary .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: entities on the spec-review screen previously had no
  * correction path beyond removal, unlike roles/assumptions right above them
  * on the same screen -- an AI-mislabeled entity could only be fixed after
@@ -973,6 +1047,39 @@ test("clicking an entity summary's label opens an inline edit, and saving it cal
       assert.deepEqual(patchBody, { label: "Client" });
       assert.deepEqual(renamedProjects[0].spec.entities.map((e) => e.label), ["Client"]);
       assert.equal(document.querySelector(".entity-summary-rename-edit"), null, "must return to display mode after a successful save");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2093: mirrors EntityLabelEditor.test.ts's own round-1892 test --
+ * same race, same ENTITY_NOT_FOUND code, same expected outcome (the
+ * editor closes with no stuck error), just reached through this screen's
+ * own click-to-rename instead of the post-build editor's.
+ */
+test("an entity summary's rename editor closes with no error when the save 404s ENTITY_NOT_FOUND because another tab already removed this entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      renderEntitySummaryItem(() => {});
+
+      fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+      const input = document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Client" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".entity-summary-rename-edit") === null);
+      // Round 666's own established rule: compare as a boolean, never a raw DOM node.
+      assert.equal(document.querySelector(".entity-summary .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
+      assert.ok(document.querySelector(".entity-summary-label"), "the editor must close back to the read-only label, not stay stuck open");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1528,6 +1635,40 @@ test("a field chip surfaces a real removal error (e.g. the last-field guard) ins
 });
 
 /**
+ * Round 2093: mirrors EntitySummaryItem's own identical test -- another
+ * tab on this same not-yet-built project already removed this exact
+ * field (FIELD_NOT_FOUND) or its whole entity (ENTITY_NOT_FOUND, since
+ * removeField's route resolves the entity via findEntity before even
+ * reaching findField -- same ordering FieldLabelEditor.tsx's own
+ * round-1892 fix documents). Either way the target is genuinely gone, so
+ * this confirms no stuck, endlessly-repeatable error banner is shown.
+ */
+test("a field chip's remove button swallows FIELD_NOT_FOUND instead of showing a stuck error, when another tab already removed this exact field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Field "email" is not part of this entity', code: "FIELD_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p));
+
+      fireEvent.click(document.querySelector(".chip-remove") as HTMLButtonElement);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(changedProjects.length, 0, "onChanged must not fire for a target that never actually existed to remove");
+      // Round 666's own established rule: compare as a boolean, never a raw DOM node.
+      assert.equal(document.querySelector(".chip-removable .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Real feature round: a field's `required` flag used to be plain, static
  * " *" text on the chip -- the one property a field chip could never
  * actually fix, unlike its label (click-to-rename). Confirms the new
@@ -1612,6 +1753,40 @@ test("a field chip's required checkbox guards against a fast double-click, so on
 });
 
 /**
+ * Round 2093: handleToggleRequired and commitTypeChange live outside the
+ * shared useRemovableSpecItem/useRenamableSpecItem hooks (see
+ * handleRemoveField's own round-931 comment), so they never got the
+ * identical ghost-target fix those hooks' other callers did -- the exact
+ * same ENTITY_NOT_FOUND/FIELD_NOT_FOUND race applies here too, when
+ * another tab already removed this field (or its whole entity) before
+ * this toggle's own PATCH lands.
+ */
+test("a field chip's required checkbox swallows FIELD_NOT_FOUND instead of showing a stuck error, when another tab already removed this exact field", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Field "email" is not part of this entity', code: "FIELD_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      fireEvent.click(document.querySelector(".chip-field-required input") as HTMLInputElement);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(changedProjects.length, 0, "onChanged must not fire for a target that never actually existed to toggle");
+      // Round 666's own established rule: compare as a boolean, never a raw DOM node.
+      assert.equal(document.querySelector(".chip-removable .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1963: commitTypeChange had no guard against racing ITSELF either
  * -- the more serious half of this gap, since it's parameterized by
  * `type` and its own caller (handleTypeSelectChange) is a plain <select
@@ -1655,6 +1830,36 @@ test("a field chip's type select guards against two rapid changes, so only the l
         "two rapid type changes must only ever reach the type-change PATCH once -- the second change must be blocked by typeBusy, not fire its own independent request",
       );
       assert.equal(patchedTypes[0], "number", "the first change to actually fire must be the one sent -- typeBusy blocks the second until the first resolves");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2093: mirrors handleToggleRequired's own identical test just
+ * above -- same ghost-target race, reached through the type <select>
+ * instead of the required checkbox.
+ */
+test("a field chip's type select swallows ENTITY_NOT_FOUND instead of showing a stuck error, when another tab already removed this field's whole entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const changedProjects: Project[] = [];
+      renderFieldChip((p) => changedProjects.push(p), true, { name: "email", type: "text", required: true });
+
+      fireEvent.change(document.querySelector(".chip-field-type") as HTMLSelectElement, { target: { value: "number" } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(changedProjects.length, 0, "onChanged must not fire for a target that never actually existed to retype");
+      // Round 666's own established rule: compare as a boolean, never a raw DOM node.
+      assert.equal(document.querySelector(".chip-removable .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2353,6 +2558,41 @@ test("clicking a field chip's text opens an inline edit, and saving it calls the
       await waitForCondition(() => changedProjects.length === 1);
       assert.deepEqual(patchBody, { label: "Email Address" });
       assert.equal(document.querySelector(".chip-rename-edit"), null, "must return to display mode after a successful save");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2093: mirrors FieldLabelEditor.test.ts's own round-1892 test --
+ * same race, same two possible codes (ENTITY_NOT_FOUND since the route
+ * resolves the entity before even reaching findField, or FIELD_NOT_FOUND
+ * for the field itself), same expected outcome (the editor closes with
+ * no stuck error), just reached through this screen's own click-to-
+ * rename instead of the post-build editor's.
+ */
+test("a field chip's rename editor closes with no error when the save 404s ENTITY_NOT_FOUND because another tab already removed this field's whole entity", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Entity "Customer" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      renderFieldChip(() => {});
+
+      fireEvent.click(document.querySelector(".chip-text") as HTMLElement);
+      const input = document.querySelector(".chip-rename-edit input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Email Address" } });
+      fireEvent.blur(input);
+
+      await waitForCondition(() => document.querySelector(".chip-rename-edit") === null);
+      // Round 666's own established rule: compare as a boolean, never a raw DOM node.
+      assert.equal(document.querySelector(".chip-removable .error") === null, true, "no error banner must be shown -- a retry can only ever repeat the same 404");
+      assert.ok(document.querySelector(".chip-text"), "the editor must close back to the read-only chip text, not stay stuck open");
     } finally {
       globalThis.fetch = originalFetch;
     }

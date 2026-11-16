@@ -41,7 +41,26 @@ import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
  * correction workflow, a plain text input + submit calling the matching
  * POST endpoint.
  */
-function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRemoved: (project: Project) => void) {
+function useRemovableSpecItem(
+  remove: () => Promise<{ project: Project }>,
+  onRemoved: (project: Project) => void,
+  // Round 2093: EntitySummaryItem's own remove/duplicate and FieldChip's
+  // own remove -- unlike RoleChip/AssumptionItem/PersonaItem's remove,
+  // which already reject a stale request with their own ROLE_NOT_FOUND/
+  // etc. STALE_INDEX handling (round 1335) -- can target an entity/field
+  // another tab on this same not-yet-built project already removed (this
+  // screen has no Collaborators button at all, so the realistic trigger
+  // is the same user with two tabs open, not a different collaborator).
+  // routes/projects.ts's findEntity/findField throw ENTITY_NOT_FOUND/
+  // FIELD_NOT_FOUND for that, the identical "ghost target" shape rounds
+  // 1884/1885/1890/1891/1892 already close for every other deferred
+  // action in this app -- just never ported to this shared hook. Passing
+  // the codes that mean "the target is already, permanently gone" here
+  // swallows the error instead of leaving a stuck, endlessly-repeatable
+  // one for an outcome that will never change; omitted (as for the role/
+  // assumption/persona call sites) this behaves exactly as before.
+  ghostCodes: string[] = [],
+) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +82,9 @@ function useRemovableSpecItem(remove: () => Promise<{ project: Project }>, onRem
       const { project } = await remove();
       onRemoved(project);
     } catch (err) {
-      setError((err as Error).message);
+      if (!ghostCodes.includes((err as Error & { code?: string }).code ?? "")) {
+        setError((err as Error).message);
+      }
       setBusy(false);
     }
   }
@@ -93,6 +114,10 @@ function useRenamableSpecItem(
   currentValue: string,
   rename: (value: string) => Promise<{ project: Project }>,
   onRenamed: (project: Project) => void,
+  // Round 2093: see useRemovableSpecItem's own identical parameter, just
+  // above -- EntitySummaryItem's and FieldChip's own rename share this
+  // hook too, and the exact same ghost-target race applies to them.
+  ghostCodes: string[] = [],
 ) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -144,7 +169,11 @@ function useRenamableSpecItem(
       onRenamed(project);
       setEditing(false);
     } catch (err) {
-      setError((err as Error).message);
+      if (ghostCodes.includes((err as Error & { code?: string }).code ?? "")) {
+        setEditing(false);
+      } else {
+        setError((err as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -637,7 +666,14 @@ export function EntitySummaryItem({
   onBusyChange?: (entityName: string, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved);
+  // Round 2093: see useRemovableSpecItem's/useRenamableSpecItem's own
+  // ghostCodes doc comments -- this screen's only realistic trigger is
+  // the same user with two tabs open (no Collaborators button exists
+  // here), but the server-side race and its ENTITY_NOT_FOUND response are
+  // identical either way.
+  const { busy, error, handleRemove, clearError } = useRemovableSpecItem(() => removeEntity(projectId, entity.name), onRemoved, [
+    "ENTITY_NOT_FOUND",
+  ]);
   // Round 1216: reuses useRemovableSpecItem's own generic
   // busy/error/call/callback shape -- it's not actually remove-specific
   // (just "call this async action, track busy/error, report the result
@@ -648,11 +684,13 @@ export function EntitySummaryItem({
   const { busy: duplicateBusy, error: duplicateError, handleRemove: handleDuplicate, clearError: clearDuplicateError } = useRemovableSpecItem(
     () => duplicateEntity(projectId, entity.name),
     onRenamed,
+    ["ENTITY_NOT_FOUND"],
   );
   const rename = useRenamableSpecItem(
     entity.label ?? entity.name,
     (value) => renameEntityLabel(projectId, entity.name, value),
     onRenamed,
+    ["ENTITY_NOT_FOUND"],
   );
   // Round 1039: renameEntityLabel/renameFieldLabel (both used right on this
   // screen, via click-to-rename) have no server-side uniqueness check --
@@ -968,14 +1006,22 @@ export function FieldChip({
   onBusyChange?: (fieldName: string, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
+  // Round 2093: see EntitySummaryItem's own identical comment -- the
+  // entity routes' field-scoped siblings resolve the entity first (see
+  // commitTypeChange/handleToggleRequired's own identical comments below),
+  // so a removed entity surfaces as ENTITY_NOT_FOUND even on these
+  // field-scoped routes, not FIELD_NOT_FOUND -- both are treated the same
+  // way here.
   const { busy, error, handleRemove, clearError } = useRemovableSpecItem(
     () => removeField(projectId, entityName, field.name),
     onChanged,
+    ["ENTITY_NOT_FOUND", "FIELD_NOT_FOUND"],
   );
   const rename = useRenamableSpecItem(
     field.label ?? field.name,
     (value) => renameFieldLabel(projectId, entityName, field.name, value),
     onChanged,
+    ["ENTITY_NOT_FOUND", "FIELD_NOT_FOUND"],
   );
   // Round 1039: see EntitySummaryItem's own identical comment -- this
   // chip's own relation-target dropdown (below) offers every OTHER
@@ -1017,7 +1063,19 @@ export function FieldChip({
       const { project } = await setFieldRequired(projectId, entityName, field.name, !field.required);
       onChanged(project);
     } catch (err) {
-      setRequiredError((err as Error).message);
+      // Round 2093: see useRemovableSpecItem's own ghostCodes doc comment
+      // -- this chip's own two direct handlers (not routed through that
+      // shared hook) have the identical ghost-target race: another tab on
+      // this same not-yet-built project already removed this exact field
+      // (FIELD_NOT_FOUND) or its whole entity (ENTITY_NOT_FOUND --
+      // setFieldRequired's route resolves the entity via findEntity before
+      // findField, same ordering FieldLabelEditor.tsx's own round-1892 fix
+      // documents). Swallowed instead of left as a stuck, endlessly-
+      // repeatable error for an outcome that will never change.
+      const code = (err as Error & { code?: string }).code;
+      if (code !== "ENTITY_NOT_FOUND" && code !== "FIELD_NOT_FOUND") {
+        setRequiredError((err as Error).message);
+      }
     } finally {
       setRequiredBusy(false);
     }
@@ -1133,7 +1191,12 @@ export function FieldChip({
       onChanged(project);
       setDraftType(null);
     } catch (err) {
-      setTypeError((err as Error).message);
+      // Round 2093: mirrors handleToggleRequired's own identical fix just
+      // above -- same ghost-target race, same two possible codes.
+      const code = (err as Error & { code?: string }).code;
+      if (code !== "ENTITY_NOT_FOUND" && code !== "FIELD_NOT_FOUND") {
+        setTypeError((err as Error).message);
+      }
     } finally {
       setTypeBusy(false);
     }
