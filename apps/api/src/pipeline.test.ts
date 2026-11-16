@@ -1243,6 +1243,58 @@ test("the Architect's headline uses the singular 'entity'/'table'/'role' when a 
   const firstArchitectSuccess = firstEvents.find((e) => e.agent === "Architect" && e.status === "success");
   assert.ok(firstArchitectSuccess);
   assert.equal(firstArchitectSuccess!.message, "Designed 1 table for 1 role.", `expected singular "table"/"role", got: "${firstArchitectSuccess!.message}"`);
+
+  // Round 2078: the Database agent's own success message, built separately
+  // a few lines below architectEvent's, never got round 1462's singular/
+  // plural fix at all -- not even the `(s)` placeholder convention this
+  // same pipeline's "Sample Data Filler" message uses. A first build with
+  // exactly one entity (produced above) is the single most common minimal
+  // case, and it hits BOTH counts at once: exactly 1 new table, exactly 0
+  // new columns.
+  const firstDatabaseSuccess = firstEvents.find((e) => e.agent === "Database" && e.status === "success");
+  assert.ok(firstDatabaseSuccess);
+  assert.match(firstDatabaseSuccess!.message, /\b1 new table\b/, `expected singular "table", got: "${firstDatabaseSuccess!.message}"`);
+  assert.ok(!firstDatabaseSuccess!.message.includes("1 new tables"), `must not say "tables" for exactly one, got: "${firstDatabaseSuccess!.message}"`);
+  assert.match(firstDatabaseSuccess!.message, /\b0 new columns\b/, `0 is still plural, got: "${firstDatabaseSuccess!.message}"`);
+});
+
+/**
+ * Round 2078: the symmetric direction of the test just above -- a refine
+ * that adds exactly one new COLUMN to an existing entity (no new table at
+ * all) must render "0 new tables, 1 new column", not "1 new columns".
+ */
+test("the Database agent's success message uses the singular 'column' when a refine adds exactly one new field to an existing entity", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const previousSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Customer", label: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+  };
+  const nextSpec: ProductSpec = {
+    ...previousSpec,
+    entities: [{ ...previousSpec.entities[0], fields: [...previousSpec.entities[0].fields, { name: "email", type: "text", required: false }] }],
+  };
+  applyMigrations(db, "proj1", previousSpec);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "test",
+    spec: previousSpec,
+  });
+
+  const events = await collect(runBuildPipeline(db, project, { previousSpec, nextSpec, changeLabel: "Refine: add Customer email field" }));
+  const databaseSuccess = events.find((e) => e.agent === "Database" && e.status === "success");
+  assert.ok(databaseSuccess);
+  assert.match(databaseSuccess!.message, /\b1 new column\b/, `expected singular "column", got: "${databaseSuccess!.message}"`);
+  assert.ok(!databaseSuccess!.message.includes("1 new columns"), `must not say "columns" for exactly one, got: "${databaseSuccess!.message}"`);
+  assert.match(databaseSuccess!.message, /\b0 new tables\b/, `0 is still plural, got: "${databaseSuccess!.message}"`);
 });
 
 /**

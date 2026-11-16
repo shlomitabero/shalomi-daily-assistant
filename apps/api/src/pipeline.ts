@@ -890,11 +890,20 @@ export async function* runBuildPipeline(
       detail: { correctedSpec: fixedSpec },
     };
   }
+  // Round 2078: this message's own sibling, architectEvent's headline just
+  // above, already branches singular/plural for every count it reports
+  // (round 1462) -- but these two counts never got the same treatment, so
+  // the single most common minimal case (a first build with exactly one
+  // entity, or a refine adding exactly one field) rendered the
+  // grammatically broken "1 new tables"/"1 new columns" verbatim in
+  // BuildProgress's own step caption.
+  const newTableCount = changes.filter((c) => c.type === "new_table").length;
+  const newColumnCount = changes.filter((c) => c.type === "new_column").length;
   yield {
     agent: "Database",
     status: "success",
     message:
-      `${changes.length} schema change(s) applied (${changes.filter((c) => c.type === "new_table").length} new tables, ${changes.filter((c) => c.type === "new_column").length} new columns). Nothing was dropped.` +
+      `${changes.length} schema change(s) applied (${newTableCount} new ${newTableCount === 1 ? "table" : "tables"}, ${newColumnCount} new ${newColumnCount === 1 ? "column" : "columns"}). Nothing was dropped.` +
       describeMigrationHazards(changes),
     detail: changes,
   };
