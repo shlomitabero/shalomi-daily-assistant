@@ -970,6 +970,13 @@ button.danger:hover:not(:disabled) {
   border: 1px solid var(--border);
   font-size: 13.5px;
   font-weight: 500;
+  /* Round 2069: mirrors .entity-undo-toast's own round-1376 fix for the
+     identical hazard -- this class renders a recent-search query verbatim
+     (recentSearches.ts's addRecentSearch has no length cap, and no search
+     input anywhere sets maxLength), and an unbroken long token with no
+     wrap guard forced the containing dialog wider than intended, pushing
+     the chip's own remove button off-screen entirely. */
+  overflow-wrap: anywhere;
 }
 
 .chip-new {

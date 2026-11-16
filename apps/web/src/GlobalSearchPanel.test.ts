@@ -3733,6 +3733,35 @@ test("a global search group header's entity-label text wraps mid-word instead of
 });
 
 /**
+ * Round 2069: `recentSearches.ts`'s own `addRecentSearch` stores the raw
+ * query verbatim with no length cap, and no search input anywhere (here or
+ * in the other 4 panels sharing this same "chip chip-removable" markup --
+ * App.tsx, EntityPanel.tsx, HistoryPanel.tsx, WhatsAppPanel.tsx) sets
+ * `maxLength`. `.chip` had no `overflow-wrap`/`flex-wrap` of its own at
+ * all, so a long, unbroken recent-search query forced the chip -- and with
+ * it, the whole dialog -- wider than intended, confirmed live via
+ * `page.evaluate()`: a 176-char unbroken query made the dialog's
+ * `scrollWidth` (1364px) balloon past its own visible `clientWidth`
+ * (558px), with the chip's own remove button pushed off-screen entirely.
+ * This is the same defect class round 1376 already fixed for
+ * `.entity-undo-toast` just above `.chip` in this same stylesheet; jsdom
+ * has no layout engine and can't detect the real overflow (see this
+ * file's own hit-button/entity-label tests above), so this reads
+ * styles.css's own source directly instead.
+ */
+test("a recent-search chip's text wraps mid-word instead of overflowing the dialog (and pushing its own remove button off-screen) when the query has no spaces or hyphens to break on", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const chip = stylesCss.match(/\.chip \{[\s\S]*?\}/)?.[0];
+  assert.ok(chip, "expected a .chip rule in styles.css");
+  assert.match(
+    chip!,
+    /overflow-wrap:\s*anywhere/,
+    ".chip must allow a long unbreakable recent-search query to wrap mid-word instead of overflowing the dialog and pushing its own remove button off-screen",
+  );
+});
+
+/**
  * Round 1744: matchesSearch/relationDisplayLabel (entityFormatting.ts) look
  * up a relation field's target records by the field's own raw `relationTo`
  * string, not by the target entity's current canonical name -- because a
