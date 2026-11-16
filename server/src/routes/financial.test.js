@@ -413,6 +413,31 @@ test('createPaperTrade stores a simulated trade and logs it, never touching the 
   assert.equal(logged[0].detail.symbol, 'AAPL');
 });
 
+test('createPaperTrade prunes stored trades past the 100 most recent, not just what listPaperTrades returns', () => {
+  // listPaperTrades already caps what it RETURNS at the 100 most recent -
+  // but the table itself kept every trade ever created forever. This is a
+  // free, uncapped simulation (no real cost, no MAX_PENDING_DRAFTS-style
+  // limit), so the owner can run it any number of times - the same
+  // unbounded-growth risk execution.js's own actions_log pruning and
+  // routes/auth.js's login_attempt pruning already exist to prevent for
+  // their own tables, left unaddressed here. Since nothing anywhere ever
+  // reads past the 100 most recent, pruning the oldest ones away carries
+  // no correctness risk.
+  __resetForTests();
+  for (let i = 0; i < 100; i += 1) {
+    db.paper_trades.insert({
+      id: `pt_old_${i}`, symbol: 'AAPL', side: 'long',
+      createdAt: new Date(2020, 0, 1 + i).toISOString(),
+    });
+  }
+  const res = makeRes();
+  createPaperTrade({ body: { symbol: 'MSFT', side: 'long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(db.paper_trades.all().length, 100, 'the oldest trade must be pruned to make room for the new one');
+  assert.equal(db.paper_trades.get('pt_old_0'), null, 'the very oldest trade must be the one pruned');
+  assert.ok(db.paper_trades.get(res.body.trade.id), 'the just-created trade must survive');
+});
+
 test('listPaperTrades returns trades newest first', () => {
   // createPaperTrade stamps createdAt with the real clock, so two trades
   // created back-to-back in a test can land in the same millisecond and

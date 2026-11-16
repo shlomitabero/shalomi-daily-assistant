@@ -171,6 +171,7 @@ export function createPaperTrade(req, res) {
     createdAt: new Date().toISOString(),
   });
   logAction({ type: 'paper_trade', detail: { symbol: normalizedSymbol, side, netPnl: result.netPnl }, result: 'success' });
+  prunePaperTrades();
   res.status(201).json({ trade });
 }
 
@@ -178,6 +179,29 @@ export function createPaperTrade(req, res) {
 // id, unlike approvals/opportunities) - a straight server-side cap, same
 // precedent as listDigests, is safe here with no correctness risk.
 const MAX_PAPER_TRADES_RETURNED = 100;
+
+// listPaperTrades above already caps what it RETURNS at the 100 most
+// recent, but the table itself kept every trade ever created forever -
+// this is a free, uncapped simulation with no real cost, so the owner can
+// run it as many times as they like with no natural rate limit (unlike a
+// real draft, which MAX_PENDING_DRAFTS caps because each one is a real,
+// billed AI call). This app is explicitly built to run indefinitely, and
+// db/store.js's persist() rewrites the ENTIRE db.json on every single
+// write - the same unbounded-growth risk execution.js's own actions_log
+// pruning and routes/auth.js's login_attempt pruning already exist to
+// prevent, left unaddressed for this one table. Since nothing anywhere
+// ever reads past the 100 most recent (per the comment above), pruning to
+// that same number carries no correctness risk at all.
+function prunePaperTrades() {
+  const all = db.paper_trades.all();
+  const excess = all.length - MAX_PAPER_TRADES_RETURNED;
+  if (excess > 0) {
+    all
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .slice(0, excess)
+      .forEach((trade) => db.paper_trades.delete(trade.id));
+  }
+}
 
 export function listPaperTrades(req, res) {
   const trades = db.paper_trades.all()
