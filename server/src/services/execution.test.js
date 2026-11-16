@@ -293,6 +293,49 @@ test('logAction never prunes a sale_confirmed entry, even a very old one past th
   assert.ok(db.actions_log.get(oldSale.id), 'the old sale_confirmed entry must survive pruning');
 });
 
+test('logAction DOES prune an old successful sale_confirmed entry, unlike a blocked one', () => {
+  // A successful sale is fully resolved - its money is already recorded in
+  // db.ledger (this actions_log entry only ever mirrors that for the audit
+  // trail) - so, unlike a blocked one, there is no "still-open payment
+  // problem" to protect by keeping it forever.
+  __resetForTests();
+  const oldSuccess = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { transactionId: 'txn_old' }, result: 'success',
+    createdAt: new Date('2020-01-01').toISOString(),
+  });
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(Date.now() + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: {}, result: 'success' });
+  assert.equal(db.actions_log.get(oldSuccess.id), null, 'a resolved, successful sale_confirmed is safe to prune like any other entry');
+});
+
+test('logAction DOES prune an old sandbox-skip sale_confirmed entry, unlike a blocked one', () => {
+  // billing.js's own 'skipped: sandbox transaction' result (PADDLE_ENV=sandbox,
+  // this README's own documented default while testing) is never real money
+  // at all by design - routinely repeated during normal Paddle testing, so
+  // blanket-protecting it the same as a blocked entry would make exactly
+  // the type most likely to accumulate fastest during testing the one
+  // actions_log never prunes.
+  __resetForTests();
+  const oldSandboxSkip = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { transactionId: 'txn_old' },
+    result: 'skipped: sandbox transaction, not recorded as real revenue',
+    createdAt: new Date('2020-01-01').toISOString(),
+  });
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(Date.now() + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: {}, result: 'success' });
+  assert.equal(db.actions_log.get(oldSandboxSkip.id), null, 'a sandbox skip is never real money, so it is safe to prune like any other entry');
+});
+
 test('logAction never prunes a login_attempt entry - that type already has its own dedicated, tighter cap', () => {
   __resetForTests();
   const oldLogin = db.actions_log.insert({

@@ -15,7 +15,7 @@ import { totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
 // reasoning, smaller cap, since a brute-force attempt can log far faster)
 // - every OTHER type was left unbounded.
 //
-// sale_confirmed is the one type this must never prune: ledger.js's
+// A blocked sale_confirmed must never be pruned: ledger.js's
 // countUnrecordedSales() scans this type's ENTIRE lifetime history (a
 // blocked sale_confirmed means a real payment came in and was never
 // recorded, with no route that ever marks it resolved), so dropping an old
@@ -30,7 +30,24 @@ import { totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
 // comfortably clear that, not approach it. Same value as login_attempt's
 // own dedicated cap, for simplicity.
 const MAX_ACTIONS_LOG_ENTRIES = 500;
-const UNPRUNABLE_ACTION_TYPES = new Set(['sale_confirmed', 'login_attempt']);
+
+// This used to protect EVERY sale_confirmed entry, not just a blocked one -
+// but a successful sale is fully resolved (its money is already recorded in
+// db.ledger, which this type's own entry only ever mirrors for the audit
+// log), and billing.js's own 'skipped: sandbox transaction' result is never
+// real money at all by design (PADDLE_ENV=sandbox, this README's own
+// documented default while testing Paddle). Neither carries the "real,
+// still-open payment problem" risk the comment above describes - only a
+// 'blocked' one does. Blanket-protecting the whole type meant every single
+// sandbox test purchase (routine, repeated, by design, during normal Paddle
+// testing) permanently grew actions_log forever, exactly the unbounded-growth
+// risk this whole pruning mechanism exists to prevent, for the one type most
+// likely to accumulate fastest during active testing.
+function isUnprunable(entry) {
+  if (entry.type === 'login_attempt') return true;
+  if (entry.type === 'sale_confirmed') return String(entry.result).startsWith('blocked');
+  return false;
+}
 
 export function logAction({ type, detail, result }) {
   const entry = db.actions_log.insert({ id: makeId('act'), type, detail, result, createdAt: new Date().toISOString() });
@@ -39,7 +56,7 @@ export function logAction({ type, detail, result }) {
 }
 
 function pruneActionsLog() {
-  const prunable = db.actions_log.where((a) => !UNPRUNABLE_ACTION_TYPES.has(a.type));
+  const prunable = db.actions_log.where((a) => !isUnprunable(a));
   const excess = prunable.length - MAX_ACTIONS_LOG_ENTRIES;
   if (excess > 0) {
     prunable
