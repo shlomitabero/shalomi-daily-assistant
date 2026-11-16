@@ -2858,10 +2858,117 @@ test("HistoryPanel's diff panel shows a real, rendered message when a checkpoint
       const detailText = document.querySelector(".detail-list")!.textContent ?? "";
       assert.match(
         detailText,
-        /Orders.*would change the type of these fields.*Status/,
+        /Orders.*would change these fields.*Status/,
         "a same-named field that changed type must be reported as a real change, not silently as 'no changes'",
       );
       assert.doesNotMatch(document.body.textContent ?? "", /No changes -- restoring/, "must never show the no-changes message when a field's type genuinely differs");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2070: `fieldSignature` (checkpointDiff.ts) deliberately folds FOUR
+ * independent kinds of field change into one bucket -- type, relationTo,
+ * enumValues/enumLabels, and required (its own doc comment explains why
+ * each belongs) -- so a field that only became required (type unchanged)
+ * still lands in `changedFieldNames` exactly like a real type change does.
+ * But the one rendered message for that whole bucket,
+ * "history.diff.entityChangedFields", hard-coded a claim that only the
+ * field's TYPE changed -- false for this case (and for an enum-value-only
+ * or relation-target-only change too). A live-interaction survey agent
+ * found this: a field whose only change was `required: false` -> `true`
+ * rendered "Orders would change the type of these fields: Status" even
+ * though Status's type never changed. Fixed by wording the message
+ * generically ("would change these fields"), matching the sibling
+ * entityLostFields/entityGainedFields pattern that never overclaims WHICH
+ * property changed.
+ */
+test("HistoryPanel's diff panel does not claim a field's TYPE changed when only its required flag did", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp: Checkpoint = {
+      id: "cp1",
+      projectId: "proj1",
+      label: "Initial build",
+      kind: "build",
+      spec: {
+        summary: "s",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            label: "Customers",
+            fields: [{ name: "email", label: "Email", type: "text", required: false }],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      },
+      createdAt: new Date().toISOString(),
+      createdByUserId: null,
+    };
+    const currentSpec: ProductSpec = {
+      ...cp.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "Customers",
+          fields: [{ name: "email", label: "Email", type: "text", required: true }],
+        },
+      ],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const toggle = document.querySelector(".detail-toggle") as HTMLButtonElement;
+      fireEvent.click(toggle);
+      await waitForCondition(() => document.querySelector(".detail-list") !== null);
+
+      const detailText = document.querySelector(".detail-list")!.textContent ?? "";
+      assert.match(
+        detailText,
+        /Customers.*would change these fields.*Email/,
+        "a field that only became required must still be reported as a real change",
+      );
+      assert.doesNotMatch(
+        detailText,
+        /change the type/,
+        "a field whose type never changed (only its required flag did) must never have the diff panel claim its TYPE changed",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
