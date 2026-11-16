@@ -8698,7 +8698,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = \`\${entity.name}.csv\`;
+      a.download = \`\${entityDisplayLabel(entity, allEntityLabelOccurrences)}.csv\`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -8718,7 +8718,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = \`\${entity.name}.json\`;
+      a.download = \`\${entityDisplayLabel(entity, allEntityLabelOccurrences)}.json\`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -8865,7 +8865,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = \`\${entity.name}.ics\`;
+      a.download = \`\${entityDisplayLabel(entity, allEntityLabelOccurrences)}.ics\`;
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -10064,6 +10064,105 @@ test("EntityPanel's Export CSV button sanitizes the entity name before using it 
 });
 
 /**
+ * Round 2081's finding: Export CSV/JSON/ICS all handed the entity's raw,
+ * internal `name` to the downloaded file's own name -- not the entity's
+ * real display `label`, which is what the tab bar, this panel's own
+ * heading, print sheets, and every other user-facing surface for this
+ * exact entity already show (via entityDisplayLabel/entityLabelOccurrences,
+ * imported and used in this exact file). Every built-in template and every
+ * Hebrew-described heuristic-generated project deliberately keeps `name`
+ * fixed ASCII while `label` carries the real (often non-English) text, so
+ * this silently handed users a wrong-language/wrong-text filename on the
+ * single most commonly used export affordance in the app. Confirms all
+ * three export buttons now use the entity's label, not its name, with the
+ * round-846 sanitization (safeDownloadName/downloadCalendarIcs) still
+ * applied on top.
+ */
+test("EntityPanel's Export CSV/JSON/ICS buttons use the entity's display label, not its raw internal name, for the downloaded file's own name", async () => {
+  await withJsdom(async () => {
+    const labeledEntity: Entity = {
+      name: "Zamanim",
+      label: "תורים",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "date", label: "Date", type: "date", required: true },
+      ],
+    };
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/entities/Zamanim") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+    const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+    (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+    const originalCreateElement = document.createElement.bind(document) as typeof document.createElement;
+    let capturedDownload: string | undefined;
+    (document as unknown as { createElement: typeof document.createElement }).createElement = ((tag: string) => {
+      const el = originalCreateElement(tag);
+      if (tag === "a") {
+        const originalClick = (el as HTMLAnchorElement).click.bind(el);
+        (el as HTMLAnchorElement).click = () => {
+          capturedDownload = (el as HTMLAnchorElement).download;
+          originalClick();
+        };
+      }
+      return el;
+    }) as typeof document.createElement;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: labeledEntity,
+              allEntities: [labeledEntity],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("table tbody tr[data-record-id]").length === 1);
+
+      capturedDownload = undefined;
+      fireEvent.click(document.querySelector(".csv-export-btn") as HTMLButtonElement);
+      await waitForCondition(() => capturedDownload !== undefined);
+      assert.equal(capturedDownload, "תורים.csv", "CSV export must name the file after the entity's label, not its internal name \"Zamanim\"");
+
+      capturedDownload = undefined;
+      fireEvent.click(document.querySelector(".json-export-btn") as HTMLButtonElement);
+      await waitForCondition(() => capturedDownload !== undefined);
+      assert.equal(capturedDownload, "תורים.json", "JSON export must name the file after the entity's label, not its internal name \"Zamanim\"");
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".ics-export-btn") !== null);
+      await waitForCondition(() => !(document.querySelector(".ics-export-btn") as HTMLButtonElement).disabled);
+
+      capturedDownload = undefined;
+      fireEvent.click(document.querySelector(".ics-export-btn") as HTMLButtonElement);
+      await waitForCondition(() => capturedDownload !== undefined);
+      assert.equal(capturedDownload, "תורים.ics", "ICS export must name the file after the entity's label, not its internal name \"Zamanim\"");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+      if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+      (document as unknown as { createElement: typeof document.createElement }).createElement = originalCreateElement;
+    }
+  });
+});
+
+/**
  * New in this round: EntityPanel -- the single most-used screen in the
  * app -- was the one data-bearing panel left with no "Copy" action next
  * to its Download/Export button, unlike BusinessTwinPanel/HistoryPanel/

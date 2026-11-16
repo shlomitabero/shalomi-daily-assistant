@@ -11821,6 +11821,167 @@ test("the exported EntityView's Export CSV button includes every record once the
 });
 
 /**
+ * Round 2081's finding: mirrors EntityPanel.test.ts's own identical new
+ * regression test -- the exported app's Export CSV/JSON/ICS buttons handed
+ * the entity's raw internal `name` to the downloaded file's own name
+ * instead of its real display `label`, even though this exact generated
+ * EntityView.jsx already has and uses entityDisplayLabel/
+ * entityLabelOccurrences for its own headings (allEntityLabelOccurrences,
+ * see entityDisplayLabel's own doc comment above). The fixture project's
+ * own Customer entity ("Customer"/"לקוחות") and this test's own Appointment
+ * entity ("Appointment"/"תורים") already have name != label, exactly the
+ * normal shape of this Hebrew-first product's every built-in template.
+ */
+test("the exported EntityView's Export CSV/JSON/ICS buttons use the entity's display label, not its raw internal name, for the downloaded file's own name", async () => {
+  const withDate: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        ...project.spec.entities,
+        {
+          name: "Appointment",
+          label: "תורים",
+          fields: [
+            { name: "customerName", label: "שם לקוח", type: "text", required: true },
+            { name: "date", label: "תאריך", type: "date", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(withDate);
+  const dir = writeGeneratedWebComponent(files);
+  const today = new Date().toISOString().slice(0, 10);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string): Promise<Response> => {
+    if (input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: [{ id: 1, name: "Acme Corp", status: "New" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (input === "/api/Appointment") {
+      return new Response(JSON.stringify({ records: [{ id: 1, customerName: "Acme appointment", date: today }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+  const originalCreateObjectURL = (URL as unknown as { createObjectURL?: (b: Blob) => string }).createObjectURL;
+  const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: (u: string) => void }).revokeObjectURL;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => "blob:mock-url";
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+  const originalCreateElement = document.createElement.bind(document) as typeof document.createElement;
+  let capturedDownload: string | undefined;
+  (document as unknown as { createElement: typeof document.createElement }).createElement = ((tag: string) => {
+    const el = originalCreateElement(tag);
+    if (tag === "a") {
+      const originalClick = (el as HTMLAnchorElement).click.bind(el);
+      (el as HTMLAnchorElement).click = () => {
+        capturedDownload = (el as HTMLAnchorElement).download;
+        originalClick();
+      };
+    }
+    return el;
+  }) as typeof document.createElement;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = withDate.spec.entities.find((e) => e.name === "Customer")!;
+      const appointmentEntity = withDate.spec.entities.find((e) => e.name === "Appointment")!;
+
+      const customerProps = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const { container: customerContainer } = render(React.createElement(EntityView, customerProps));
+      for (let i = 0; i < 40; i++) {
+        if (customerContainer.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+
+      capturedDownload = undefined;
+      await act(async () => {
+        fireEvent.click(customerContainer.querySelector(".csv-export-btn") as HTMLButtonElement);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedDownload !== undefined) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(capturedDownload, "לקוחות.csv", "CSV export must name the file after the entity's label, not its internal name \"Customer\"");
+
+      capturedDownload = undefined;
+      await act(async () => {
+        fireEvent.click(customerContainer.querySelector(".json-export-btn") as HTMLButtonElement);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedDownload !== undefined) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(capturedDownload, "לקוחות.json", "JSON export must name the file after the entity's label, not its internal name \"Customer\"");
+
+      const appointmentProps = {
+        entity: appointmentEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+      const { container: appointmentContainer } = render(React.createElement(EntityView, appointmentProps));
+      for (let i = 0; i < 40; i++) {
+        if (appointmentContainer.querySelectorAll("tbody tr").length === 1) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const calendarToggle = appointmentContainer.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(calendarToggle);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (appointmentContainer.querySelector(".ics-export-btn")) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      const icsBtn = appointmentContainer.querySelector(".ics-export-btn") as HTMLButtonElement;
+      assert.equal(icsBtn.disabled, false, "the one already-loaded record is in the current month, so the export button must be enabled");
+
+      capturedDownload = undefined;
+      await act(async () => {
+        fireEvent.click(icsBtn);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (capturedDownload !== undefined) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(capturedDownload, "תורים.ics", "ICS export must name the file after the entity's label, not its internal name \"Appointment\"");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCreateObjectURL) (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = originalCreateObjectURL;
+    if (originalRevokeObjectURL) (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = originalRevokeObjectURL;
+    (document as unknown as { createElement: typeof document.createElement }).createElement = originalCreateElement;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1135: a fresh survey found this toggle (and three siblings in the
  * live preview -- LanguageSwitcher.tsx's language toggle, EntityPanel.tsx's
  * own identical Table/Board/Calendar toggle, and BusinessTwinPanel.tsx's

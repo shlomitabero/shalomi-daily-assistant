@@ -4957,7 +4957,7 @@ export function EntityPanel({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${safeDownloadName(entity.name, "export")}.csv`;
+      a.download = `${safeDownloadName(entityDisplayLabel(entity, entityLabelOccurrences(allEntities)), "export")}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -4986,7 +4986,7 @@ export function EntityPanel({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${safeDownloadName(entity.name, "export")}.json`;
+      a.download = `${safeDownloadName(entityDisplayLabel(entity, entityLabelOccurrences(allEntities)), "export")}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -5184,7 +5184,7 @@ export function EntityPanel({
       const labelField = calendarChipLabelField(entity, dateField);
       const monthRecords = await monthRecordsForIcsExport();
       const ics = buildCalendarIcs(entity, dateField, labelField, monthRecords, allEntities, relatedRecords, new Date(), endDateField, orderedFields, lang, projectId);
-      downloadCalendarIcs(ics, entity.name);
+      downloadCalendarIcs(ics, entityDisplayLabel(entity, entityLabelOccurrences(allEntities)));
     } finally {
       setIcsExportStatus("done");
     }
