@@ -45,6 +45,22 @@ export function normalizePhone(value: string): string {
 }
 
 /**
+ * Round 2066: whether `value` is even shaped like a phone number -- digits
+ * only (plus the formatting characters a person would actually type: a
+ * leading "+", spaces, hyphens, dots and parentheses), with enough digits
+ * left after normalizePhone's own stripping to plausibly be real.
+ * Deliberately as shallow a check as toEmail's own z.string().email()
+ * sibling in routes/projects.ts's CreateAutomationRuleSchema -- it exists
+ * to catch "notaphonenumber123" or "abc" (not phone-shaped at all) at rule
+ * create/update time, not to replicate sendMessage's own deeper
+ * country-code heuristics (missing_country_code's leading-zero logic),
+ * which can only run once a real send attempt exists.
+ */
+export function isPhoneLikeNumber(value: string): boolean {
+  return /^\+?[\d\s().-]+$/.test(value) && normalizePhone(value).length >= 7;
+}
+
+/**
  * Round 926: normalizePhone's own leading-zero strip only ever catches a
  * trunk zero sitting at the very START of the digit string -- a number
  * stored with BOTH the country code and the local trunk zero still in

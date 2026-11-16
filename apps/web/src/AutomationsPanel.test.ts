@@ -3760,6 +3760,62 @@ test("AutomationsPanel's webhook action shows a translated local/private-address
 });
 
 /**
+ * Round 2066: the direct sibling of the webhookUrl test just above, on the
+ * WhatsApp static-destination toNumber field instead -- it's a plain
+ * type="text" input with no `pattern`, so an obviously non-phone value
+ * like "notaphonenumber123" passes the native-validity check cleanly and
+ * would otherwise silently round-trip to the server's own new
+ * isPhoneLikeNumber rejection, surfacing only the generic VALIDATION_ERROR
+ * banner with no clue why.
+ */
+test("AutomationsPanel's WhatsApp action shows a translated invalid-phone message and sends zero requests when a static toNumber isn't phone-shaped at all", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createCalls += 1;
+        throw new Error("createAutomationRule must never be called when toNumber isn't phone-shaped at all");
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      // Default actionType is already "send_whatsapp"; switch toMode to
+      // "static" (default is "field") the same way the record_deleted
+      // test above does.
+      const toModeSelect = Array.from(document.querySelectorAll("select")).find(
+        (s) => Array.from(s.options).map((o) => o.value).sort().join(",") === "field,static",
+      ) as HTMLSelectElement;
+      fireEvent.change(toModeSelect, { target: { value: "static" } });
+
+      const toNumberInput = document.querySelector('input[placeholder="Phone number with country code (e.g. 972501234567)"]') as HTMLInputElement;
+      fireEvent.change(toNumberInput, { target: { value: "notaphonenumber123" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "New ticket!" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(createCalls, 0, "the API must never be called when toNumber isn't phone-shaped at all");
+      const errorEl = document.querySelector(".error");
+      assert.ok(errorEl, "expected a visible invalid-phone error");
+      assert.match(errorEl!.textContent ?? "", /valid phone number/i);
+      assert.equal(errorEl!.getAttribute("role"), "status");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1364: the exact same bug class round 1363 closed for
  * EntityPanel.tsx's record-form Save button -- handleSubmit here had no
  * guard against racing ITSELF (every other action in this panel already

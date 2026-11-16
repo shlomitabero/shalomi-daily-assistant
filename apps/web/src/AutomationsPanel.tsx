@@ -74,6 +74,23 @@ function isBlockedWebhookHostname(raw: string): boolean {
 }
 
 /**
+ * Round 2066: mirrors isBlockedWebhookHostname just above for the identical
+ * reason, on the static-destination WhatsApp toNumber field instead of
+ * webhookUrl -- not imported from whatsapp.ts's own isPhoneLikeNumber (the
+ * established per-surface-duplication convention this file already uses),
+ * so it only needs to be as shallow a shape check as toEmail's own native
+ * type="email" format constraint gets for free. toNumber is a plain
+ * type="text" input with no `pattern`, so an obviously non-phone value
+ * like "notaphonenumber123" passes checkValidity() above untouched and
+ * would otherwise silently round-trip to the server's own new
+ * isPhoneLikeNumber rejection, surfacing only the generic VALIDATION_ERROR
+ * banner with no clue why.
+ */
+function isPhoneLikeNumber(value: string): boolean {
+  return /^\+?[\d\s().-]+$/.test(value) && value.replace(/\D/g, "").replace(/^0+/, "").length >= 7;
+}
+
+/**
  * If-this-then-that automation rules on top of this app's existing
  * WhatsApp integration: "when a record in this entity is created, or a
  * field on it is set to a given value, send a WhatsApp message." Firing
@@ -868,6 +885,15 @@ export function AutomationsPanel({
     // generic VALIDATION_ERROR banner, with no clue why.
     if (actionType === "webhook" && isBlockedWebhookHostname(webhookUrl)) {
       setError(t("automations.webhookUrl.blockedLocal"));
+      return;
+    }
+    // Round 2066: see isPhoneLikeNumber's own doc comment -- a toNumber
+    // that isn't phone-shaped at all passes the plain type="text" input
+    // above with no complaint, so without this it would silently
+    // round-trip to the server's own isPhoneLikeNumber rejection and
+    // surface only the generic VALIDATION_ERROR banner, with no clue why.
+    if (actionType === "send_whatsapp" && toMode === "static" && toNumber.trim() && !isPhoneLikeNumber(toNumber.trim())) {
+      setError(t("automations.toNumber.invalid"));
       return;
     }
     setCreateBusy(true);

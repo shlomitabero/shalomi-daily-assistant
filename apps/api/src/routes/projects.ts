@@ -90,7 +90,7 @@ import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
 import { deleteUploadedFile, isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "../whatsappWeb.js";
-import { findMatchingRecord } from "../whatsapp.js";
+import { findMatchingRecord, isPhoneLikeNumber } from "../whatsapp.js";
 import { recordDisplayLabel } from "../displayField.js";
 import { fireRule, fireScheduledRule, hasTooManyConsecutiveFailuresToday, isAllowedWebhookUrl, runAutomationsForRecordChange } from "../automations.js";
 import type { EmailSender } from "../email.js";
@@ -369,6 +369,10 @@ const CreateAutomationRuleSchema = z
     message: "toNumber is required when toMode is static",
     path: ["toNumber"],
   })
+  .refine((data) => data.actionType !== "send_whatsapp" || data.toMode !== "static" || !data.toNumber || isPhoneLikeNumber(data.toNumber), {
+    message: "toNumber must be a valid phone number",
+    path: ["toNumber"],
+  })
   .refine((data) => data.actionType !== "send_whatsapp" || data.toMode !== "field" || !!data.toField, {
     message: "toField is required when toMode is field",
     path: ["toField"],
@@ -482,6 +486,9 @@ export function findAutomationRuleInvariantViolation(rule: {
   }
   if (rule.actionType === "send_whatsapp" && rule.toMode === "static" && !rule.toNumber) {
     return "toNumber is required when toMode is static";
+  }
+  if (rule.actionType === "send_whatsapp" && rule.toMode === "static" && rule.toNumber && !isPhoneLikeNumber(rule.toNumber)) {
+    return "toNumber must be a valid phone number";
   }
   if (rule.actionType === "send_whatsapp" && rule.toMode === "field" && !rule.toField) {
     return "toField is required when toMode is field";

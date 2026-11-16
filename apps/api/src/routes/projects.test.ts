@@ -354,6 +354,27 @@ test("findAutomationRuleInvariantViolation rejects toMode:static with no toNumbe
 });
 
 /**
+ * Round 2066: the direct sibling of the webhookUrl local/private-address
+ * check just below -- toNumber had presence-only validation (the check
+ * just above), never a shape check, unlike toEmail's own z.string().email()
+ * in the same schema. A PATCH-merged rule whose toNumber is obviously not
+ * phone-shaped at all must be rejected here too, the same as it now is on
+ * create (CreateAutomationRuleSchema's own identical new .refine()).
+ */
+test("findAutomationRuleInvariantViolation rejects toMode:static with a toNumber that isn't phone-shaped at all", () => {
+  assert.match(
+    findAutomationRuleInvariantViolation({ ...recordCreatedRule, toNumber: "notaphonenumber123" }) ?? "",
+    /toNumber must be a valid phone number/,
+  );
+});
+
+test("findAutomationRuleInvariantViolation still accepts a valid toNumber in any common format", () => {
+  for (const toNumber of ["+15551234567", "050-123-4567", "(972) 50 123 4567"]) {
+    assert.equal(findAutomationRuleInvariantViolation({ ...recordCreatedRule, toNumber }), null);
+  }
+});
+
+/**
  * The exact repro this fix targets: a PATCH that switches toMode to
  * "field" without also setting toField (because the rule was created
  * with toMode:"static" and has never had a toField value) must be

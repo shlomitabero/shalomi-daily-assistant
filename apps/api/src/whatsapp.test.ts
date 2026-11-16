@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Project } from "@forge/shared";
 import { applyMigrations, insertRecord, openDatabase } from "@forge/db";
-import { buildPhoneMatchCandidates, findMatchingRecord, normalizePhone } from "./whatsapp.js";
+import { buildPhoneMatchCandidates, findMatchingRecord, isPhoneLikeNumber, normalizePhone } from "./whatsapp.js";
 
 test("normalizePhone strips non-digits and a single leading trunk zero", () => {
   assert.equal(normalizePhone("050-123-4567"), "501234567");
@@ -19,6 +19,28 @@ test("normalizePhone strips a leading 00 international access code fully, not ju
   // "0" still baked into the "normalized" result.
   assert.equal(normalizePhone("00972-50-123-4567"), "972501234567");
   assert.equal(normalizePhone("+972-50-123-4567"), "972501234567");
+});
+
+/**
+ * Round 2066: isPhoneLikeNumber is routes/projects.ts's own shape guard for
+ * a WhatsApp automation rule's static toNumber field -- deliberately as
+ * shallow a check as toEmail's own z.string().email() sibling, so it
+ * catches a value that isn't phone-shaped at all ("notaphonenumber123",
+ * "abc", a bare "123" too short to be real) without trying to replicate
+ * sendMessage's own deeper country-code heuristics.
+ */
+test("isPhoneLikeNumber accepts real-looking phone numbers in every common format and rejects obviously non-phone text", () => {
+  assert.equal(isPhoneLikeNumber("972501234567"), true);
+  assert.equal(isPhoneLikeNumber("+972-50-123-4567"), true);
+  assert.equal(isPhoneLikeNumber("050-123-4567"), true);
+  assert.equal(isPhoneLikeNumber("(972) 50 123 4567"), true);
+  assert.equal(isPhoneLikeNumber("+1 555 123 4567"), true);
+
+  assert.equal(isPhoneLikeNumber("notaphonenumber123"), false, "letters mixed with digits must not pass");
+  assert.equal(isPhoneLikeNumber("abc"), false, "no digits at all must not pass");
+  assert.equal(isPhoneLikeNumber("TBD"), false, "a placeholder value must not pass");
+  assert.equal(isPhoneLikeNumber("123"), false, "too few digits to be a real number must not pass");
+  assert.equal(isPhoneLikeNumber(""), false);
 });
 
 const project: Project = {
