@@ -21563,7 +21563,11 @@ test("every scrollIntoView call site in the exported app routes through scrollIn
     "expected exactly 7 occurrences in EntityView.jsx: the function's own definition, the highlighted-row effect, the focused-row effect, startCreateNew, startCreateForColumn, startCreateForDate, and (round 1518) startEdit",
   );
 
-  assert.match(globalSearchJsx, /scrollIntoViewRespectingMotion,\n\} from "\.\/EntityView\.jsx";/, "GlobalSearch.jsx must import the shared helper from EntityView.jsx rather than duplicating it");
+  assert.match(
+    globalSearchJsx,
+    /scrollIntoViewRespectingMotion,\s*entityLabelOccurrences,\s*entityDisplayLabel,\s*Highlighted,\s*splitLinkSegments,\n\} from "\.\/EntityView\.jsx";/,
+    "GlobalSearch.jsx must import the shared helper from EntityView.jsx rather than duplicating it",
+  );
   const globalSearchCallCount = (globalSearchJsx.match(/scrollIntoViewRespectingMotion\(/g) ?? []).length;
   assert.equal(globalSearchCallCount, 1, "expected exactly 1 call site in GlobalSearch.jsx: the arrow-key result-group scroll");
 });
