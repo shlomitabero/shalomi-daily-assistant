@@ -156,7 +156,6 @@ export interface BaileysIncomingMessage {
     productMessage?: { product?: { title?: string; description?: string }; body?: string; footer?: string };
     orderMessage?: { orderTitle?: string; message?: string };
     eventMessage?: { name?: string; description?: string; isCanceled?: boolean };
-    eventResponseMessage?: { response?: number };
     encEventResponseMessage?: Record<string, never>;
     scheduledCallCreationMessage?: { callType?: number; title?: string };
     scheduledCallEditMessage?: { editType?: number };
@@ -708,16 +707,18 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.botForwardedMessage?.message) return describeIncomingMessage(message.botForwardedMessage.message);
   // Round 1922: encCommentMessage is the genuinely-encrypted sibling of
   // commentMessage just above (round 1901), the same relationship
-  // encReactionMessage/encEventResponseMessage already have with their own
-  // plaintext siblings reactionMessage/eventResponseMessage. Confirmed
-  // against the installed Baileys protobuf (WAProto.proto): EncCommentMessage
-  // is `{ targetMessageKey, encPayload, encIv }`, byte-for-byte the same
-  // shape as EncReactionMessage/EncEventResponseMessage. Its content can't be
-  // decrypted here, but detecting that a Channel/Status comment arrived at
-  // all needs no decryption, the same "detect presence only" bar those two
-  // siblings already clear below. Without this, a comment delivered this way
-  // fell straight through to the final `return null` and vanished with zero
-  // trace, even though the plaintext form was already visible (round 1901).
+  // encReactionMessage already has with its own plaintext sibling
+  // reactionMessage. Confirmed against the installed Baileys protobuf
+  // (WAProto.proto): EncCommentMessage is `{ targetMessageKey, encPayload,
+  // encIv }`, byte-for-byte the same shape as EncReactionMessage/
+  // EncEventResponseMessage below (encEventResponseMessage, unlike these
+  // two, has no plaintext sibling at all here -- see its own doc comment).
+  // Its content can't be decrypted here, but detecting that a Channel/
+  // Status comment arrived at all needs no decryption, the same "detect
+  // presence only" bar those two siblings already clear below. Without
+  // this, a comment delivered this way fell straight through to the final
+  // `return null` and vanished with zero trace, even though the plaintext
+  // form was already visible (round 1901).
   if (message.encCommentMessage) return "[Comment]";
   const text = message.conversation ?? message.extendedTextMessage?.text;
   if (text) return text;
@@ -809,31 +810,25 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
     const label = ev.isCanceled ? "[Event canceled]" : "[Event]";
     return ev.name ? `${label} ${ev.name}` : label;
   }
-  // Round 1606: the RSVP (Going/Not Going/Maybe) half of eventMessage just
-  // above (round 1502) -- when a recipient taps a response on an event
-  // invite, Baileys delivers eventResponseMessage, a plaintext int enum
-  // (WAProto's IEventResponseMessage.response: EventResponseType
-  // [UNKNOWN=0, GOING=1, NOT_GOING=2, MAYBE=3]), confirmed against the
-  // installed Baileys protobuf and its actively-exercised receive path
-  // (messages-recv.js emits the raw field on messages.upsert; this is not a
-  // reserved/unused protobuf slot). Its genuinely-encrypted sibling
-  // encEventResponseMessage carries only encPayload/encIv, the same
-  // "detect presence only" bar as encReactionMessage above -- round 1600's
-  // own doc comment there surfaced it but deferred it as a "weaker
-  // secondary candidate" for lacking this plaintext enum precedent, which
-  // this branch now supplies. Previously both fell through to the final
-  // `return null` and vanished with zero trace -- an invite's creation and
-  // cancellation were logged (round 1502), but every RSVP to it was not.
-  if (message.eventResponseMessage) {
-    const EVENT_RESPONSE_GOING = 1;
-    const EVENT_RESPONSE_NOT_GOING = 2;
-    const EVENT_RESPONSE_MAYBE = 3;
-    const r = message.eventResponseMessage.response;
-    if (r === EVENT_RESPONSE_GOING) return "[Event: Going]";
-    if (r === EVENT_RESPONSE_NOT_GOING) return "[Event: Not going]";
-    if (r === EVENT_RESPONSE_MAYBE) return "[Event: Maybe]";
-    return "[Event response]";
-  }
+  // Round 1606 originally added a plaintext `eventResponseMessage` branch
+  // here, believing Baileys delivers event RSVPs (Going/Not Going/Maybe)
+  // as a top-level plaintext field on message content, citing
+  // messages-recv.js as the emitting path. Round 2075 verified this false
+  // against the actually-installed @whiskeysockets/baileys package:
+  // WAProto.proto's top-level `Message` has no such field at all (the
+  // nested `Message.EventResponseMessage` type is only ever used by the
+  // unrelated top-level `EventResponse`/`LegacyMessage` messages, and
+  // messages-recv.js never references it anywhere). The real, only code
+  // path (lib/Utils/process-message.js) decrypts `encEventResponseMessage`
+  // below's ciphertext -- but only if a `getMessage` callback (this app's
+  // own `connect()` call supplies none, so Baileys' default always
+  // returns `undefined`) can retrieve the original event-creation message
+  // first; even then it re-emits the result via a `messages.update` event
+  // (`update.eventResponses`), never on `messages.upsert`, and this app's
+  // own `handleMessageUpdates` doesn't read that field either. So the
+  // removed branch could never fire against real traffic -- every real
+  // RSVP already falls through to the presence-only placeholder below,
+  // same as before round 1606 ever ran.
   if (message.encEventResponseMessage) return "[Event response]";
   // Round 1537: WhatsApp's native "Schedule a call" chat-menu action --
   // ScheduledCallCreationMessage in Baileys' own shipped protobuf

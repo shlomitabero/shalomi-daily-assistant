@@ -2816,17 +2816,18 @@ test("incoming WhatsApp Channel follow invites are logged with a descriptive pla
 });
 
 /**
- * Round 1606: the RSVP (Going/Not Going/Maybe) half of eventMessage just
- * above (round 1502) was previously dropped with zero trace, the same
- * silent-vanish gap every prior round in this message-type-coverage family
- * fixed for a different message shape. eventResponseMessage.response is a
- * plaintext int enum, confirmed directly against the installed Baileys
- * protobuf types (IEventResponseMessage/EventResponseType). Its genuinely-
- * encrypted sibling encEventResponseMessage carries only encPayload/encIv --
- * round 1600 surfaced it but deferred it for lacking this plaintext enum
- * precedent, which this round supplies.
+ * Round 1606 originally claimed Baileys delivers event RSVPs (Going/Not
+ * Going/Maybe) as a plaintext `eventResponseMessage` field and added a
+ * branch decoding it. Round 2075 verified this false against the
+ * actually-installed @whiskeysockets/baileys package (no such top-level
+ * field exists; the real decrypt path needs a `getMessage` callback this
+ * app never supplies, and emits via `messages.update`, never
+ * `messages.upsert`, even when it succeeds) and removed that dead branch
+ * -- see describeIncomingMessage's own updated doc comment. Only the
+ * genuinely-reachable `encEventResponseMessage` presence-only case
+ * (round 1600) remains.
  */
-test("incoming WhatsApp event RSVPs (Going/Not Going/Maybe, and their encrypted sibling) are logged with a descriptive placeholder instead of being silently dropped", async () => {
+test("an incoming WhatsApp event RSVP's genuinely-encrypted ciphertext is logged with a descriptive placeholder instead of being silently dropped", async () => {
   const { manager, createdSockets, db } = setupManager();
   insertProject(db, project);
   applyMigrations(db, project.id, project.spec);
@@ -2837,26 +2838,13 @@ test("incoming WhatsApp event RSVPs (Going/Not Going/Maybe, and their encrypted 
 
   createdSockets[0].emitMessagesUpsert({
     type: "notify",
-    messages: [
-      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: { response: 1 } } },
-      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: { response: 2 } } },
-      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: { response: 3 } } },
-      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { eventResponseMessage: {} } },
-      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { encEventResponseMessage: {} } },
-    ],
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { encEventResponseMessage: {} } }],
   });
 
-  // listWhatsAppMessages orders newest-first, the reverse of emission order.
   const { messages: rsvpMessages } = listWhatsAppMessages(db, project.id);
-  assert.equal(rsvpMessages.length, 5);
+  assert.equal(rsvpMessages.length, 1);
   assert.equal(rsvpMessages[0].body, "[Event response]", "the genuinely-encrypted sibling can only detect presence, not the chosen response");
-  assert.equal(rsvpMessages[1].body, "[Event response]", "an unrecognized/unset response enum must fall back to a plain placeholder, not print nothing or throw");
-  assert.equal(rsvpMessages[2].body, "[Event: Maybe]");
-  assert.equal(rsvpMessages[3].body, "[Event: Not going]");
-  assert.equal(rsvpMessages[4].body, "[Event: Going]");
-  for (const m of rsvpMessages) {
-    assert.equal(m.direction, "in", "every placeholder row must still be a real, matched-against incoming message, not metadata");
-  }
+  assert.equal(rsvpMessages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
 });
 
 /**
