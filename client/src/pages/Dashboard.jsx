@@ -344,8 +344,15 @@ export default function Dashboard() {
             <span className={`dot ${s.connected ? 'dot-on' : 'dot-off'}`} />
             <span className="source-name">{s.name}</span>
             <span className="source-revenue">
+              {/* Every other real, verified money figure on this page
+                  (cashInToday/cashOutToday/outstandingReceivables/
+                  pendingObligations, the price-tag fix from two cycles ago)
+                  shows 2 decimal places - this was the one exception,
+                  rounding real recorded revenue to the nearest whole
+                  dollar instead (e.g. $9.99 shown as "$10"), a real,
+                  verified number made to look like a different one. */}
               {revenueBySource[s.key]
-                ? `$${revenueBySource[s.key].toFixed(0)} נכנס`
+                ? `$${revenueBySource[s.key].toFixed(2)} נכנס`
                 : s.key === 'financial_markets'
                   // Unlike every other source, this one structurally can never
                   // show real revenue here, connected or not - README.md is
