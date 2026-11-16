@@ -6,6 +6,7 @@ import type { Entity, EntityRecord, Project } from "@forge/shared";
 import {
   AUTOMATION_RUNS_RETENTION_LIMIT,
   findUserById,
+  getAutomationRule,
   getProject,
   tryGetProject,
   getRecord,
@@ -1145,7 +1146,18 @@ async function fireWebhookAction(
     // for a project id that no longer exists -- a permanently orphaned
     // row nothing else will ever clean up, since automation_runs has no
     // foreign key/cascade of its own.
-    if (!getProject(db, project.id)) return;
+    // Round 2087: the same await-then-recheck hazard this comment already
+    // documents also applies to the RULE itself -- deleteAutomationRule
+    // (packages/db/src/automations.ts) synchronously removes this rule's
+    // own row and every one of its past automation_runs, and can run to
+    // completion entirely within this same real network await. Without
+    // this, recordAutomationRun below would silently recreate an
+    // automation_runs row referencing a ruleId that no longer exists in
+    // automation_rules (that table has no FK/REFERENCES on ruleId at all,
+    // so nothing stops the insert) -- the identical permanently-orphaned-
+    // row hazard this project-existence check already guards against,
+    // just for rule deletion instead of project deletion.
+    if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
     // Round 2084: a non-2xx response's own BODY almost always names the
     // actionable reason (a JSON API's error field, an HTML error page's
     // title) -- discarding it and keeping only the bare status code left
@@ -1183,7 +1195,10 @@ async function fireWebhookAction(
       skipRuleSummaryUpdate,
     );
   } catch (err) {
-    if (!getProject(db, project.id)) return;
+    // Round 2087: see the identical check in the success path above --
+    // the rule can be deleted during this same awaited fetch just as
+    // easily on the failing path as the succeeding one.
+    if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
     // Round 1327: a timed-out request rejects with fetch/undici's own
     // generic AbortError ("This operation was aborted" or similar), which
     // tells a user debugging a failed webhook rule nothing about WHY it
@@ -1410,7 +1425,9 @@ async function fireEmailAction(
     // automation_runs row for a project deleteProject already removed
     // every such row for, permanently orphaned since that table has no
     // foreign key/cascade of its own.
-    if (!getProject(db, project.id)) return;
+    // Round 2087: same rule-deletion half of this hazard as
+    // fireWebhookAction's own identical fix -- see its comment.
+    if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
     recordAutomationRun(
       db,
       project.id,
@@ -1424,7 +1441,7 @@ async function fireEmailAction(
       skipRuleSummaryUpdate,
     );
   } catch (err) {
-    if (!getProject(db, project.id)) return;
+    if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
     // Round 1459: mirrors fireWebhookAction's own identical normalization
     // just above -- email.ts's ResendEmailSender.performSend throws a
     // ResendTimeoutError on its own AbortController timeout (round 2030
@@ -1597,7 +1614,9 @@ export async function fireRule(
   // this project could have been deleted. Without this, insertWhatsAppMessage
   // and recordAutomationRun below would silently recreate rows for a
   // project id that no longer exists.
-  if (!getProject(db, project.id)) return;
+  // Round 2087: same rule-deletion half of this hazard as
+  // fireWebhookAction's own identical fix -- see its comment.
+  if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
   const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
   insertWhatsAppMessage(db, {
     projectId: project.id,
@@ -1648,7 +1667,9 @@ export async function fireRule(
   for (const extraAttachment of attachments.slice(1)) {
     if (!result.ok) break;
     const extraResult = await whatsapp.sendMessage(project.id, to, "", extraAttachment);
-    if (!getProject(db, project.id)) return;
+    // Round 2087: same rule-deletion half of this hazard as
+    // fireWebhookAction's own identical fix -- see its comment.
+    if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
     insertWhatsAppMessage(db, {
       projectId: project.id,
       direction: "out",
@@ -1836,7 +1857,10 @@ export async function fireScheduledRule(
   }
   const result = await whatsapp.sendMessage(project.id, to, rule.messageTemplate);
   // Same re-check-after-await hazard fireRule's own identical line documents.
-  if (!getProject(db, project.id)) return;
+  // Round 2087: including the rule-deletion half -- this scheduled rule's
+  // own row can be deleted during this same awaited send just as easily
+  // as a record-triggered rule's can.
+  if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
   const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
   insertWhatsAppMessage(db, {
     projectId: project.id,

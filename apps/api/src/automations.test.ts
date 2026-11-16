@@ -8,6 +8,7 @@ import type { Entity, Project } from "@forge/shared";
 import {
   applyMigrations,
   createUser,
+  deleteAutomationRule,
   deleteProject,
   ensureAutomationRulesTable,
   ensureCheckpointsTable,
@@ -3460,6 +3461,50 @@ test("runAutomationsForRecordChange's webhook action never resurrects an automat
   }
 
   assert.equal(listAutomationRuns(db, project.id, rule.id, 10).length, 0, "no run row must exist for a project that was deleted while this exact request was still in flight");
+});
+
+/**
+ * Round 2087: the sibling race the test above never covered -- that same
+ * genuine network await can just as easily outlive the RULE itself, not
+ * just the whole project. deleteAutomationRule (packages/db/src/
+ * automations.ts) synchronously removes the rule's own row and wipes its
+ * run history, and can run to completion entirely within this exact
+ * fetch. Without the matching getAutomationRule re-check this round
+ * added, recordAutomationRun below would resurrect a run row referencing
+ * a ruleId that no longer exists in automation_rules at all -- that
+ * table has no FK/REFERENCES on ruleId, so nothing else stops the
+ * insert, and nothing ever prunes it afterward (deleteAutomationRunsForRule
+ * only runs at the moment of deletion, which by definition already
+ * happened). The real deletion happens from inside the mocked fetch
+ * itself, the same "genuinely races the awaited call" technique the test
+ * above already uses for project deletion.
+ */
+test("runAutomationsForRecordChange's webhook action never resurrects an automation_runs row for a RULE deleted while the webhook request was in flight", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    deleteAutomationRule(db, project.id, rule.id);
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(getAutomationRule(db, project.id, rule.id), undefined, "sanity check: the rule really is gone for this test to mean anything");
+  assert.equal(listAutomationRuns(db, project.id, rule.id, 10).length, 0, "no run row must exist for a rule that was deleted while this exact request was still in flight");
 });
 
 /**
