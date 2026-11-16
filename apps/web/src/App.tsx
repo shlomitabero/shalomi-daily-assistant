@@ -210,6 +210,12 @@ interface ArchitectImpactDetail {
   removedEntities?: { name: string; label: string }[];
   newRoleNames?: string[];
   newPersonaNames?: string[];
+  // Round 2064: mirrors BuildProgress.tsx's identical ImpactDetail field --
+  // see pipeline.ts's architectEvent/fieldLevelChangeUnderstood doc comment
+  // for the full reasoning. Optional so an older cached event payload from
+  // before this round, which never set this key at all, is never mistaken
+  // for the honest "false" case.
+  fieldLevelChangeUnderstood?: boolean;
 }
 
 /**
@@ -358,6 +364,19 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
   const detail = architectEvent?.detail as ArchitectImpactDetail | undefined;
   if (!detail) return t("preview.refineHistory.noSummary");
   const parts: string[] = [];
+  // Round 2064: a heuristic-engine refine that didn't understand its own
+  // instruction is NOT the same as a real "no structural change" --
+  // without this, the exact same gap round 1942 fixed for roles/personas
+  // (a real but unrelated change masking an understood-nothing refine
+  // behind an unrelated "New role(s): Admin, Member" bullet) could still
+  // mask the one thing a user actually needs to know: their own specific
+  // entity/field request was never understood at all. See pipeline.ts's
+  // architectEvent/fieldLevelChangeUnderstood doc comment for the full
+  // reasoning behind when this is set `false`. Pushed first so it reads as
+  // the headline, not an afterthought buried after an unrelated role bullet.
+  if (detail.fieldLevelChangeUnderstood === false) {
+    parts.push(t("build.detail.architect.fieldLevelNotUnderstood"));
+  }
   if ((detail.newRoleNames ?? []).length > 0) {
     parts.push(`${t("build.detail.architect.newRoles")}${(detail.newRoleNames ?? []).join(", ")}`);
   }

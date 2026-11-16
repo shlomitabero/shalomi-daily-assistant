@@ -1743,6 +1743,149 @@ test("an initial build (no previous spec) never reports a removed entity", async
 });
 
 /**
+ * Round 2064: closes the gap round 2063's own survey scoped out and left
+ * deliberately unimplemented. heuristic.ts's HeuristicSpecProvider has no
+ * incremental/field-level parser at all -- a /refine instruction like "Add
+ * a Priority field to Task" run through it regenerates matchEntities'
+ * whole-entity keyword matches from scratch and is a pure no-op on the
+ * entity/field side whenever the project's existing entities already
+ * satisfy those same whole-entity keywords (the ordinary case for any
+ * refine of an already-built project). Before this round, that silence
+ * was reported with no distinction at all from a real "nothing needed to
+ * change" -- this is the one new, honest signal this round adds.
+ */
+type FieldLevelDetail = { fieldLevelChangeUnderstood?: boolean };
+
+test("a /refine whose candidate came from the heuristic engine and left entities/fields byte-identical reports fieldLevelChangeUnderstood: false", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", label: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  // Simulates exactly what routes/projects.ts's /refine handler hands
+  // runBuildPipeline when the heuristic provider's regenerated candidate,
+  // merged via mergeRefinedSpec, didn't actually add/change/remove
+  // anything on the entity/field side -- the real-world shape of "Add a
+  // Priority field to Task" silently no-op'ing against the heuristic
+  // engine's own whole-entity-only matching.
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec: spec, nextSpec: spec, changeLabel: 'Refine: Add a "Priority" field to Task', providerName: "heuristic" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.equal((architectSuccess!.detail as FieldLevelDetail).fieldLevelChangeUnderstood, false);
+});
+
+test("a /refine whose candidate came from the heuristic engine via an AI-fallback and left entities/fields byte-identical also reports fieldLevelChangeUnderstood: false", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", label: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  // generateSpec's own doc comment: a failed AI call falls back to the
+  // identical heuristic generator, tagged "<name>-fallback" so it's never
+  // silently mistaken for a normal heuristic (no-API-key) response -- but
+  // the actual generation really was produced by the same field-naive
+  // heuristic engine, so this must be flagged identically to a plain
+  // "heuristic" providerName.
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec: spec, nextSpec: spec, changeLabel: 'Refine: Add a "Priority" field to Task', providerName: "anthropic-fallback" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.equal((architectSuccess!.detail as FieldLevelDetail).fieldLevelChangeUnderstood, false);
+});
+
+test("a /refine whose candidate came from the AI provider and left entities/fields byte-identical reports fieldLevelChangeUnderstood: true (the AI provider does understand field-level edits)", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", label: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec: spec, nextSpec: spec, changeLabel: "Refine: reword the summary", providerName: "anthropic" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.equal((architectSuccess!.detail as FieldLevelDetail).fieldLevelChangeUnderstood, true);
+});
+
+test("a /refine on the heuristic engine that genuinely did change an entity/field reports fieldLevelChangeUnderstood: true, not a false alarm", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", label: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const refinedSpec: ProductSpec = {
+    ...spec,
+    entities: [...spec.entities, { name: "Invoice", fields: [{ name: "total", type: "number", required: true }] }],
+  };
+  const events = await collect(
+    runBuildPipeline(db, project, { previousSpec: spec, nextSpec: refinedSpec, changeLabel: "Refine: add invoices", providerName: "heuristic" }),
+  );
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.equal((architectSuccess!.detail as FieldLevelDetail).fieldLevelChangeUnderstood, true);
+});
+
+test("an initial /build is always fieldLevelChangeUnderstood: true regardless of provider -- there is no previous spec for this to even apply to", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [{ name: "Task", label: "Task", fields: [{ name: "title", type: "text", required: true }] }],
+  };
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const events = await collect(runBuildPipeline(db, project, { nextSpec: spec, changeLabel: "Initial build", providerName: "heuristic" }));
+  const architectSuccess = events.find((e) => e.agent === "Architect" && e.status === "success");
+  assert.ok(architectSuccess);
+  assert.equal((architectSuccess!.detail as FieldLevelDetail).fieldLevelChangeUnderstood, true);
+});
+
+/**
  * Regression test for round 406: /refine's own generateSpec() call
  * produces a providerName (routes/projects.ts) that previously had nowhere
  * to go once handed to this generator -- it's now carried on the very

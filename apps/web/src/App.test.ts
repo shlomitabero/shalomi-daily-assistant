@@ -83,6 +83,77 @@ test("summarizeRefineImpact reports new roles/personas instead of falsely claimi
 });
 
 /**
+ * Round 2064: closes the gap round 2063's own survey scoped out -- a
+ * heuristic-engine refine that left entities/fields byte-identical (the
+ * engine has no field-level understanding at all, see pipeline.ts's
+ * architectEvent/fieldLevelChangeUnderstood doc comment) must never read
+ * as a plain "no structural change", since that phrasing gives no hint
+ * the user's own specific request was never understood in the first
+ * place, as opposed to a refine that genuinely needed no entity/field
+ * change.
+ */
+test("summarizeRefineImpact surfaces the honest fieldLevelChangeUnderstood: false signal instead of falsely claiming no structural change", () => {
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [],
+        fieldLevelChangeUnderstood: false,
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.equal(summary, "build.detail.architect.fieldLevelNotUnderstood");
+  assert.notEqual(summary, "preview.refineHistory.noChange");
+});
+
+/**
+ * The adjacent round-1942 case and this round's new one can fire on the
+ * very same refine (a template-built project's first refine, whose
+ * heuristic candidate both no-ops the entity/field side AND injects
+ * Admin/Member) -- both signals must show, not just whichever check runs
+ * first.
+ */
+test("summarizeRefineImpact reports both the fieldLevelChangeUnderstood: false signal and an unrelated real role/persona change on the same refine", () => {
+  const events: AgentStepEvent[] = [
+    {
+      agent: "Architect",
+      status: "success",
+      message: "…",
+      detail: {
+        newEntities: [],
+        changedEntities: [],
+        newRoleNames: ["Admin", "Member"],
+        newPersonaNames: ["Admin user", "Member user"],
+        fieldLevelChangeUnderstood: false,
+      },
+    },
+  ];
+  const summary = summarizeRefineImpact(events, t);
+  assert.match(summary, /build\.detail\.architect\.fieldLevelNotUnderstood/);
+  assert.match(summary, /Admin, Member/);
+});
+
+/**
+ * fieldLevelChangeUnderstood is only ever explicitly `false` -- an absent
+ * key (every event before this round) or an explicit `true` (an AI-provider
+ * refine, or any refine that genuinely changed something) must never
+ * trigger this new signal.
+ */
+test("summarizeRefineImpact does not surface the fieldLevelChangeUnderstood signal when it's true or absent", () => {
+  const trueEvents: AgentStepEvent[] = [
+    { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [], fieldLevelChangeUnderstood: true } },
+  ];
+  assert.doesNotMatch(summarizeRefineImpact(trueEvents, t), /fieldLevelNotUnderstood/);
+
+  const absentEvents: AgentStepEvent[] = [{ agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } }];
+  assert.doesNotMatch(summarizeRefineImpact(absentEvents, t), /fieldLevelNotUnderstood/);
+});
+
+/**
  * Regression test for a real gap found by round 377's Explore survey:
  * pipeline.ts's computeImpact now reports entities the refine dropped
  * from the spec (see pipeline.test.ts), but that detail is useless if

@@ -528,7 +528,50 @@ export function describeImpactHazards(previousSpec: ProductSpec, nextSpec: Produ
   );
 }
 
-function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec, rawCandidateSpec?: ProductSpec): AgentStepEvent {
+/**
+ * Round 2064: closes the narrower gap round 2063's own survey scoped out
+ * (left deliberately unimplemented pending this exact design) without
+ * touching matchRoles' already-settled Admin/Member injection (round 1942's
+ * own doc comment on previousRolesLower/newRoleNames above) at all --
+ * heuristic.ts's HeuristicSpecProvider has no incremental/field-level
+ * parser whatsoever (matchEntities only does whole-entity keyword
+ * matching), so a /refine instruction like `Add a "Priority" field to
+ * Task` run through it is a pure no-op on the entity/field side: every
+ * array computeImpact returns above (newEntityNames/changedEntities/
+ * removedEntityNames) comes back empty. Before this round, that silence
+ * was reported exactly like a real "nothing needed to change" -- "Impact:
+ * +0 new entities..., 0 existing entities gaining fields." plus, whenever
+ * the project's previous roles didn't already include matchRoles' own
+ * filler (e.g. the first refine of a template-built project -- round
+ * 1942's own repro), a `newRoleNames: ["Admin", "Member"]` real but
+ * UNRELATED change that reads as if *something* about this refine
+ * succeeded. Nothing anywhere told the user their own specific entity/
+ * field request was never understood at all.
+ *
+ * `fieldLevelChangeUnderstood` is `true` for every /build (previousSpec is
+ * undefined there, so this never even checks the provider) and for every
+ * /refine whose candidate spec came from the AnthropicSpecProvider
+ * (providerName "anthropic"), which does have real field-level
+ * understanding -- only `false` for a /refine whose generation was
+ * actually produced by the heuristic engine (providerName "heuristic", or
+ * "<name>-fallback" per generateSpec's own doc comment -- a failed AI call
+ * that fell back to the identical heuristic generator) AND whose resulting
+ * impact is entity/field-silent. This can't tell "the instruction wasn't
+ * about entities/fields at all" apart from "the heuristic failed to
+ * understand a field-level instruction" (the heuristic has no concept of
+ * either), so it's deliberately phrased downstream (App.tsx,
+ * BuildProgress.tsx) as an honest caveat about the engine's own
+ * limitations, never as a specific diagnosis of what this instruction
+ * asked for.
+ */
+function fieldLevelChangeUnderstood(previousSpec: ProductSpec | undefined, impact: ImpactSummary, providerName: string | undefined): boolean {
+  if (!previousSpec || !providerName) return true;
+  const usedHeuristicEngine = providerName === "heuristic" || providerName.endsWith("-fallback");
+  if (!usedHeuristicEngine) return true;
+  return impact.newEntityNames.length > 0 || impact.changedEntities.length > 0 || impact.removedEntityNames.length > 0;
+}
+
+function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: ProductSpec, rawCandidateSpec?: ProductSpec, providerName?: string): AgentStepEvent {
   const impact = computeImpact(previousSpec, nextSpec);
   // changedEntities includes an entity for ANY of new/removed/tightened
   // fields (see computeImpact above), but the headline below only ever
@@ -542,7 +585,12 @@ function architectEvent(previousSpec: ProductSpec | undefined, nextSpec: Product
       `${entitiesWithNewFields.length} existing ${entitiesWithNewFields.length === 1 ? "entity" : "entities"} gaining fields.` +
       describeImpactHazards(previousSpec, nextSpec, rawCandidateSpec)
     : `Designed ${nextSpec.entities.length} ${nextSpec.entities.length === 1 ? "table" : "tables"} for ${nextSpec.roles.length} ${nextSpec.roles.length === 1 ? "role" : "roles"}.`;
-  return { agent: "Architect", status: "success", message, detail: impact };
+  return {
+    agent: "Architect",
+    status: "success",
+    message,
+    detail: { ...impact, fieldLevelChangeUnderstood: fieldLevelChangeUnderstood(previousSpec, impact, providerName) },
+  };
 }
 
 export function runQaChecks(
@@ -789,7 +837,7 @@ export async function* runBuildPipeline(
     // shape.
     ...(providerName ? { detail: { providerName } } : {}),
   };
-  yield architectEvent(previousSpec, nextSpec, rawCandidateSpec);
+  yield architectEvent(previousSpec, nextSpec, rawCandidateSpec, providerName);
 
   yield { agent: "Database", status: "running", message: "Applying migration…" };
   let changes: MigrationChange[];
@@ -834,7 +882,7 @@ export async function* runBuildPipeline(
     // for the corrected spec lets the UI (which keeps only the latest
     // event per agent) replace the stale one instead of leaving it
     // uncorrected.
-    yield architectEvent(previousSpec, nextSpec, rawCandidateSpec);
+    yield architectEvent(previousSpec, nextSpec, rawCandidateSpec, providerName);
     yield {
       agent: "Debug",
       status: "success",

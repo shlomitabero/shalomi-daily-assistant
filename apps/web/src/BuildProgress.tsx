@@ -158,6 +158,14 @@ interface ImpactDetail {
   removedEntities?: { name: string; label: string }[];
   newRoleNames?: string[];
   newPersonaNames?: string[];
+  // Round 2064: pipeline.ts's architectEvent now sets this `false` only for
+  // a /refine whose candidate spec came from the no-AI heuristic engine
+  // (directly, or via an AI-provider fallback) AND whose impact on this
+  // entity/field diff came back completely empty -- see its own doc
+  // comment for the full reasoning. Optional (not `?? true` below) so an
+  // older cached event payload from before this round, which never set
+  // this key at all, is never mistaken for the honest "false" case.
+  fieldLevelChangeUnderstood?: boolean;
 }
 
 interface MigrationChangeDetail {
@@ -182,18 +190,29 @@ function AgentDetail({ agent, detail }: { agent: AgentStepEvent["agent"]; detail
   const { t } = useTranslation();
 
   if (agent === "Architect" && detail) {
-    const { newEntities, changedEntities, removedEntities, newRoleNames, newPersonaNames } = detail as ImpactDetail;
+    const { newEntities, changedEntities, removedEntities, newRoleNames, newPersonaNames, fieldLevelChangeUnderstood } = detail as ImpactDetail;
+    // Round 2064: a heuristic-engine refine that didn't understand its own
+    // instruction is NOT the same as a real "nothing needed to change" --
+    // without this, the branch below fell through to the plain `noChange`
+    // message (when nothing else happened to change either) or silently
+    // disappeared under an unrelated role/persona bullet (round 1942's own
+    // Admin/Member filler), in both cases leaving the one thing a user
+    // actually needs to know -- their own specific request was never
+    // understood at all -- completely unsaid.
+    const notUnderstood = fieldLevelChangeUnderstood === false;
     if (
       newEntities.length === 0 &&
       changedEntities.length === 0 &&
       (removedEntities ?? []).length === 0 &&
       (newRoleNames ?? []).length === 0 &&
-      (newPersonaNames ?? []).length === 0
+      (newPersonaNames ?? []).length === 0 &&
+      !notUnderstood
     ) {
       return <p className="muted small">{t("build.detail.architect.noChange")}</p>;
     }
     return (
       <ul className="detail-list">
+        {notUnderstood && <li>{t("build.detail.architect.fieldLevelNotUnderstood")}</li>}
         {(newRoleNames ?? []).length > 0 && (
           <li>
             {t("build.detail.architect.newRoles")}

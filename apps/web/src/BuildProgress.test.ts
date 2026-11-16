@@ -413,6 +413,75 @@ test("BuildProgress's Architect detail panel reports new roles/personas instead 
 });
 
 /**
+ * Round 2064: closes the gap round 2063's own survey scoped out -- a
+ * heuristic-engine refine that left entities/fields byte-identical (the
+ * engine has no field-level understanding at all; see pipeline.ts's
+ * architectEvent/fieldLevelChangeUnderstood doc comment) used to fall
+ * through to the exact same "No structural change — everything already
+ * exists." message as a refine that genuinely needed no entity/field
+ * change, with nothing anywhere saying the user's own specific request
+ * was never understood in the first place.
+ */
+test("BuildProgress's Architect detail panel reports the honest fieldLevelChangeUnderstood: false signal instead of falsely claiming no structural change, once expanded", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "…",
+        detail: { newEntities: [], changedEntities: [], fieldLevelChangeUnderstood: false },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = architectStep?.querySelector(".detail-list");
+    assert.ok(detailList, "expected the detail list to render once expanded, not the 'No structural change' message");
+    assert.match(detailList!.textContent ?? "", /rule-based engine/);
+  });
+});
+
+/**
+ * Companion to the test just above: fieldLevelChangeUnderstood: true (an
+ * AI-provider refine, or any refine that genuinely changed something) and
+ * an entirely absent key (every event from before this round) must both
+ * keep rendering exactly as before -- this new signal is additive, never a
+ * replacement for the existing empty-impact check.
+ */
+test("BuildProgress's Architect detail panel still shows the plain 'No structural change' message when fieldLevelChangeUnderstood is true or absent", async () => {
+  await withJsdom(async () => {
+    const events: AgentStepEvent[] = [
+      { agent: "Architect", status: "running", message: "…" },
+      {
+        agent: "Architect",
+        status: "success",
+        message: "…",
+        detail: { newEntities: [], changedEntities: [], fieldLevelChangeUnderstood: true },
+      },
+    ];
+    renderBuildProgress(events);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const steps = [...document.querySelectorAll(".agent-step")];
+    const architectStep = steps.find((s) => s.textContent?.includes("Product Planner"));
+    const toggle = architectStep?.querySelector(".detail-toggle") as HTMLButtonElement | null;
+    assert.ok(toggle, "expected a details toggle for the Architect step once it succeeds with a detail payload");
+    fireEvent.click(toggle!);
+
+    const detailList = architectStep?.querySelector(".detail-list");
+    assert.equal(detailList, null, "expected no detail list at all -- fieldLevelChangeUnderstood: true is not a reason to show one");
+    assert.match(architectStep?.textContent ?? "", /No structural change/);
+  });
+});
+
+/**
  * Round 1467: the detail-toggle button never reported its own expand/collapse
  * state via aria-expanded, unlike EntityPanel.tsx's own columns-menu/collapse
  * toggles, which already use this convention for the identical disclosure-
