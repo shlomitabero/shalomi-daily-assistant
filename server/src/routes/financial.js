@@ -8,8 +8,23 @@ import { logAction } from '../services/execution.js';
 
 export const financialRouter = Router();
 
+// Every other list endpoint in this app (listActions: 200, listDigests: 90,
+// listPaperTrades/getEntries: 100/200) already caps itself for exactly this
+// reason - this was the one list left returning every symbol the owner
+// ever added, with no limit and no pagination anywhere in the client. A
+// watchlist this large is unlikely in practice (each symbol is a deliberate,
+// one-at-a-time add, and twelvedata.com's own free-tier rate limit already
+// discourages tracking hundreds of them) - but unlikely is not impossible,
+// and nothing here stopped it. Newest-first, same precedent as every other
+// capped list, rather than the current de-facto (insertion-order,
+// unsorted) behavior.
+const MAX_WATCHLIST_RETURNED = 200;
+
 export function listWatchlist(req, res) {
-  res.json({ watchlist: db.financial_watchlist.all(), connected: isMarketDataConnected() });
+  const watchlist = db.financial_watchlist.all()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, MAX_WATCHLIST_RETURNED);
+  res.json({ watchlist, connected: isMarketDataConnected() });
 }
 
 // Guards the gap between the alreadyTracked check below and the insert

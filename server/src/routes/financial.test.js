@@ -474,6 +474,24 @@ test('listPaperTrades caps the response at the 100 most recent trades, newest fi
   assert.equal(res.body.trades[99].id, 'pt_5');
 });
 
+test('listWatchlist caps the response at the 200 most recent symbols, newest first', () => {
+  // Same unbounded-growth pattern already fixed for listPaperTrades/
+  // listActions/listDigests/getEntries - this was the one list endpoint
+  // left with no cap at all, returning every symbol the owner ever added
+  // with no pagination anywhere in the client.
+  __resetForTests();
+  for (let i = 0; i < 205; i += 1) {
+    db.financial_watchlist.insert({
+      id: `wl_${i}`, symbol: `SYM${i}`, createdAt: new Date(2026, 0, 1 + i).toISOString(),
+    });
+  }
+  const res = makeRes();
+  listWatchlist({}, res);
+  assert.equal(res.body.watchlist.length, 200);
+  assert.equal(res.body.watchlist[0].id, 'wl_204');
+  assert.equal(res.body.watchlist[199].id, 'wl_5');
+});
+
 test('listWatchlist and listPaperTrades return what was stored', () => {
   __resetForTests();
   db.financial_watchlist.insert({ id: 'wl_1', symbol: 'AAPL' });
