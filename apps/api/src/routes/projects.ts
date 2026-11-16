@@ -4574,11 +4574,20 @@ export function createProjectsRouter(
             throw new HttpError(400, "No file was uploaded", "NO_FILE_UPLOADED");
           }
           // Round 1025: mirrors the entity file-field upload route's own
-          // identical fix just above -- see its own comment for the full
-          // "resurrected upload directory" race this re-check closes.
-          if (!getProject(db, req.params.id)) {
+          // fix. Round 2088: that sibling route's own re-check was
+          // upgraded (round 2086) from a bare getProject existence check
+          // to a full requireProjectWriteAccess call, to also catch an
+          // owner demoting/removing this exact uploader while their
+          // upload is still in flight -- a bare existence check doesn't
+          // catch that, since the project itself still exists either
+          // way. This route's copy was never updated to match, leaving
+          // the identical demoted/removed-uploader race open here. Reuse
+          // the same re-check for the same reason.
+          try {
+            requireProjectWriteAccess(db, req.params.id, req.userId!);
+          } catch (err) {
             await rm(file.path, { force: true }).catch(() => {});
-            throw new HttpError(404, `Project "${req.params.id}" not found`, "PROJECT_NOT_FOUND");
+            throw err;
           }
           return {
             status: 200,

@@ -19358,6 +19358,94 @@ test("uploading a file as a collaborator who gets demoted to viewer while the (s
 });
 
 /**
+ * Round 2088: the identical demoted-uploader-mid-flight race the test above
+ * just fixed on the entity file-field upload route, but on its own sibling
+ * -- the WhatsApp attachment upload route. Round 2086's fix was only ever
+ * applied to the entity route; this route's own re-check (added back in
+ * round 1025, whose comment explicitly says it "mirrors" the entity
+ * route's fix) was never updated to match, so it still only rechecked bare
+ * project existence, not write access -- leaving the exact same gap open
+ * here. Same hand-built slow multipart body / short-head-start convention
+ * as the test above, just against the WhatsApp attachment route instead.
+ */
+test("uploading a WhatsApp attachment as a collaborator who gets demoted to viewer while the (slow) upload is still in flight must be rejected, not silently completed with access already revoked", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const ownerEmail = `whatsapp-upload-vs-demote-owner-${randomUUID()}@example.com`;
+    const collabEmail = `whatsapp-upload-vs-demote-collab-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const collabToken = await signup(baseUrl, collabEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+    const collabUserId = collaborators[0].userId;
+    assert.equal(collaborators[0].role, "editor", "sanity check: starts able to write");
+
+    const boundary = `----forgeTestBoundary${randomUUID()}`;
+    const head = new TextEncoder().encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="chat.pdf"\r\nContent-Type: application/pdf\r\n\r\n`,
+    );
+    const tail = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+    const contentPieces = Array.from({ length: 5 }, (_, i) => new TextEncoder().encode(`fake-attachment-bytes-piece-${i}-`));
+
+    const slowBody = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(head);
+        for (const piece of contentPieces) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          controller.enqueue(piece);
+        }
+        controller.enqueue(tail);
+        controller.close();
+      },
+    });
+
+    const uploadPromise = fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/attachments/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${collabToken}`, "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: slowBody,
+      duplex: "half",
+    } as RequestInit);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const demoteRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(demoteRes.status, 200);
+
+    const uploadRes = await uploadPromise;
+    assert.notEqual(uploadRes.status, 200, "must not report success once the uploader has already lost write access");
+    assert.equal(uploadRes.status, 403);
+    assert.equal(((await uploadRes.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+    const attachmentsDir = path.join(uploadsDir, projectId, "_whatsapp-attachments");
+    const entries = existsSync(attachmentsDir) ? readdirSync(attachmentsDir) : [];
+    assert.deepEqual(entries, [], "the file must not be left behind on disk for a write that was ultimately rejected");
+  });
+});
+
+/**
  * Round 782: multer (via busboy) decodes a multipart part's
  * `Content-Disposition: filename="..."` header as raw Latin-1 bytes
  * unless `defParamCharset` is explicitly configured, which
