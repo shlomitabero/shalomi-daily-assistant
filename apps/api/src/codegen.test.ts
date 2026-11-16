@@ -31083,6 +31083,63 @@ test("the exported GlobalSearch shows a real error with a Retry button when a se
 });
 
 /**
+ * Round 2083's finding: this component's own full-failure error message
+ * (every entity's search request failing, the `err.message` branch the
+ * test above exercises) is a raw server string, not this codebase's own
+ * hardcoded text -- but the *partial*-failure branch just above it in
+ * runSearch builds a hardcoded, digit-embedded English sentence
+ * ("Search failed for 1 of 2 entities...") that was never wrapped in the
+ * bidi-isolating <bdi dir="ltr"> this exact file's sibling EntityView
+ * error banner already got in round 2029 for the identical failure
+ * shape. Inside this exported app's own real RTL document (driven by
+ * Hebrew-labeled entities/fields, the normal case for this Hebrew-first
+ * product), an un-isolated digit-embedded English sentence is subject to
+ * the browser's own bidi algorithm and can visually scramble -- the exact
+ * symptom rounds 1716-2057 already fixed at every other site in this
+ * file. No test before this one ever drove this specific branch (the
+ * existing error tests above only ever fail EVERY entity, never just
+ * some), so this gap went unnoticed.
+ */
+test("the exported GlobalSearch wraps its partial-failure message (some entities failed, not all) in a bidi-isolating <bdi dir=\"ltr\">, same as EntityView's own error banner", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (String(input).endsWith("/Customer")) {
+      return { ok: false, status: 500, json: async () => ({ error: "Server exploded" }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ records: [] }) };
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { GlobalSearch } = await import(path.join(dir, "web", "src", "components", "GlobalSearch.jsx"));
+      const props = { entities: project.spec.entities, onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {} };
+
+      const { container } = render(React.createElement(GlobalSearch, props));
+      const input = container.querySelector(".global-search-input") as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "widget" } });
+        fireEvent.submit(container.querySelector("form.global-search-form")!);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const errorP = container.querySelector(".error-retry-row p.error");
+      assert.match(errorP?.textContent ?? "", /Search failed for 1 of 2 entities/, "expected the partial-failure message, not the full-failure raw server message");
+      const errorBdi = errorP?.querySelector("bdi[dir='ltr']");
+      assert.ok(errorBdi, "the partial-failure message must be wrapped in a bidi-isolating <bdi dir=\"ltr\">, same as EntityView's own error banner");
+      assert.equal(errorBdi!.textContent, errorP!.textContent, "the bdi wrapper must contain the message's entire text, not just part of it");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 816's finding: the same "live query vs. frozen highlightQuery"
  * staleness bug round 815 (above) fixed for Show all/Copy/Download was
  * also present in this one remaining spot in the same component -- the

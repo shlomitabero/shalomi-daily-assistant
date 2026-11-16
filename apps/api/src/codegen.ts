@@ -10644,7 +10644,7 @@ export function GlobalSearch({ entities, onClose, onJumpToEntity, onJumpToRecord
 
         {error && (
           <div className="error-retry-row">
-            <p className="error" role="status">{error}</p>
+            <p className="error" role="status"><bdi dir="ltr">{error}</bdi></p>
             <button type="button" onClick={() => { setExpandedSamples({}); runSearch(highlightQuery); }}>
               Try again
             </button>
