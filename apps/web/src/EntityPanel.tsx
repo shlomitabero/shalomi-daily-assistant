@@ -3389,6 +3389,23 @@ export function EntityPanel({
    * rounds 1122/1480/1487/1531/1559 already fixed for its sibling jump
    * targets), so a pure case-only rename of the deadline field while the
    * Twin panel is still open lands here with a now-stale exact name.
+   *
+   * Round 2042: also forces viewMode to "table" and clears groupFieldName
+   * -- the exact same "what else could hide this row" fix the sibling
+   * highlightRecordId effect above already applies, for the identical
+   * reason. groupFieldName/collapsedGroups (and collapsedBoardColumns in
+   * Board view) are persisted per project+entity+user and get reloaded
+   * from storage on every mount, so a tab the user left with a group
+   * collapsed, then switched away from, comes back with that same group
+   * still collapsed. This effect only ever touched fieldFilters, so a
+   * stat tile's own count (read from the full, ungrouped record set) and
+   * the toolbar's record-count readout (visibleRecords.length, computed
+   * before group-collapse) both kept citing every matching record, while
+   * effectivelyVisibleRecords silently dropped whichever of them landed
+   * inside a still-collapsed group -- with no error, no banner, and
+   * (in the worst case, if every matching record's group happened to be
+   * collapsed) a tile claiming N>0 matches landing on what looks like an
+   * empty table.
    */
   useEffect(() => {
     if (!createDateFilter || loading) return;
@@ -3400,6 +3417,8 @@ export function EntityPanel({
         setFieldFiltersPreference(projectId, entity.name, userId, next);
         return next;
       });
+      setViewMode(setViewModePreference(projectId, entity.name, userId, "table"));
+      setGroupFieldName(setGroupByField(projectId, entity.name, userId, ""));
     }
     onCreateDateFilterHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps

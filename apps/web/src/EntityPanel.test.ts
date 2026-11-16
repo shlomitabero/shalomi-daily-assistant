@@ -19995,6 +19995,94 @@ test("EntityPanel applies an incoming createDateFilter by case-insensitive field
   });
 });
 
+/**
+ * Round 2042: the createDateFilter effect just above only ever touched
+ * fieldFilters -- unlike its sibling highlightRecordId effect further up
+ * this file (which also forces viewMode to "table" and clears
+ * groupFieldName specifically because a collapsed table group hides its
+ * records from the DOM entirely, with no error). groupFieldName and
+ * collapsedGroups are persisted per project+entity+user and reloaded from
+ * storage on every mount, so a user who grouped this entity by "status"
+ * and collapsed the group the overdue record happens to sit in, then left
+ * the tab, came back to a Business Twin stat tile claiming N overdue
+ * records while effectivelyVisibleRecords silently dropped every one of
+ * them still sitting inside that still-collapsed group -- with the
+ * toolbar's own record-count readout (visibleRecords.length, computed
+ * before group-collapse) still citing the pre-collapse count the whole
+ * time. Confirms the incoming createDateFilter now also re-expands the
+ * table (clearing groupFieldName), so the filtered record it names is
+ * actually rendered, not silently swallowed by stale grouping state.
+ */
+test("EntityPanel's incoming createDateFilter clears a stale 'Group by' grouping/collapse so the matching record isn't left hidden inside a still-collapsed group", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const taskEntity: Entity = {
+      name: "Task",
+      label: "Task",
+      fields: [
+        { name: "title", label: "Title", type: "text", required: true },
+        { name: "status", label: "Status", type: "enum", enumValues: ["todo", "done"], required: true },
+        { name: "dueDate", label: "Due", type: "date", required: false },
+      ],
+    };
+    const store: EntityRecord[] = [
+      { id: 1, title: "Overdue todo task", status: "todo", dueDate: isoDateOffset(-5) },
+      { id: 2, title: "Done task", status: "done", dueDate: isoDateOffset(-30) },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Task") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    let handledCount = 0;
+    const onCreateDateFilterHandled = () => {
+      handledCount++;
+    };
+    try {
+      const view = render(buildEntityPanelElement({ entity: taskEntity, allEntities: [taskEntity], onCreateDateFilterHandled }));
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      // Group by status, then collapse the "todo" group -- the one the
+      // overdue record actually lives in.
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+      const todoHeaderRow = Array.from(document.querySelectorAll(".entity-group-header-row")).find((row) => row.textContent?.toLowerCase().includes("todo"))!;
+      fireEvent.click(todoHeaderRow.querySelector(".entity-group-toggle") as HTMLButtonElement);
+      await waitForCondition(() => !Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Overdue todo task")));
+
+      // Now a Business Twin tile jump lands on this same tab, naming the
+      // exact record that's still hidden inside the collapsed "todo" group.
+      view.rerender(
+        buildEntityPanelElement({
+          entity: taskEntity,
+          allEntities: [taskEntity],
+          createDateFilter: { fieldName: "dueDate", value: "overdue" },
+          onCreateDateFilterHandled,
+        }),
+      );
+
+      await waitForCondition(() => handledCount === 1);
+      await waitForCondition(() => Array.from(document.querySelectorAll("table tbody tr")).some((r) => r.textContent?.includes("Overdue todo task")));
+      assert.equal(
+        document.querySelectorAll(".entity-group-header-row").length,
+        0,
+        "the stale 'Group by' grouping itself must be cleared, not just happen to leave this one group expanded",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("an ordinary (non-deadline-named) date field in the past is never flagged overdue, even decades back", async () => {
   await withJsdom(async () => {
     function isoDateOffset(days: number): string {
