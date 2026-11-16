@@ -18328,11 +18328,12 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc && runSearchSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities/runSearch in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -18357,7 +18358,7 @@ test("the exported GlobalSearch's runSearch shows results from every entity that
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
     "failedShowAllEntitiesRef",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
     async (entityName: string) => {
@@ -18418,10 +18419,11 @@ test("the exported GlobalSearch's searchAllEntities disambiguates two entities t
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/searchAllEntities in generated output",
   );
 
   const activeCustomer = { name: "ActiveCustomer", label: "Customers", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -18429,7 +18431,7 @@ test("the exported GlobalSearch's searchAllEntities disambiguates two entities t
 
   const searchAllEntities = new Function(
     "listRecords",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
   )(async (entityName: string) =>
     entityName === "ActiveCustomer" ? { records: [{ id: 1, name: "Dana Levi" }] } : { records: [{ id: 2, name: "Dana Cohen" }] },
   ) as (entities: unknown[], query: string) => Promise<{ results: { entityName: string; entityLabel: string }[] }>;
@@ -18459,10 +18461,11 @@ test("the exported GlobalSearch's searchAllEntities collects every truncated ent
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/searchAllEntities in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -18470,7 +18473,7 @@ test("the exported GlobalSearch's searchAllEntities collects every truncated ent
 
   const searchAllEntities = new Function(
     "listRecords",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
   )(async (entityName: string) =>
     // "Alpha" has a real match AND is truncated (the exact silent-miss
     // risk: an older, non-returned row could also match). "Beta" has
@@ -18500,10 +18503,11 @@ test("the exported GlobalSearch's searchAllEntities names a truncated entity by 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && searchAllEntitiesSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/searchAllEntities in generated output",
   );
 
   // A real entity-rename scenario: the internal identifier stayed
@@ -18514,7 +18518,7 @@ test("the exported GlobalSearch's searchAllEntities names a truncated entity by 
 
   const searchAllEntities = new Function(
     "listRecords",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\nreturn searchAllEntities;`,
   )(async () => ({ records: [], truncated: true })) as (entities: unknown[], query: string) => Promise<{ truncatedNames: string[] }>;
 
   const { truncatedNames } = await searchAllEntities([renamedEntity], "match");
@@ -18625,11 +18629,12 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc && runSearchSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities/runSearch in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -18653,7 +18658,7 @@ test("the exported GlobalSearch's runSearch orders entity groups by totalMatches
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
     "failedShowAllEntitiesRef",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA, entityB, entityC],
     async (entityName: string) =>
@@ -18786,10 +18791,11 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const handleShowAllSrc = globalSearchJsx.match(/ {2}async function handleShowAll\(entityName\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && handleShowAllSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/handleShowAll in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && handleShowAllSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/handleShowAll in generated output",
   );
 
   const courierEntity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -18810,7 +18816,7 @@ test("the exported GlobalSearch's handleShowAll writes the data it just fetched 
     "errorFromShowAllEntityRef",
     "failedShowAllEntitiesRef",
     "setTruncatedEntityNames",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${handleShowAllSrc}\nreturn handleShowAll;`,
   )(
     [courierEntity],
     async () => ({ records: [{ id: 1, name: "Bob Cohen" }] }),
@@ -18981,11 +18987,12 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
   const matchesSearchSrc = entityViewJsx.match(/export function matchesSearch\([\s\S]*?\n\}\n/)?.[0]?.replace("export ", "");
   const entityLabelOccurrencesSrc = entityViewJsx.match(/function entityLabelOccurrences\([\s\S]*?\n\}\n/)?.[0];
   const entityDisplayLabelSrc = entityViewJsx.match(/function entityDisplayLabel\([\s\S]*?\n\}\n/)?.[0];
+  const withRelationToAliasesSrc = globalSearchJsx.match(/function withRelationToAliases\([\s\S]*?\n\}\n/)?.[0];
   const searchAllEntitiesSrc = globalSearchJsx.match(/async function searchAllEntities\([\s\S]*?\n\}\n/)?.[0];
   const runSearchSrc = globalSearchJsx.match(/ {2}async function runSearch\(q\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && searchAllEntitiesSrc && runSearchSrc,
-    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/searchAllEntities/runSearch in generated output",
+    matchesSearchSrc && entityLabelOccurrencesSrc && entityDisplayLabelSrc && withRelationToAliasesSrc && searchAllEntitiesSrc && runSearchSrc,
+    "expected to find matchesSearch/entityLabelOccurrences/entityDisplayLabel/withRelationToAliases/searchAllEntities/runSearch in generated output",
   );
 
   const entityA = { name: "Alpha", label: "Alpha", fields: [{ name: "name", label: "Name", type: "text" }] };
@@ -19012,7 +19019,7 @@ test("the exported GlobalSearch's runSearch ignores a stale, still-in-flight sea
     "lastRecordsByEntityRef",
     "errorFromShowAllEntityRef",
     "failedShowAllEntitiesRef",
-    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
+    `${matchesSearchSrc}\n${entityLabelOccurrencesSrc}\n${entityDisplayLabelSrc}\n${withRelationToAliasesSrc}\n${searchAllEntitiesSrc}\n${runSearchSrc}\nreturn runSearch;`,
   )(
     [entityA],
     async () => {
