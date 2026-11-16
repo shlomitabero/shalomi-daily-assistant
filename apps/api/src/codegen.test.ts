@@ -5487,7 +5487,7 @@ test("the exported EntityView's isDeadlineFieldName rejects field names that mer
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   assert.ok(patternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
-  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
   const isDeadlineFieldName = new Function(`${patternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
@@ -5512,7 +5512,7 @@ test("the exported EntityView's isDeadlineFieldName matches the built-in WorkOrd
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   assert.ok(patternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
-  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
   const isDeadlineFieldName = new Function(`${patternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
@@ -5532,7 +5532,7 @@ test("the exported EntityView's isDeadlineFieldName matches the built-in Rental 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   assert.ok(patternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
-  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
   const isDeadlineFieldName = new Function(`${patternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
@@ -5540,6 +5540,52 @@ test("the exported EntityView's isDeadlineFieldName matches the built-in Rental 
   assert.equal(isDeadlineFieldName("endDate"), true, "Rental's own field name");
   assert.equal(isDeadlineFieldName("EndDate"), true, "case-insensitive");
   assert.equal(isDeadlineFieldName("startDate"), false, "only the end of a ranged record is a deadline, not the start");
+});
+
+/**
+ * Round 2079: mirrors the live preview's own identical fix -- a field named
+ * exactly "date" carries no deadline-ish word of its own at all, so the
+ * built-in Appointment/Event entities' own `date` (a future scheduled time,
+ * status Scheduled/Planned/...) never matched before this round, while the
+ * built-in Donation/Expense/Review entities' own `date` (a historical
+ * occurrence date, status Pledged/Pending/Published/...) correctly must
+ * still never match. Confirms the exported app's own copy of the function
+ * got the identical fix.
+ */
+test("the exported EntityView's isDeadlineFieldName treats a bare 'date' field as a deadline only when paired with a sibling status/stage enum holding a not-yet-happened value", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  const statusValuesSrc = entityViewJsx.match(/const DEADLINE_STATUS_VALUES = [^;]+;/)?.[0];
+  assert.ok(patternSrc && statusValuesSrc, "expected to find DUE_FIELD_NAME_PATTERN/DEADLINE_STATUS_VALUES in generated output");
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
+
+  const isDeadlineFieldName = new Function(`${patternSrc}\n${statusValuesSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (
+    fieldName: string,
+    fields?: { name: string; type: string; enumValues?: string[] }[],
+  ) => boolean;
+
+  assert.equal(isDeadlineFieldName("date"), false, "with no sibling fields given at all, a bare 'date' has nothing to disambiguate it with");
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", enumValues: ["Scheduled", "Completed", "Cancelled", "No-show"] }]),
+    true,
+    "the built-in Appointment entity's own shape",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", enumValues: ["Planned", "Confirmed", "Completed", "Cancelled"] }]),
+    true,
+    "the built-in Event entity's own shape",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", enumValues: ["Pledged", "Received", "Refunded"] }]),
+    false,
+    "the built-in Donation entity's own shape -- a historical date, not a deadline",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", enumValues: ["Pending", "Approved", "Paid", "Rejected"] }]),
+    false,
+    "the built-in Expense entity's own shape -- 'Pending' must NOT count as a deadline value, or Expense/Review would both become false positives",
+  );
 });
 
 /**
@@ -7084,7 +7130,7 @@ test("the exported record table's date cell shows the correct calendar day even 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const dateHelperSrc = entityViewJsx.match(/const CALENDAR_DATE_FORMAT[\s\S]*?\nfunction parseFieldDate\(raw\) \{[\s\S]*?\n\}\n/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   // Cell also calls isDeadlineFieldName/getDateUrgency (round 340) --
   // needed here too, since this test evals Cell in isolation rather than
   // importing the whole generated module. isDeadlineFieldName's own
@@ -7092,7 +7138,7 @@ test("the exported record table's date cell shows the correct calendar day even 
   // calling the extracted function throws "DUE_FIELD_NAME_PATTERN is not
   // defined" the moment a date-type field reaches the isDeadlineFieldName
   // check below.
-  const urgencyHelperSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN[\s\S]*?\nfunction isDeadlineFieldName\(fieldName\) \{[\s\S]*?\nfunction getDateUrgency\(value, today\) \{[\s\S]*?\n\}\n/)?.[0];
+  const urgencyHelperSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN[\s\S]*?\nfunction isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\nfunction getDateUrgency\(value, today\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(dateHelperSrc && cellSrc && urgencyHelperSrc, "expected to find parseFieldDate/Cell/isDeadlineFieldName+getDateUrgency in generated output");
 
   const transformed = transformSync(`${urgencyHelperSrc}\n${dateHelperSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
@@ -7572,7 +7618,7 @@ test("the exported record table's Cell renders a phone-like-named number field a
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
 
   const transformed = transformSync(`${phoneFieldHintsSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
@@ -7606,7 +7652,7 @@ test("the exported record table's Cell falls back to the raw stored value for a 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
 
   const transformed = transformSync(`${phoneFieldHintsSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
@@ -7644,7 +7690,7 @@ test("the exported record table's Cell wraps a phone-like field's value in <bdi 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const phoneFieldHintsSrc = entityViewJsx.match(/const PHONE_FIELD_NAME_HINTS = \[[^\]]*\];/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(phoneFieldHintsSrc && cellSrc, "expected to find PHONE_FIELD_NAME_HINTS/Cell in generated output");
 
   const transformed = transformSync(
@@ -7681,7 +7727,7 @@ test("the exported record table's Cell wraps a relation's phone-shaped display l
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const looksLikePhoneNumberSrc = entityViewJsx.match(/function looksLikePhoneNumber\(label\) \{[\s\S]*?\n\}\n/)?.[0];
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(looksLikePhoneNumberSrc && cellSrc, "expected to find looksLikePhoneNumber/Cell in generated output");
 
   const transformed = transformSync(`${looksLikePhoneNumberSrc}\n${cellSrc}`, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
@@ -14162,7 +14208,7 @@ test("the exported EntityView's relation cells jump to the related record via th
   const files = generateExportFiles(withRelation);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(onJumpToRecord && field\.relationTo\) \{/);
   // Round 1533: field.relationTo can differ in letter case from its real
@@ -14227,7 +14273,7 @@ test("the exported EntityView's Cell renders a longtext field with a native hove
   const files = generateExportFiles(withLongtext);
   const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /if \(field\.type === "longtext"\) \{/);
   assert.match(cellSrc!, /<span className="longtext-cell" title=\{String\(value\)\}>/);
@@ -14278,7 +14324,7 @@ test("the exported EntityView's splitLinkSegments finds a URL and an email addre
 
 test("the exported EntityView's Cell renders a real clickable <a> for a URL/email embedded in a text or longtext field", () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
-  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)?.[0];
+  const cellSrc = entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(cellSrc, "expected to find the real generated Cell component");
   assert.match(cellSrc!, /<LinkifiedText text=\{String\(value\)\} query=\{highlightQuery\} \/>/, "both the longtext and plain-text branches must route through LinkifiedText");
   assert.match(entityViewJsx, /function LinkifiedText\(\{ text, query \}\) \{/, "expected the real generated LinkifiedText component");
@@ -21838,7 +21884,7 @@ test("the exported EntityView's Cell, matchesSearch, and fieldDisplayValue all s
   assert.equal(fieldDisplayValue({ type: "file" }, fileValue), "invoice.pdf", "the CSV export must show just the filename, not the raw JSON descriptor");
   assert.equal(fieldDisplayValue({ type: "file" }, unsafeFileValue), "", "an unsafe file url must display as no file, per round 908's stored-XSS guard");
 
-  const transformed = transformSync(`${isImageMimeTypeSrc}\n${parseFileFieldValueSrc}\nfunction Highlighted({ text }) { return text; }\n${entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed \}\) \{[\s\S]*?\n\}\n/)![0]}`, {
+  const transformed = transformSync(`${isImageMimeTypeSrc}\n${parseFileFieldValueSrc}\nfunction Highlighted({ text }) { return text; }\n${entityViewJsx.match(/function Cell\(\{ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields \}\) \{[\s\S]*?\n\}\n/)![0]}`, {
     loader: "jsx",
     jsxFactory: "h",
     jsxFragment: "Frag",

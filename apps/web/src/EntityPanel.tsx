@@ -267,6 +267,7 @@ function Cell({
   onJumpToRecord,
   allEntities,
   recordClosed = false,
+  siblingFields = [],
 }: {
   field: Field;
   value: unknown;
@@ -304,6 +305,18 @@ function Cell({
    * below: a past deadline on an already-resolved record isn't something
    * still worth flagging red/amber. */
   recordClosed?: boolean;
+  /** Round 2079: the record's OTHER fields on this same entity -- needed
+   * only so isDeadlineFieldName can tell a bare "date" field's own meaning
+   * apart (Appointment/Event's own `date` is a deadline; Donation/Expense/
+   * Review's own `date` is a historical occurrence date) by checking for a
+   * sibling status/stage enum with a "not yet happened" value. Every call
+   * site below passes the entity's full, unfiltered field list -- not a
+   * filtered view like BoardCard's own `otherFields` (which already
+   * excludes the board-grouping field, frequently `status` itself) or
+   * Table view's `visibleFields` (which excludes a hidden column) --
+   * since this field's own meaning doesn't change based on what's
+   * currently visible/grouped-by elsewhere. */
+  siblingFields?: Field[];
 }) {
   if (value === null || value === undefined || value === "") {
     return <span className="muted">{t("entity.empty")}</span>;
@@ -360,7 +373,7 @@ function Cell({
   }
   if (field.type === "date") {
     const formatted = formatDateValue(String(value), lang);
-    const urgency = isDeadlineFieldName(field.name) && !recordClosed ? getDateUrgency(String(value)) : null;
+    const urgency = isDeadlineFieldName(field.name, siblingFields) && !recordClosed ? getDateUrgency(String(value)) : null;
     if (!urgency) return <>{formatted}</>;
     // Round 1747: mirrors the boolean branch's own aria-label reasoning
     // above exactly -- a title on a bare span has no implicit accessible
@@ -505,6 +518,7 @@ function RecordPrintSheet({
                   f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined
                 }
                 recordClosed={isRecordClosedStatus(record, fields)}
+                siblingFields={fields}
               />
             </dd>
           </div>
@@ -581,6 +595,7 @@ function RecordListPrintSheet({
               t={t}
               relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], allEntities, relatedRecords, lang) : undefined}
               recordClosed={recordClosed}
+              siblingFields={fields}
             />
           </td>
         ))}
@@ -772,6 +787,7 @@ function BoardCard({
             onJumpToRecord={onJumpToRecord}
             allEntities={allEntities}
             recordClosed={isRecordClosedStatus(record, orderedFields)}
+            siblingFields={orderedFields}
           />
         </div>
       ))}
@@ -1105,7 +1121,7 @@ function CalendarView({
                 // grouped by -- matching how Cell/BoardCard gate on a
                 // record's own deadline-named field.
                 const urgency =
-                  isDeadlineFieldName(dateField.name) && !isRecordClosedStatus(record, orderedFields)
+                  isDeadlineFieldName(dateField.name, orderedFields) && !isRecordClosedStatus(record, orderedFields)
                     ? getDateUrgency(String(record[dateField.name] ?? ""))
                     : null;
                 const chipLabel = calendarChipLabelValue(labelField, record, lang);
@@ -3688,7 +3704,7 @@ export function EntityPanel({
         // must match against that classification, not the raw stored
         // "YYYY-MM-DD" string, which is what the generic fallback below
         // would otherwise compare "overdue"/"dueSoon" against.
-        if (field?.type === "date" && isDeadlineFieldName(field.name)) {
+        if (field?.type === "date" && isDeadlineFieldName(field.name, entity.fields)) {
           if (isRecordClosedStatus(r, entity.fields)) return false;
           return getDateUrgency(String(r[fieldName] ?? "")) === value;
         }
@@ -5869,6 +5885,7 @@ export function EntityPanel({
                   onJumpToRecord={onJumpToRecord}
                   allEntities={allEntities}
                   recordClosed={recordClosed}
+                  siblingFields={entity.fields}
                 />
               )}
             </td>

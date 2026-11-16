@@ -4823,6 +4823,56 @@ test("isDeadlineFieldName matches the built-in Rental entity's own endDate field
   assert.equal(isDeadlineFieldName("startDate"), false, "only the end of a ranged record is a deadline, not the start");
 });
 
+/**
+ * Round 2079: a field named exactly "date" carries no deadline-ish word of
+ * its own at all, unlike every case above -- the built-in Appointment/Event
+ * entities' own `date` field IS the deadline (a future scheduled time that
+ * becomes overdue once passed and not yet completed), but
+ * Donation/Expense/Review/VolunteerEvent/StockMovement's own `date` is a
+ * historical occurrence date that already happened, never a deadline.
+ * Without this round's fix, a bare "date" never matched at all, so
+ * Appointment/Event got none of the overdue/due-soon treatment every
+ * sibling deadline field already gets.
+ */
+test("isDeadlineFieldName treats a bare 'date' field as a deadline only when paired with a sibling status/stage enum holding a not-yet-happened value", () => {
+  assert.equal(isDeadlineFieldName("date"), false, "with no sibling fields given at all, a bare 'date' has nothing to disambiguate it with");
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", required: true, enumValues: ["Scheduled", "Completed", "Cancelled", "No-show"] }]),
+    true,
+    "the built-in Appointment entity's own shape",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", required: true, enumValues: ["Planned", "Confirmed", "Completed", "Cancelled"] }]),
+    true,
+    "the built-in Event entity's own shape",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "stage", type: "enum", required: true, enumValues: ["Scheduled", "Done"] }]),
+    true,
+    "a 'stage' enum must count the same way 'status' does, mirroring isRecordClosedStatus's own convention",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", required: true, enumValues: ["Pledged", "Received", "Refunded"] }]),
+    false,
+    "the built-in Donation entity's own shape -- a historical date, not a deadline",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", required: true, enumValues: ["Pending", "Approved", "Paid", "Rejected"] }]),
+    false,
+    "the built-in Expense entity's own shape -- 'Pending' must NOT count as a deadline value, or Expense/Review would both become false positives",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "status", type: "enum", required: true, enumValues: ["Published", "Pending", "Hidden"] }]),
+    false,
+    "the built-in Review entity's own shape",
+  );
+  assert.equal(
+    isDeadlineFieldName("date", [{ name: "name", type: "text", required: true }]),
+    false,
+    "the built-in VolunteerEvent/StockMovement entities' own shape -- no status/stage field at all",
+  );
+});
+
 test("getDateUrgency classifies a date relative to a fixed reference day, not real wall-clock time", () => {
   const today = new Date(2026, 5, 15); // June 15, 2026 -- a Monday, chosen arbitrarily
   assert.equal(getDateUrgency("2026-06-10", today), "overdue", "a date before today is overdue");

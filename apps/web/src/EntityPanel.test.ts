@@ -20051,6 +20051,118 @@ test("a date field named like a deadline is visually flagged overdue/due-soon in
 });
 
 /**
+ * Round 2079: a field named exactly "date" carries no deadline-ish word at
+ * all, unlike dueDate/scheduledDate/endDate above -- the built-in
+ * Appointment entity's own `date` field IS a deadline (paired with a
+ * "Scheduled"/"Completed"/... status), but the built-in Donation entity's
+ * own `date` field is a historical occurrence date, never a deadline (paired
+ * with a "Pledged"/"Received"/"Refunded" status that never implies "not yet
+ * happened"). Before this round, a bare "date" field matched neither case at
+ * all -- this confirms the live table now correctly flags the first and still
+ * correctly leaves the second alone, using the exact same entity shapes the
+ * real built-in domain library declares.
+ */
+test("a bare 'date' field paired with a 'Scheduled' status (the built-in Appointment entity's own shape) is now flagged overdue", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const appointmentEntity: Entity = {
+      name: "Appointment",
+      label: "Appointment",
+      fields: [
+        { name: "customerName", label: "Customer", type: "text", required: true },
+        { name: "date", label: "Date", type: "date", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["Scheduled", "Completed", "Cancelled", "No-show"],
+        },
+      ],
+    };
+    const store: EntityRecord[] = [{ id: 1, customerName: "Dana", date: isoDateOffset(-6), status: "Scheduled" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Appointment") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: appointmentEntity, allEntities: [appointmentEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const row = document.querySelector("table tbody tr")!;
+      assert.ok(row.querySelector(".date-overdue"), "Appointment's own bare 'date' field, 6 days past with a still-Scheduled status, must now be flagged overdue");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2079: the sibling, false-positive-guarding half of the test just
+ * above -- the built-in Donation entity's own bare `date` field is a
+ * historical occurrence date (paired with a "Pledged"/"Received"/"Refunded"
+ * status that never implies "not yet happened"), never a deadline, and must
+ * stay unflagged even with the identical past date.
+ */
+test("a bare 'date' field paired with a 'Pledged'/'Received'/'Refunded' status (the built-in Donation entity's own shape) is never flagged overdue", async () => {
+  await withJsdom(async () => {
+    function isoDateOffset(days: number): string {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    const donationEntity: Entity = {
+      name: "Donation",
+      label: "Donation",
+      fields: [
+        { name: "donorName", label: "Donor", type: "text", required: true },
+        { name: "amount", label: "Amount", type: "number", required: true },
+        {
+          name: "status",
+          label: "Status",
+          type: "enum",
+          required: true,
+          enumValues: ["Pledged", "Received", "Refunded"],
+        },
+        { name: "date", label: "Date", type: "date", required: false },
+      ],
+    };
+    const donationStore: EntityRecord[] = [{ id: 1, donorName: "Yossi", amount: 100, status: "Pledged", date: isoDateOffset(-6) }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Donation") {
+        return new Response(JSON.stringify({ records: donationStore }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: donationEntity, allEntities: [donationEntity] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const row = document.querySelector("table tbody tr")!;
+      assert.equal(
+        row.querySelector(".date-overdue"),
+        null,
+        "Donation's own bare 'date' field is a historical occurrence date (paired with a 'Pledged'/'Received'/'Refunded' status, never 'Scheduled'), so it must never be flagged overdue even 6 days in the past",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1747: the overdue/due-soon urgency span above only ever carried a
  * CSS color class plus an HTML `title` -- a `title` on a bare, non-
  * interactive `<span>` has no implicit accessible-description role, and

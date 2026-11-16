@@ -2531,6 +2531,68 @@ test("computeBusinessTwin flags the built-in Rental entity's own endDate as over
   assert.match(observation!.text, /1 of 1 record/, "only the still-Active rental counts -- the Returned one must be excluded entirely, not just left out of the overdue count");
 });
 
+/**
+ * Round 2079: mirrors entityFormatting.ts's/codegen.ts's identical fix --
+ * a field named exactly "date" carries no deadline-ish word of its own at
+ * all, so isDeadlineFieldName never recognized the built-in Appointment
+ * entity's own `date` (a future scheduled time, status Scheduled/Completed/
+ * Cancelled/No-show) as a deadline before this round -- Business Twin
+ * silently never surfaced an overdue Appointment insight. Confirms the
+ * sibling built-in Donation entity's own bare `date` (a historical
+ * occurrence date, status Pledged/Received/Refunded -- never "Scheduled")
+ * correctly stays unflagged with the identical past date, using the REAL
+ * domain-library field/status shapes for both, not synthetic stand-ins.
+ */
+test("computeBusinessTwin flags the built-in Appointment entity's own bare 'date' field as overdue, but not the built-in Donation entity's own bare 'date' field with the identical past date", () => {
+  const twoEntityProject: Project = {
+    ...project,
+    description: "A salon with appointments and a donor list",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          label: "Appointments",
+          fields: [
+            { name: "customerName", type: "text", required: true },
+            { name: "date", label: "Date", type: "date", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Scheduled", "Completed", "Cancelled", "No-show"] },
+          ],
+        },
+        {
+          name: "Donation",
+          label: "Donations",
+          fields: [
+            { name: "donorName", type: "text", required: true },
+            { name: "amount", type: "number", required: true },
+            { name: "status", label: "Status", type: "enum", required: true, enumValues: ["Pledged", "Received", "Refunded"] },
+            { name: "date", label: "Date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, twoEntityProject.id, twoEntityProject.spec);
+  const [appointment, donation] = twoEntityProject.spec.entities;
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, twoEntityProject.id, appointment, { customerName: "Dana", date: "2026-01-01", status: "Scheduled" });
+  insertRecord(db, twoEntityProject.id, appointment, { customerName: "Yossi", date: "2026-01-01", status: "Completed" });
+  insertRecord(db, twoEntityProject.id, donation, { donorName: "Omer", amount: 100, status: "Pledged", date: "2026-01-01" });
+
+  const twin = computeBusinessTwin(db, twoEntityProject, today);
+  const appointmentObservation = twin.jumpableObservations.find((o) => o.entityName === "Appointment" && o.text.includes("Date"));
+  assert.ok(appointmentObservation, `expected an overdue observation for the still-Scheduled appointment, got: ${JSON.stringify(twin.jumpableObservations)}`);
+  assert.match(appointmentObservation!.text, /1 of 1 record/, "only the still-Scheduled appointment counts -- the Completed one must be excluded entirely");
+  // Donation still legitimately surfaces its own unrelated observations
+  // (e.g. a numeric aggregate on "amount") -- only an overdue/due-soon
+  // observation on its own "date" field must be absent.
+  assert.ok(
+    !twin.jumpableObservations.some((o) => o.entityName === "Donation" && o.fieldName === "date"),
+    `Donation's own historical 'date' (status Pledged/Received/Refunded, never Scheduled) must never surface an overdue observation, got: ${JSON.stringify(twin.jumpableObservations)}`,
+  );
+});
+
 test("computeBusinessTwin stays silent about a deadline field when nothing is actually overdue yet", () => {
   const orderProject: Project = {
     ...project,

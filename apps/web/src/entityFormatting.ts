@@ -431,9 +431,35 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
  * exactly once, only on Rental, so this carries zero false-positive risk
  * for any other built-in entity.
  */
-export function isDeadlineFieldName(fieldName: string): boolean {
+/**
+ * Round 2079: a field named exactly "date" carries no deadline-ish word of
+ * its own at all, so on its own it's genuinely ambiguous -- the built-in
+ * Appointment/Event entities' own `date` field IS the deadline (a future
+ * scheduled time that becomes overdue once passed and not yet completed),
+ * but Donation/Expense/Review/VolunteerEvent/StockMovement's own `date` is
+ * a historical occurrence date that already happened, never a deadline.
+ * Grepped the full built-in domain library (domainEntities.ts + templates.ts)
+ * and confirmed these two values appear ONLY on a sibling status/stage enum
+ * of Appointment ("Scheduled"/"scheduled") and Event ("Planned") -- WorkOrder's
+ * own "Scheduled" status pairs with its already-correctly-named
+ * `scheduledDate`, never a bare `date`, so it can't collide with this set.
+ * Deliberately excludes "pending" even though it reads similarly -- Expense
+ * and Review both use "Pending" on their own status enum, paired with a
+ * genuinely historical `date`, so including it would wrongly flag both.
+ */
+const DEADLINE_STATUS_VALUES = new Set(["scheduled", "planned"]);
+export function isDeadlineFieldName(fieldName: string, fields: Field[] = []): boolean {
   const lower = fieldName.toLowerCase();
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate");
+  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate")) {
+    return true;
+  }
+  if (lower !== "date") return false;
+  // Mirrors isRecordClosedStatus's own `.filter(...).some(...)` convention
+  // (round 2068) -- nothing stops an entity from declaring both a "status"
+  // and a "stage" enum, so every qualifying field is checked, not just the
+  // first match.
+  const statusFields = fields.filter((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
+  return statusFields.some((f) => f.enumValues?.some((v) => DEADLINE_STATUS_VALUES.has(v.toLowerCase())));
 }
 
 export type DateUrgency = "overdue" | "dueSoon" | null;
@@ -1103,7 +1129,7 @@ export function findFilterableFields(fields: Field[], allEntities?: Entity[], re
   // boolean/relation) right above. A plain, non-deadline date field is
   // deliberately still excluded: with an unbounded value space and no
   // existing urgency classification, it has nothing comparable to offer.
-  const deadlineDateFields = fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+  const deadlineDateFields = fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name, fields));
   return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields, ...deadlineDateFields];
 }
 

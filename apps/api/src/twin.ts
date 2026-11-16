@@ -797,9 +797,30 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
  * neither "due", "deadline", nor "scheduled". Plain substring check: no
  * other built-in field name contains "enddate" at all.
  */
-function isDeadlineFieldName(fieldName: string): boolean {
+/**
+ * Round 2079: mirrors entityFormatting.ts's/codegen.ts's identical fix --
+ * a bare "date" field name carries no deadline-ish word of its own, so a
+ * plain substring/word check alone can't tell the built-in Appointment/
+ * Event entities' own `date` (a future scheduled time, becomes overdue once
+ * passed and not yet completed) apart from Donation/Expense/Review's own
+ * `date` (a historical occurrence date, never a deadline). Grepped the full
+ * built-in domain library and confirmed "scheduled"/"planned" appear ONLY
+ * on Appointment's/Event's own status enum -- deliberately excludes
+ * "pending" even though it reads similarly, since Expense/Review both use
+ * it on their own status enum paired with a genuinely historical `date`.
+ */
+const DEADLINE_STATUS_VALUES = new Set(["scheduled", "planned"]);
+function isDeadlineFieldName(fieldName: string, fields: Entity["fields"] = []): boolean {
   const lower = fieldName.toLowerCase();
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate");
+  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate")) {
+    return true;
+  }
+  if (lower !== "date") return false;
+  // Mirrors isRecordClosedStatus's own `.filter(...).some(...)` convention
+  // just below (round 2068) -- checks every qualifying status/stage field,
+  // not just the first.
+  const statusFields = fields.filter((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
+  return statusFields.some((f) => f.enumValues?.some((v) => DEADLINE_STATUS_VALUES.has(v.toLowerCase())));
 }
 
 /**
@@ -953,7 +974,7 @@ function computeOverdueObservations(
   const observations: ReturnType<typeof computeOverdueObservations> = [];
   const startOfToday = startOfDayInTimeZone(today, timeZone);
   for (const entity of project.spec.entities) {
-    const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+    const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name, entity.fields));
     if (deadlineFields.length === 0) continue;
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;
@@ -1034,7 +1055,7 @@ function computeDueSoonObservations(
   const startOfToday = startOfDayInTimeZone(today, timeZone);
   const dayMs = 24 * 60 * 60 * 1000;
   for (const entity of project.spec.entities) {
-    const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+    const deadlineFields = entity.fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name, entity.fields));
     if (deadlineFields.length === 0) continue;
     const records = recordsByEntity.get(entity.name) ?? [];
     if (records.length === 0) continue;

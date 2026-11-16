@@ -3332,9 +3332,28 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 // "should have happened by now" case, but contained neither "due",
 // "deadline", nor "scheduled". Plain substring check: no other built-in
 // field name contains "enddate" at all.
-function isDeadlineFieldName(fieldName) {
+// Round 2079: mirrors the live preview's own identical fix -- a bare "date"
+// field name carries no deadline-ish word of its own, so a plain substring/
+// word check alone can't tell the built-in Appointment/Event entities' own
+// "date" field (a future scheduled time, becomes overdue once passed and
+// not yet completed) apart from Donation/Expense/Review's own "date" field
+// (a historical occurrence date, never a deadline). Grepped the full
+// built-in domain library and confirmed "scheduled"/"planned" appear ONLY
+// on Appointment's/Event's own status enum -- deliberately excludes
+// "pending" even though it reads similarly, since Expense/Review both use
+// it on their own status enum paired with a genuinely historical date.
+const DEADLINE_STATUS_VALUES = new Set(["scheduled", "planned"]);
+function isDeadlineFieldName(fieldName, fields) {
   const lower = fieldName.toLowerCase();
-  return DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate");
+  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate")) {
+    return true;
+  }
+  if (lower !== "date" || !fields) return false;
+  // Mirrors isRecordClosedStatus's own filter-then-some convention
+  // elsewhere in this file -- checks every qualifying status/stage field,
+  // not just the first.
+  const statusFields = fields.filter((f) => f.type === "enum" && (f.name.toLowerCase() === "status" || f.name.toLowerCase() === "stage"));
+  return statusFields.some((f) => f.enumValues && f.enumValues.some((v) => DEADLINE_STATUS_VALUES.has(String(v).toLowerCase())));
 }
 const DUE_SOON_WINDOW_DAYS = 3;
 function getDateUrgency(value, today) {
@@ -3581,7 +3600,7 @@ function LinkifiedText({ text, query }) {
   );
 }
 
-function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed }) {
+function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, recordClosed, siblingFields }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   if (field.type === "relation") {
     const label = relationLabel || \`#\${value}\`;
@@ -3628,7 +3647,7 @@ function Cell({ field, value, relationLabel, highlightQuery, onJumpToRecord, rec
     // is behind UTC.
     const date = parseFieldDate(value);
     const formatted = Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
-    const urgency = isDeadlineFieldName(field.name) && !recordClosed ? getDateUrgency(value) : null;
+    const urgency = isDeadlineFieldName(field.name, siblingFields) && !recordClosed ? getDateUrgency(value) : null;
     if (!urgency) return <>{formatted}</>;
     const urgencyLabel = urgency === "overdue" ? "Overdue" : "Due soon";
     return (
@@ -4747,7 +4766,7 @@ function findFilterableFields(fields, relatedRecords) {
   // filter dropdown alongside enum/boolean/relation. A plain,
   // non-deadline date field stays excluded -- it has no such
   // classification to filter by.
-  const deadlineDateFields = fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name));
+  const deadlineDateFields = fields.filter((f) => f.type === "date" && isDeadlineFieldName(f.name, fields));
   return [...findFilterableEnumFields(fields), ...fields.filter((f) => f.type === "boolean"), ...relationFields, ...deadlineDateFields];
 }
 
@@ -5401,7 +5420,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                 // getDateUrgency/isRecordClosedStatus at all, so an overdue
                 // record's chip rendered identically to one due next month.
                 const urgency =
-                  isDeadlineFieldName(dateField.name) && !isRecordClosedStatus(record, entity.fields)
+                  isDeadlineFieldName(dateField.name, entity.fields) && !isRecordClosedStatus(record, entity.fields)
                     ? getDateUrgency(String(record[dateField.name] || ""))
                     : null;
                 const chipLabel = calendarLabelValue(labelField, record);
@@ -5562,6 +5581,7 @@ function RecordPrintSheet({ entity, fields, record, relatedRecords }) {
                 value={record[f.name]}
                 relationLabel={f.type === "relation" ? relationDisplayLabel(f, record[f.name], relatedRecords) : undefined}
                 recordClosed={isRecordClosedStatus(record, fields)}
+                siblingFields={fields}
               />
             </dd>
           </div>
@@ -5601,7 +5621,7 @@ function RecordListPrintSheet({ entity, fields, records, groups, relatedRecords,
       <tr key={r.id}>
         {fields.map((f) => (
           <td key={f.name}>
-            <Cell field={f} value={r[f.name]} relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined} recordClosed={recordClosed} />
+            <Cell field={f} value={r[f.name]} relationLabel={f.type === "relation" ? relationDisplayLabel(f, r[f.name], relatedRecords) : undefined} recordClosed={recordClosed} siblingFields={fields} />
           </td>
         ))}
       </tr>
@@ -5724,6 +5744,7 @@ function BoardCard({ orderedFields, boardField, record, relatedRecords, highligh
             highlightQuery={highlightQuery}
             onJumpToRecord={onJumpToRecord}
             recordClosed={recordClosed}
+            siblingFields={orderedFields}
           />
         </div>
       ))}
@@ -7491,7 +7512,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         // the same two states getDateUrgency already classifies the table
         // cell's own red/amber styling by, so this must match against that
         // classification, not the raw stored "YYYY-MM-DD" string.
-        if (field && field.type === "date" && isDeadlineFieldName(field.name)) {
+        if (field && field.type === "date" && isDeadlineFieldName(field.name, entity.fields)) {
           // Round 1723: mirrors the live preview's own EntityPanel.tsx fix
           // (round 1721) -- a record whose own status is already terminal
           // (e.g. an Invoice "Paid") never classifies as overdue/dueSoon in
@@ -9057,6 +9078,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 highlightQuery={search}
                 onJumpToRecord={onJumpToRecord}
                 recordClosed={recordClosed}
+                siblingFields={entity.fields}
               />
             )}
           </td>
