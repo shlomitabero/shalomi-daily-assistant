@@ -217,6 +217,19 @@ export function patchOpportunity(req, res) {
   if ('priceUSD' in patch && !(typeof patch.priceUSD === 'number' && Number.isFinite(patch.priceUSD) && patch.priceUSD > 0)) {
     return res.status(400).json({ error: 'מחיר המוצר חייב להיות מספר חיובי' });
   }
+  // OpportunityDetail.jsx's price input has step="any" so the owner can
+  // type a real price like 9.99, but nothing stopped a value like 9.999
+  // from being stored exactly as typed - while services/paddle.js's own
+  // createOneTimePrice always rounds to whole cents (Math.round(priceUSD *
+  // 100)) for what Paddle actually charges a real customer. The owner's
+  // own saved price could then silently diverge from what gets charged at
+  // checkout moments later. Rounding here the same way paddle.js itself
+  // does means what's stored - and what the owner sees reflected back in
+  // this same form - is always the real, final price, not an approximation
+  // of it.
+  if ('priceUSD' in patch) {
+    patch.priceUSD = Math.round(patch.priceUSD * 100) / 100;
+  }
   // Once published, priceUSD is baked into a real Paddle price object
   // (publishing.js never updates an existing one — there's no API for
   // that) — the live sales page and the actual checkout amount are fixed

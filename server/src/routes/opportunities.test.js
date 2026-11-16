@@ -439,6 +439,22 @@ test('patchOpportunity rejects a null or non-positive priceUSD — a product alw
   assert.equal(resZero.statusCode, 400);
 });
 
+test('patchOpportunity rounds priceUSD to the nearest cent, the same way Paddle itself rounds the real charge', () => {
+  // The owner's own price input has step="any" so they can type a real
+  // price like 9.99 - nothing stops 9.999 from being saved exactly as
+  // typed, but services/paddle.js's own createOneTimePrice always rounds
+  // to whole cents (Math.round(priceUSD * 100)) for what Paddle actually
+  // charges a real customer. Storing the raw value would let the owner's
+  // own saved price silently diverge from the real charge.
+  __resetForTests();
+  const opp = insertOpportunity();
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 9.999 } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.priceUSD, 10);
+  assert.equal(db.opportunities.get(opp.id).priceUSD, 10);
+});
+
 test('patchOpportunity rejects changing priceUSD after publishing — the live Paddle price is already fixed', () => {
   // publishing.js never updates an existing Paddle price (there's no API
   // for that) — editing priceUSD post-publish would desync the dashboard's
