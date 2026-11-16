@@ -3816,6 +3816,70 @@ test("AutomationsPanel's WhatsApp action shows a translated invalid-phone messag
 });
 
 /**
+ * Round 2067: the direct sibling of the round-2066 toNumber test just
+ * above, on the send_email action's own static-destination toEmail field
+ * instead -- toEmail does get a native type="email" format check (unlike
+ * toNumber's plain type="text"), but that check is far weaker than it
+ * looks: a domain-less value like "test@example" passes checkValidity()
+ * cleanly (HTML5's email constraint has no requirement for a dot or a TLD),
+ * and would otherwise silently round-trip to the server's own stricter
+ * z.string().email() rejection, surfacing only the generic VALIDATION_ERROR
+ * banner with no clue why. Confirms the new isLikelyValidEmailDomain
+ * pre-check catches this before any request.
+ */
+test("AutomationsPanel's send-email action shows a translated invalid-email message and sends zero requests when a static toEmail has no real domain", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createCalls += 1;
+        throw new Error("createAutomationRule must never be called when toEmail has no real domain");
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "send_email"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "send_email" } });
+
+      const toModeSelect = Array.from(document.querySelectorAll("select")).find(
+        (s) => Array.from(s.options).map((o) => o.value).sort().join(",") === "field,static",
+      ) as HTMLSelectElement;
+      fireEvent.change(toModeSelect, { target: { value: "static" } });
+
+      const subjectField = document.querySelector('.automations-create-form input[type="text"]') as HTMLInputElement;
+      fireEvent.change(subjectField, { target: { value: "New ticket!" } });
+
+      const toEmailInput = document.querySelector('input[placeholder="Email address (e.g. example@mail.com)"]') as HTMLInputElement;
+      fireEvent.change(toEmailInput, { target: { value: "test@example" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "A new ticket was created." } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(createCalls, 0, "the API must never be called when toEmail has no real domain");
+      const errorEl = document.querySelector(".error");
+      assert.ok(errorEl, "expected a visible invalid-email error");
+      assert.match(errorEl!.textContent ?? "", /valid email address/i);
+      assert.equal(errorEl!.getAttribute("role"), "status");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1364: the exact same bug class round 1363 closed for
  * EntityPanel.tsx's record-form Save button -- handleSubmit here had no
  * guard against racing ITSELF (every other action in this panel already

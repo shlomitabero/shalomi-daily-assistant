@@ -91,6 +91,30 @@ function isPhoneLikeNumber(value: string): boolean {
 }
 
 /**
+ * Round 2067: mirrors isBlockedWebhookHostname/isPhoneLikeNumber just above
+ * for the identical reason, on the send_email action's static destination
+ * (toEmail) instead -- toEmail does get a native type="email" FORMAT check
+ * (unlike toNumber's plain type="text"), but that check is far weaker than
+ * it looks: in a real browser, checkValidity() returns true for
+ * "test@example", "foo@localhost", "a@b" and "user@192.168.1.5" (HTML5's
+ * email constraint has no requirement for a dot or a TLD at all). The
+ * server's real validator (routes/projects.ts's CreateAutomationRuleSchema,
+ * z.string().email()) is materially stricter -- it requires a dot-separated
+ * domain ending in a letters-only TLD of at least two characters -- and
+ * rejects every one of those values, so they'd otherwise silently
+ * round-trip to the server and surface only the generic VALIDATION_ERROR
+ * banner, with no clue why. This only checks the domain's shallow shape
+ * (dot + letters-only TLD), not the full server regex, matching this file's
+ * existing shallow-advisory convention; the server stays the sole authority.
+ */
+function isLikelyValidEmailDomain(value: string): boolean {
+  const at = value.lastIndexOf("@");
+  if (at < 1) return false;
+  const domain = value.slice(at + 1);
+  return /^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?)*\.[A-Z]{2,}$/i.test(domain);
+}
+
+/**
  * If-this-then-that automation rules on top of this app's existing
  * WhatsApp integration: "when a record in this entity is created, or a
  * field on it is set to a given value, send a WhatsApp message." Firing
@@ -894,6 +918,15 @@ export function AutomationsPanel({
     // surface only the generic VALIDATION_ERROR banner, with no clue why.
     if (actionType === "send_whatsapp" && toMode === "static" && toNumber.trim() && !isPhoneLikeNumber(toNumber.trim())) {
       setError(t("automations.toNumber.invalid"));
+      return;
+    }
+    // Round 2067: see isLikelyValidEmailDomain's own doc comment -- a
+    // toEmail whose domain has no dot/TLD at all passes the native
+    // type="email" check above cleanly, so without this it would silently
+    // round-trip to the server's own stricter z.string().email() rejection
+    // and surface only the generic VALIDATION_ERROR banner, with no clue why.
+    if (actionType === "send_email" && toMode === "static" && toEmail.trim() && !isLikelyValidEmailDomain(toEmail.trim())) {
+      setError(t("automations.toEmail.invalid"));
       return;
     }
     setCreateBusy(true);
