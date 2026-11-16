@@ -24133,7 +24133,7 @@ test("the exported App.jsx's entity-tab bar disambiguates its own tab text and m
     "expected entityLabelOccurrences/entityDisplayLabel to be imported from the generated EntityView.jsx",
   );
 
-  const tabButtonMatch = appJsx.match(/onClick=\{\(\) => setActive\(e\.name\)\}\s*>\s*\{([^}]+)\}/);
+  const tabButtonMatch = appJsx.match(/onClick=\{\(\) => setActive\(e\.name\)\}[\s\S]*?\n\s*>\s*\n\s*\{([^}]+)\}/);
   assert.ok(tabButtonMatch, "expected to find the entity-tab button's own label expression in generated App.jsx");
   assert.equal(
     tabButtonMatch![1].trim(),
