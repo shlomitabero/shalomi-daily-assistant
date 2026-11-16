@@ -1777,6 +1777,84 @@ test("EntityPanel's bulk delete treats a NOT_FOUND entry (already deleted elsewh
 });
 
 /**
+ * Round 2076: the entity-level sibling of the NOT_FOUND test just above --
+ * another collaborator's checkpoint restore/refine can remove the WHOLE
+ * entity during this tab's own deferred UNDO_WINDOW_MS, 404ing EVERY
+ * selected record's DELETE with ENTITY_NOT_FOUND rather than NOT_FOUND.
+ * Before this round that fell through to the genuine-failure branch,
+ * restoring both rows as ghosts (there is nowhere left to restore them
+ * into) and showing a raw "2 of 2 records could not be deleted" error for
+ * an outcome (the records are gone) this click actually wanted. Confirms
+ * both are treated as already-achieved, exactly like NOT_FOUND.
+ */
+test("EntityPanel's bulk delete treats an ENTITY_NOT_FOUND entry (entity removed by a checkpoint restore) as succeeded, never restoring a ghost row", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    let deleteCallCount = 0;
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && /^\/api\/projects\/proj1\/entities\/Deal\/\d+$/.test(input)) {
+        deleteCallCount += 1;
+        return new Response(JSON.stringify({ error: 'Entity "Deal" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (const checkbox of document.querySelectorAll('td.select-col input[type="checkbox"]')) {
+        fireEvent.click(checkbox);
+      }
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+      // The optimistic removal in handleBulkDelete itself (not yet this
+      // round's own fix) already drops both rows to 0 synchronously, before
+      // the deferred commitPendingDelete below even runs -- so waiting for
+      // the row count to merely reach 0 would pass trivially regardless of
+      // whether the old, un-fixed commitPendingDelete goes on to wrongly
+      // restore both as "genuine failures" a moment later. Waiting for both
+      // real DELETE calls to actually land is what proves commitPendingDelete
+      // ran its own ENTITY_NOT_FOUND handling to completion.
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+      await waitForCondition(() => deleteCallCount === 2);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(
+        document.querySelectorAll("table tbody tr").length,
+        0,
+        "neither row must be restored as a ghost -- there is nowhere left to restore them into once the whole entity is gone",
+      );
+      assert.equal(
+        document.querySelector(".error"),
+        null,
+        "no error banner should be shown at all -- every selected record 404ing ENTITY_NOT_FOUND means the delete's own goal (the records gone) was already achieved, not a genuine failure",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * New in this round: once rows are selected, the only ways to leave
  * selection mode were to actually commit a bulk delete/duplicate/update
  * (mutating data just to escape the mode) or manually uncheck every row
@@ -2096,6 +2174,79 @@ test("EntityPanel's handleBulkUpdate excludes a NOT_FOUND id from both the retry
       "the partial-failure count must reflect only the 1 genuine failure, not the NOT_FOUND id too",
     );
     assert.equal(refreshCalled, 1);
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
+ * Round 2076: the sibling of this file's other ENTITY_NOT_FOUND tests --
+ * handleBulkUpdate only treated the narrower record-level NOT_FOUND
+ * rejection as "already gone, nothing to report" before this round. The
+ * entity-level ENTITY_NOT_FOUND (another collaborator's checkpoint
+ * restore/refine removing the whole entity mid-batch) used to fall through
+ * to the genuine-failure branch instead, leaking the raw backend message
+ * ("Entity \"Order\" is not part of this project's spec") into the UI and
+ * keeping the id selected for a retry that could never succeed.
+ */
+test("EntityPanel's handleBulkUpdate silently drops a selected record that 404s ENTITY_NOT_FOUND (entity removed by a checkpoint restore) instead of surfacing its raw backend message", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch && displayMatch && handlerMatch, "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  let capturedError: string | undefined | null = null;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "writesInFlight",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "status", required: false }] },
+      new Set([5]),
+      "status",
+      "Shipped",
+      (msg: string | null) => {
+        capturedError = msg;
+      },
+      async () => {
+        const err = new Error('Entity "Order" is not part of this project\'s spec') as Error & { code?: string };
+        err.code = "ENTITY_NOT_FOUND";
+        throw err;
+      },
+      (next: Set<number>) => {
+        capturedSelectedIds = next;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.equal(capturedError, null, "an ENTITY_NOT_FOUND-only batch must never set a real error -- the entity is just gone, not a genuine failure, and setError(null) at the top of the function is the only call that should ever land");
+    assert.deepEqual([...capturedSelectedIds!], [], "an ENTITY_NOT_FOUND id must not remain selected for retry -- there's nothing left to retry");
+    assert.equal(refreshCalled, 1, "refresh() must still run, the same as the sibling NOT_FOUND case");
   } finally {
     globalThis.window.confirm = originalConfirm;
   }
@@ -21400,6 +21551,78 @@ test("EntityPanel closes the edit form and drops the ghost row when Save discove
 });
 
 /**
+ * Round 2076: the sibling race round 1864 never covered -- not this one
+ * record being deleted, but the WHOLE ENTITY vanishing out from under an
+ * open edit form (another collaborator restoring a Time Machine checkpoint
+ * from before this entity existed, or a /refine that removes/renames it).
+ * updateRecord 404s with the distinct ENTITY_NOT_FOUND (not NOT_FOUND),
+ * which the old catch block fell through to the generic setError branch on
+ * -- leaving the form stuck open, repeating the same 404 on every further
+ * Save, exactly the failure mode round 1864 fixed for NOT_FOUND. Confirms
+ * Save now closes the form and refreshes the same way for this code too.
+ */
+test("EntityPanel closes the edit form when Save discovers, via a 404 ENTITY_NOT_FOUND, that another collaborator's checkpoint restore removed the entity being edited", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    let entityStillExists = true;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const patchMatch = /^\/api\/projects\/proj1\/entities\/Deal\/(\d+)$/.exec(input);
+      if (method === "PATCH" && patchMatch) {
+        if (!entityStillExists) {
+          return new Response(JSON.stringify({ error: 'Entity "Deal" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const id = Number(patchMatch[1]);
+        const record = store.find((r) => r.id === id);
+        Object.assign(record!, JSON.parse(init!.body as string));
+        return new Response(JSON.stringify({ record }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Acme Corp");
+      const submitButton = document.querySelector(".record-form button[type=submit]") as HTMLButtonElement;
+      assert.equal(submitButton.textContent, "Save", "sanity check: the form must actually be in edit mode for record 1 before the entity itself vanishes");
+
+      // Another collaborator's checkpoint restore removes this entity from
+      // the live spec here -- after the form already opened on record 1,
+      // but before this tab's own Save is clicked.
+      entityStillExists = false;
+
+      const nameInput = document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement;
+      fireEvent.change(nameInput, { target: { value: "Acme Corp (renamed)" } });
+      fireEvent.submit(document.querySelector(".record-form") as HTMLFormElement);
+
+      await waitForCondition(
+        () => (document.querySelector(".record-form button[type=submit]") as HTMLButtonElement | null)?.textContent === "Add",
+      );
+      assert.equal(
+        (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement).value,
+        "",
+        "an ENTITY_NOT_FOUND save must close+reset the form (editingId cleared) exactly like NOT_FOUND already does, not leave it stuck open re-showing the same 404 on every further Save",
+      );
+      assert.equal(document.getElementById("entity-form-error-Deal"), null, "no error banner should be left showing -- this is a clean close, not a save failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1873: the exact same cross-tab race round 1864 fixed for the
  * single-record add/edit form's Save button, left open for commitInlineEdit
  * (double-click-a-cell inline editing) and handleMoveFields (the board
@@ -21456,6 +21679,67 @@ test("EntityPanel's inline cell edit drops the ghost row (instead of leaving it 
   });
 });
 
+/**
+ * Round 2076: the sibling of this same file's handleSubmit ENTITY_NOT_FOUND
+ * test just above -- commitInlineEdit funnels through the identical
+ * updateRecord PATCH and, before this round, only treated the narrower
+ * record-level NOT_FOUND as "stop, this is a vanished-row race, not a real
+ * failure" -- the entity-level ENTITY_NOT_FOUND (another collaborator's
+ * checkpoint restore/refine removing this entity while the cell was open)
+ * fell through to the generic setError + setMoveErrorId branch instead,
+ * leaving the row stuck highlighted red and showing a raw backend error.
+ */
+test("EntityPanel's inline cell edit does not surface a raw error or highlight the row red when its PATCH 404s ENTITY_NOT_FOUND because a checkpoint restore removed the entity", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    let getCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        // Another collaborator's checkpoint restore/refine removes this
+        // whole entity from the live spec between this GET and this PATCH.
+        return new Response(JSON.stringify({ error: 'Entity "Deal" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      getCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+      const getCountAfterInitialLoad = getCount;
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Acme Corporation" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      // The catch block's own `await refresh()` is what proves ENTITY_NOT_FOUND
+      // took the same early-return path as NOT_FOUND (the generic setError/
+      // setMoveErrorId branch never calls refresh()) -- waiting for the GET
+      // count to grow past its post-initial-load value is a deterministic
+      // signal that this exact branch ran and settled, the same way the
+      // sibling NOT_FOUND test's own row-count-drops-to-0 assertion is.
+      await waitForCondition(() => getCount > getCountAfterInitialLoad);
+      assert.equal(
+        document.querySelector("p.error"),
+        null,
+        "no raw backend error banner should be shown for ENTITY_NOT_FOUND -- it must be treated the same quiet way as the sibling NOT_FOUND race",
+      );
+      assert.equal(
+        document.querySelector("table tbody tr")?.className.includes("record-row-move-error"),
+        false,
+        "the row must not be left highlighted red -- ENTITY_NOT_FOUND must take the same early refresh()-and-return path as NOT_FOUND, never reaching setMoveErrorId",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("EntityPanel's board-view move drops the ghost card (instead of leaving it stuck, highlighted red) when its PATCH 404s NOT_FOUND because another tab already fully deleted the record", async () => {
   await withJsdom(async () => {
     const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
@@ -21488,6 +21772,66 @@ test("EntityPanel's board-view move drops the ghost card (instead of leaving it 
         document.querySelector("p.error"),
         null,
         "no error banner should be left showing -- this is a clean drop of a vanished card, not a save failure the user needs to retry",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2076: the sibling of this file's other ENTITY_NOT_FOUND tests --
+ * handleMoveFields (this same board dropdown, plus board/calendar drag)
+ * only treated the narrower record-level NOT_FOUND as "stop, this is a
+ * vanished-record race, not a real failure" before this round. The
+ * entity-level ENTITY_NOT_FOUND (a checkpoint restore/refine removing this
+ * whole entity while the board was open) fell through to the generic
+ * setError + setMoveErrorId branch instead, leaving the card stuck
+ * highlighted red and showing a raw backend error on every further drag.
+ */
+test("EntityPanel's board-view move does not surface a raw error or highlight the card red when its PATCH 404s ENTITY_NOT_FOUND because a checkpoint restore removed the entity", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
+    let getCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({ error: 'Entity "Deal" is not part of this project\'s spec', code: "ENTITY_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      getCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-card").length === 1);
+      const getCountBeforeMove = getCount;
+
+      const moveSelect = document.querySelector(".board-card-move") as HTMLSelectElement;
+      fireEvent.change(moveSelect, { target: { value: "won" } });
+
+      // The catch block's own `await refresh()` is what proves ENTITY_NOT_FOUND
+      // took the same early-return path as NOT_FOUND (the generic setError/
+      // setMoveErrorId branch never calls refresh()) -- waiting for another
+      // GET beyond the pre-move count is a deterministic signal that this
+      // exact branch ran and settled, the same way the sibling NOT_FOUND
+      // test's own board-card-count-drops-to-0 assertion is.
+      await waitForCondition(() => getCount > getCountBeforeMove);
+      assert.equal(
+        document.querySelector("p.error"),
+        null,
+        "no raw backend error banner should be shown for ENTITY_NOT_FOUND -- it must be treated the same quiet way as the sibling NOT_FOUND race",
+      );
+      assert.equal(
+        document.querySelector(".board-card")?.className.includes("board-card-move-error"),
+        false,
+        "the card must not be left highlighted red -- ENTITY_NOT_FOUND must take the same early refresh()-and-return path as NOT_FOUND, never reaching setMoveErrorId",
       );
     } finally {
       globalThis.fetch = originalFetch;

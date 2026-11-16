@@ -4158,7 +4158,17 @@ export function EntityPanel({
       // looking perfectly editable. Treating it the same way those two
       // handle a now-gone editingId -- close the form, refresh() to drop
       // the ghost row -- clears it instead of leaving it stuck.
-      if (error.code === "NOT_FOUND" && editingId != null) {
+      // Round 2076: the entity itself, not just this one record, can
+      // disappear out from under an open form the same way -- another
+      // collaborator restoring a Time Machine checkpoint from before this
+      // entity existed, or a /refine that removes/renames it, leaves the
+      // data in place (migrate.ts never drops rows) but 404s this PATCH
+      // with the distinct ENTITY_NOT_FOUND (findEntity, routes/projects.ts)
+      // instead of NOT_FOUND. Left unhandled, Save repeats this same 404
+      // forever with no way out except Cancel or a reload -- the identical
+      // stuck-form failure mode this round's own NOT_FOUND case already
+      // fixed, just one level up.
+      if ((error.code === "NOT_FOUND" || error.code === "ENTITY_NOT_FOUND") && editingId != null) {
         if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
           setForm(emptyForm(entity));
           setEditingId(null);
@@ -4313,10 +4323,17 @@ export function EntityPanel({
     // own NOT_FOUND handling for this identical "ghost row" race on
     // handleSubmit/commitInlineEdit/handleBulkUpdate -- just never swept
     // into this older, more fundamental delete flow until now.
+    // Round 2076: an ENTITY_NOT_FOUND rejection -- the whole entity, not
+    // just this record, vanished (checkpoint restore/refine) during the
+    // same window -- reaches the identical outcome: there is no longer
+    // anywhere to restore this row into, so it's treated the same as
+    // NOT_FOUND here too, mirroring handleSubmit's own round-2076 fix.
     const notFound = new Set(
       pending.entries.filter((_, i) => {
         const r = results[i];
-        return r.status === "rejected" && (r.reason as Error & { code?: string }).code === "NOT_FOUND";
+        if (r.status !== "rejected") return false;
+        const code = (r.reason as Error & { code?: string }).code;
+        return code === "NOT_FOUND" || code === "ENTITY_NOT_FOUND";
       }),
     );
     const failed = pending.entries.filter((e, i) => results[i].status === "rejected" && !notFound.has(e));
@@ -4775,10 +4792,16 @@ export function EntityPanel({
       // untranslated backend error string (e.g. "Record 42 not found in
       // Order") straight into the UI instead of quietly dropping it, the
       // way handleSubmit/commitInlineEdit/handleMoveFields already do.
+      // Round 2076: same treatment for ENTITY_NOT_FOUND -- the whole
+      // entity vanishing (checkpoint restore/refine) mid-bulk-update is
+      // the same "nothing left to report as failed" case, mirroring
+      // handleSubmit's own round-2076 fix.
       const notFoundIds = new Set(
         ids.filter((_id, i) => {
           const r = results[i];
-          return r.status === "rejected" && (r.reason as Error & { code?: string }).code === "NOT_FOUND";
+          if (r.status !== "rejected") return false;
+          const code = (r.reason as Error & { code?: string }).code;
+          return code === "NOT_FOUND" || code === "ENTITY_NOT_FOUND";
         }),
       );
       const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
@@ -5474,7 +5497,10 @@ export function EntityPanel({
       // just stayed highlighted red forever, repeating the identical 404
       // on every further interaction. refresh() drops the now-gone row
       // instead, the same as Save already does for this exact race.
-      if (error.code === "NOT_FOUND") {
+      // Round 2076: same treatment for ENTITY_NOT_FOUND -- the whole
+      // entity vanishing (checkpoint restore/refine) mid-drag/-move is
+      // the same case, mirroring handleSubmit's own round-2076 fix.
+      if (error.code === "NOT_FOUND" || error.code === "ENTITY_NOT_FOUND") {
         await refresh();
         return;
       }
@@ -5655,7 +5681,10 @@ export function EntityPanel({
       // identical 404 on every further interaction. refresh() drops the
       // now-gone row instead, the same as Save already does for this
       // exact race.
-      if (error.code === "NOT_FOUND") {
+      // Round 2076: same treatment for ENTITY_NOT_FOUND -- the whole
+      // entity vanishing (checkpoint restore/refine) mid-inline-edit is
+      // the same case, mirroring handleSubmit's own round-2076 fix.
+      if (error.code === "NOT_FOUND" || error.code === "ENTITY_NOT_FOUND") {
         await refresh();
         return;
       }
