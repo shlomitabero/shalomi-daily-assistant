@@ -6397,6 +6397,43 @@ test("EntityPanel's calendar view prev/next month buttons swap their chevron gly
 });
 
 /**
+ * Round 2074: the same bug class round 6372's own test closed for the
+ * prev/next month chevrons, on the per-record "move one day earlier/later"
+ * tap-friendly reschedule buttons (round 1384) instead -- this calendar
+ * grid visually mirrors for RTL (earlier dates sit to the right, confirmed
+ * live via Playwright), so a static left-pointing "rewind" icon on "move
+ * earlier" visually moved the chip RIGHT under Hebrew, the opposite of
+ * what the icon shows. The underlying date math (getDate() +/- 1) is
+ * unaffected by RTL and was always correct -- only the glyph needed to
+ * swap, mirroring dirFor(lang)'s already-established convention from the
+ * chevrons just above.
+ */
+test("EntityPanel's calendar view swaps the move-earlier/move-later button glyphs under RTL so they still point the way the chip actually moves", async () => {
+  await withJsdom(async () => {
+    const today = isoDateToday();
+    const store: EntityRecord[] = [{ id: 1, title: "Dana's appointment", date: today }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockListRecordsFetch(store) as typeof fetch;
+    try {
+      localStorage.setItem("forge.lang", "he");
+      renderAppointmentPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const calendarToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(calendarToggle);
+      await waitForCondition(() => document.querySelector(".calendar-record-move-earlier") !== null);
+
+      const moveEarlierBtn = document.querySelector(".calendar-record-move-earlier") as HTMLButtonElement;
+      const moveLaterBtn = document.querySelector(".calendar-record-move-later") as HTMLButtonElement;
+      assert.equal(moveEarlierBtn.textContent, "⏩", "under RTL, 'move earlier' (which visually shifts the chip right) must show the right-pointing icon");
+      assert.equal(moveLaterBtn.textContent, "⏪", "under RTL, 'move later' (which visually shifts the chip left) must show the left-pointing icon");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: reaching a date more than a couple of months away (a
  * rental due in 11 months, a historical record from 2 years back) meant
  * clicking the prev/next chevron that many times -- the month label was

@@ -1203,7 +1203,15 @@ function CalendarView({
                           onReschedule(record, target, dayKey);
                         }}
                       >
-                        ⏪
+                        {/* Round 2074: this grid visually mirrors for RTL (earlier
+                            dates sit to the right, confirmed live), the same way
+                            the month-nav chevrons just above already swap glyphs
+                            via dirFor(lang) -- but these two static icons never
+                            did, so clicking "earlier" in Hebrew visually moved the
+                            chip right while showing a left-pointing icon. The
+                            underlying date math (getDate() - 1) is unaffected by
+                            RTL and stays correct either way; only the glyph swaps. */}
+                        {dirFor(lang) === "rtl" ? "⏩" : "⏪"}
                       </button>
                       <button
                         type="button"
@@ -1218,7 +1226,7 @@ function CalendarView({
                           onReschedule(record, target, dayKey);
                         }}
                       >
-                        ⏩
+                        {dirFor(lang) === "rtl" ? "⏪" : "⏩"}
                       </button>
                     </>
                   )}
