@@ -102,6 +102,68 @@ test("EntityPanel's handleDuplicate never copies a 'file' field's value -- dupli
 });
 
 /**
+ * Round 2082: the sibling of this file's other ENTITY_NOT_FOUND tests
+ * (handleSubmit, commitInlineEdit, handleMoveFields, handleBulkUpdate,
+ * commitPendingDelete -- all fixed in round 2076) -- handleDuplicate never
+ * got the same treatment. Another tab/collaborator restoring a Time
+ * Machine checkpoint or running a /refine that removes the whole entity
+ * mid-session leaves this stale `entity` object pointing nowhere, so
+ * createRecord 404s with ENTITY_NOT_FOUND. Left unhandled, Duplicate just
+ * leaked the raw backend message and left the row stuck, repeating the
+ * identical failure on every further click -- the same stuck state round
+ * 2076 already fixed for every other write path in this file.
+ */
+test("EntityPanel's handleDuplicate silently drops the action instead of surfacing a raw error when its createRecord 404s ENTITY_NOT_FOUND because a checkpoint restore removed the entity", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Order",
+    fields: [{ name: "name", type: "text", required: true }],
+  };
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp" }];
+
+  let capturedError: string | undefined | null = null;
+  let refreshCalled = 0;
+
+  const fn = new Function(
+    "writesInFlight",
+    "records",
+    "setError",
+    "entity",
+    "createRecord",
+    "projectId",
+    "refresh",
+    "setDuplicatingId",
+    `${code}\nreturn handleDuplicate;`,
+  )(
+    false,
+    records,
+    (msg: string | null) => {
+      capturedError = msg;
+    },
+    entity,
+    async () => {
+      const err = new Error('Entity "Order" is not part of this project\'s spec') as Error & { code?: string };
+      err.code = "ENTITY_NOT_FOUND";
+      throw err;
+    },
+    "proj1",
+    async () => {
+      refreshCalled += 1;
+    },
+    () => {},
+  ) as (id: number) => Promise<void>;
+
+  await fn(1);
+
+  assert.equal(capturedError, null, "an ENTITY_NOT_FOUND failure must never set a real error -- the entity is just gone, not a genuine failure, and setError(null) at the top of the function is the only call that should ever land");
+  assert.equal(refreshCalled, 1, "refresh() must still run, the same as the sibling NOT_FOUND-handling write paths");
+});
+
+/**
  * Regression test: handleBulkDelete used to await `Promise.all(ids.map(...))`
  * inside a try/catch. A single rejected delete (a dropped connection, a
  * record another browser tab already removed) rejected the whole
@@ -192,6 +254,80 @@ test("EntityPanel's handleBulkDuplicate refreshes and keeps only the ids that ac
     "a partial failure must surface the translated duplicate-partial-failure message, not the raw single-record rejection",
   );
   assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the records that WERE successfully duplicated");
+});
+
+/**
+ * Round 2082: the sibling of this file's other ENTITY_NOT_FOUND tests
+ * (handleBulkUpdate's own round-2076 test above, plus handleSubmit/
+ * commitInlineEdit/handleMoveFields/commitPendingDelete) -- handleBulkDuplicate
+ * never got the same treatment. Another tab/collaborator restoring a Time
+ * Machine checkpoint or running a /refine that removes the whole entity
+ * mid-batch leaves every selected id's createRecord 404ing with
+ * ENTITY_NOT_FOUND, which used to be treated exactly like any other
+ * failure: the raw backend message surfaced and every id stayed selected
+ * for a retry that could never succeed. Also confirms a genuine failure
+ * mixed into the same batch still surfaces correctly -- ENTITY_NOT_FOUND
+ * ids must be excluded from both the error message and the re-selected
+ * set, not just silently swallow every failure indiscriminately.
+ */
+test("EntityPanel's handleBulkDuplicate silently drops ids that 404 ENTITY_NOT_FOUND (entity removed by a checkpoint restore) instead of surfacing their raw backend message or leaving them stuck selected", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = { name: "Order", fields: [{ name: "name", type: "text", required: true }] };
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Alice" },
+    { id: 2, createdAt: "x", name: "Bob" },
+  ];
+
+  let capturedError: string | undefined | null = null;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+
+  const fn = new Function(
+    "writesInFlight",
+    "setBulkActionBusy",
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "proj1",
+    entity,
+    records,
+    new Set([1, 2]),
+    (msg: string | null) => {
+      capturedError = msg;
+    },
+    async () => {
+      const err = new Error('Entity "Order" is not part of this project\'s spec') as Error & { code?: string };
+      err.code = "ENTITY_NOT_FOUND";
+      throw err;
+    },
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(capturedError, null, "an ENTITY_NOT_FOUND-only batch must never set a real error -- the entity is just gone, not a genuine failure, and setError(null) at the top of the function is the only call that should ever land");
+  assert.deepEqual([...capturedSelectedIds!], [], "ENTITY_NOT_FOUND ids must not remain selected for retry -- there's nothing left to retry");
+  assert.equal(refreshCalled, 1, "refresh() must still run, the same as the sibling NOT_FOUND-handling write paths");
 });
 
 test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value either, for the same reason handleDuplicate doesn't", async () => {

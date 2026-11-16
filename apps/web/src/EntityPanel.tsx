@@ -4573,7 +4573,19 @@ export function EntityPanel({
       await createRecord(projectId, entity.name, copy);
       await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      // Round 2082: mirrors handleSubmit's own round-2076 ENTITY_NOT_FOUND
+      // handling -- another tab/collaborator restoring a Time Machine
+      // checkpoint or running a /refine that removes this entity mid-session
+      // leaves this stale `entity` object pointing nowhere, so createRecord
+      // 404s. Left unhandled, Duplicate just repeats the identical failure
+      // forever with the row stuck selected, the same stuck state round
+      // 2076 already fixed for every other write path in this file.
+      const error = err as Error & { code?: string };
+      if (error.code === "NOT_FOUND" || error.code === "ENTITY_NOT_FOUND") {
+        await refresh();
+        return;
+      }
+      setError(error.message);
     } finally {
       setDuplicatingId(null);
     }
@@ -4649,10 +4661,26 @@ export function EntityPanel({
           return createRecord(projectId, entity.name, copy);
         }),
       );
-      const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+      // Round 2082: mirrors handleBulkUpdate's own round-2076 NOT_FOUND/
+      // ENTITY_NOT_FOUND handling above -- the whole entity (or a selected
+      // record) vanishing between clicking "Duplicate selected" and these
+      // requests reaching the server is the same "nothing left to report
+      // as failed" case, not a reportable failure to leave the row stuck
+      // selected over.
+      const notFoundIds = new Set(
+        ids.filter((_id, i) => {
+          const r = results[i];
+          if (r.status !== "rejected") return false;
+          const code = (r.reason as Error & { code?: string }).code;
+          return code === "NOT_FOUND" || code === "ENTITY_NOT_FOUND";
+        }),
+      );
+      const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
       setSelectedIds(new Set(failedIds));
       if (failedIds.length > 0) {
-        const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected")!;
+        const firstFailure = results.find(
+          (r, i): r is PromiseRejectedResult => r.status === "rejected" && !notFoundIds.has(ids[i]),
+        )!;
         setError(
           failedIds.length === ids.length
             ? (firstFailure.reason as Error).message
