@@ -18030,10 +18030,12 @@ test("the exported app includes a real cross-entity global search, ported from t
   // assertion buried among hundreds of real passes went unnoticed by the
   // file-level pass/fail counts this routine's own rounds have been
   // tracking. Corrected here since this round's own fix touches this exact
-  // import list anyway.
+  // import list anyway. splitLinkSegments was added later still (round
+  // 1050's own LinkifiedHighlighted, see below) and drifted stale the same
+  // way -- folded in here too, same regex, same reasoning.
   assert.match(
     globalSearchJsx,
-    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*scrollIntoViewRespectingMotion,\s*entityLabelOccurrences,\s*entityDisplayLabel,\s*Highlighted,\s*\} from ".\/EntityView\.jsx";/,
+    /import \{\s*matchesSearch,\s*recordDisplayLabel,\s*markDialogOpen,\s*markDialogClosed,\s*DIALOG_FOCUSABLE_SELECTOR,\s*hideDialogBackgroundFromAssistiveTech,\s*scrollIntoViewRespectingMotion,\s*entityLabelOccurrences,\s*entityDisplayLabel,\s*Highlighted,\s*splitLinkSegments,\s*\} from ".\/EntityView\.jsx";/,
   );
   assert.match(globalSearchJsx, /export function GlobalSearch/);
   assert.match(globalSearchJsx, /global-search-group-selected/);
