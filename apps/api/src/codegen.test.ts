@@ -16549,10 +16549,13 @@ test("the exported EntityView renders a real CSV import (the complement to CSV e
   assert.match(entityViewJsx, /async function handleImportFile\(e\)/);
   assert.match(entityViewJsx, /csv-import-label/);
   assert.match(entityViewJsx, /Promise\.allSettled/);
-  // A required relation field refuses the whole import with one clear
-  // error rather than guessing at foreign keys -- same rule as the live
-  // preview's buildImportRecords.
-  assert.match(entityViewJsx, /CSV import isn't supported yet for entities with a required relation field/);
+  // A required relation (or file) field refuses the whole import with one
+  // clear error rather than guessing at foreign keys or an upload -- same
+  // rule as the live preview's buildImportRecords. The message is
+  // parameterized by the field's own type since a later round generalized
+  // this guard to cover required file fields too (see the dedicated
+  // "skips an optional file column" test below for that case).
+  assert.match(entityViewJsx, /CSV import isn't supported yet for entities with a required \$\{requiredUnsupported\.type\} field/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
   assert.match(stylesCss, /\.csv-import-row/);
