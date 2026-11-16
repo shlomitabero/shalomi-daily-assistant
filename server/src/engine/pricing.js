@@ -12,5 +12,14 @@ export function resolveDefaultPriceUSD(envValue) {
   if (envValue === undefined || envValue === null || envValue === '') return FALLBACK_PRICE_USD;
   const parsed = Number(envValue);
   if (!Number.isFinite(parsed) || parsed <= 0) return FALLBACK_PRICE_USD;
-  return parsed;
+  // A real purchase is always charged in whole cents
+  // (services/paddle.js's own Math.round(priceUSD * 100) for the real
+  // Paddle charge) - routes/opportunities.js's patchOpportunity already
+  // rounds the same way for an owner-edited price, but a newly drafted
+  // opportunity gets its priceUSD straight from here, at creation time,
+  // never through that route at all. A misconfigured DEFAULT_PRODUCT_PRICE_USD
+  // (e.g. "9.999", a typo) would otherwise seed every new opportunity with
+  // a price that silently diverges from what a customer is ever actually
+  // charged, until the owner happened to open and re-save that one card.
+  return Math.round(parsed * 100) / 100;
 }

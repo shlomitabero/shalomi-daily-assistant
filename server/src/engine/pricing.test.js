@@ -25,3 +25,12 @@ test('zero or a negative value falls back instead of producing a free or negativ
 test('a valid positive numeric string is used as-is', () => {
   assert.equal(resolveDefaultPriceUSD('14.99'), 14.99);
 });
+
+test('a value with more than cent precision is rounded, the same way Paddle itself rounds the real charge', () => {
+  // services/paddle.js's own createOneTimePrice always rounds to whole
+  // cents (Math.round(priceUSD * 100)) for what Paddle actually charges a
+  // real customer - a misconfigured DEFAULT_PRODUCT_PRICE_USD (e.g. a
+  // typo like "9.999") must not seed a new opportunity with a price that
+  // silently diverges from that real charge.
+  assert.equal(resolveDefaultPriceUSD('9.999'), 10);
+});
