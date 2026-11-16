@@ -1224,11 +1224,11 @@ test("EntityPanel disables every single-record write affordance (table row, in-f
  * actually combined -- this is the one test that confirms the combination
  * itself exists).
  */
-test("EntityPanel combines bulkActionBusy, importBusy, submitBusy, and duplicatingId into one writesInFlight flag", () => {
+test("EntityPanel combines bulkActionBusy, importBusy, submitBusy, duplicatingId, and movingId into one writesInFlight flag", () => {
   assert.match(
     entityPanelSrc,
-    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy \|\| duplicatingId !== null;/,
-    "expected a single writesInFlight flag ORing bulkActionBusy, importBusy, (round 1363) submitBusy, and (round 1472) duplicatingId together",
+    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy \|\| duplicatingId !== null \|\| movingId !== null;/,
+    "expected a single writesInFlight flag ORing bulkActionBusy, importBusy, (round 1363) submitBusy, (round 1472) duplicatingId, and (round 2061) movingId together",
   );
 });
 
@@ -1495,6 +1495,101 @@ test("EntityPanel's handleDuplicate sets duplicatingId before its real work and 
         : "handleDuplicate must still clear duplicatingId back to null even when createRecord rejects -- otherwise one failed duplicate would leave every future duplicate permanently blocked",
     );
   }
+});
+
+/**
+ * Round 2061: a live-interaction pass (Playwright, real browser) found that
+ * the calendar's "move one day earlier/later" quick-shift buttons (a
+ * touch-friendly alternative to drag-and-drop, round 1384) silently
+ * collapsed a fast double-click into a single day-shift instead of two --
+ * both PATCH requests carried the identical target date, so the second
+ * click's intent was discarded with no error shown. Unlike handleMove's
+ * other callers (the board dropdown, drag-and-drop), which all compute an
+ * *absolute* target value so a racing second call harmlessly repeats the
+ * same write, these buttons compute a *relative* target (±1 day from the
+ * currently rendered date) -- both calls read the same stale pre-render
+ * date before React re-renders with the first call's own result. Mirrors
+ * handleDuplicate's own round-1472 self-guard shape exactly: movingId set
+ * to the record's own id before the real work, cleared back to null once
+ * done, success or failure.
+ */
+test("EntityPanel's handleMoveFields sets movingId before its real work and always clears it afterward, success or failure, guarding against a relative-shift race", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleMoveFields\(id: number, fields: Record<string, string>\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleMoveFields in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  for (const shouldSucceed of [true, false]) {
+    const movingIdCalls: (number | null)[] = [];
+    const fn = new Function(
+      "writesInFlight",
+      "movingId",
+      "setError",
+      "updateRecord",
+      "projectId",
+      "entity",
+      "refresh",
+      "setMovingId",
+      "setMoveErrorId",
+      `${code}\nreturn handleMoveFields;`,
+    )(
+      false,
+      null,
+      () => {},
+      async () => {
+        if (!shouldSucceed) throw new Error("network error");
+      },
+      "proj1",
+      { name: "Appointment" },
+      async () => {},
+      (id: number | null) => movingIdCalls.push(id),
+      () => {},
+    ) as (id: number, fields: Record<string, string>) => Promise<void>;
+
+    await fn(1, { date: "2026-11-21" });
+
+    assert.deepEqual(
+      movingIdCalls,
+      [1, null],
+      shouldSucceed
+        ? "handleMoveFields must set movingId to the record's own id before its real work and clear it back to null once updateRecord resolves"
+        : "handleMoveFields must still clear movingId back to null even when updateRecord rejects -- otherwise one failed move would leave every future move on that record permanently blocked",
+    );
+  }
+
+  // The guard itself: a second call for the exact same record while the
+  // first is still "in flight" (movingId already equal to that id) must
+  // return immediately, never reaching updateRecord -- this is the actual
+  // race fired by two real PATCHes from one double-click before any fix.
+  const handlerMatch2 = entityPanelSrc.match(/ {2}async function handleMoveFields\(id: number, fields: Record<string, string>\) \{[\s\S]*?\n {2}\}\n/);
+  const { code: code2 } = transformSync(handlerMatch2![0], { loader: "ts" });
+  let updateRecordCalls = 0;
+  const guardedFn = new Function(
+    "writesInFlight",
+    "movingId",
+    "setError",
+    "updateRecord",
+    "projectId",
+    "entity",
+    "refresh",
+    "setMovingId",
+    "setMoveErrorId",
+    `${code2}\nreturn handleMoveFields;`,
+  )(
+    false,
+    1,
+    () => {},
+    async () => {
+      updateRecordCalls++;
+    },
+    "proj1",
+    { name: "Appointment" },
+    async () => {},
+    () => {},
+    () => {},
+  ) as (id: number, fields: Record<string, string>) => Promise<void>;
+
+  await guardedFn(1, { date: "2026-11-22" });
+  assert.equal(updateRecordCalls, 0, "a second handleMoveFields call for the same record already mid-move must never reach updateRecord");
 });
 
 /**

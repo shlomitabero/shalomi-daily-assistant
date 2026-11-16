@@ -2121,6 +2121,17 @@ export function EntityPanel({
   // record's duplicate is still in flight; writesInFlight below only ever
   // needs it as a boolean.
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
+  // Round 2061: mirrors duplicatingId's own round-1472 doc comment above --
+  // handleMoveFields had the identical gap, just harder to spot since most
+  // of its callers (the board dropdown, drag-and-drop) set an absolute
+  // target value, so a racing second call harmlessly repeats the same
+  // write. The calendar's "move one day earlier/later" quick-shift buttons
+  // compute a *relative* target (±1 day from the currently rendered date)
+  // instead, so a fast double-click fires two calls that both read the
+  // same stale pre-render date and both PATCH the same "+1 day" value --
+  // the second click's intent is silently discarded instead of landing as
+  // "+2 days". Keyed by record id for the same reason duplicatingId is.
+  const [movingId, setMovingId] = useState<number | null>(null);
   // Round 1260: bulkActionBusy and importBusy were two fully independent
   // flags guarding the exact same hazard -- a batch of concurrent writes
   // (Promise.allSettled) still in flight racing some OTHER write to one of
@@ -2138,8 +2149,9 @@ export function EntityPanel({
   // existing `disabled={writesInFlight}`/`bulkActionBusy={writesInFlight}`
   // site (the table-row and in-form Duplicate buttons, BoardCard,
   // CalendarView) picked up handleDuplicate's own self-guard for free,
-  // with no separate wiring needed at any of those call sites.
-  const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null;
+  // with no separate wiring needed at any of those call sites. Round 2061
+  // folded movingId in for the same reason -- see its own declaration.
+  const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null || movingId !== null;
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -5435,8 +5447,13 @@ export function EntityPanel({
     // all of which funnel through here -- see handleDelete's own identical
     // guard above for why a single-record write must never race a bulk
     // batch still in flight on the same record. Round 1260: also an import.
-    if (writesInFlight) return;
+    // Round 2061: also this same record's own still-in-flight move -- see
+    // movingId's own doc comment for why this call in particular needed a
+    // self-guard that handleMove's board-dropdown/drag-and-drop siblings
+    // never surfaced a user-visible need for.
+    if (writesInFlight || movingId === id) return;
     setError(null);
+    setMovingId(id);
     try {
       await updateRecord(projectId, entity.name, id, fields);
       await refresh();
@@ -5455,6 +5472,8 @@ export function EntityPanel({
       }
       setError(error.message);
       setMoveErrorId(id);
+    } finally {
+      setMovingId(null);
     }
   }
 
