@@ -186,7 +186,7 @@ function computeRelationCoverageObservations(
       observations.push({
         text: hebrew
           ? `ב"${entityLabel}", ל-${unassigned} מתוך ${records.length} רשומ${records.length === 1 ? "ה" : "ות"} אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מוגדר.`
-          : `In "${entityLabel}", ${unassigned} of ${records.length} record${records.length === 1 ? "" : "s"} have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} set.`,
+          : `In "${entityLabel}", ${unassigned} of ${records.length} record${records.length === 1 ? "" : "s"} ${unassigned === 1 ? "has" : "have"} no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} set.`,
         entityName: entity.name,
       });
     }
@@ -259,7 +259,7 @@ function computeFileFieldCoverageObservations(
       observations.push({
         text: hebrew
           ? `ב"${entityLabel}", ל-${missing} מתוך ${records.length} רשומ${records.length === 1 ? "ה" : "ות"} אין "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} מועלה.`
-          : `In "${entityLabel}", ${missing} of ${records.length} record${records.length === 1 ? "" : "s"} have no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} uploaded.`,
+          : `In "${entityLabel}", ${missing} of ${records.length} record${records.length === 1 ? "" : "s"} ${missing === 1 ? "has" : "have"} no "${fieldLabel}"${ambiguous ? ` (${field.name})` : ""} uploaded.`,
         entityName: entity.name,
       });
     }
@@ -984,8 +984,8 @@ function computeOverdueObservations(
       const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `${overdueCount} מ-${recordCount} רשומ${recordCount === 1 ? "ה" : "ות"} ב"${entityLabel}" עברו את התאריך ב"${fieldLabel}"${fieldSuffix}.`
-          : `${overdueCount} of ${recordCount} record${recordCount === 1 ? "" : "s"} in "${entityLabel}" have an overdue "${fieldLabel}"${fieldSuffix}.`,
+          ? `${overdueCount} מ-${recordCount} רשומ${recordCount === 1 ? "ה" : "ות"} ב"${entityLabel}" ${overdueCount === 1 ? "עברה" : "עברו"} את התאריך ב"${fieldLabel}"${fieldSuffix}.`
+          : `${overdueCount} of ${recordCount} record${recordCount === 1 ? "" : "s"} in "${entityLabel}" ${overdueCount === 1 ? "has" : "have"} an overdue "${fieldLabel}"${fieldSuffix}.`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,
@@ -1062,8 +1062,8 @@ function computeDueSoonObservations(
       const fieldSuffix = ambiguous ? ` (${field.name})` : "";
       observations.push({
         text: hebrew
-          ? `${dueSoonCount} מ-${recordCount} רשומ${recordCount === 1 ? "ה" : "ות"} ב"${entityLabel}" מתקרבות לתאריך ב"${fieldLabel}"${fieldSuffix} בימים הקרובים.`
-          : `${dueSoonCount} of ${recordCount} record${recordCount === 1 ? "" : "s"} in "${entityLabel}" have a "${fieldLabel}"${fieldSuffix} coming up soon.`,
+          ? `${dueSoonCount} מ-${recordCount} רשומ${recordCount === 1 ? "ה" : "ות"} ב"${entityLabel}" ${dueSoonCount === 1 ? "מתקרבת" : "מתקרבות"} לתאריך ב"${fieldLabel}"${fieldSuffix} בימים הקרובים.`
+          : `${dueSoonCount} of ${recordCount} record${recordCount === 1 ? "" : "s"} in "${entityLabel}" ${dueSoonCount === 1 ? "has" : "have"} a "${fieldLabel}"${fieldSuffix} coming up soon.`,
         entityName: entity.name,
         entityLabel,
         fieldName: field.name,

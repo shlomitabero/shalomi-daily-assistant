@@ -248,7 +248,9 @@ test("computeBusinessTwin's relation-coverage observation uses the singular 'rec
   const twin = computeBusinessTwin(db, relationProject);
   const coverage = twin.jumpableObservations.find((o) => o.entityName === "Ticket");
   assert.ok(coverage, `expected a relation-coverage observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
-  assert.match(coverage!.text, /1 of 1 record have/, `expected singular "record", got: "${coverage!.text}"`);
+  // Round 2062: subject-verb agreement -- "have" was unconditional, but
+  // with exactly 1 record as the subject the correct verb is "has".
+  assert.match(coverage!.text, /1 of 1 record has/, `expected singular "record" and the agreeing verb "has", got: "${coverage!.text}"`);
   assert.ok(!coverage!.text.includes("records"), `must not say "records" for a single record, got: "${coverage!.text}"`);
 });
 
@@ -291,7 +293,10 @@ test("computeBusinessTwin's relation-coverage observations disambiguate two rela
   insertRecord(db, relationProject.id, ticket, { subject: "Can't log in", customerId: null, escalatedTo: null });
 
   const twin = computeBusinessTwin(db, relationProject);
-  const coverageObservations = twin.jumpableObservations.filter((o) => o.text.includes("have no"));
+  // Round 2062: the verb is now "has" when exactly 1 record is unassigned
+  // (both fields here) -- see the singular-"record" test's own doc
+  // comment for why "have" was wrong in that case.
+  const coverageObservations = twin.jumpableObservations.filter((o) => o.text.includes("has no") || o.text.includes("have no"));
   assert.equal(coverageObservations.length, 2, `expected one observation per ambiguous relation field, got: ${JSON.stringify(coverageObservations)}`);
   assert.ok(
     coverageObservations.some((o) => o.text.includes('"Customer" (customerId)')),
@@ -389,7 +394,9 @@ test("computeBusinessTwin's file-upload-coverage observation uses the singular '
   const twin = computeBusinessTwin(db, fileProject);
   const coverage = twin.jumpableObservations.find((o) => o.entityName === "Claim");
   assert.ok(coverage, `expected a file-coverage observation, got: ${JSON.stringify(twin.jumpableObservations)}`);
-  assert.match(coverage!.text, /1 of 1 record have/, `expected singular "record", got: "${coverage!.text}"`);
+  // Round 2062: subject-verb agreement -- "have" was unconditional, but
+  // with exactly 1 record as the subject the correct verb is "has".
+  assert.match(coverage!.text, /1 of 1 record has/, `expected singular "record" and the agreeing verb "has", got: "${coverage!.text}"`);
   assert.ok(!coverage!.text.includes("records"), `must not say "records" for a single record, got: "${coverage!.text}"`);
 });
 
@@ -2592,7 +2599,10 @@ test("computeBusinessTwin phrases the overdue-deadline observation in Hebrew for
   insertRecord(db, orderProject.id, order, { customer: "דנה", dueDate: "2026-01-01" });
 
   const twin = computeBusinessTwin(db, orderProject, today);
-  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("תאריך יעד") && o.text.includes("עברו את התאריך")));
+  // Round 2062: gender/number agreement -- "עברו" (plural) was
+  // unconditional, but with exactly 1 overdue record the correct verb is
+  // "עברה" (feminine singular, agreeing with the feminine noun "רשומה").
+  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("תאריך יעד") && o.text.includes("עברה את התאריך")));
 });
 
 /**
@@ -2799,7 +2809,10 @@ test("computeBusinessTwin phrases the due-soon observation in Hebrew for a Hebre
   insertRecord(db, orderProject.id, order, { customer: "דנה", dueDate: "2026-01-16" });
 
   const twin = computeBusinessTwin(db, orderProject, today);
-  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("תאריך יעד") && o.text.includes("מתקרבות לתאריך")));
+  // Round 2062: gender/number agreement -- "מתקרבות" (plural) was
+  // unconditional, but with exactly 1 due-soon record the correct verb is
+  // "מתקרבת" (feminine singular).
+  assert.ok(twin.jumpableObservations.some((o) => o.text.includes("תאריך יעד") && o.text.includes("מתקרבת לתאריך")));
 });
 
 /**
