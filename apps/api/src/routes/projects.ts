@@ -3307,6 +3307,20 @@ export function createProjectsRouter(
           // not flip the WHOLE draft spec's language away from what the
           // original description already established.
           const { spec: candidateSpec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
+          // Round 2089: generateSpec above is a genuine await (a real
+          // Anthropic API call) standing between the entry-point
+          // requireProjectWriteAccess check and updateProjectSpec below,
+          // which actually commits the result. activePipelines only stops
+          // a second build/refine/answers call on this same project from
+          // racing this one -- it does nothing to stop the project owner
+          // demoting this exact caller to viewer, or removing them as a
+          // collaborator outright, via a completely different, fast
+          // collaborator-management request while this AI call is still in
+          // flight. Without this re-check, a user with no write access by
+          // the time this resolves would still get their spec change
+          // committed, exactly like the race rounds 2086/2088 already
+          // closed on the two file-upload routes.
+          requireProjectWriteAccess(db, project.id, req.userId!);
           // Round 1759: this route used to store `candidateSpec` outright,
           // the exact same bug round 1714 fixed for /refine -- generateSpec
           // has no awareness of the CURRENT spec, so its candidate can
@@ -3411,6 +3425,16 @@ export function createProjectsRouter(
         // the instruction was actually about (see SpecProvider.generate's
         // own doc comment).
         const { spec: candidateSpec, providerName } = await generateSpec(combinedDescription, provider, isHebrewText(project.description));
+        // Round 2089: same re-check as /answers just above, for the same
+        // reason -- generateSpec is a genuine await (a real Anthropic API
+        // call) between the entry-point access check and the real commit
+        // (streamPipeline below, which runs diffAndMigrate against the
+        // live schema). activePipelines guards against a second
+        // build/refine/answers racing this one on the same project, but
+        // does nothing to stop the owner demoting/removing this exact
+        // caller via an ordinary, fast collaborator-management request
+        // while this AI call is still in flight.
+        requireProjectWriteAccess(db, project.id, req.userId!);
         // Round 1714: see mergeRefinedSpec's own doc comment -- generateSpec
         // has no awareness of the CURRENT spec, so a candidate it returns
         // can silently omit entities/fields/roles the project already has
@@ -3968,9 +3992,17 @@ export function createProjectsRouter(
           // the instant the project is gone, that row would be permanently
           // orphaned and unreachable through any route, forever, while this
           // request still reports 200 { ok: true } as if nothing went wrong.
-          if (!getProject(db, project.id)) {
-            throw new HttpError(404, `Project "${project.id}" not found`, "PROJECT_NOT_FOUND");
-          }
+          // Round 2089: upgraded from a bare getProject existence check to
+          // the full requireProjectWriteAccess the two upload routes already
+          // use (rounds 2086/2088) for the identical reason -- the project
+          // owner demoting this exact sender to viewer, or removing them as
+          // a collaborator outright, while whatsapp.sendMessage() above is
+          // still awaiting its real network round-trip, left the message
+          // logged (and, worse, actually sent) for a user who no longer had
+          // write access to this project by the time it landed. A bare
+          // existence check doesn't catch either case, since the project
+          // itself still exists either way.
+          requireProjectWriteAccess(db, project.id, req.userId!);
           // Mirrors the matching an incoming message gets (see
           // WhatsAppWebManager.handleIncomingMessages): without this, the panel's
           // own log rendering (which falls back to the matched label only when

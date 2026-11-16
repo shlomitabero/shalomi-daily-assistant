@@ -17023,6 +17023,85 @@ test("two concurrent /refine calls on the same project: the second is rejected w
   );
 });
 
+/**
+ * Round 2089: activePipelines (the guard the two tests above rely on)
+ * only ever stops a SECOND build/refine/answers call on this same project
+ * from racing the first -- it does nothing to stop the project owner
+ * demoting the caller's own role via a completely different, fast
+ * collaborator-management request while generateSpec's real AI call is
+ * still in flight. Proves this empirically with the same gated-provider
+ * harness the tests above use, just firing a role-demotion instead of a
+ * second /refine during the gate window.
+ */
+test("/refine must not commit a spec change for a collaborator who was demoted to viewer while generateSpec was still in flight", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `refine-vs-demote-owner-${randomUUID()}@example.com`);
+      const collabEmail = `refine-vs-demote-collab-${randomUUID()}@example.com`;
+      const collabToken = await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(ownerToken) });
+      assert.equal(buildRes.status, 200);
+      await collectSSE(buildRes);
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+      const collabUserId = collaborators[0].userId;
+      assert.equal(collaborators[0].role, "editor", "sanity check: starts able to write");
+
+      const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+      const { project: beforeProject } = (await beforeRes.json()) as { project: { spec: unknown } };
+
+      gated.arm();
+      const refinePromise = fetch(`${baseUrl}/api/projects/${project.id}/refine`, {
+        method: "POST",
+        headers: authHeaders(collabToken),
+        body: JSON.stringify({ instruction: "Also track invoices for customers." }),
+      });
+      refinePromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const demoteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      assert.equal(demoteRes.status, 200);
+      gated.release();
+
+      const refineRes = await refinePromise;
+      assert.notEqual(refineRes.status, 200, "must not report success once the refiner has already lost write access");
+      assert.equal(refineRes.status, 403);
+      let refineBody: { code?: string } = {};
+      try {
+        refineBody = (await refineRes.json()) as { code?: string };
+      } catch {
+        // A 200 path would have been an SSE stream, not JSON -- only
+        // relevant if the assertion above already failed.
+      }
+      assert.equal(refineBody.code, "VIEWER_READ_ONLY");
+
+      const afterRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+      const { project: afterProject } = (await afterRes.json()) as { project: { spec: unknown } };
+      assert.deepEqual(afterProject.spec, beforeProject.spec, "the project's spec must be completely unchanged by a refine rejected this way");
+    },
+    { provider: gated.provider },
+  );
+});
+
 test("two concurrent /answers calls on the same not-yet-built project: the second is rejected with 409 instead of silently racing and losing the first's answers", async () => {
   const gated = createGatedProvider();
   await withServer(
@@ -17070,6 +17149,71 @@ test("two concurrent /answers calls on the same not-yet-built project: the secon
         body: JSON.stringify({ additionalRequest: "Also track payments." }),
       });
       assert.equal(answersCRes.status, 200);
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
+ * Round 2089: the same gap as /refine's own sibling test above, but
+ * removing the collaborator outright (not just demoting them) while
+ * generateSpec is still in flight, mirroring the two variants (demote vs.
+ * remove) round 2089's own survey already proved against /refine and
+ * /answers respectively.
+ */
+test("/answers must not commit a spec change for a collaborator who was removed outright while generateSpec was still in flight", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `answers-vs-remove-owner-${randomUUID()}@example.com`);
+      const collabEmail = `answers-vs-remove-collab-${randomUUID()}@example.com`;
+      const collabToken = await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+      const collabUserId = collaborators[0].userId;
+      assert.equal(collaborators[0].role, "editor", "sanity check: starts able to write");
+
+      const beforeRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+      const { project: beforeProject } = (await beforeRes.json()) as { project: { spec: unknown } };
+
+      gated.arm();
+      const answersPromise = fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(collabToken),
+        body: JSON.stringify({ additionalRequest: "Also track invoices for customers." }),
+      });
+      answersPromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      const removeRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}`, {
+        method: "DELETE",
+        headers: authHeaders(ownerToken),
+      });
+      assert.equal(removeRes.status, 204);
+      gated.release();
+
+      const answersRes = await answersPromise;
+      assert.notEqual(answersRes.status, 200, "must not report success once the caller has already been removed from the project");
+      assert.equal(answersRes.status, 404);
+      const answersBody = (await answersRes.json()) as { code?: string };
+      assert.equal(answersBody.code, "PROJECT_NOT_FOUND");
+
+      const afterRes = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(ownerToken) });
+      const { project: afterProject } = (await afterRes.json()) as { project: { spec: unknown } };
+      assert.deepEqual(afterProject.spec, beforeProject.spec, "the project's spec must be completely unchanged by an /answers call rejected this way");
     },
     { provider: gated.provider },
   );
@@ -19443,6 +19587,89 @@ test("uploading a WhatsApp attachment as a collaborator who gets demoted to view
     const entries = existsSync(attachmentsDir) ? readdirSync(attachmentsDir) : [];
     assert.deepEqual(entries, [], "the file must not be left behind on disk for a write that was ultimately rejected");
   });
+});
+
+/**
+ * Round 2089: the same race class as the two upload tests just above, on
+ * POST .../integrations/whatsapp/send -- whatsapp.sendMessage() is a
+ * genuine network round-trip standing between this route's entry-point
+ * access check and insertWhatsAppMessage's own commit. The old recheck
+ * there only confirmed the project still existed (round 1024's own
+ * case); it never caught the owner demoting this exact sender to viewer
+ * while the send is still in flight. Uses the same opts.sendMessage gate
+ * round 536 established (see createFakeWhatsAppSocket's own doc comment)
+ * to hold the real send open deterministically.
+ */
+test("WhatsApp send must not be delivered for a collaborator who was demoted to viewer while the send was still in flight", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  let resolveSendGate: () => void = () => {};
+  const sendGate = new Promise<void>((resolve) => {
+    resolveSendGate = resolve;
+  });
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, `whatsapp-send-vs-demote-owner-${randomUUID()}@example.com`);
+      const collabEmail = `whatsapp-send-vs-demote-collab-${randomUUID()}@example.com`;
+      const collabToken = await signup(baseUrl, collabEmail);
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: collabEmail }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+      const collabUserId = collaborators[0].userId;
+      assert.equal(collaborators[0].role, "editor", "sanity check: starts able to write");
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(ownerToken) });
+      createdSockets[0].sock.user = { id: "15550005555:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const sendPromise = fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers: authHeaders(collabToken),
+        body: JSON.stringify({ to: "972501234567", message: "Hello from a soon-to-be-demoted collaborator" }),
+      });
+      sendPromise.catch(() => {});
+
+      for (let i = 0; i < 40 && createdSockets[0].sendCalls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(createdSockets[0].sendCalls.length, 1, "the send must have reached the gated socket call before the demotion fires");
+
+      const demoteRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUserId}/role`, {
+        method: "PATCH",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      assert.equal(demoteRes.status, 200);
+      resolveSendGate();
+
+      const sendRes = await sendPromise;
+      assert.notEqual(sendRes.status, 200, "must not report success once the sender has already lost write access");
+      assert.equal(sendRes.status, 403);
+      assert.equal(((await sendRes.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+      const messagesRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/messages`, { headers: authHeaders(ownerToken) });
+      const { messages } = (await messagesRes.json()) as { messages: unknown[] };
+      assert.deepEqual(messages, [], "no message row must be logged for a send rejected this way");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, { sendMessage: () => sendGate });
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
 });
 
 /**
