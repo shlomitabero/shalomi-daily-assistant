@@ -1128,6 +1128,28 @@ test("a delivery app description (like the real 'wolt' user report) produces a r
   assert.ok(entityNames.includes("Order"), `Expected an Order entity for a delivery app, got: ${entityNames}`);
 });
 
+// Regression test: "וולט" is the Hebrew transliteration of BOTH the Wolt
+// delivery app and the electrical unit "volt" -- a bare, unbounded keyword
+// match spuriously tagged an EV-charging/battery app as having an Order
+// (checkout/delivery) entity, the same bare-substring-collision bug family
+// as rounds 1978-1984/2027.
+test("an EV-charging or battery-store description mentioning voltage ('וולט') does not spuriously get an Order entity", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const evSpec = await provider.generate("אפליקציה לניהול תחנת טעינה לרכבים חשמליים, עם מטענים ב-230 וולט.");
+  assert.ok(!evSpec.entities.map((e) => e.name).includes("Order"), `EV-charging app must not get a spurious Order entity: ${evSpec.entities.map((e) => e.name)}`);
+
+  const batterySpec = await provider.generate("חנות לממכר סוללות וציוד חשמלי - סוללות 12 וולט ו-24 וולט למלאי.");
+  assert.ok(!batterySpec.entities.map((e) => e.name).includes("Order"), `Battery-store app must not get a spurious Order entity: ${batterySpec.entities.map((e) => e.name)}`);
+});
+
+test("a genuine Hebrew mention of the Wolt delivery brand still produces an Order entity", async () => {
+  const provider = new HeuristicSpecProvider();
+  const spec = await provider.generate("אפליקציה לניהול הזמנות משלוחים מוולט");
+  const entityNames = spec.entities.map((e) => e.name);
+  assert.ok(entityNames.includes("Order"), `Expected an Order entity for a genuine Wolt-brand mention, got: ${entityNames}`);
+});
+
 test("a restaurant-with-delivery description produces menu, order, and courier entities together", async () => {
   const provider = new HeuristicSpecProvider();
   const spec = await provider.generate("An order-management app for a restaurant with delivery, including a menu and couriers.");

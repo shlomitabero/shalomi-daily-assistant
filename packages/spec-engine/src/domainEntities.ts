@@ -397,7 +397,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // ordinary app descriptions than all of those combined.
       /(?<!\bin\s)\border(s)?\b|\border(s)?\b(?!\s+to\b)/, "purchase", "checkout page", "checkout flow", "online checkout",
       "delivery", "deliveries", "wolt",
-      "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים", "וולט",
+      "הזמנה", "הזמנות", "רכישה", "רכישות", "משלוח", "משלוחים",
+      // "וולט" is the Hebrew transliteration of both the Wolt delivery
+      // app and the electrical unit "volt" -- identical spelling, no way
+      // to tell them apart by spelling alone. Excludes the unit sense via
+      // (a) an immediately preceding digit (with an optional space) and
+      // (b) the "ים"/"אז" inflections ("וולטים"/"וולטאז'"), while leaving
+      // every genuine standalone brand mention ("וולט", "כמו וולט",
+      // "מוולט") still matching.
+      /(?<!\d)(?<!\d\s)וולט(?!ים|אז)/,
     ],
     labelHe: "הזמנות",
     descriptionHe: "רכישה שביצע לקוח.",
