@@ -23,6 +23,14 @@ test('an empty-string total throws rather than silently resolving to zero', () =
   assert.throws(() => extractTransactionAmount({ details: { totals: { total: '' } } }), /not a valid number/);
 });
 
+test('a negative total throws instead of recording a sale as a loss', () => {
+  // A completed sale's own total can never legitimately be negative - a
+  // malformed/corrupted payload here would otherwise silently flip a real
+  // sale into negative revenue, poisoning cashInToday/every total summed
+  // from the ledger, with no review step before it gets written there.
+  assert.throws(() => extractTransactionAmount({ details: { totals: { total: '-500' } } }), /not a valid number/);
+});
+
 test('extractTransactionFee converts minor units (cents) to a major-unit amount', () => {
   assert.equal(extractTransactionFee({ details: { totals: { fee: '825' } } }), 8.25);
 });
@@ -35,4 +43,8 @@ test('extractTransactionFee defaults to zero when null — normal before a trans
 
 test('extractTransactionFee throws instead of silently becoming NaN', () => {
   assert.throws(() => extractTransactionFee({ details: { totals: { fee: 'N/A' } } }), /not a valid number/);
+});
+
+test('extractTransactionFee throws on a negative fee the same way extractTransactionAmount does', () => {
+  assert.throws(() => extractTransactionFee({ details: { totals: { fee: '-100' } } }), /not a valid number/);
 });

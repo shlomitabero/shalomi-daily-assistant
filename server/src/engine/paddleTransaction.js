@@ -15,6 +15,19 @@ function extractMinorUnitsField(raw, fieldLabel) {
   if (!Number.isFinite(amount)) {
     throw new Error(`${fieldLabel} is not a valid number: ${JSON.stringify(raw)}`);
   }
+  // A completed sale's own total/fee can never legitimately be negative -
+  // same reasoning already applied to a cost on PATCH /opportunities/:id
+  // ("a cost is money going out and can never be negative"). Unlike that
+  // owner-entered field, this comes from a third-party webhook payload, so
+  // the risk is a malformed/corrupted response rather than a typo - but
+  // billing.js inserts this value straight into the ledger as a verified,
+  // real transaction, with no review step before it ever reaches
+  // totalSpentSoFar()/cashInToday. A negative value slipping through would
+  // silently flip a cost into a credit or a sale into a loss, poisoning
+  // every total derived from it.
+  if (amount < 0) {
+    throw new Error(`${fieldLabel} is not a valid number: ${JSON.stringify(raw)}`);
+  }
   return amount;
 }
 
