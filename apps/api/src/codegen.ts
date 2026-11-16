@@ -5873,7 +5873,7 @@ function FieldInput({ entity, field, value, onChange, relatedEntity, relatedEnti
           />
         )}
         {isTruncated && (
-          <p className="relation-filter-truncated-hint muted small" role="status">{\`Showing \${displayedRecords.length} of \${filteredRecords.length} records -- type to search for a specific one.\`}</p>
+          <p className="relation-filter-truncated-hint muted small" role="status"><bdi dir="ltr">{\`Showing \${displayedRecords.length} of \${filteredRecords.length} records -- type to search for a specific one.\`}</bdi></p>
         )}
         <select
           id={id}
@@ -9378,7 +9378,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                     />
                   )}
                   {isRelationFilterTruncated && (
-                    <p className="relation-filter-truncated-hint muted small" role="status">{\`Showing \${displayedRelationRecords.length} of \${filteredRelationRecords.length} records -- type to search for a specific one.\`}</p>
+                    <p className="relation-filter-truncated-hint muted small" role="status"><bdi dir="ltr">{\`Showing \${displayedRelationRecords.length} of \${filteredRelationRecords.length} records -- type to search for a specific one.\`}</bdi></p>
                   )}
                   {select}
                 </div>

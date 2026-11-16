@@ -5941,6 +5941,98 @@ test("the exported EntityView excludes the record currently being edited from it
 });
 
 /**
+ * Round 2057: FieldInput's own relation <select> (the one feeding a
+ * record's create/edit form, as opposed to the toolbar's separate
+ * filter-by-relation dropdown already covered above) carries the
+ * identical "Showing N of M records" truncation hint once a related
+ * entity has more than RELATION_PICKER_OPTION_CAP (200) records -- see
+ * the empty-state/record-count bdi tests' own doc comments for the full
+ * hardcoded-English-in-RTL mechanism. Confirms this hint is also wrapped
+ * in a bidi-isolating <bdi dir="ltr">.
+ */
+test("the exported EntityView's record-form relation field caps its rendered options for a very large related entity and bidi-isolates the truncation hint", async () => {
+  const courierEntity: Entity = { name: "Courier", label: "Courier", fields: [{ name: "name", label: "Name", type: "text", required: true }] };
+  const orderEntity: Entity = {
+    name: "Order",
+    label: "Order",
+    fields: [
+      { name: "item", label: "Item", type: "text", required: true },
+      { name: "courierId", label: "Courier", type: "relation", relationTo: "Courier", required: false },
+    ],
+  };
+  const withRelationProject: Project = {
+    ...project,
+    spec: { ...project.spec, entities: [courierEntity, orderEntity] },
+  };
+  const files = generateExportFiles(withRelationProject);
+  const dir = writeGeneratedWebComponent(files);
+  const courierRecords: EntityRecord[] = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, name: `Courier ${i + 1}` }));
+  const store: EntityRecord[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => {
+    if (input === "/api/Order") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (input === "/api/Courier") {
+      return new Response(JSON.stringify({ records: courierRecords }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const props = {
+        entity: orderEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        const addButton = Array.from(container.querySelectorAll("button")).find((b) => /add/i.test(b.textContent ?? ""));
+        if (addButton) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      await act(async () => {
+        const addButton = Array.from(container.querySelectorAll("button")).find((b) => /add/i.test(b.textContent ?? "")) as HTMLButtonElement;
+        fireEvent.click(addButton);
+      });
+
+      let fieldWrapper: HTMLElement | null = null;
+      for (let i = 0; i < 40; i++) {
+        fieldWrapper = container.querySelector(".relation-field-input");
+        if (fieldWrapper) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(fieldWrapper, "expected FieldInput's relation picker wrapper once the create form is open");
+
+      const select = fieldWrapper!.querySelector("select");
+      assert.ok(select, "expected a real Courier relation select");
+      assert.equal(select!.querySelectorAll("option").length, 201, "the rendered option count must be capped (200) plus the blank placeholder option");
+
+      const hint = fieldWrapper!.querySelector(".relation-filter-truncated-hint");
+      assert.ok(hint, "a hint must explain the list is truncated");
+      assert.ok(hint?.textContent?.includes("200"), "the hint must name how many options are actually shown");
+      assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+      const hintBdi = hint!.querySelector("bdi[dir='ltr']");
+      assert.ok(hintBdi, "the truncation hint must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(hintBdi!.textContent, hint!.textContent, "the bdi wrapper must contain the hint's entire text, not just part of it");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1243: mirrors the live preview's own identical fix (EntityPanel.tsx)
  * -- the exported app's three excludeRecordIds call sites (mirrored from
  * the live editor, round 1037) still compared relationTo to this entity's
@@ -28561,6 +28653,12 @@ test("the exported EntityView's toolbar filter-by-relation dropdown caps its ren
       assert.ok(hint, "a hint must explain the list is truncated");
       assert.ok(hint?.textContent?.includes("201"), "the hint must name how many options are actually shown (200 capped + 1 for the filter value)");
       assert.ok(hint?.textContent?.includes("250"), "the hint must name the true total record count");
+      // Round 2057: see the empty-state/record-count bdi tests' own doc
+      // comments -- this hint is the same hardcoded-English-in-RTL gap,
+      // since it mixes digits with an English sentence with no i18n layer.
+      const hintBdi = hint!.querySelector("bdi[dir='ltr']");
+      assert.ok(hintBdi, "the truncation hint must be wrapped in a bidi-isolating <bdi dir=\"ltr\">");
+      assert.equal(hintBdi!.textContent, hint!.textContent, "the bdi wrapper must contain the hint's entire text, not just part of it");
 
       await act(async () => {
         // "Courier 123" (not "Courier 7") so the substring match is
