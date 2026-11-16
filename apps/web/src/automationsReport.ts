@@ -262,8 +262,17 @@ export function translateAutomationError(actionType: AutomationActionType | null
   // network-error message were never covered by AUTOMATION_CONFIG_ERROR_CODES
   // above, since that map only knows fixed literal sentences.
   if (actionType === "webhook") {
-    const statusMatch = /^Webhook responded with status (\d+)$/.exec(error);
-    if (statusMatch) return translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
+    // Round 2084: mirrors AutomationsPanel.tsx's own identical fix (see
+    // its comment) -- the destination's own response-body detail, now
+    // appended to this same string's source (automations.ts), must be
+    // captured and re-surfaced here too, or this downloaded/copied report
+    // would show only the bare status while the live panel shows the
+    // actionable detail for the exact same run.
+    const statusMatch = /^Webhook responded with status (\d+)(?:: (.+))?$/.exec(error);
+    if (statusMatch) {
+      const base = translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
+      return statusMatch[2] ? `${base} ${translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR_DETAIL", { detail: statusMatch[2] })}` : base;
+    }
     if (error) return translate(lang, "error.AUTOMATION_WEBHOOK_NETWORK_ERROR");
   }
   // Round 1524: mirrors AutomationsPanel.tsx's own identical fix (round

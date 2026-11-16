@@ -6138,6 +6138,54 @@ test("AutomationsPanel translates a webhook rule's HTTP-status failure and its n
 });
 
 /**
+ * Round 2084: round 1381's own fix just above only ever surfaced the bare
+ * HTTP status code for a webhook failure -- the destination's own response
+ * BODY (added to this same string's source, fireWebhookAction in
+ * apps/api/src/automations.ts) almost always names the actionable reason
+ * (a JSON API's error field, e.g. a Forge project's own inbound-webhook
+ * route rejecting with 'Field "name" is required'), and was discarded
+ * entirely. Confirms the optional ": <detail>" suffix this round added to
+ * the stored error string is now captured and shown, not silently dropped
+ * by the status-only regex.
+ */
+test("AutomationsPanel surfaces a webhook failure's own response-body detail, not just its bare HTTP status code", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                actionType: "webhook",
+                webhookUrl: "https://hooks.example.com/forge",
+                lastTriggeredAt: new Date("2026-03-15T09:00:00Z").toISOString(),
+                lastStatus: "failed",
+                lastError: 'Webhook responded with status 400: Field "name" is required',
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const row = document.querySelector(".automations-rule-row") as HTMLElement;
+      assert.equal((row.textContent ?? "").includes('Webhook responded with status 400: Field "name" is required'), false, "the bare raw combined English sentence must never leak into the rule row");
+      assert.match(row.textContent ?? "", /400/, "the translated message must still surface the actual status code");
+      assert.match(row.textContent ?? "", /Field "name" is required/, "the destination's own actionable response-body detail must still reach the user, not be silently discarded");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 948: editing a rule's actionType (switching it between
  * send_whatsapp and webhook) never clears/retroactively updates its own
  * already-stored lastError/run history -- a rule's CURRENT actionType is

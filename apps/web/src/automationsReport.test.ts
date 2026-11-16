@@ -384,6 +384,32 @@ test("formatAutomationsReport translates a webhook rule's HTTP-status failure an
 });
 
 /**
+ * Round 2084: mirrors AutomationsPanel.test.ts's own identical fix (see
+ * its comment) -- round 1381's fix just above only ever surfaced the bare
+ * status code; the destination's own response-body detail (now appended
+ * to this same string's source, fireWebhookAction in apps/api/src/
+ * automations.ts) must reach this downloaded/copied report too, not just
+ * the live panel.
+ */
+test("formatAutomationsReport surfaces a webhook failure's own response-body detail, not just its bare HTTP status code", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const rule = makeRule({
+    id: "http-error-detail-rule",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    lastTriggeredAt: "2026-03-15T09:00:00Z",
+    lastStatus: "failed",
+    lastError: 'Webhook responded with status 400: Field "name" is required',
+  });
+
+  const report = formatAutomationsReport([rule], [], "Shop", "en", t);
+
+  assert.equal(report.includes('Webhook responded with status 400: Field "name" is required'), false, "the bare raw combined English sentence must never leak into the report");
+  assert.match(report, /status 400/, "the report must still surface the actual status code");
+  assert.match(report, /Field "name" is required/, "the destination's own actionable response-body detail must still reach the report, not be silently discarded");
+});
+
+/**
  * Round 1524: mirrors AutomationsPanel.tsx's own identical fix (round 1459,
  * see its own comment) -- this module's hand-duplicated translateAutomationError
  * had the webhook network-error fallback above (round 1381) but never got

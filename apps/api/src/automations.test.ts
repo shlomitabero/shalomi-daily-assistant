@@ -3864,6 +3864,80 @@ test("runAutomationsForRecordChange records a failed outcome when the webhook re
 });
 
 /**
+ * Round 2084: the test above only ever asserted on the bare status code --
+ * before this round, fireWebhookAction discarded a non-2xx response's own
+ * BODY entirely, even though that body almost always names the actionable
+ * reason (a JSON API's own error field, an HTML error page's title). This
+ * confirms a real repro of that gap -- a destination that mimics this
+ * app's own inbound-webhook route's exact rejection shape -- now has its
+ * body surfaced in the stored lastError, bounded and squashed to one line.
+ */
+test("runAutomationsForRecordChange's webhook failure also captures a bounded, single-line snippet of the destination's own response body, not just the bare status code", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ error: 'Field "name" is required', code: "VALIDATION_ERROR" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.equal(after.lastError, 'Webhook responded with status 400: {"error":"Field \\"name\\" is required","code":"VALIDATION_ERROR"}');
+});
+
+/**
+ * Round 2084: the sibling of the test above -- a response body that's
+ * very large or spread across many lines (a verbose HTML error page, a
+ * stack trace) must not bloat the stored run row without bound, and must
+ * not break the single-line shape the client-side status-parsing regex
+ * (AutomationsPanel.tsx, automationsReport.ts) depends on.
+ */
+test("runAutomationsForRecordChange's webhook failure bounds and single-lines an oversized/multi-line response body instead of storing it verbatim", async () => {
+  const { db, project } = setupProject();
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("line one\nline two\n" + "x".repeat(500), { status: 500 })) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const after = getAutomationRule(db, project.id, rule.id)!;
+  assert.equal(after.lastStatus, "failed");
+  assert.ok(after.lastError!.startsWith("Webhook responded with status 500: line one line two x"), "must collapse newlines to spaces, not store the raw multi-line body");
+  assert.equal(after.lastError!.includes("\n"), false, "the stored error must never contain a raw newline");
+  assert.ok(after.lastError!.length < 250, "the response body snippet must be bounded, not stored verbatim regardless of size");
+});
+
+/**
  * Round 859: isAllowedWebhookUrl only ever validates rule.webhookUrl
  * itself, once, before the fetch -- without redirect: "manual", Node's
  * own fetch (undici) silently follows up to 20 redirects, re-requesting

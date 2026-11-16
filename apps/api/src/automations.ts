@@ -1146,13 +1146,34 @@ async function fireWebhookAction(
     // row nothing else will ever clean up, since automation_runs has no
     // foreign key/cascade of its own.
     if (!getProject(db, project.id)) return;
+    // Round 2084: a non-2xx response's own BODY almost always names the
+    // actionable reason (a JSON API's error field, an HTML error page's
+    // title) -- discarding it and keeping only the bare status code left
+    // a project owner with no way to tell "wrong field name" apart from
+    // "wrong auth token" apart from "endpoint doesn't exist" without
+    // re-implementing this exact POST by hand to see the body themselves.
+    // Bounded and squashed to one line so a large/multi-line response
+    // body can't bloat the stored run row or break the status-parsing
+    // regex this same string feeds on the client (AutomationsPanel.tsx,
+    // automationsReport.ts). Wrapped in its own try/catch since reading
+    // the body is a second, independent place this fetch can still fail
+    // after headers already came back.
+    let webhookErrorDetail: string | null = null;
+    if (!res.ok) {
+      try {
+        const bodyText = (await res.text()).trim().replace(/\s+/g, " ");
+        if (bodyText) webhookErrorDetail = bodyText.slice(0, 200);
+      } catch {
+        // Body unreadable -- fall back to the bare status, same as before this fix.
+      }
+    }
     recordAutomationRun(
       db,
       project.id,
       rule.id,
       {
         status: res.ok ? "sent" : "failed",
-        error: res.ok ? null : `Webhook responded with status ${res.status}`,
+        error: res.ok ? null : `Webhook responded with status ${res.status}${webhookErrorDetail ? `: ${webhookErrorDetail}` : ""}`,
       },
       rule.actionType,
       record ? Number(record.id) : null,

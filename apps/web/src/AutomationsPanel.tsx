@@ -1306,8 +1306,18 @@ export function AutomationsPanel({
     // KNOWN whole-rule misconfiguration above has already been ruled out,
     // is necessarily some other network-level failure.
     if (actionType === "webhook") {
-      const statusMatch = /^Webhook responded with status (\d+)$/.exec(error);
-      if (statusMatch) return translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
+      // Round 2084: the destination's own non-2xx response body (added to
+      // this same string's own source in automations.ts) is appended after
+      // ": " -- capturing it here too, instead of just the status, so a
+      // destination's own actionable reason (e.g. a JSON API's "Field X is
+      // required") reaches this run-history/report text instead of only
+      // the bare, unhelpful status code. An older stored run from before
+      // this fix has no such suffix, so the capture group stays optional.
+      const statusMatch = /^Webhook responded with status (\d+)(?:: (.+))?$/.exec(error);
+      if (statusMatch) {
+        const base = translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR", { status: statusMatch[1] });
+        return statusMatch[2] ? `${base} ${translate(lang, "error.AUTOMATION_WEBHOOK_HTTP_ERROR_DETAIL", { detail: statusMatch[2] })}` : base;
+      }
       if (error) return translate(lang, "error.AUTOMATION_WEBHOOK_NETWORK_ERROR");
     }
     // Round 1459: send_email's own equivalent of the webhook fallback just
