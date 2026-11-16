@@ -221,7 +221,19 @@ export default function ProductPage() {
         {product.salesBullets.map((b, i) => <li key={i}>{b}</li>)}
       </ul>
       <p>{product.salesParagraph}</p>
-      <div className="price-tag">${product.priceUSD}</div>
+      {/* priceUSD is only ever validated as a finite positive number
+          (routes/opportunities.js's patchOpportunity) - the owner's own
+          number input has step="any" specifically to allow a real price
+          like 9.99, but nothing rounds it to whole cents, so a price saved
+          as e.g. 9.999 showed exactly that raw value here ("$9.999") on
+          the one real, customer-facing, real-money page in this app -
+          while services/paddle.js's own createOneTimePrice always rounds
+          to whole cents (Math.round(priceUSD * 100)) for what Paddle
+          actually charges, so a real customer could see one price
+          advertised here and be charged a different one at checkout.
+          .toFixed(2) rounds the same way, so the advertised price now
+          always matches what Paddle actually charges. */}
+      <div className="price-tag">${product.priceUSD.toFixed(2)}</div>
       {purchasePending ? (
         <>
           <p className="hint">התשלום התקבל ב-Paddle — מאשרים ומכינים את המדריך…</p>
