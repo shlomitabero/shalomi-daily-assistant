@@ -155,7 +155,19 @@ function renderPackageJson(project: Project): string {
       name: packageName(project.name),
       private: true,
       version: "1.0.0",
-      description: `Exported from Forge AI: ${project.description}`.slice(0, 200),
+      // Round 2035: mirrors appInitial's/renderManifestJson's own
+      // `[...name]` code-point-aware iteration (round 1283) and
+      // routes/projects.ts's clone/duplicate routes (round 2034) for the
+      // identical hazard -- project.description has no charset
+      // restriction (CreateProjectSchema/RenameProjectSchema only cap
+      // length), so a raw `.slice(0, 200)` on this UTF-16 string can cut
+      // an astral-plane emoji's surrogate pair in half right at the cap.
+      // The resulting lone/unpaired surrogate becomes a literal U+FFFD
+      // the moment zip.ts's buildZip Buffer.from(content, "utf8")
+      // encodes this file's content for the downloaded export's real
+      // package.json -- the same encode-time corruption round 2034
+      // already proved for node:sqlite, just a different destination.
+      description: [...`Exported from Forge AI: ${project.description}`].slice(0, 200).join(""),
       type: "module",
       scripts: {
         dev: "vite",

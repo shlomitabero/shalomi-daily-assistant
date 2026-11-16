@@ -94,6 +94,41 @@ test("generated package.json is valid JSON with express + react + vite, and star
 });
 
 /**
+ * Round 2035: see renderPackageJson's own doc comment just above (and
+ * routes/projects.ts's identical round-2034 fix for the clone/duplicate
+ * routes) for the full hazard -- a raw `.slice(0, 200)` on the 24-char
+ * "Exported from Forge AI: " prefix plus `project.description` (no
+ * charset restriction, per CreateProjectSchema/RenameProjectSchema) can
+ * cut an astral-plane emoji's surrogate pair in half right at the cap,
+ * baking a lone/unpaired surrogate into the real package.json this
+ * export's users download -- the same mechanism round 1283's own
+ * `[...name]` fix (just above, appInitial/renderManifestJson) already
+ * guards against for the project name. Positions the emoji so its high
+ * surrogate lands exactly at the combined string's index 199 (the
+ * description's own index 175, right after the 24-char prefix) -- the
+ * real cut point for the 200-char cap.
+ */
+test("generated package.json's description never contains a lone/unpaired surrogate when an emoji straddles the 200-char truncation boundary", () => {
+  const emojiDescription = `${"A".repeat(175)}😀${"B".repeat(10)}`;
+  const emojiProject: Project = { ...project, description: emojiDescription };
+  const files = generateExportFiles(emojiProject);
+  const pkg = JSON.parse(files.find((f) => f.path === "package.json")!.content);
+  assert.doesNotMatch(
+    pkg.description,
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    `package.json's description must never contain a lone/unpaired surrogate, got ${JSON.stringify(pkg.description)}`,
+  );
+  // Not asserting an exact length cap here, same as round 1283's own
+  // sibling emoji test just above: slicing by CODE POINTS to stay
+  // surrogate-safe can land the cap one UTF-16 code unit past 200 when
+  // the 200th code point itself is a 2-unit character (as it
+  // deliberately is here) -- a soft, approximate cap on a
+  // server-synthesized display string is an accepted tradeoff for never
+  // emitting a malformed surrogate.
+  assert.ok(pkg.description.startsWith("Exported from Forge AI: "), "the prefix must survive the truncation");
+});
+
+/**
  * Round 1869: discovered via live exploration -- the README's own
  * documented dev workflow ("use `npm run dev` (Vite dev server) alongside
  * `node server.js`") was completely broken, because vite.config.js had no
