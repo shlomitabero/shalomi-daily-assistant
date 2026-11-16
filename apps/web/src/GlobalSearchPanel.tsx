@@ -811,7 +811,7 @@ export function GlobalSearchPanel({
                       <button
                         type="button"
                         className="chip-remove"
-                        title={t("search.recent.remove")}
+                        title={t("search.recent.remove", { query: q })}
                         aria-label={t("search.recent.remove", { query: q })}
                         onClick={() => handleRemoveRecentSearch(q)}
                       >

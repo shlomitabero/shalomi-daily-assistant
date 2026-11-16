@@ -3157,6 +3157,41 @@ test("GlobalSearchPanel's per-chip remove button deletes only that one recent se
 });
 
 /**
+ * Round 2092: the chip's `title` (hover tooltip) called `t("search.recent.remove")`
+ * with no params at all, while the very next line's `aria-label` correctly called
+ * `t("search.recent.remove", { query: q })` -- translate() only substitutes a
+ * `{placeholder}` when a params object is actually passed, so the tooltip showed
+ * the literal, untranslated string `Remove "{query}" from recent searches` instead
+ * of the real search term, for every user, in both languages. The home page's own
+ * identical "recent search chip" pattern (App.tsx) and EntityPanel's own copy both
+ * already pass params to both attributes -- this is the one place that regressed.
+ */
+test("GlobalSearchPanel's per-chip remove button's hover tooltip shows the real search term, not a literal '{query}' placeholder", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockGlobalSearchFetch() as typeof fetch;
+    try {
+      const firstView = renderGlobalSearchPanel(() => {});
+      const input = document.querySelector(".global-search-input") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "widget" } });
+      fireEvent.submit(document.querySelector("form.global-search-form")!);
+      await waitForCondition(() => document.querySelectorAll(".global-search-group").length === 2);
+      firstView.unmount();
+
+      renderGlobalSearchPanel(() => {});
+      const chip = Array.from(document.querySelectorAll(".global-search-recent .chip")).find(
+        (el) => el.querySelector(".chip-text")?.textContent === "widget",
+      )!;
+      const removeButton = chip.querySelector(".chip-remove") as HTMLButtonElement;
+      assert.ok(!removeButton.title.includes("{query}"), "the tooltip must never show the literal, untranslated '{query}' placeholder");
+      assert.ok(removeButton.title.includes("widget"), "the tooltip must show the real search term");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: Global Search was the one read-heavy panel in this
  * app with no Copy/Download companions at all (Business Twin round 222,
  * WhatsApp log round 223, Time Machine round 224 all already have both) --

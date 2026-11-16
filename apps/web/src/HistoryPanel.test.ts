@@ -2782,6 +2782,75 @@ test("HistoryPanel remembers a committed checkpoint search as a recent-search ch
 });
 
 /**
+ * Round 2092: the chip's `title` (hover tooltip) called `t("history.recent.remove")`
+ * with no params at all, while the very next line's `aria-label` correctly called
+ * `t("history.recent.remove", { query: q })` -- translate() only substitutes a
+ * `{placeholder}` when a params object is actually passed, so the tooltip showed
+ * the literal, untranslated string `Remove "{query}" from recent searches` instead
+ * of the real search term, for every user, in both languages.
+ */
+test("HistoryPanel's per-chip remove button's hover tooltip shows the real search term, not a literal '{query}' placeholder", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    // Round 1568: history-filters (and the .history-search box inside it)
+    // only renders once there are more than 5 checkpoints -- same
+    // convention the existing adjacent test above uses.
+    const checkpoints = [
+      makeCheckpoint("cp1", "Initial build"),
+      makeCheckpoint("cp2", "Refine: add invoice tracking"),
+      makeCheckpoint("cp3", "Refine: add customer notes"),
+      makeCheckpoint("cp4", "Refine: fix invoice totals"),
+      makeCheckpoint("cp5", "Refine: add reminders"),
+      makeCheckpoint("cp6", "Refine: add tags"),
+    ];
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    function renderPanel() {
+      return render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: checkpoints[0].spec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+    }
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 6);
+
+      const searchBox = document.querySelector(".history-search") as HTMLInputElement;
+      fireEvent.change(searchBox, { target: { value: "invoice" } });
+      fireEvent.blur(searchBox);
+      await waitForCondition(() => document.querySelector(".history-recent-searches .chip-remove") !== null);
+
+      const removeButton = document.querySelector(".history-recent-searches .chip-remove") as HTMLButtonElement;
+      assert.ok(!removeButton.title.includes("{query}"), "the tooltip must never show the literal, untranslated '{query}' placeholder");
+      assert.ok(removeButton.title.includes("invoice"), "the tooltip must show the real search term");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: computeCheckpointDiff (checkpointDiff.ts) previously
  * detected a field only by name -- a same-named field that changed TYPE
  * between the checkpoint and the live spec (e.g. a refine turning a

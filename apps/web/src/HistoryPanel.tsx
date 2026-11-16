@@ -465,7 +465,7 @@ export function HistoryPanel({
                   <button
                     type="button"
                     className="chip-remove"
-                    title={t("history.recent.remove")}
+                    title={t("history.recent.remove", { query: q })}
                     aria-label={t("history.recent.remove", { query: q })}
                     onClick={() => handleRemoveRecentSearch(q)}
                   >

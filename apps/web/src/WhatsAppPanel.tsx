@@ -1498,7 +1498,7 @@ export function WhatsAppPanel({
                       <button
                         type="button"
                         className="chip-remove"
-                        title={t("whatsapp.test.recent.remove")}
+                        title={t("whatsapp.test.recent.remove", { number: n })}
                         aria-label={t("whatsapp.test.recent.remove", { number: n })}
                         onClick={() => handleRemoveRecentNumber(n)}
                       >

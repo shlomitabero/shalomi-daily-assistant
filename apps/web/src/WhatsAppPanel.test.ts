@@ -3782,6 +3782,62 @@ test("WhatsAppPanel's recent-number chip has a working per-number remove button"
 });
 
 /**
+ * Round 2092: the recent-number chip's `title` (hover tooltip) called
+ * `t("whatsapp.test.recent.remove")` with no params at all, while the very next
+ * line's `aria-label` correctly called `t("whatsapp.test.recent.remove", { number: n })`
+ * -- translate() only substitutes a `{placeholder}` when a params object is
+ * actually passed, so the tooltip showed the literal, untranslated string
+ * `Remove "{number}" from recent numbers` instead of the real phone number, for
+ * every user, in both languages. The message log's own recent-search chip just
+ * below (a few lines down, same file) already got this right -- this is the one
+ * copy that regressed.
+ */
+test("WhatsAppPanel's recent-number chip's hover tooltip shows the real phone number, not a literal '{number}' placeholder", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
+        return new Response(
+          JSON.stringify({ status: "connected", phoneNumber: "972501234567", qrDataUrl: null, error: null }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/integrations/whatsapp/send") {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      const view = render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(LanguageProvider, null, React.createElement(WhatsAppPanel, { projectId: "proj1", userId: "user1", projectName: "Test Project", onClose: () => {}, onJumpToEntity: () => {}, onJumpToRecord: () => {}, entities: [], onCreateRecordFromMessage: () => {} })),
+        ),
+      );
+      await waitForCondition(() => document.querySelector(".whatsapp-test-form") !== null);
+
+      const inputs = document.querySelectorAll('.whatsapp-test-form input[type="text"]');
+      fireEvent.change(inputs[0], { target: { value: "972521112233" } });
+      fireEvent.change(inputs[1], { target: { value: "Hi" } });
+      fireEvent.submit(document.querySelector("form.whatsapp-test-form")!);
+
+      await waitForCondition(() => document.querySelector(".whatsapp-recent-numbers .chip-remove") !== null);
+      const removeButton = document.querySelector(".whatsapp-recent-numbers .chip-remove") as HTMLButtonElement;
+      assert.ok(!removeButton.title.includes("{number}"), "the tooltip must never show the literal, untranslated '{number}' placeholder");
+      assert.ok(removeButton.title.includes("972521112233"), "the tooltip must show the real phone number");
+      view.unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: the message log's own search box (shown once a
  * project has more than 5 messages) was the last live-filter-as-you-type
  * search box in the app with zero memory of past queries -- Global
