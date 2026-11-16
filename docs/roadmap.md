@@ -49272,3 +49272,19 @@ Note for future rounds: `WhatsAppPanel.tsx`'s own-click-reentrancy sweep is now 
 **Tests/verification**: verified fail-before/pass-after by stashing this round's diff and re-running the test in isolation: failed with the exact predicted regex mismatch at line 18034 when stashed, passed once restored. Ran the full `codegen.test.ts` file standalone: 556/564 pass (up from 555/564 after round 2053 -- exactly 1 more, 8 remaining, no new failures). Ran the full `@forge/api` suite: 1658/1666 pass -- the same 8 remaining pre-existing failures, none new (this run's own port-conflict flake from round 2053 did not recur). Ran `npm run build` for `apps/api` clean (test-only change; `apps/web` not touched, no re-run needed).
 
 **8 failures now remain open** (down from 20 at the start of round 2048, 12 fixed across 7 rounds) -- 1 is the now-identified move-error-indicator fix (ready for a quick pickup), the rest per round 2049's original triage (category 3's remaining instances, category 4's second import-list test, category 5's hardcoded capture window).
+
+### Round 2055: fixed the move-error-indicator codegen test's stale ternary regex, exactly as round 2054 diagnosed it
+
+**The bug**: the "move-error indicator" test (`codegen.test.ts` line 23673) was the fix round 2054 identified but left open. Its final assertion expected the calendar chip's className to be built from a plain two-string ternary (`record.id === moveErrorId ? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"`), but the real generated code (`codegen.ts` line 5405) now builds that className via a template literal that layers in overdue/due-soon urgency classes alongside the moveErrorId-driven class:
+
+```
+className={`calendar-record-chip${record.id === moveErrorId ? " calendar-record-chip-move-error" : ""}${urgency === "overdue" ? " calendar-record-chip-overdue" : urgency === "dueSoon" ? " calendar-record-chip-due-soon" : ""}`}
+```
+
+The move-error class still applies exactly when `record.id === moveErrorId`, so this was never a real bug -- the test's regex was just stale against a structural change the urgency-class feature introduced.
+
+**The fix**: replaced the test's literal-ternary regex with one matching the real template-literal form, escaping the `` ` ``/`${`/`}` delimiters per the file's own established convention for matching generated-template-literal source. Verified the replacement regex against the real generated output directly (standalone script calling `generateExportFiles`) before editing the test, confirming an exact match. No `codegen.ts` change: the real generated code was already correct.
+
+**Tests/verification**: verified fail-before/pass-after by stashing this round's diff and re-running the test in isolation: failed with the exact predicted regex mismatch at the test's own line (`operator: 'match'`) when stashed, passed once restored. Ran the full `codegen.test.ts` file standalone: 557/564 pass (up from 556/564 after round 2054 -- exactly 1 more, 7 remaining, no new failures). Ran `npm run build` for `apps/api` clean. Ran the full `@forge/api` suite in the background to confirm no new regressions across the 7 remaining pre-existing failures.
+
+**7 failures now remain open** (down from 20 at the start of round 2048, 13 fixed across 8 rounds) -- category 3's remaining instances (`filteredRecords.map`→`displayedRecords.map` rename, `deleteRecord` gaining a 3rd arg, Kanban drag-and-drop gaining `bulkActionBusy`/`onDragEnd` guards + BoardCard's `isPinned`/`onTogglePin` params -- 2 tests), category 4's second import-list test (not yet investigated), and category 5's hardcoded capture window (FieldInput enum-branch test).
