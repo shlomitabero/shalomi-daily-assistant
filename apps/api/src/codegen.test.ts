@@ -23705,9 +23705,12 @@ test("the exported EntityView marks the specific row/card/chip with a move-error
     /hasMoveError=\{r\.id === moveErrorId\}/,
     "the BoardCard call site must pass hasMoveError scoped to that specific record",
   );
+  // The chip's className is a template literal that layers urgency classes
+  // (round ~2010) alongside the moveErrorId-driven class, not a plain
+  // two-string ternary, so match on the moveErrorId sub-expression.
   assert.match(
     entityViewJsx,
-    /record\.id === moveErrorId \? "calendar-record-chip calendar-record-chip-move-error" : "calendar-record-chip"/,
+    /className=\{`calendar-record-chip\$\{record\.id === moveErrorId \? " calendar-record-chip-move-error" : ""\}\$\{urgency === "overdue" \? " calendar-record-chip-overdue" : urgency === "dueSoon" \? " calendar-record-chip-due-soon" : ""\}`\}/,
     "the calendar chip's className must reflect moveErrorId",
   );
   assert.match(
