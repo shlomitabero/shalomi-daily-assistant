@@ -132,6 +132,33 @@ test('patchSettings rejects a non-numeric maxLoss instead of storing it', () => 
   assert.equal(res.statusCode, 400);
 });
 
+test('patchSettings rejects an object currency instead of storing it as an unrenderable setting', () => {
+  // currency (unlike budget/mode/maxLoss above) had no type check at all -
+  // Settings.jsx prints it directly as a JSX child twice, so an object or
+  // array stored as-is would crash that page's render, not just show a
+  // dead field.
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { currency: {} } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /מטבע חייב להיות מחרוזת/);
+});
+
+test('patchSettings rejects an empty or whitespace-only currency the same way', () => {
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { currency: '   ' } }, res);
+  assert.equal(res.statusCode, 400);
+});
+
+test('patchSettings accepts a real currency string', () => {
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { currency: 'USD' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.settings.currency, 'USD');
+});
+
 test('patchSettings rejects a non-boolean emergencyStop instead of storing it', () => {
   // mode/budget/maxLoss above all reject a malformed value - emergencyStop
   // (the one field meant for "use the moment something looks wrong") was

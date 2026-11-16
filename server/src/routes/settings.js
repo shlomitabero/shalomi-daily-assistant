@@ -46,6 +46,15 @@ export function patchSettings(req, res) {
     // actually configured anymore.
     patch.budgetConfigured = patch.budget > 0;
   }
+  // Unlike budget/mode/maxLoss above, currency had no type check at all -
+  // a non-string value (an object or array) would be stored as-is and then
+  // crash Settings.jsx's render, which prints it directly as a JSX child
+  // twice ("תקציב כולל ({form.currency})", "הפסד מרבי מקובל ({form.currency})"),
+  // not just show a dead field. Same wrong-type-at-the-door principle as
+  // actionType on POST /approvals and symbol on POST /financial/watchlist.
+  if ('currency' in patch && (typeof patch.currency !== 'string' || !patch.currency.trim())) {
+    return res.status(400).json({ error: 'מטבע חייב להיות מחרוזת לא ריקה' });
+  }
   if ('maxLoss' in patch && patch.maxLoss !== null) {
     if (typeof patch.maxLoss !== 'number' || !Number.isFinite(patch.maxLoss) || patch.maxLoss < 0) {
       return res.status(400).json({ error: 'הפסד מרבי חייב להיות ריק (ללא הגבלה) או מספר לא שלילי' });
