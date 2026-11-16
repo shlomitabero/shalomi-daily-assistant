@@ -4435,9 +4435,26 @@ export function createProjectsRouter(
           // rounds 539/1024 already established for auth.ts's own password
           // routes -- cleaning up the just-written file rather than leaving
           // it orphaned if the project is gone.
-          if (!getProject(db, req.params.id)) {
+          // Round 2086: that re-check only ever covered the project
+          // vanishing entirely -- the SAME real-I/O window just as easily
+          // lets an owner demote this exact uploader to viewer, or remove
+          // them as a collaborator outright, while their upload is still
+          // in flight. A bare getProject existence check doesn't catch
+          // either: the project still exists, so the upload went on to
+          // complete and land on disk for a user who, by the moment the
+          // write actually finished, no longer had write access -- the
+          // one write path in this file that checked access only once,
+          // before its own real I/O, instead of re-deriving it after.
+          // Re-running the exact same requireProjectWriteAccess call this
+          // route already makes at entry closes both gaps at once (a
+          // revoked/removed/demoted uploader now gets the identical
+          // 403/404 any other write attempt of theirs would), with the
+          // same cleanup-the-orphaned-file behavior on any failure.
+          try {
+            requireProjectWriteAccess(db, req.params.id, req.userId!);
+          } catch (err) {
             await rm(file.path, { force: true }).catch(() => {});
-            throw new HttpError(404, `Project "${req.params.id}" not found`, "PROJECT_NOT_FOUND");
+            throw err;
           }
           return {
             status: 200,

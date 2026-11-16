@@ -19253,6 +19253,111 @@ test("uploading a file to a project that gets deleted while the (slow) upload is
 });
 
 /**
+ * Round 2086: the sibling gap round 1025's own fix (just above) only ever
+ * covered -- the real I/O window between this route's entry-point
+ * requireProjectWriteAccess check and multer's own disk write lets the
+ * project vanish out from under an in-flight upload, but the exact same
+ * window just as easily lets the OWNER demote the uploader themselves
+ * from editor to viewer while their upload is still in flight. The old
+ * re-check only confirmed the project still exists (getProject), which a
+ * mere demotion doesn't change -- so the upload went on to complete and
+ * land on disk for a user who, by the moment the write actually
+ * finished, no longer had write access to the project at all. Simulates
+ * the slow connection the same honest way round 1025's own test does: a
+ * hand-built multipart body streamed over several real-delayed chunks,
+ * giving the concurrent PATCH role-change request a genuine window to
+ * land and finish while the upload is still in flight.
+ */
+test("uploading a file as a collaborator who gets demoted to viewer while the (slow) upload is still in flight must be rejected, not silently completed with access already revoked", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const ownerEmail = `upload-vs-demote-owner-${randomUUID()}@example.com`;
+    const collabEmail = `upload-vs-demote-collab-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const collabToken = await signup(baseUrl, collabEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Customer",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "receipt", type: "file", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+    const collabUserId = collaborators[0].userId;
+    assert.equal(collaborators[0].role, "editor", "sanity check: starts able to write");
+
+    const boundary = `----forgeTestBoundary${randomUUID()}`;
+    const head = new TextEncoder().encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="receipt.pdf"\r\nContent-Type: application/pdf\r\n\r\n`,
+    );
+    const tail = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+    const contentPieces = Array.from({ length: 5 }, (_, i) => new TextEncoder().encode(`fake-receipt-bytes-piece-${i}-`));
+
+    const slowBody = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(head);
+        for (const piece of contentPieces) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          controller.enqueue(piece);
+        }
+        controller.enqueue(tail);
+        controller.close();
+      },
+    });
+
+    const uploadPromise = fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/fields/receipt/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${collabToken}`, "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: slowBody,
+      duplex: "half",
+    } as RequestInit);
+
+    // Same short-head-start convention as round 1025's own test -- the
+    // upload's own entry-point access check has already passed (the
+    // collaborator was still an editor at that moment) before the owner's
+    // concurrent demotion fires.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const demoteRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(demoteRes.status, 200);
+
+    const uploadRes = await uploadPromise;
+    assert.notEqual(uploadRes.status, 200, "must not report success once the uploader has already lost write access");
+    assert.equal(uploadRes.status, 403);
+    assert.equal(((await uploadRes.json()) as { code?: string }).code, "VIEWER_READ_ONLY");
+
+    const entriesDir = path.join(uploadsDir, projectId, "Customer");
+    const entries = existsSync(entriesDir) ? readdirSync(entriesDir) : [];
+    assert.deepEqual(entries, [], "the file must not be left behind on disk for a write that was ultimately rejected");
+  });
+});
+
+/**
  * Round 782: multer (via busboy) decodes a multipart part's
  * `Content-Disposition: filename="..."` header as raw Latin-1 bytes
  * unless `defParamCharset` is explicitly configured, which
