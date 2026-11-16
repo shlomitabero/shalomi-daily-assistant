@@ -1041,6 +1041,32 @@ test("sendMessage refuses honestly when 'to' has 3 or more leading zeros, instea
   assert.deepEqual(createdSockets[0].sendCalls, []);
 });
 
+/**
+ * Round 2044: the compound of the two sibling mistakes just above --
+ * BOTH a "00" international access-code prefix AND the destination's own
+ * leftover local trunk zero still left in after the country code, e.g.
+ * "00972-050-1234567". leadingZeros is exactly 2 here (only the initial
+ * "00"), so the 1-or-3+-leading-zeros guard above doesn't fire; and the
+ * round-926 `/^9720/` leftover-trunk-zero check used to test the raw,
+ * unstripped digit string, which starts with "00972…" rather than
+ * "9720…", so it missed this shape too even though normalizePhone's own
+ * later leading-zero stripping produces the exact same malformed
+ * "9720501234567" result as the already-rejected bare "+972-050-1234567"
+ * case. Both existing guards were individually correct for their own
+ * component mistake; neither composed with the other.
+ */
+test("sendMessage refuses honestly when 'to' combines a 00 access code with a leftover local trunk zero after the country code, instead of addressing a wrong/nonexistent 13-digit JID", async () => {
+  const { manager, createdSockets } = setupManager();
+  await manager.connect("proj1");
+  createdSockets[0].sock.user = { id: "972501234567:1@s.whatsapp.net" };
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  const result = await manager.sendMessage("proj1", "00972-050-1234567", "שלום!");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "missing_country_code");
+  assert.deepEqual(createdSockets[0].sendCalls, []);
+});
+
 test("sendMessage builds a real, fully-qualified JID for a number typed with a 00 international access code", async () => {
   // Unlike the local-format case above ("050-123-4567" -> missing its
   // country code entirely, now refused honestly instead of silently

@@ -1915,7 +1915,25 @@ export class WhatsAppWebManager {
     // never a legitimate destination, only ever this exact leftover-trunk-
     // zero mistake, with zero realistic false-positive risk for this app's
     // actual user base.
-    if (/^9720/.test(rawDigits)) {
+    //
+    // Round 2044: tests rawDigits with its own leading zeros stripped
+    // first (the exact same stripping normalizePhone itself does just
+    // below), not rawDigits directly -- the guard above only ever rejects
+    // 1 or 3+ leading zeros, so a genuine "00" access-code prefix (exactly
+    // 2 leading zeros, otherwise accepted as already-qualified) reaches
+    // here unstripped. For the compound mistake this guard exists to
+    // catch -- "00" (access code) + "972" (country code) + a local number
+    // that STILL has its own leftover trunk zero, e.g.
+    // "00972-050-1234567" -- rawDigits is "009720501234567", which does
+    // NOT start with "9720" (it starts with "00972…"), so the un-stripped
+    // check silently missed it even though normalizePhone's own later
+    // stripping produces the exact same malformed "9720…" shape as the
+    // already-rejected "+972-050-1234567" case. Stripping first makes the
+    // two leading-zero shapes (0 zeros: already-qualified; 2 zeros: "00"
+    // then already-qualified) compose correctly with this check, since
+    // leadingZeros===1 and leadingZeros>=3 already returned above and
+    // never reach here.
+    if (/^9720/.test(rawDigits.replace(/^0+/, ""))) {
       return { ok: false, error: "missing_country_code" };
     }
 
