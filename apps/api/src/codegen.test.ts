@@ -21664,12 +21664,16 @@ test("the exported EntityView's CSV import skips an optional file column, but re
   const buildImportRecordsSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n  return \{ records, errors, warnings \};\n\}\n/)?.[0];
   const matchesImportHeaderSrc = entityViewJsx.match(/function matchesImportHeader\([\s\S]*?\n\}\n/)?.[0];
   const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
-  assert.ok(buildImportRecordsSrc && matchesImportHeaderSrc && fieldLabelOccurrencesSrc, "expected to find buildImportRecords/matchesImportHeader/fieldLabelOccurrences in generated output");
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    buildImportRecordsSrc && matchesImportHeaderSrc && fieldLabelOccurrencesSrc && makeDuplicateWarningCheckerSrc,
+    "expected to find buildImportRecords/matchesImportHeader/fieldLabelOccurrences/makeDuplicateWarningChecker in generated output",
+  );
 
   const ALL_ENTITIES = withFile.spec.entities;
   const { buildImportRecords } = new Function(
     "ALL_ENTITIES",
-    `${matchesImportHeaderSrc}\n${fieldLabelOccurrencesSrc}\n${buildImportRecordsSrc}\nreturn { buildImportRecords };`,
+    `${matchesImportHeaderSrc}\n${fieldLabelOccurrencesSrc}\n${makeDuplicateWarningCheckerSrc}\n${buildImportRecordsSrc}\nreturn { buildImportRecords };`,
   )(ALL_ENTITIES) as { buildImportRecords: (fields: unknown[], rows: string[][], relatedRecords: unknown) => { records: unknown[]; errors: string[] } };
 
   const fields = withFile.spec.entities.find((e) => e.name === "Document")!.fields;
