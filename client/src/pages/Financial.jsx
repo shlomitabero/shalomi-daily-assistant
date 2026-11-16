@@ -181,7 +181,23 @@ export default function Financial() {
               >
                 {refreshingId === w.id ? 'מרענן…' : 'רענן מחיר'}
               </button>
-              <button className="btn btn-ghost" onClick={() => onRemoveSymbol(w.id)} disabled={removingId === w.id}>
+              {/* onRefreshAll (the "רענן הכל" button above) captures the
+                  watchlist array once, at the moment it's clicked, then
+                  iterates it one symbol at a time over several real network
+                  calls - removing an entry here mid-loop would still let
+                  that loop reach and refresh the now-deleted row's id,
+                  getting back a clean 404 from the server but counted and
+                  shown to the owner as one more real "failed to refresh"
+                  symbol, confusingly, for a symbol they deliberately
+                  removed themselves. "רענן מחיר" right above already
+                  disables itself the same way during a bulk refresh - this
+                  button was the one exception. */}
+              <button
+                className="btn btn-ghost"
+                onClick={() => onRemoveSymbol(w.id)}
+                disabled={removingId === w.id || refreshingAll}
+                title={refreshingAll ? 'לא ניתן להסיר תוך כדי "רענן הכל"' : undefined}
+              >
                 {removingId === w.id ? 'מסיר…' : 'הסר'}
               </button>
             </div>
