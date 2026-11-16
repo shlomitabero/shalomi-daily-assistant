@@ -6,17 +6,21 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { AgentStepEvent, Project, ProductSpec } from "@forge/shared";
 import {
+  addCollaborator,
   applyMigrations,
   countRecords,
   deleteRecord,
   diffAndMigrate,
   ensureCheckpointsTable,
+  ensureProjectCollaboratorsTable,
   ensureProjectsTable,
+  getProject,
   insertProject,
   insertRecord,
   listCheckpoints,
   listRecords,
   openDatabase,
+  updateCollaboratorRole,
 } from "@forge/db";
 import {
   carryForwardLabels,
@@ -2011,6 +2015,181 @@ test("Debug Agent reports failure clearly when its own fix attempt is also inval
     const lastDebugEvent = events.filter((e) => e.agent === "Debug").at(-1);
     assert.equal(lastDebugEvent!.status, "failed");
     assert.ok(!events.some((e) => e.agent === "Forge"));
+  } finally {
+    process.env.ANTHROPIC_API_KEY = originalKey;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+/**
+ * Round 2090: requestSpecFix (the Debug Agent's own repair AI call, just
+ * above in runBuildPipeline) has the exact same genuine-await-before-commit
+ * shape already closed at five other call sites -- both file-upload
+ * routes, WhatsApp send, /refine, /answers (rounds 2086-2089) -- just
+ * reached through this shared generator's own repair path instead of
+ * directly in a route handler. This generator has no awareness of the
+ * caller's access by itself; it's only ever started after the owning
+ * route's own entry-point requireProjectWriteAccess already ran, once,
+ * before this whole pipeline -- and its first, already-failed
+ * diffAndMigrate attempt above -- even started. activePipelines
+ * (routes/projects.ts) only ever blocks a SECOND build/refine/answers/
+ * restore call from racing this same project; it does nothing to stop the
+ * owner demoting this exact caller via an ordinary, fast, completely
+ * unrelated collaborator-management request while requestSpecFix's own AI
+ * call is still in flight.
+ *
+ * requestSpecFix has no injectable SpecProvider seam the way generateSpec
+ * does (app.test.ts's own createGatedProvider() gates generateSpec via a
+ * real SpecProvider the test harness can inject) -- it calls the
+ * Anthropic API directly via a raw `fetch`, which is the only test seam
+ * available for it (the existing tests just above already mock
+ * globalThis.fetch for this same function, just without gating it). This
+ * test adds the same first-call-only gate idiom on top of that seam: a
+ * manually-released gate the mocked fetch blocks on, giving a concurrent,
+ * ordinary, synchronous db write (the demotion) a deterministic window
+ * while the "AI call" is genuinely still pending -- the same proof shape
+ * as the five already-fixed sites' own app.test.ts races, just driven
+ * directly against this generator (no HTTP round trip) since reaching
+ * this exact repair branch through a live HTTP /build or /refine call
+ * would need either an unsafe identifier Zod already rejects at every
+ * real entry point, or project history /refine's own additive-only
+ * mergeRefinedSpec and this app's complete lack of any entity-removal
+ * route make impossible to construct live -- this is the same reason the
+ * two tests just above already drive this exact branch directly through
+ * runBuildPipeline() rather than a real HTTP /build call.
+ */
+test("the repair path must not apply a migration fix for a collaborator who was demoted to viewer while requestSpecFix was still in flight", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "owner1",
+    name: "test",
+    description: "test",
+    // Same reason as the two tests above: stored as fixedSpec (which
+    // round-trips through getProject's own ProductSpecSchema.parse)
+    // while brokenSpec is what's actually passed as `nextSpec` below.
+    spec: fixedSpec,
+  });
+  addCollaborator(db, project.id, "collab1", "editor");
+
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = (async () => {
+    markStarted();
+    await gate;
+    return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedSpec) }] }), {
+      status: 200,
+    });
+  }) as unknown as typeof fetch;
+
+  try {
+    const genPromise = collect(
+      runBuildPipeline(db, project, { nextSpec: brokenSpec, changeLabel: "Initial build", createdByUserId: "collab1" }),
+    );
+
+    // Waits until requestSpecFix's own call has actually started (and is
+    // blocked inside the gate) before firing the demotion -- without this,
+    // firing it immediately could race the test itself, landing before
+    // generateCreateTableStatements's own first, already-expected failure.
+    await started;
+    const demotedProject = project; // same id throughout
+    updateCollaboratorRole(db, demotedProject.id, "collab1", "viewer");
+    release();
+
+    const events = await genPromise;
+    const debugEvents = events.filter((e) => e.agent === "Debug");
+    assert.equal(
+      debugEvents.at(-1)!.status,
+      "failed",
+      "must not report success once the caller triggering this build has already lost write access",
+    );
+    assert.ok(!events.some((e) => e.agent === "Forge"), "must never reach the Forge finalize step for a now-access-less caller");
+
+    const stillStored = getProject(db, project.id)!;
+    assert.equal(stillStored.status, "draft", "the project must never be marked built by a fix applied after access was revoked");
+    assert.throws(
+      () => db.prepare(`SELECT COUNT(*) as c FROM "entity_proj1_Customer"`).get(),
+      "the repair's real migration commit must never have run -- the table it would have created must not exist",
+    );
+  } finally {
+    process.env.ANTHROPIC_API_KEY = originalKey;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+/**
+ * The complement to the test just above: removed as a collaborator
+ * entirely (not merely demoted), proving stillHasWriteAccess's own 404-
+ * equivalent branch (no role row at all, and not the owner) the same way
+ * round 2089's /answers test proves it for generateSpec's own call.
+ */
+test("the repair path must not apply a migration fix for a collaborator who was removed outright while requestSpecFix was still in flight", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  const project = insertProject(db, {
+    id: "proj1",
+    ownerId: "owner1",
+    name: "test",
+    description: "test",
+    spec: fixedSpec,
+  });
+  addCollaborator(db, project.id, "collab1", "editor");
+
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = (async () => {
+    markStarted();
+    await gate;
+    return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedSpec) }] }), {
+      status: 200,
+    });
+  }) as unknown as typeof fetch;
+
+  try {
+    const genPromise = collect(
+      runBuildPipeline(db, project, { nextSpec: brokenSpec, changeLabel: "Initial build", createdByUserId: "collab1" }),
+    );
+
+    await started;
+    db.prepare("DELETE FROM project_collaborators WHERE projectId = ? AND userId = ?").run(project.id, "collab1");
+    release();
+
+    const events = await genPromise;
+    const debugEvents = events.filter((e) => e.agent === "Debug");
+    assert.equal(
+      debugEvents.at(-1)!.status,
+      "failed",
+      "must not report success once the caller triggering this build has been removed as a collaborator entirely",
+    );
+    assert.ok(!events.some((e) => e.agent === "Forge"));
+
+    const stillStored = getProject(db, project.id)!;
+    assert.equal(stillStored.status, "draft");
   } finally {
     process.env.ANTHROPIC_API_KEY = originalKey;
     globalThis.fetch = originalFetch;

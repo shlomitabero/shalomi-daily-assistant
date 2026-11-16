@@ -17296,6 +17296,163 @@ test("restoring a checkpoint while a refine is in flight is rejected with 409, i
 });
 
 /**
+ * Round 2090: checkpoint restore's own cleanupFileFieldsRetypedAway call
+ * (pipeline.ts) is a genuine await -- real disk I/O (one rm() per affected
+ * row/file) -- between this route's entry-point requireProjectWriteAccess
+ * and the real commit (updateProjectSpec), the exact same shape already
+ * closed on both upload routes, WhatsApp send, /refine and /answers
+ * (rounds 2086-2089). A comment that used to sit on this route claimed
+ * "access was already established above and can't have changed in
+ * between" -- false, for the same reason round 2089's /refine and /answers
+ * repros already disprove it: activePipelines only blocks a second build/
+ * refine/answers/restore racing this same project, never an ordinary,
+ * fast, unrelated collaborator-role-change request.
+ *
+ * Unlike generateSpec's own network call (gateable via a real SpecProvider
+ * seam -- createGatedProvider() above), real disk I/O has no such seam in
+ * this app, so this uses the same real-timing technique already
+ * established in this file for a disk-I/O race (see the upload-vs-demote
+ * test above, round 2086): enough real files (1000; empirically ~70ms of
+ * genuine rm() time on this sandbox, confirmed by timing
+ * cleanupFileFieldsRetypedAway directly before writing this test) give the
+ * concurrent demotion request a comfortably wide, real window to land and
+ * finish while the restore's own cleanup is still genuinely in flight --
+ * not a hard deterministic gate, but the same honest technique, and the
+ * same order-of-magnitude safety margin, already accepted in this codebase
+ * for this exact class of disk-I/O race.
+ */
+test("restoring a checkpoint that retypes a file field away from 'file' must not commit for a collaborator who was demoted to viewer while the real disk cleanup was still in flight", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const ownerEmail = `restore-vs-demote-owner-${randomUUID()}@example.com`;
+    const collabEmail = `restore-vs-demote-collab-${randomUUID()}@example.com`;
+    const ownerToken = await signup(baseUrl, ownerEmail);
+    const collabToken = await signup(baseUrl, collabEmail);
+    const owner = findUserByEmail(db, ownerEmail)!;
+
+    // The checkpoint being restored TO: "attachment" was "text" back then.
+    const oldSpec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    // The project's CURRENT spec: "attachment" is "file" -- restoring to
+    // oldSpec above is exactly the "retyped away from file" shape
+    // cleanupFileFieldsRetypedAway exists for.
+    const currentSpec: ProductSpec = {
+      ...oldSpec,
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Documents", description: "test", spec: currentSpec });
+    diffAndMigrate(db, projectId, undefined, currentSpec);
+    markProjectBuilt(db, projectId);
+    insertCheckpoint(db, { id: "cp-old", projectId, label: "Initial build", kind: "build", spec: oldSpec });
+
+    // 1000 real records, each with a real uploaded file on disk -- see
+    // this test's own doc comment above for why this count, and
+    // pipeline.test.ts's own "deletes real uploads" test for the exact
+    // same file-descriptor-JSON shape used here.
+    const fileDir = path.join(uploadsDir, projectId, "Document");
+    mkdirSync(fileDir, { recursive: true });
+    for (let i = 0; i < 1000; i++) {
+      const filename = `${randomUUID()}.pdf`;
+      writeFileSync(path.join(fileDir, filename), "%PDF-fake-contents");
+      insertRecord(db, projectId, currentSpec.entities[0], {
+        title: `Document ${i}`,
+        attachment: JSON.stringify({ url: `/api/uploads/${projectId}/Document/${filename}`, name: "doc.pdf", size: 19, mimeType: "application/pdf" }),
+      });
+    }
+
+    await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: collabEmail }),
+    });
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators`, { headers: authHeaders(ownerToken) });
+    const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; role: string }[] };
+    const collabUserId = collaborators[0].userId;
+    assert.equal(collaborators[0].role, "editor", "sanity check: starts able to write");
+
+    const restorePromise = fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/cp-old/restore`, {
+      method: "POST",
+      headers: authHeaders(collabToken),
+    });
+    restorePromise.catch(() => {});
+
+    // Short head start: the restore's own entry-point requireProjectWriteAccess
+    // and its synchronous diffAndMigrate must both have already run (same
+    // convention as the slow-upload test above) before the demotion fires,
+    // so it genuinely lands during cleanupFileFieldsRetypedAway's own real
+    // disk I/O, not before the restore handler even started.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const demoteRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators/${collabUserId}/role`, {
+      method: "PATCH",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    assert.equal(demoteRes.status, 200);
+
+    const restoreRes = await restorePromise;
+    assert.notEqual(restoreRes.status, 200, "must not report success once the restorer has already lost write access");
+    assert.equal(restoreRes.status, 403);
+    const restoreBody = (await restoreRes.json()) as { code?: string };
+    assert.equal(restoreBody.code, "VIEWER_READ_ONLY");
+
+    // The real proof this round's fix actually closes: the project's own
+    // spec -- the authoritative, read-back state every other route and
+    // every other user relies on -- must still be the CURRENT one, never
+    // actually overwritten with the checkpoint's spec, for a restore whose
+    // caller had already lost write access by the time it would have
+    // committed.
+    const afterRes = await fetch(`${baseUrl}/api/projects/${projectId}`, { headers: authHeaders(ownerToken) });
+    const { project: afterProject } = (await afterRes.json()) as { project: { spec: ProductSpec } };
+    assert.deepEqual(afterProject.spec, currentSpec, "the project's spec must be completely unchanged by a restore rejected this way");
+
+    // NOT this round's fix, and left exactly as discovered rather than
+    // silently asserted away: cleanupFileFieldsRetypedAway's own real
+    // disk deletes happen BEFORE this recheck (it's the very await this
+    // recheck has to run after to catch the race at all), so by the time
+    // the recheck above threw, every one of these 1000 real files was
+    // already unlinked -- for a restore whose own spec commit, just
+    // asserted above, never actually happened. The project's spec still
+    // claims "attachment" is a "file" field, pointing existing records at
+    // uploads that no longer exist on disk: a dangling-reference hazard
+    // this round's fix does not close, and that pipeline.ts's own /build
+    // and /refine path has the identical ordering for (cleanup at line
+    // ~976, the real updateProjectSpec commit for THAT path not until
+    // line ~1242) -- so it's a pre-existing hazard on any failure between
+    // cleanup and the real commit, not something this fix introduced.
+    // Flagged for a dedicated future round rather than fixed here.
+    const remainingFiles = readdirSync(fileDir);
+    assert.equal(
+      remainingFiles.length,
+      0,
+      "known, separate, NOT-yet-fixed hazard: cleanupFileFieldsRetypedAway's real deletes run before this recheck can catch the race, so they're not undone by it -- see this test's own comment",
+    );
+  });
+});
+
+/**
  * Regression test for a real bug found by round 378's Explore survey:
  * unlike /build, /refine, /answers, and restore above, DELETE /projects/:id
  * never checked activePipelines at all before this round. A running

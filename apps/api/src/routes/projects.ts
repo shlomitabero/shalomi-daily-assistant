@@ -3620,9 +3620,17 @@ export function createProjectsRouter(
             // retry, so on a retry it would still be the PRE-restore spec
             // from the request object, not the actually-current (already
             // restored) one getProject() returns here. A plain getProject()
-            // is enough (not another requireProjectWriteAccess call) since
-            // access was already established above and can't have changed
-            // in between.
+            // is enough here (not another requireProjectWriteAccess call) --
+            // this is only a read used to compute the diff, not the actual
+            // commit, and the real access recheck that matters happens right
+            // before the real commit below, after this callback's own
+            // genuine await (cleanupFileFieldsRetypedAway). A comment that
+            // used to sit here claimed access "can't have changed in
+            // between" for the whole rest of this callback -- that's now
+            // known false: round 2089's /refine and /answers repros directly
+            // disprove that activePipelines (just above) blocks a concurrent
+            // collaborator-role change; it only ever blocks a second build/
+            // refine/answers/restore racing this same project.
             const currentSpec = getProject(db, project.id)!.spec;
             // Restoring never drops columns/tables (migrations are additive-only),
             // so it's always safe from *losing* data: this just ensures the
@@ -3656,6 +3664,20 @@ export function createProjectsRouter(
             // exact same way a /refine can -- see cleanupFileFieldsRetypedAway's
             // own doc comment (pipeline.ts).
             await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
+            // Round 2090: cleanupFileFieldsRetypedAway above is a genuine
+            // await -- real disk I/O (one rm() per affected row/file),
+            // proportional to row/file count -- sitting between this
+            // route's own entry-point requireProjectWriteAccess and the
+            // real commit (updateProjectSpec) right below, the exact same
+            // shape already closed on both upload routes, WhatsApp send,
+            // /refine and /answers (rounds 2086-2089). Rechecked here,
+            // right before the commit, and left to throw (403 if demoted
+            // to viewer, 404 if removed/the project itself is gone) exactly
+            // like those five other sites -- unlike pipeline.ts's own
+            // requestSpecFix repair path, no SSE response has been started
+            // here, so an ordinary thrown HttpError still turns into a
+            // clean error response via errorMiddleware.
+            requireProjectWriteAccess(db, project.id, req.userId!);
             const updated = updateProjectSpec(db, project.id, checkpoint.spec);
             // Round 1568: closes the half of docs/security.md's "No audit
             // log" gap round 1567 left open -- see recordCheckpointRestore's

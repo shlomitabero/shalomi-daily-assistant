@@ -5,6 +5,7 @@ import {
   describeMigrationHazards,
   diffAndMigrate,
   generateSeedRecords,
+  getCollaboratorRole,
   getProject,
   insertCheckpoint,
   insertRecord,
@@ -13,6 +14,7 @@ import {
   orderForSeeding,
   quoteIdentifier,
   tableNameFor,
+  tryGetProject,
   updateProjectSpec,
   ValidationError,
   type ForgeDatabase,
@@ -807,6 +809,40 @@ export async function cleanupFileFieldsRetypedAway(db: ForgeDatabase, uploadsDir
 }
 
 /**
+ * Round 2090: mirrors routes/projects.ts's own requireProjectWriteAccess
+ * (owner always passes; a collaborator passes unless their role is
+ * "viewer"; no access/no project at all fails) but as a plain boolean
+ * instead of a throw -- this generator's own SSE response has ALREADY
+ * had `res.writeHead(200, ...)` called on it by the time this ever runs
+ * (streamPipeline, routes/projects.ts, writes that before pulling this
+ * generator's first event), so throwing an HttpError here can't turn into
+ * a clean 403/404 the way it does at an ordinary route's own top level --
+ * see errorMiddleware's own `res.headersSent` branch (app.ts), which exists
+ * for exactly this "already streaming" case and can only destroy the
+ * connection, not send a real error body. Callers here instead yield a
+ * failed Debug event and `return`, the same shape this generator already
+ * uses for every other way the repair attempt can fail.
+ *
+ * requireProjectWriteAccess itself lives in routes/projects.ts (not
+ * exported, and not safely movable here without restructuring that
+ * file's whole access-check neighborhood) -- this re-implements its exact
+ * rule directly against @forge/db's own primitives instead.
+ */
+function stillHasWriteAccess(db: ForgeDatabase, projectId: string, userId: string | undefined): boolean {
+  // createdByUserId is undefined only for a test that constructs
+  // PipelineOptions directly (see its own doc comment above) -- there's no
+  // real caller to recheck against, so this is a no-op pass-through rather
+  // than a crash on `undefined` thrown at getCollaboratorRole.
+  if (!userId) return true;
+  const current = tryGetProject(db, projectId);
+  if (!current) return false; // project deleted since the route's own entry-point check
+  if (current.ownerId === userId) return true;
+  const role = getCollaboratorRole(db, projectId, userId);
+  if (role === null) return false; // removed as a collaborator entirely
+  return role !== "viewer"; // demoted to viewer
+}
+
+/**
  * The build/refine agent pipeline. Every step does genuinely verifiable
  * work — a real migration, real seed inserts, a real smoke test, a real
  * static scan — and can genuinely fail with a real error. Nothing here is a
@@ -865,6 +901,32 @@ export async function* runBuildPipeline(
       // a user's customized labels than generateSpec had -- carries them
       // forward again here, same as the initial nextSpec just above.
       carryForwardLabels(previousSpec, fixedSpec);
+      // Round 2090: requestSpecFix above is a genuine second AI call --
+      // the exact same genuine-await-before-commit shape already closed on
+      // five other call sites (both upload routes, WhatsApp send, /refine,
+      // /answers -- rounds 2086-2089), just reached through this shared
+      // generator's own repair path instead of directly in a route
+      // handler. The route's own entry-point requireProjectWriteAccess ran
+      // once, long before this whole pipeline -- and its first,
+      // already-failed diffAndMigrate attempt above -- ever started; the
+      // owner can demote this exact caller to viewer, or remove them as a
+      // collaborator entirely, via an ordinary fast request while this AI
+      // call is in flight, same as every other fixed call site.
+      // activePipelines (routes/projects.ts) only ever blocks a SECOND
+      // build/refine/answers/restore from racing this same project, never
+      // this. Rechecked here, right before the real commit
+      // (diffAndMigrate just below) -- not thrown as an HttpError the way
+      // those five other sites do, since this generator's SSE response has
+      // already committed a 200 status by now; see stillHasWriteAccess's
+      // own doc comment for why.
+      if (!stillHasWriteAccess(db, project.id, options.createdByUserId)) {
+        yield {
+          agent: "Debug",
+          status: "failed",
+          message: "Access to this project changed while the automatic fix was being prepared, so it was discarded instead of being applied.",
+        };
+        return;
+      }
       changes = diffAndMigrate(db, project.id, previousSpec, fixedSpec);
     } catch (fixErr) {
       yield {
