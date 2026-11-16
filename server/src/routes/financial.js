@@ -20,6 +20,16 @@ export function listWatchlist(req, res) {
 // exists to prevent, just via a path that check alone doesn't close.
 const symbolsBeingAdded = new Set();
 
+// A real stock ticker is never more than a handful of characters (the
+// longest real-world symbols run to roughly a dozen) - without this, a
+// symbol field with no cap at all would store an arbitrarily huge string
+// verbatim in financial_watchlist forever (there's no size limit on this
+// table unlike actions.js's own MAX_MESSAGE_LENGTH precedent for a
+// free-text field), and - while connected - get URL-encoded into a real
+// request to twelvedata.com that only ever wastes a real, rate-limited API
+// call on a symbol that can never actually exist.
+const MAX_SYMBOL_LENGTH = 20;
+
 export async function addToWatchlist(req, res) {
   const { symbol } = req.body ?? {};
   // A non-string symbol (an object, a number) would otherwise be stored
@@ -29,6 +39,9 @@ export async function addToWatchlist(req, res) {
   // not just that one row — this stops it at the door instead.
   if (!symbol || typeof symbol !== 'string' || !symbol.trim()) {
     return res.status(400).json({ error: 'סימבול הוא שדה חובה וחייב להיות מחרוזת לא ריקה' });
+  }
+  if (symbol.trim().length > MAX_SYMBOL_LENGTH) {
+    return res.status(400).json({ error: `סימבול חייב להיות עד ${MAX_SYMBOL_LENGTH} תווים` });
   }
   const normalizedSymbol = symbol.trim().toUpperCase();
 
@@ -131,6 +144,12 @@ export function createPaperTrade(req, res) {
   // straight through and get stored as a paper trade with a blank-looking
   // symbol in the list below.
   if (!symbol || typeof symbol !== 'string' || !symbol.trim()) return res.status(400).json({ error: 'סימבול הוא שדה חובה' });
+  // Same cap as addToWatchlist above, for the same reason - a real ticker
+  // is never more than a handful of characters, and this one has no
+  // external API call to reject an absurd value for it either.
+  if (symbol.trim().length > MAX_SYMBOL_LENGTH) {
+    return res.status(400).json({ error: `סימבול חייב להיות עד ${MAX_SYMBOL_LENGTH} תווים` });
+  }
   const normalizedSymbol = symbol.trim().toUpperCase();
   // simulateTradeResult (engine/paperTrading.js) already throws on an
   // unrecognized side - this check exists so a typo like "Long" or "buy"

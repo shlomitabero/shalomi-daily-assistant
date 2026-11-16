@@ -42,6 +42,32 @@ test('addToWatchlist rejects a missing or non-string symbol instead of storing a
   assert.equal(db.financial_watchlist.all().length, 0);
 });
 
+test('addToWatchlist rejects a symbol over the length cap instead of storing an absurd value or wasting a real API call on it', async () => {
+  // A real ticker is never more than a handful of characters - without a
+  // cap, an arbitrarily huge symbol would be stored verbatim forever (no
+  // size limit on this table otherwise) and, while connected, URL-encoded
+  // into a real request to twelvedata.com that can never succeed.
+  __resetForTests();
+  const res = makeRes();
+  await addToWatchlist({ body: { symbol: 'A'.repeat(21) } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /20 תווים/);
+  assert.equal(db.financial_watchlist.all().length, 0);
+});
+
+test('addToWatchlist accepts a symbol exactly at the length cap', async () => {
+  __resetForTests();
+  const original = process.env.MARKET_DATA_API_KEY;
+  delete process.env.MARKET_DATA_API_KEY;
+  try {
+    const res = makeRes();
+    await addToWatchlist({ body: { symbol: 'A'.repeat(20) } }, res);
+    assert.equal(res.statusCode, 201);
+  } finally {
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+  }
+});
+
 test('addToWatchlist rejects a request with no body at all instead of throwing', async () => {
   // req.body is undefined, not {}, when body-parser didn't run for this
   // request at all (e.g. a missing/wrong content-type) - every other test
@@ -308,6 +334,15 @@ test('createPaperTrade rejects a whitespace-only symbol instead of storing a bla
   createPaperTrade({ body: { symbol: '   ', side: 'long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
   assert.equal(res.statusCode, 400);
   assert.match(res.body.error, /סימבול הוא שדה חובה/);
+  assert.equal(db.paper_trades.all().length, 0);
+});
+
+test('createPaperTrade rejects a symbol over the length cap, same as addToWatchlist', () => {
+  __resetForTests();
+  const res = makeRes();
+  createPaperTrade({ body: { symbol: 'A'.repeat(21), side: 'long', entryPrice: 100, exitPrice: 110, quantity: 1 } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /20 תווים/);
   assert.equal(db.paper_trades.all().length, 0);
 });
 
