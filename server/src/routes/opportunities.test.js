@@ -70,6 +70,50 @@ test('createDigitalProduct rejects a missing topic or audience before drafting a
   assert.equal(db.opportunities.all().length, 0);
 });
 
+test('createDigitalProduct rejects a non-string topic or audience instead of crashing on .trim()', async () => {
+  // A number/object/array passes the truthy check unharmed and then throws
+  // "topic.trim is not a function" - asyncHandler catches it so the process
+  // survives, but it still reaches the owner as a generic 500 instead of
+  // this function's own clean 400.
+  __resetForTests();
+  const resNumberTopic = makeRes();
+  await createDigitalProduct({ body: { topic: 123, audience: 'יזמים' } }, resNumberTopic);
+  assert.equal(resNumberTopic.statusCode, 400);
+  assert.equal(resNumberTopic.body.error, 'נושא הוא שדה חובה');
+
+  const resObjectAudience = makeRes();
+  await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: {} } }, resObjectAudience);
+  assert.equal(resObjectAudience.statusCode, 400);
+  assert.equal(resObjectAudience.body.error, 'קהל מטרה הוא שדה חובה');
+  assert.equal(db.opportunities.all().length, 0);
+});
+
+test('createDigitalProduct rejects a topic or audience over the length cap instead of sending it to a real, billed AI call', async () => {
+  __resetForTests();
+  const tooLong = 'א'.repeat(201);
+
+  const resTopic = makeRes();
+  await createDigitalProduct({ body: { topic: tooLong, audience: 'יזמים' } }, resTopic);
+  assert.equal(resTopic.statusCode, 400);
+  assert.match(resTopic.body.error, /200 תווים/);
+
+  const resAudience = makeRes();
+  await createDigitalProduct({ body: { topic: 'ניהול זמן', audience: tooLong } }, resAudience);
+  assert.equal(resAudience.statusCode, 400);
+  assert.match(resAudience.body.error, /200 תווים/);
+  assert.equal(db.opportunities.all().length, 0);
+});
+
+test('createDigitalProduct accepts a topic/audience exactly at the length cap', async () => {
+  __resetForTests();
+  await withoutAnthropicKey(async () => {
+    const exactly200 = 'א'.repeat(200);
+    const res = makeRes();
+    await createDigitalProduct({ body: { topic: exactly200, audience: exactly200 } }, res);
+    assert.equal(res.statusCode, 201);
+  });
+});
+
 test('createDigitalProduct rejects a request with no body at all instead of throwing', async () => {
   // req.body is undefined, not {}, when body-parser didn't run for this
   // request at all (e.g. a missing/wrong content-type) - every other test

@@ -18,13 +18,37 @@ function withFeasibility(opportunity) {
   return { ...opportunity, feasibility, netProfitMid };
 }
 
+// Every other free-text field this app accepts (actions.js's client-error
+// message/path, financial.js's symbol) is type-checked before anything else
+// touches it - topic/audience were the one exception. A non-string value
+// (a number, object, array) passes the truthy check below unharmed, then
+// crashes on topic.trim() with a raw "topic.trim is not a function" -
+// asyncHandler below catches it so the process survives, but it still
+// reaches the owner as a generic 500 "שגיאת שרת פנימית" instead of the
+// clean 400 this function already gives an empty topic one line below.
+const MAX_TOPIC_AUDIENCE_LENGTH = 200;
+
 // The one proven end-to-end path: AI drafts a real digital product + sales
 // copy. Demand/revenue is left as missing data (never fabricated) until the
 // owner sets their own estimate on the card.
 export async function createDigitalProduct(req, res) {
   const { topic, audience } = req.body ?? {};
-  if (!topic || !topic.trim()) return res.status(400).json({ error: 'נושא הוא שדה חובה' });
-  if (!audience || !audience.trim()) return res.status(400).json({ error: 'קהל מטרה הוא שדה חובה' });
+  if (!topic || typeof topic !== 'string' || !topic.trim()) return res.status(400).json({ error: 'נושא הוא שדה חובה' });
+  if (!audience || typeof audience !== 'string' || !audience.trim()) return res.status(400).json({ error: 'קהל מטרה הוא שדה חובה' });
+  // Both feed straight into a real, billed Anthropic API call
+  // (engine/productDraft.js's buildProductPrompt) with no cap of their own -
+  // an API client bug or a stolen owner token sending a huge topic/audience
+  // here would inflate that call's real cost with no limit at all, the same
+  // "real-money AI spend" risk MAX_PENDING_DRAFTS below already guards
+  // against for request COUNT, just unguarded here for request SIZE. 200
+  // comfortably covers any real topic/audience phrase (the form's own
+  // placeholders are a few words) with room to spare.
+  if (topic.trim().length > MAX_TOPIC_AUDIENCE_LENGTH) {
+    return res.status(400).json({ error: `נושא חייב להיות עד ${MAX_TOPIC_AUDIENCE_LENGTH} תווים` });
+  }
+  if (audience.trim().length > MAX_TOPIC_AUDIENCE_LENGTH) {
+    return res.status(400).json({ error: `קהל מטרה חייב להיות עד ${MAX_TOPIC_AUDIENCE_LENGTH} תווים` });
+  }
 
   // runAutonomousScan already refused a new draft past this same cap - this
   // manual route had no such limit at all, even though each draft here is
