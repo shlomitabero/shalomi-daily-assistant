@@ -3367,6 +3367,64 @@ test("an incoming WhatsApp encrypted emoji reaction (encReactionMessage) is logg
 });
 
 /**
+ * Round 2046: secretEncryptedMessage is Baileys' genuinely-encrypted
+ * sibling of editedMessage/protocolMessage's MESSAGE_EDIT path -- the same
+ * "detect presence only" relationship encCommentMessage/encReactionMessage/
+ * encEventResponseMessage above already have with their own plaintext
+ * siblings. Confirmed against the installed Baileys protobuf
+ * (WAProto.proto): SecretEncryptedMessage is `{ targetMessageKey,
+ * encPayload, encIv, secretEncType }`, byte-for-byte the same encrypted
+ * shape as those three. Its secretEncType enum (UNKNOWN=0, EVENT_EDIT=1,
+ * MESSAGE_EDIT=2) distinguishes editing a shared WhatsApp "Event" from
+ * editing an ordinary text/media message -- eventMessage has no edit
+ * notification of its own otherwise, since ProtocolMessage.Type has no
+ * "event edit" value at all.
+ */
+test("an incoming WhatsApp encrypted edited message (secretEncryptedMessage, MESSAGE_EDIT) is logged with a descriptive placeholder instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { secretEncryptedMessage: { secretEncType: 2 } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "[Edited]");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+test("an incoming WhatsApp encrypted edited Event (secretEncryptedMessage, EVENT_EDIT) is distinguished from an ordinary edited message, instead of being silently dropped", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [
+      { key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false }, message: { secretEncryptedMessage: { secretEncType: 1 } } },
+    ],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body, "[Event edited]");
+  assert.equal(messages[0].direction, "in", "the placeholder row must still be a real, matched-against incoming message, not metadata");
+});
+
+/**
  * Round 1576: WhatsApp Business's native "Create/Send Invoice" chat action
  * produces invoiceMessage. Confirmed directly against the installed
  * Baileys protobuf (WAProto.proto: InvoiceMessage's `note` field is

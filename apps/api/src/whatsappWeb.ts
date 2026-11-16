@@ -179,6 +179,7 @@ export interface BaileysIncomingMessage {
     viewOnceMessageV2Extension?: { message?: BaileysIncomingMessage["message"] };
     documentWithCaptionMessage?: { message?: BaileysIncomingMessage["message"] };
     editedMessage?: { message?: BaileysIncomingMessage["message"] };
+    secretEncryptedMessage?: { secretEncType?: number };
     protocolMessage?: { type?: number; editedMessage?: BaileysIncomingMessage["message"] };
     pinInChatMessage?: { type?: number };
     keepInChatMessage?: { keepType?: number };
@@ -980,6 +981,28 @@ function describeIncomingMessage(message: BaileysIncomingMessage["message"]): st
   if (message.editedMessage) {
     const inner = describeIncomingMessage(message.editedMessage.message);
     return inner ? `[Edited] ${inner}` : "[Edited]";
+  }
+  // Round 2046: secretEncryptedMessage is Baileys' end-to-end-encrypted
+  // sibling of the plaintext editedMessage/protocolMessage(MESSAGE_EDIT)
+  // paths just above -- confirmed against the installed Baileys protobuf
+  // (WAProto.proto's Message.SecretEncryptedMessage: targetMessageKey,
+  // encPayload, encIv, secretEncType), byte-for-byte the same shape as the
+  // encCommentMessage/encEventResponseMessage/encReactionMessage siblings
+  // already handled elsewhere in this function under the same "detect
+  // presence only, since content is genuinely encrypted" bar (round 1600).
+  // secretEncType distinguishes MESSAGE_EDIT (an edited text/media message,
+  // same event as editedMessage above) from EVENT_EDIT (editing a shared
+  // WhatsApp "Event" -- eventMessage above has no edit notification of its
+  // own otherwise, since ProtocolMessage.Type has no "event edit" value at
+  // all). Without this, either kind of edit delivered this way fell
+  // straight through to the final `return null` and vanished from the
+  // message log with zero trace, the exact failure mode this file's own
+  // long chain of Round-N fixes for previously-unhandled Baileys message
+  // types already exists to close.
+  if (message.secretEncryptedMessage) {
+    const SECRET_ENC_TYPE_EVENT_EDIT = 1;
+    if (message.secretEncryptedMessage.secretEncType === SECRET_ENC_TYPE_EVENT_EDIT) return "[Event edited]";
+    return "[Edited]";
   }
   // Round 1507: WhatsApp's own "Pin message"/"Unpin message" chat action
   // (long-press a message, tap Pin/Unpin) arrives as a message whose
