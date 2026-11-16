@@ -3704,6 +3704,62 @@ test("AutomationsPanel's webhook action shows a translated invalid-URL message a
 });
 
 /**
+ * Round 2065: a local/private webhookUrl (e.g. "http://localhost:3000/hook"
+ * or "http://127.0.0.1/x") passes the native type="url" format check round
+ * 1589 added just above cleanly -- it's a syntactically real URL, just one
+ * automations.ts's own isAllowedWebhookUrl rejects server-side as an SSRF
+ * guard. Without a client-side mirror of that same check, Create silently
+ * fired the real POST, which the server refused with a specific, helpful
+ * reason that resolveErrorMessage's VALIDATION_ERROR handling discards (by
+ * design) for the generic "submitted data isn't valid" banner -- leaving
+ * no clue why a URL that looks valid was rejected. Confirms the new
+ * isBlockedWebhookHostname pre-check catches this before any request.
+ */
+test("AutomationsPanel's webhook action shows a translated local/private-address message and sends zero requests when webhookUrl points at a local or private host", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let createCalls = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj5/automations") {
+        return new Response(JSON.stringify({ rules: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj5/entities/Ticket/automations") {
+        createCalls += 1;
+        throw new Error("createAutomationRule must never be called when webhookUrl points at a local/private host");
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanelWith(triggerFieldProject);
+      await waitForCondition(() => document.body.textContent?.includes("No automations yet") ?? false);
+
+      const actionSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "webhook"),
+      ) as HTMLSelectElement;
+      fireEvent.change(actionSelect, { target: { value: "webhook" } });
+
+      const urlInput = document.querySelector('input[type="url"]') as HTMLInputElement;
+      fireEvent.change(urlInput, { target: { value: "http://localhost:3000/hook" } });
+
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "New ticket!" } });
+      fireEvent.submit(document.querySelector(".automations-create-form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(createCalls, 0, "the API must never be called when webhookUrl points at a local/private host");
+      const errorEl = document.querySelector(".error");
+      assert.ok(errorEl, "expected a visible local/private-address error");
+      assert.match(errorEl!.textContent ?? "", /local or private address/i);
+      assert.equal(errorEl!.getAttribute("role"), "status");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1364: the exact same bug class round 1363 closed for
  * EntityPanel.tsx's record-form Save button -- handleSubmit here had no
  * guard against racing ITSELF (every other action in this panel already

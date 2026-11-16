@@ -37,6 +37,43 @@ const LOCALE: Record<string, string> = { he: "he-IL", en: "en-US" };
 const RELATION_PICKER_OPTION_CAP = 200;
 
 /**
+ * Round 2065: a client-side mirror of automations.ts's own
+ * isAllowedWebhookUrl (not imported -- advisory only, so it only needs the
+ * common, realistic local/private hostnames a real user might actually
+ * type; the server stays the sole authority and still rejects anything
+ * this misses). Without this, webhookUrl only had a native type="url"
+ * FORMAT check (describeInvalidField below) -- "http://localhost:3000/hook"
+ * or "http://127.0.0.1/abc" pass that cleanly, so Create/Save silently
+ * round-trips to the server, which refuses it with a specific, helpful
+ * reason that resolveErrorMessage's VALIDATION_ERROR handling then
+ * discards for the generic "submitted data isn't valid" banner (by
+ * design, see EntityPanel.test.ts's round-1167 comment) -- leaving no
+ * clue why a URL that looks valid was rejected.
+ */
+function isBlockedWebhookHostname(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false; // native type="url" validation already catches this
+  }
+  const hostname = url.hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "0.0.0.0" ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    hostname === "::" ||
+    hostname === "[::]" ||
+    /^127\./.test(hostname) ||
+    /^10\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^169\.254\./.test(hostname)
+  );
+}
+
+/**
  * If-this-then-that automation rules on top of this app's existing
  * WhatsApp integration: "when a record in this entity is created, or a
  * field on it is set to a given value, send a WhatsApp message." Firing
@@ -822,6 +859,15 @@ export function AutomationsPanel({
     if (invalid) {
       setError(describeInvalidField(invalid));
       invalid.focus();
+      return;
+    }
+    // Round 2065: see isBlockedWebhookHostname's own doc comment -- a
+    // local/private webhookUrl passes the native type="url" check above
+    // cleanly, so without this it would silently round-trip to the
+    // server's own isAllowedWebhookUrl rejection and surface only the
+    // generic VALIDATION_ERROR banner, with no clue why.
+    if (actionType === "webhook" && isBlockedWebhookHostname(webhookUrl)) {
+      setError(t("automations.webhookUrl.blockedLocal"));
       return;
     }
     setCreateBusy(true);
