@@ -709,6 +709,17 @@ test("HistoryPanel's 'What would change?' toggle shows the real entities/fields 
  * the same flat "No changes" text the genuinely-identical checkpoint
  * above gets, telling the reader restoring is a no-op when it would
  * actually rename the entity back on screen.
+ *
+ * Round 2071: this test's original fixture had BOTH sides carrying their
+ * own explicit label ("Customers" vs "Clients") -- apps/api/src/
+ * pipeline.ts's carryForwardLabels (rounds 915/929, shipped after round
+ * 2036) means a restore would actually keep the LIVE spec's own label in
+ * that case, so that scenario is no longer genuinely restorable (see
+ * checkpointDiff.test.ts's own round-2071 tests). Switched to the
+ * direction that still is: the live spec has NO label of its own at all
+ * (falls back to the raw entity name "Customer"), while the checkpoint
+ * has an explicit one -- carryForwardLabels' own guard never fires here,
+ * so restoring really would apply the checkpoint's frozen label.
  */
 test("HistoryPanel's 'What would change?' toggle distinguishes a label-only difference from a genuinely identical checkpoint, instead of calling both 'No changes'", async () => {
   await withJsdom(async () => {
@@ -720,7 +731,7 @@ test("HistoryPanel's 'What would change?' toggle distinguishes a label-only diff
     };
     const currentSpec: ProductSpec = {
       ...labelOnlyCheckpoint.spec,
-      entities: [{ name: "Customer", label: "Clients", fields: [{ name: "name", type: "text", required: true }] }],
+      entities: [{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }],
     };
 
     globalThis.fetch = (async (input: string, init?: RequestInit) => {

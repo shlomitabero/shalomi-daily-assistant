@@ -410,7 +410,19 @@ test("computeCheckpointDiff reports a same-named enum field whose enumValues cha
  * only re-labels an enum's existing options, leaving enumValues/type/
  * required untouched, was invisible to this diff entirely.
  */
-test("computeCheckpointDiff reports a same-named enum field as changedFieldNames when only its enumLabels differ, even with identical enumValues", () => {
+/**
+ * Round 2071: this used to assert `changedFieldNames: ["Status"]` here,
+ * on the premise that any enumLabels difference is a real, restorable
+ * change -- but apps/api/src/pipeline.ts's carryForwardLabels (rounds
+ * 915/929, shipped after this test's own original round) makes restore
+ * ALWAYS keep the live spec's own enum label for any value the live spec
+ * already labels. Since `current` here already labels both "New" and
+ * "Done", restoring this checkpoint (which has no enumLabels at all)
+ * would change nothing -- the checkpoint's own missing labels never
+ * actually take effect. See the test just below for the genuinely
+ * restorable, opposite-direction case this round's fix still catches.
+ */
+test("computeCheckpointDiff does not flag an enum field as changed when the LIVE spec already labels every value the checkpoint doesn't", () => {
   const current = makeSpec([
     {
       name: "Order",
@@ -428,6 +440,35 @@ test("computeCheckpointDiff reports a same-named enum field as changedFieldNames
   ]);
   const checkpoint = makeSpec([
     { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+
+  const diff = computeCheckpointDiff(current, checkpoint);
+  assert.deepEqual(
+    diff.changedEntities,
+    [],
+    "restoring can never actually apply the checkpoint's own (absent) enumLabels when the live spec already labels every value itself",
+  );
+});
+
+/**
+ * Round 2071: the genuinely restorable direction -- here it's the
+ * CHECKPOINT that has a custom label for "Done" and the live spec that
+ * has none at all, so carryForwardLabels' own guard (`if
+ * (prevField.enumLabels[value] !== undefined)`) never fires for "Done"
+ * and the checkpoint's frozen label survives restore untouched, actually
+ * changing what's rendered.
+ */
+test("computeCheckpointDiff still flags an enum field as changed when the CHECKPOINT labels a value the live spec doesn't", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+  const checkpoint = makeSpec([
+    {
+      name: "Order",
+      fields: [
+        { name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"], enumLabels: { Done: "בוצע" } },
+      ],
+    },
   ]);
 
   const diff = computeCheckpointDiff(current, checkpoint);
@@ -449,27 +490,49 @@ test("computeCheckpointDiff does not flag an enum field as changed when enumLabe
 });
 
 /**
- * Round 818's finding (isCheckpointCurrent side): the identical gap --
- * a checkpoint whose enumValues/type/required all match the live spec but
- * whose enumLabels differ used to be wrongly reported "Current", even
- * though restoring it would visibly change every rendered instance of
- * that enum field.
+ * Round 2071: this used to assert `false` here, on the same now-corrected
+ * premise as the computeCheckpointDiff test above -- but restoring this
+ * checkpoint, which has no enumLabels at all, can never actually change
+ * anything when the live spec already labels every one of its enum
+ * values itself (carryForwardLabels always keeps the live label in that
+ * case). The checkpoint IS genuinely current.
  */
-test("isCheckpointCurrent is false when a same-named enum field's enumLabels differ, even though enumValues/type/required all match", () => {
+test("isCheckpointCurrent is still true when a same-named enum field's enumLabels differ, if the LIVE spec already labels every value the checkpoint doesn't", () => {
   const current = makeSpec([
     {
       name: "Order",
       fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Done"], enumLabels: { New: "חדש", Done: "בוצע" } }],
     },
   ]);
-  const enumLabelsChanged = makeSpec([
+  const checkpointMissingLabels = makeSpec([
     { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
   ]);
 
   assert.equal(
-    isCheckpointCurrent(current, enumLabelsChanged),
+    isCheckpointCurrent(current, checkpointMissingLabels),
+    true,
+    "restoring can never actually apply the checkpoint's own (absent) enumLabels when the live spec already labels every value itself",
+  );
+});
+
+/**
+ * Round 2071: the genuinely restorable direction -- the checkpoint labels
+ * "Done" and the live spec doesn't, so restoring really would change what
+ *'s rendered for that value (see the matching computeCheckpointDiff test
+ * above for the identical reasoning).
+ */
+test("isCheckpointCurrent is false when the CHECKPOINT labels an enum value the live spec doesn't", () => {
+  const current = makeSpec([
+    { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Done"] }] },
+  ]);
+  const checkpointHasExtraLabel = makeSpec([
+    { name: "Order", fields: [{ name: "status", type: "enum", required: true, enumValues: ["New", "Done"], enumLabels: { Done: "בוצע" } }] },
+  ]);
+
+  assert.equal(
+    isCheckpointCurrent(current, checkpointHasExtraLabel),
     false,
-    "same enumValues, type, and required must not be enough when the field's own enumLabels genuinely differ",
+    "restoring would genuinely apply the checkpoint's own label for a value the live spec doesn't label at all",
   );
 });
 
@@ -649,19 +712,17 @@ test("isCheckpointCurrent is false when an entity's own description differs, eve
 });
 
 /**
- * Round 874's finding: isCheckpointCurrent had the identical gap round 817
- * already fixed for description -- a checkpoint whose entities/fields
- * match the live spec byte-for-byte (fieldSignature deliberately excludes
- * a field's own label, for computeCheckpointDiff's narrower "is this a
- * structural change" question) but whose entity/field LABEL differs used
- * to be wrongly reported "Current" too. An entity/field label rename
- * (routes/projects.ts's PATCH .../label routes) never creates a new
- * checkpoint, so every pre-existing checkpoint keeps the old label while
- * the live spec shows the new one -- restoring that checkpoint would
- * genuinely change the rendered label back, which isCheckpointCurrent
- * must not call "already current".
+ * Round 874 originally asserted `false` for both cases here. Round 2071:
+ * apps/api/src/pipeline.ts's carryForwardLabels (rounds 915/929, shipped
+ * after round 874) means a restore ALWAYS keeps the live spec's own
+ * label when it has one -- so when `current` already has its own
+ * explicit label (as in both cases below), restoring a checkpoint with a
+ * DIFFERENT frozen label changes nothing at all; the checkpoint IS
+ * genuinely current. See the test just below for the genuinely
+ * restorable, opposite-direction case this round's fix still catches
+ * (the live spec having no label of its own at all).
  */
-test("isCheckpointCurrent is false when an entity's or a field's own label differs, even though every other property is byte-identical", () => {
+test("isCheckpointCurrent is still true when an entity's or a field's own label differs, if the LIVE spec already has its own label either way", () => {
   const current = makeSpec([
     { name: "Customer", label: "Customer", fields: [{ name: "name", label: "Name", type: "text", required: true }] },
   ]);
@@ -674,13 +735,38 @@ test("isCheckpointCurrent is false when an entity's or a field's own label diffe
 
   assert.equal(
     isCheckpointCurrent(current, entityLabelChanged),
-    false,
-    "identical entities/fields must not be enough when the entity's own label genuinely differs",
+    true,
+    "restoring can never actually apply the checkpoint's own entity label when the live spec already has its own",
   );
   assert.equal(
     isCheckpointCurrent(current, fieldLabelChanged),
+    true,
+    "restoring can never actually apply the checkpoint's own field label when the live spec already has its own",
+  );
+});
+
+/**
+ * Round 2071: the genuinely restorable direction -- the live spec has NO
+ * label of its own at all (falls back to the raw name), while the
+ * checkpoint has an explicit one. carryForwardLabels' own guard (`if
+ * (prevField.label !== undefined)`) never fires here, so the checkpoint's
+ * frozen label survives restore untouched, actually changing what's
+ * rendered from the raw name to that label.
+ */
+test("isCheckpointCurrent is false when the CHECKPOINT has its own entity/field label and the live spec has none at all", () => {
+  const current = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
+  const entityHasExtraLabel = makeSpec([{ name: "Customer", label: "Client", fields: [{ name: "name", type: "text", required: true }] }]);
+  const fieldHasExtraLabel = makeSpec([{ name: "Customer", fields: [{ name: "name", label: "Full Name", type: "text", required: true }] }]);
+
+  assert.equal(
+    isCheckpointCurrent(current, entityHasExtraLabel),
     false,
-    "identical entities/fields must not be enough when a field's own label genuinely differs",
+    "restoring would genuinely apply the checkpoint's own entity label when the live spec has none of its own",
+  );
+  assert.equal(
+    isCheckpointCurrent(current, fieldHasExtraLabel),
+    false,
+    "restoring would genuinely apply the checkpoint's own field label when the live spec has none of its own",
   );
 });
 
@@ -1188,10 +1274,19 @@ test("formatCheckpointHistory omits the diff section entirely for a checkpoint w
  * round, that combination silently omitted the whole diff block --
  * telling the reader nothing differs, when restoring this checkpoint
  * would genuinely rename the entity back on screen.
+ *
+ * Round 2071: this test's original fixture had BOTH sides carrying their
+ * own explicit label ("Clients" vs "Customers") -- apps/api/src/
+ * pipeline.ts's carryForwardLabels (rounds 915/929, shipped after round
+ * 2036) means a restore would actually keep the LIVE spec's own label in
+ * that case, so that scenario is no longer genuinely restorable (see
+ * this file's own round-2071 tests just above). Switched to the
+ * direction that still is: the live spec has NO label of its own at all,
+ * while the checkpoint has an explicit one.
  */
 test("formatCheckpointHistory surfaces a checkpoint as not-current with no entity/field changes, instead of silently omitting the diff section, when only an entity's label differs", () => {
   const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
-  const currentSpec = makeSpec([{ name: "Customer", label: "Clients", fields: [{ name: "name", type: "text", required: true }] }]);
+  const currentSpec = makeSpec([{ name: "Customer", fields: [{ name: "name", type: "text", required: true }] }]);
   const checkpointSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
   const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: checkpointSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null }];
 

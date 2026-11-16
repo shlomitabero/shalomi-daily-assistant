@@ -18,6 +18,47 @@ export interface CheckpointDiff {
 }
 
 /**
+ * Round 2071: whether actually clicking Restore would change this enum
+ * field's rendered labels at all, given what a restore's own
+ * carryForwardLabels (apps/api/src/pipeline.ts, rounds 915/929) really
+ * does to them -- not a naive "do the two enumLabels maps differ" check,
+ * which is what fieldSignature's own enumLabelsPart used to fold in below
+ * (removed as of this round for the same reason: it disagreed with what a
+ * real restore produces). carryForwardLabels keeps the LIVE label for any
+ * enum value where the live spec has one, and only lets the checkpoint's
+ * own frozen label through for a value where the live spec has none at
+ * all -- so restoring only changes what's rendered for a value where
+ * `current` has no override but `inCheckpoint` does. Mirrored, not
+ * imported, matching this file's established per-surface-duplication
+ * convention for anything restore-related (isAllowedWebhookUrl's own
+ * client-side siblings are the same pattern in a different file).
+ */
+function wouldRestoreChangeEnumLabels(current: Field, inCheckpoint: Field): boolean {
+  if (current.type !== "enum" || inCheckpoint.type !== "enum") return false;
+  const currentLabels = current.enumLabels ?? {};
+  const checkpointLabels = inCheckpoint.enumLabels ?? {};
+  for (const value of inCheckpoint.enumValues ?? []) {
+    const postRestore = currentLabels[value] !== undefined ? currentLabels[value] : checkpointLabels[value];
+    if ((postRestore ?? value) !== (currentLabels[value] ?? value)) return true;
+  }
+  return false;
+}
+
+/**
+ * Round 2071: the identical "what would Restore actually do" question as
+ * wouldRestoreChangeEnumLabels just above, for a plain entity/field label
+ * instead of an enum value's label. carryForwardLabels keeps the LIVE
+ * label when the live spec has one at all, and only lets the checkpoint's
+ * own frozen label through when the live spec's is undefined -- so
+ * restoring only changes the rendered label when `current` has none but
+ * `inCheckpoint` does.
+ */
+function wouldRestoreChangeLabel(current: string | undefined, inCheckpoint: string | undefined, fallbackName: string): boolean {
+  const postRestore = current !== undefined ? current : inCheckpoint;
+  return (postRestore ?? fallbackName) !== (current ?? fallbackName);
+}
+
+/**
  * A field's "shape" for diff/current-check purposes -- everything about it
  * that changes what the app actually does with the field, not just its
  * display label (which computeCheckpointDiff intentionally never compares,
@@ -38,6 +79,19 @@ export interface CheckpointDiff {
  * checkpoint that only differs by a field's required flag is correctly
  * reported as changed / not current, in either direction (loosened or
  * tightened), rather than silently read as "the same field, unchanged".
+ *
+ * Round 2071: enumLabels used to be folded into this signature too (see
+ * this function's own prior history), on the same "real, pervasively
+ * user-rendered content" reasoning as `required` -- but unlike `required`,
+ * a restore never actually leaves an enum value's old label in place when
+ * the live spec already has its own: apps/api/src/pipeline.ts's
+ * carryForwardLabels (rounds 915/929, added well after this signature's
+ * enumLabels handling) always keeps the live label for any value the live
+ * spec already labels, and only falls back to the checkpoint's own frozen
+ * label where the live spec has none at all. A plain hash-equality check
+ * on the two maps can't express that asymmetric rule, so enumLabels is now
+ * compared separately by wouldRestoreChangeEnumLabels above, which
+ * actually simulates what carryForwardLabels would do.
  */
 function fieldSignature(f: Field): string {
   // Declared order, not sorted -- groupByField (entityFormatting.ts) renders
@@ -50,24 +104,6 @@ function fieldSignature(f: Field): string {
   // reorder invisible to both of this function's callers, the same miss this
   // file already fixed twice for enumLabels and description.
   const enumPart = f.type === "enum" ? (f.enumValues ?? []).join(",") : "";
-  // Real, pervasively user-rendered content -- the displayed text in table
-  // cells, Kanban board columns, form <select> options, automation rule
-  // conditions, calendar exports, and grouping/sort/search matching all
-  // read enumLabels, not the raw enumValue (entityFormatting.ts, calendarIcs.ts,
-  // AutomationsPanel.tsx). Not cosmetic like `label` (excluded deliberately,
-  // see this function's own doc comment above) -- a refine that only
-  // re-labels an enum's existing options, leaving enumValues/type/required
-  // untouched, used to be invisible here. Stringified as sorted
-  // "rawValue:displayLabel" pairs so key order never produces a spurious
-  // diff; undefined and {} are deliberately the same signature (both mean
-  // "no overrides, raw values shown as-is").
-  const enumLabelsPart =
-    f.type === "enum"
-      ? Object.entries(f.enumLabels ?? {})
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([value, label]) => `${value}:${label}`)
-          .join(",")
-      : "";
   // Round 1208: lowercased, not the raw string -- relationTo is never
   // itself rendered as text anywhere (the UI shows the resolved target
   // entity's own label/records, never this raw reference string), and
@@ -86,7 +122,7 @@ function fieldSignature(f: Field): string {
   // byte-identical checkpoint as not current, over a difference nothing
   // on screen could ever reveal.
   const relationPart = f.type === "relation" ? (f.relationTo ?? "").toLowerCase() : "";
-  return `${f.type}|${relationPart}|${enumPart}|${enumLabelsPart}|${f.required ? "required" : "optional"}`;
+  return `${f.type}|${relationPart}|${enumPart}|${f.required ? "required" : "optional"}`;
 }
 
 /**
@@ -279,7 +315,8 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
     const changedFieldNames = entity.fields
       .filter((f) => {
         const inCheckpointField = checkpointFieldsByName.get(f.name) ?? checkpointFieldsByLowerName.get(f.name.toLowerCase());
-        return inCheckpointField !== undefined && fieldSignature(f) !== fieldSignature(inCheckpointField);
+        if (inCheckpointField === undefined) return false;
+        return fieldSignature(f) !== fieldSignature(inCheckpointField) || wouldRestoreChangeEnumLabels(f, inCheckpointField);
       })
       .map((f) => fieldDisplayLabel(f, labelOccurrences));
     // Real, user-rendered content (EntityPanel.tsx: {entity.description &&
@@ -382,17 +419,18 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
     // structural change worth flagging" question -- but isCheckpointCurrent
     // asks a stricter one, "is this EXACTLY what's on screen right now",
     // the same reasoning the description check just above already applies.
-    // An entity/field label rename (routes/projects.ts's PATCH
-    // .../entities/:entityName/label and .../fields/:fieldName/label) does
-    // a direct updateProjectSpec write with no new checkpoint ever
-    // inserted (checkpoints only come from pipeline.ts's build/refine
-    // flow), so every pre-existing checkpoint still carries the old label
-    // while the live spec now shows the new one -- restoring that
-    // checkpoint would genuinely change the rendered label back, yet
-    // nothing here caught it, wrongly marking the checkpoint "Current" and
-    // permanently disabling the one action (Restore) that would actually
-    // undo the rename.
-    if ((entity.label ?? entity.name) !== (inCheckpoint.label ?? inCheckpoint.name)) return false;
+    // Round 2071: round 874's own original check here was a plain
+    // label-equality comparison, correct only until apps/api/src/
+    // pipeline.ts's carryForwardLabels (rounds 915/929) shipped -- restore
+    // now ALWAYS keeps the live entity's own label when it has one, and
+    // only lets the checkpoint's frozen label through when the live spec
+    // has none at all for that entity. A plain equality check still wrongly
+    // reports "not current" (and shows a live, enabled Restore button that
+    // can never actually change anything) for the overwhelmingly common
+    // case where both sides simply have their own different custom labels
+    // -- wouldRestoreChangeLabel simulates what a real restore would
+    // actually do instead of just diffing the two frozen values.
+    if (wouldRestoreChangeLabel(entity.label, inCheckpoint.label, entity.name)) return false;
     const currentFieldsByName = new Map(entity.fields.map((f) => [f.name, f]));
     const checkpointFieldsByName = new Map(inCheckpoint.fields.map((f) => [f.name, f]));
     if (currentFieldsByName.size !== checkpointFieldsByName.size) return false;
@@ -400,8 +438,13 @@ export function isCheckpointCurrent(currentSpec: ProductSpec, checkpointSpec: Pr
       const inCheckpointField = checkpointFieldsByName.get(fieldName);
       if (!inCheckpointField) return false;
       if (fieldSignature(field) !== fieldSignature(inCheckpointField)) return false;
+      // Round 2071: see wouldRestoreChangeEnumLabels' own doc comment --
+      // fieldSignature no longer folds enumLabels in, since a plain
+      // equality check disagreed with what carryForwardLabels actually
+      // does on restore.
+      if (wouldRestoreChangeEnumLabels(field, inCheckpointField)) return false;
       // Same reasoning as the entity label check just above, one level down.
-      if ((field.label ?? field.name) !== (inCheckpointField.label ?? inCheckpointField.name)) return false;
+      if (wouldRestoreChangeLabel(field.label, inCheckpointField.label, field.name)) return false;
     }
   }
 
