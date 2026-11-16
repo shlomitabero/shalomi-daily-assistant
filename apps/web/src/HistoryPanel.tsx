@@ -574,7 +574,25 @@ export function HistoryPanel({
                           {t("history.diff.comparingTo", { label: formatCompareTarget(checkpoints, compareTargetId, t, lang) })}
                         </p>
                         {!hasChanges ? (
-                          <p className="muted small">{t("history.diff.noChanges")}</p>
+                          <p className="muted small">
+                            {/* Round 2036: isCurrent is always computed against
+                                currentSpec (see its own declaration above), so it
+                                only applies when the dropdown's own baseline IS
+                                currentSpec too (compareTargetId === null,
+                                resolveCompareSpec's documented default) -- never
+                                when comparing against a different, explicitly
+                                chosen checkpoint, where isCurrent would say
+                                nothing about THIS comparison at all. computeCheckpointDiff
+                                deliberately never tracks an entity/field label
+                                rename (round 874) or a summary/roles/personas/
+                                screens/assumptions/openQuestions edit (none of
+                                which this diff tracks at all) -- any of those can
+                                make a checkpoint genuinely not current via a
+                                direct updateProjectSpec write that never creates
+                                a new checkpoint, so an empty diff here no longer
+                                safely implies "restoring changes nothing". */}
+                            {t(compareTargetId === null && !isCurrent ? "history.diff.noEntityChangesButNotCurrent" : "history.diff.noChanges")}
+                          </p>
                         ) : (
                           <ul className="detail-list">
                             {diff.removedEntities.map((e) => (

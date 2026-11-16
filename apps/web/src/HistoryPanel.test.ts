@@ -698,6 +698,78 @@ test("HistoryPanel's 'What would change?' toggle shows the real entities/fields 
 });
 
 /**
+ * Round 2036: see checkpointDiff.ts's own round-2036 doc comments
+ * (isCheckpointCurrent/formatCheckpointHistory) for the full bug -- an
+ * entity LABEL rename (PATCH .../entities/:entityName/label) is a direct
+ * updateProjectSpec write that never creates a new checkpoint, so
+ * computeCheckpointDiff (which deliberately never compares labels, round
+ * 874) reports an EMPTY diff against this checkpoint even though
+ * isCheckpointCurrent (which DOES compare labels) correctly says it's no
+ * longer current -- before this round, that combination wrongly showed
+ * the same flat "No changes" text the genuinely-identical checkpoint
+ * above gets, telling the reader restoring is a no-op when it would
+ * actually rename the entity back on screen.
+ */
+test("HistoryPanel's 'What would change?' toggle distinguishes a label-only difference from a genuinely identical checkpoint, instead of calling both 'No changes'", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const labelOnlyCheckpoint = makeCheckpoint("cp-label", "Initial build");
+    labelOnlyCheckpoint.spec = {
+      ...labelOnlyCheckpoint.spec,
+      entities: [{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }],
+    };
+    const currentSpec: ProductSpec = {
+      ...labelOnlyCheckpoint.spec,
+      entities: [{ name: "Customer", label: "Clients", fields: [{ name: "name", type: "text", required: true }] }],
+    };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [labelOnlyCheckpoint] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+
+      const item = document.querySelector(".checkpoint-list li")!;
+      assert.equal(item.querySelector(".checkpoint-current-chip"), null, "a checkpoint whose entity label differs must never be tagged Current state");
+
+      fireEvent.click(item.querySelector(".detail-toggle") as HTMLButtonElement);
+      await waitForCondition(() => item.querySelector(".detail-list, .muted.small:last-child") !== null);
+      assert.doesNotMatch(item.textContent ?? "", /No changes --/, "must not use the genuinely-identical checkpoint's own flat 'No changes' text");
+      assert.match(item.textContent ?? "", /restoring would still change something not shown here/, "must explicitly say restoring would change something, not silently imply nothing would");
+      assert.equal(item.querySelector(".detail-list"), null, "there is still no real entity/field diff to list");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: after restoring an OLDER checkpoint, the list's own
  * newest-first order no longer says which entry you're actually looking
  * at right now. Reuses the same "identical vs older" fixture shape as the

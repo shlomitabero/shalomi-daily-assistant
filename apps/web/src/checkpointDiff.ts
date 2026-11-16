@@ -517,12 +517,16 @@ export function formatCheckpointCount(
  * interactive "compare with" dropdown to pick a different baseline, and
  * "what would restoring this remove from the live app right now" is this
  * report's own primary purpose, matching every checkpoint's own `current`
- * tag just above (also computed against currentSpec). Omitted entirely
- * (no heading, no "no changes" line) when the diff is empty, rather than
- * mirroring the on-screen toggle's own explicit noChanges message -- the
- * one checkpoint this is ever true for is already the one tagged
- * `[Current state]` just above, so a redundant "no changes" line under it
- * would be pure noise in a report meant to be scanned across many entries.
+ * tag just above (also computed against currentSpec). Used to be omitted
+ * entirely (no heading, no "no changes" line) whenever the diff was
+ * empty, on the premise that the one checkpoint this is ever true for is
+ * already the one tagged `[Current state]` just above -- round 2036:
+ * that premise broke the moment round 874 made isCheckpointCurrent (the
+ * `[Current state]` tag's own source) check more than this diff does
+ * (entity/field labels, plus summary/roles/personas/screens/assumptions/
+ * openQuestions, none of which this diff tracks), so an empty diff no
+ * longer safely implies "this is the current state" -- see the loop
+ * body's own `!isCurrent` branch below for the fix.
  */
 export function formatCheckpointHistory(
   checkpoints: Checkpoint[],
@@ -561,15 +565,16 @@ export function formatCheckpointHistory(
 
   for (const checkpoint of checkpoints) {
     const time = new Date(checkpoint.createdAt).toLocaleString(LOCALE[lang]);
-    const current = isCheckpointCurrent(currentSpec, checkpoint.spec) ? ` [${t("history.current")}]` : "";
-    lines.push(`${checkpoint.label}${current}`);
+    const isCurrent = isCheckpointCurrent(currentSpec, checkpoint.spec);
+    lines.push(`${checkpoint.label}${isCurrent ? ` [${t("history.current")}]` : ""}`);
     // count must read spec.screens, not spec.entities -- see HistoryPanel.tsx's
     // own identical fix for why entities.length under-reports the real count.
     lines.push(`${time} — ${t(checkpoint.spec.screens.length === 1 ? "history.screenCount.one" : "history.screenCount.many", { count: checkpoint.spec.screens.length })}`);
     const creatorEmail = checkpoint.createdByUserId ? collaboratorEmails?.[checkpoint.createdByUserId] : undefined;
     if (creatorEmail) lines.push(t("history.createdBy", { email: creatorEmail }));
     const diff = computeCheckpointDiff(currentSpec, checkpoint.spec);
-    if (diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0) {
+    const hasChanges = diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0;
+    if (hasChanges) {
       lines.push(t("history.diff.show"));
       for (const e of diff.removedEntities) lines.push(`- ${t("history.diff.entityRemoved", { entity: e.label })}`);
       for (const e of diff.addedEntities) lines.push(`- ${t("history.diff.entityAdded", { entity: e.label })}`);
@@ -585,6 +590,22 @@ export function formatCheckpointHistory(
         }
         if (e.descriptionChanged) lines.push(`- ${t("history.diff.entityDescriptionChanged", { entity: e.label })}`);
       }
+    } else if (!isCurrent) {
+      // Round 2036: `current` above already covers every field
+      // isCheckpointCurrent checks that this diff deliberately doesn't
+      // (entity/field labels -- round 874's own reasoning -- plus
+      // summary/roles/personas/screens/assumptions/openQuestions, none of
+      // which computeCheckpointDiff tracks at all). Any of those can
+      // differ via a direct updateProjectSpec write that never creates a
+      // new checkpoint (entity/field label-rename routes; roles/
+      // personas/assumptions add/edit/delete routes) -- so an EMPTY diff
+      // here no longer safely implies "this is the current state", the
+      // premise this whole block used to rely on before round 874 ever
+      // existed. Surface that explicitly instead of silently omitting
+      // the block, rather than claim a specific cause this diff can't
+      // actually name.
+      lines.push(t("history.diff.show"));
+      lines.push(`- ${t("history.diff.noEntityChangesButNotCurrent")}`);
     }
     lines.push("");
   }

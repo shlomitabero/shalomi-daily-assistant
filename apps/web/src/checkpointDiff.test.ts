@@ -1175,6 +1175,33 @@ test("formatCheckpointHistory omits the diff section entirely for a checkpoint w
   assert.doesNotMatch(report, /No changes/, "and must not fall back to the on-screen toggle's own 'no changes' message either");
 });
 
+/**
+ * Round 2036: see isCheckpointCurrent's own round-874 doc comment and
+ * formatCheckpointHistory's own updated doc comment above for the full
+ * bug -- an entity LABEL rename (routes/projects.ts's PATCH
+ * .../entities/:entityName/label) is a direct updateProjectSpec write
+ * that never creates a new checkpoint, so computeCheckpointDiff (which
+ * deliberately never compares labels, round 874's own reasoning) reports
+ * an EMPTY diff between this checkpoint and the live app, even though
+ * isCheckpointCurrent (which DOES compare labels, also round 874)
+ * correctly says this checkpoint is no longer current. Before this
+ * round, that combination silently omitted the whole diff block --
+ * telling the reader nothing differs, when restoring this checkpoint
+ * would genuinely rename the entity back on screen.
+ */
+test("formatCheckpointHistory surfaces a checkpoint as not-current with no entity/field changes, instead of silently omitting the diff section, when only an entity's label differs", () => {
+  const t = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const currentSpec = makeSpec([{ name: "Customer", label: "Clients", fields: [{ name: "name", type: "text", required: true }] }]);
+  const checkpointSpec = makeSpec([{ name: "Customer", label: "Customers", fields: [{ name: "name", type: "text", required: true }] }]);
+  const checkpoints: Checkpoint[] = [{ id: "cp1", projectId: "p1", label: "Initial build", kind: "build", spec: checkpointSpec, createdAt: "2026-03-01T09:00:00.000Z", createdByUserId: null }];
+
+  const report = formatCheckpointHistory(checkpoints, currentSpec, "Flower Shop", "en", t);
+
+  assert.doesNotMatch(report, /Current state/, "a checkpoint whose entity label differs from the live app must not be tagged Current state");
+  assert.match(report, /What would change\?/, "the diff heading must still appear, not be silently omitted");
+  assert.match(report, /restoring would still change something not shown here/, "must explicitly say restoring would change something, not silently imply nothing would");
+});
+
 test("resolveCompareSpec returns currentSpec when compareTargetId is null, keeping the original 'vs current' behavior unchanged", () => {
   const currentSpec = makeSpec([{ name: "Customer", fields: [] }]);
   const checkpoints: Checkpoint[] = [
