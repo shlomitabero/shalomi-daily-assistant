@@ -1424,6 +1424,39 @@ test("the exported EntityView's formatImportSummary pluralizes created/updated/s
 });
 
 /**
+ * Round 2039: ported the live preview's round-2011 dedupeImportErrors fix
+ * (apps/web/src/entityFormatting.ts) to this exported app's generated
+ * EntityView.jsx, which never received it. A CSV/JSON import whose rows
+ * all hit the same validation problem -- e.g. several rows missing the
+ * same required field -- used to render that many byte-identical `<li>`s
+ * in the "Show errors" list. The generated copy has no i18n layer, so the
+ * "(xN)" suffix is a plain hardcoded string rather than a translate()
+ * call, but the collapsing behavior must match: a repeated message
+ * collapses to one entry with a count, a singleton passes through
+ * unchanged, and first-occurrence order is preserved.
+ */
+test("the exported EntityView's dedupeImportErrors collapses repeated identical messages into one line with a count, leaves singletons untouched", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const dedupeImportErrorsSrc = entityViewJsx.match(/function dedupeImportErrors\(errors\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(dedupeImportErrorsSrc, "expected to find dedupeImportErrors in the generated EntityView.jsx");
+
+  const dedupeImportErrors = new Function(`${dedupeImportErrorsSrc}\nreturn dedupeImportErrors;`)() as (errors: string[]) => string[];
+  const requiredFieldMissing = 'Field "Status" is required.';
+  const result = dedupeImportErrors([
+    requiredFieldMissing,
+    'Row 7: "9999" isn\'t a valid record id.',
+    requiredFieldMissing,
+    requiredFieldMissing,
+  ]);
+  assert.deepEqual(result, [`${requiredFieldMissing} (x3)`, 'Row 7: "9999" isn\'t a valid record id.']);
+
+  const uniqueErrors = ['Row 1: missing required field "Name".', 'Row 2: missing required field "Name".'];
+  assert.deepEqual(dedupeImportErrors(uniqueErrors), uniqueErrors, "an all-unique list must pass through unchanged");
+
+  assert.match(entityViewJsx, /\{dedupeImportErrors\(importErrors\)\.map\(/, "the import-errors list must render through dedupeImportErrors, not the raw array");
+});
+
+/**
  * Round 1258: the client-side half of the combined-feed port -- confirms
  * the generated App.jsx actually wires up an app-header "Subscribe (all
  * calendars)" button, next to the existing "Backup All Data" link, that

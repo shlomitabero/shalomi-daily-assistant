@@ -2145,6 +2145,38 @@ function formatImportSummary(createdCount, updatedCount, errorCount) {
   return msg;
 }
 
+// Round 2039: mirrors the live preview's own dedupeImportErrors
+// (entityFormatting.ts, round 2011) -- handleImportFile/handleImportJsonFile's
+// own importErrors mixes parseErrors (client-side, each already uniquely
+// prefixed with its own "Row N:") with serverErrors built from
+// err.message with no row identity attached at all. An ordinary, plausible
+// import mistake -- a spreadsheet missing a required column, or stale
+// relation ids from a different export -- rejects every affected row with
+// the identical fixed server message (e.g. "Field \"X\" is required" or
+// "This record references another record that no longer exists"),
+// flooding the "Show errors" list with hundreds of byte-identical <li>
+// entries that bury the one actionable signal. Collapses repeats of the
+// identical string (in first-occurrence order, so a genuinely distinct
+// "Row N:" text never collides with a different row's) into one line with
+// an "(xN)" count, mirroring entity.import.errorRepeated's own "{message}
+// (x{count})" phrasing -- this exported app has no i18n, so it's inlined
+// directly. A purely cosmetic, render-time-only transform: every caller
+// keeps using the original (undeduped) importErrors array's own .length
+// for created/updated/skipped counts, exactly like formatImportSummary
+// above already does.
+function dedupeImportErrors(errors) {
+  const counts = new Map();
+  const order = [];
+  for (const msg of errors) {
+    if (!counts.has(msg)) order.push(msg);
+    counts.set(msg, (counts.get(msg) || 0) + 1);
+  }
+  return order.map((msg) => {
+    const count = counts.get(msg);
+    return count > 1 ? \`\${msg} (x\${count})\` : msg;
+  });
+}
+
 function emptyForm(entity) {
   const form = {};
   for (const f of entity.fields) form[f.name] = f.type === "boolean" ? false : "";
@@ -9177,7 +9209,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       </div>
       {showImportErrors && importErrors.length > 0 && (
         <ul className="csv-import-errors">
-          {importErrors.map((msg, i) => (
+          {dedupeImportErrors(importErrors).map((msg, i) => (
             <li key={i}>{msg}</li>
           ))}
         </ul>
