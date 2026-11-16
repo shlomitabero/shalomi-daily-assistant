@@ -14111,9 +14111,12 @@ test("the exported EntityView renders a real picker for relation fields, not a r
   // records, not the old raw number input, once relatedEntityRecords has
   // actually loaded (see round 440's disabled-placeholder loading branch).
   assert.match(entityViewJsx, /field\.type === "relation" && relatedEntity\)/);
-  // filteredRecords (not the raw relatedEntityRecords) is what's actually
-  // rendered -- round 698's own filter input narrows this list client-side.
-  assert.match(entityViewJsx, /filteredRecords\.map/);
+  // displayedRecords (not the raw relatedEntityRecords, and -- since the
+  // relation-picker option cap -- not even the unsliced filteredRecords)
+  // is what's actually rendered -- round 698's own filter input narrows
+  // the list client-side, and the option cap slices it further when
+  // truncated.
+  assert.match(entityViewJsx, /displayedRecords\.map/);
   // CSV export also resolves the related record's label, not the raw id.
   assert.match(entityViewJsx, /function recordsToCsv\(fields, records, relatedRecords, includeId\)/);
 });
@@ -14167,15 +14170,17 @@ test("the exported EntityView's relation cells jump to the related record via th
   assert.match(cellSrc!, /<button type="button" className="link-button" onClick=\{\(\) => onJumpToRecord\(targetEntity, Number\(value\)\)\}>/);
   // Without a jump handler (or without a relationTo target), a relation
   // cell must still fall back to plain, non-clickable text -- the same
-  // guard the live-preview's own Cell uses.
-  assert.match(cellSrc!, /return <>\{label\}<\/>;/);
+  // guard the live-preview's own Cell uses. Round 1732's phone-bidi fix
+  // renamed the fallback's own rendered variable from the raw label to
+  // labelContent (bdi-wrapped when the label looks like a phone number).
+  assert.match(cellSrc!, /return <>\{labelContent\}<\/>;/);
 
   // Threaded through every layer that can render a relation cell: the
   // table, the Kanban board (via BoardCard), the per-entity View wrapper,
   // and App's own activeEntity.View call -- not just the leaf component.
   assert.match(
     entityViewJsx,
-    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd \}\)/,
+    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd, isPinned, onTogglePin \}\)/,
   );
   assert.match(entityViewJsx, /<Cell\s+field=\{f\}\s+value=\{record\[f\.name\]\}\s+relationLabel=\{[^}]+\}\s+highlightQuery=\{highlightQuery\}\s+onJumpToRecord=\{onJumpToRecord\}/);
   assert.match(entityViewJsx, /export function EntityView\(\{ entity, highlightRecordId, onHighlightHandled, onJumpToRecord, onRecordCountChange, onViewModeChange \}\)/);
@@ -16368,8 +16373,9 @@ test("the exported EntityView renders a real Undo toast after a single-record de
   // commitPendingDelete now runs every pending entry's delete through
   // Promise.allSettled -- round 321's generalization to a shared batch
   // shape with handleBulkDelete, mirroring the live preview's own round
-  // 320 change exactly.
-  assert.match(entityViewJsx, /async function commitPendingDelete\(pending\) \{\s*const results = await Promise\.allSettled\(pending\.entries\.map\(\(e\) => deleteRecord\(entity\.name, e\.id\)\)\);/);
+  // 320 change exactly. Round 1891 later added deleteRecord's 3rd arg
+  // (e.record) for pinned-record cleanup bookkeeping.
+  assert.match(entityViewJsx, /async function commitPendingDelete\(pending\) \{\s*const results = await Promise\.allSettled\(pending\.entries\.map\(\(e\) => deleteRecord\(entity\.name, e\.id, e\.record\)\)\);/);
   assert.match(entityViewJsx, /function handleUndoDelete\(\) \{/);
   assert.match(entityViewJsx, /className="entity-undo-toast"/);
   assert.match(entityViewJsx, /onClick=\{handleUndoDelete\}/);
@@ -21444,9 +21450,11 @@ test("the exported EntityView's Kanban board cards are drag-and-drop-able onto a
 
   assert.match(entityViewJsx, /const \[dragOverColumn, setDragOverColumn\] = useState\(null\);/);
   // BoardCard itself must be a real native drag source, not just visually styled.
+  // A bulk-action-busy guard on draggable/onDragStart, and a wired onDragEnd
+  // (round 1232-era additions), were later folded into this same JSX block.
   assert.match(
     entityViewJsx,
-    /<div className=\{hasMoveError \? "board-card board-card-move-error" : "board-card"\} draggable onDragStart=\{\(e\) => e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\)\}>/,
+    /<div\s*\n\s*className=\{hasMoveError \? "board-card board-card-move-error" : "board-card"\}\s*\n\s*draggable=\{!bulkActionBusy\}\s*\n\s*onDragStart=\{\(e\) => \{\s*\n\s*if \(bulkActionBusy\) return;\s*\n\s*e\.dataTransfer\.setData\("text\/plain", String\(record\.id\)\);\s*\n\s*\}\}\s*\n\s*onDragEnd=\{onDragEnd\}\s*\n\s*>/,
   );
   // handleCardDrop must guard against a real no-op (dropping a card back onto its own column) before ever calling handleMove.
   const dropSrc = entityViewJsx.match(/function handleCardDrop\(e, fieldName, value\) \{[\s\S]*?\n {2}\}\n/)?.[0];
@@ -22686,7 +22694,10 @@ test("the exported app's uniqueEnumValues de-dupes real generated code, and ever
   );
 
   const fieldInputSrc = entityViewJsx.match(/function FieldInput\(\{[\s\S]*?\n\}\n/)?.[0];
-  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,1200}/)?.[0];
+  // The window must reach past {enumOptionValues.map, which now sits 1551
+  // chars after this anchor (grown as later rounds added more to the enum
+  // branch) -- 1200 was wide enough once but no longer is.
+  const enumBranch = fieldInputSrc!.match(/field\.type === "enum"[\s\S]{0,1600}/)?.[0];
   assert.match(
     enumBranch ?? "",
     /const knownEnumValues = uniqueEnumValues\(field\.enumValues\);/,
@@ -24035,7 +24046,7 @@ test("the exported EntityView's Kanban column, calendar day, and table column-he
 
   assert.match(
     entityViewJsx,
-    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd \}\)/,
+    /function BoardCard\(\{ orderedFields, boardField, record, relatedRecords, highlightQuery, hasMoveError, onMove, onEdit, onDuplicate, onDelete, onPrint, onJumpToRecord, bulkActionBusy, onDragEnd, isPinned, onTogglePin \}\)/,
     "BoardCard must accept an onDragEnd prop",
   );
   assert.match(
