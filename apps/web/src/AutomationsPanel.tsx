@@ -1609,9 +1609,17 @@ export function AutomationsPanel({
                         never shown -- the enabled chip just above stays green the whole time the
                         scheduler has actually stopped retrying this rule for the rest of today,
                         with nothing distinguishing "still retrying every minute" from "gave up
-                        until tomorrow's UTC rollover". */}
+                        until tomorrow's UTC rollover".
+                        Round 2041: that rollover itself stopped being UTC once a later fix
+                        (automations.ts's hasTooManyConsecutiveFailuresToday, see its own doc
+                        comment) switched to the rule's own scheduleTimezone wall clock -- this
+                        tooltip's "(UTC)" was never updated and had gone stale for every non-UTC
+                        rule, which is the default for any user outside UTC+0. */}
                     {rule.pausedForToday && (
-                      <span className="chip automations-chip-paused" title={t("automations.status.pausedForToday.title")}>
+                      <span
+                        className="chip automations-chip-paused"
+                        title={t("automations.status.pausedForToday.title", { timezone: rule.scheduleTimezone ?? "UTC" })}
+                      >
                         {t("automations.status.pausedForToday")}
                       </span>
                     )}

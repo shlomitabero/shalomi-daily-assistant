@@ -566,6 +566,65 @@ test("AutomationsPanel shows a distinct 'paused for today' chip for a schedule r
   });
 });
 
+/**
+ * Round 2041: the "paused for today" chip's tooltip used to hardcode
+ * "(UTC)" as the rollover timezone, but automations.ts's own
+ * hasTooManyConsecutiveFailuresToday (rounds 924/934/951, later fixed to
+ * use the rule's own scheduleTimezone wall clock rather than plain UTC)
+ * judges "today" against rule.scheduleTimezone -- which defaults to the
+ * browser's own detected zone for any newly-created rule, not UTC. The
+ * tooltip copy was never updated after that later fix, so it told most
+ * real users the wrong rollover time. Confirms the tooltip now names the
+ * rule's own stored scheduleTimezone, and falls back to "UTC" only when
+ * the rule genuinely has none.
+ */
+test("AutomationsPanel's 'paused for today' tooltip names the rule's own scheduleTimezone, not a hardcoded UTC", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/automations") {
+        return new Response(
+          JSON.stringify({
+            rules: [
+              makeRule({
+                id: "paused-jerusalem",
+                trigger: "schedule",
+                scheduleTimeUtc: "09:00",
+                scheduleDaysOfWeek: null,
+                scheduleTimezone: "Asia/Jerusalem",
+                pausedForToday: true,
+              }),
+              makeRule({
+                id: "paused-no-timezone",
+                trigger: "schedule",
+                scheduleTimeUtc: "09:00",
+                scheduleDaysOfWeek: null,
+                scheduleTimezone: null,
+                pausedForToday: true,
+              }),
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 2);
+      const [jerusalemRow, noTimezoneRow] = Array.from(document.querySelectorAll(".automations-rule-row"));
+      const jerusalemChip = jerusalemRow.querySelector(".automations-chip-paused");
+      const noTimezoneChip = noTimezoneRow.querySelector(".automations-chip-paused");
+      assert.match(jerusalemChip?.getAttribute("title") ?? "", /Asia\/Jerusalem/, "must name the rule's own scheduleTimezone, not UTC");
+      assert.doesNotMatch(jerusalemChip?.getAttribute("title") ?? "", /\(UTC\)/, "must not still claim UTC for a non-UTC rule");
+      assert.match(noTimezoneChip?.getAttribute("title") ?? "", /UTC/, "a rule with no stored scheduleTimezone must still fall back to UTC");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("AutomationsPanel shows a real error with a Retry button when the initial load fails", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
