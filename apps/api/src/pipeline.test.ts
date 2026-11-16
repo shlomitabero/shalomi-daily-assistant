@@ -3620,3 +3620,106 @@ test("cleanupFileFieldsRetypedAway is a no-op when no field retyped away from 'f
 
   assert.equal(existsSync(filePath), true, "a file with no matching type_changed entry must never be touched");
 });
+
+/**
+ * Round 2091: the two unit tests just above exercise cleanupFileFieldsRetypedAway
+ * in isolation; this one proves WHERE runBuildPipeline itself actually calls
+ * it now. Before this round, the call sat right after the Database step's
+ * own success event -- long before Seed Data, QA, Security, and the real
+ * commit (updateProjectSpec/insertCheckpoint) near the very end of this
+ * generator. QA failing is this function's own designed, documented way to
+ * stop a build/refine before publishing it (its own "stopping before
+ * publishing this build" event, followed by a bare `return`) -- a `return`
+ * sitting between that old cleanup call site and the real commit meant a
+ * QA failure (or anything else ever added in that same gap) left real
+ * uploads already deleted for a build/refine that never actually committed
+ * the spec that stops claiming they're "file" fields: a dangling-reference
+ * hazard, the exact same shape app.test.ts's own checkpoint-restore tests
+ * cover for that route. Moving the call to right after insertCheckpoint
+ * succeeds closes it here too.
+ *
+ * Steps this generator by hand (not through this file's own `collect()`
+ * helper) specifically so it can observe real disk state in the GAP
+ * between the Database step's own success event and the Forge step's own
+ * success event -- the exact window the old call site sat inside, and the
+ * one the fix moves the real delete out of.
+ */
+test("runBuildPipeline only deletes a file field's retyped-away uploads once the real commit has actually succeeded, not right after the migration step", async () => {
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-pipeline-cleanup-order-test-"));
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "Document",
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "attachment", type: "file", required: false },
+        ],
+      },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  applyMigrations(db, "proj1", spec);
+  const project = insertProject(db, { id: "proj1", ownerId: "user1", name: "test", description: "test", spec });
+
+  const fileDir = path.join(uploadsDir, "proj1", "Document");
+  mkdirSync(fileDir, { recursive: true });
+  const filename = `${randomUUID()}.pdf`;
+  const filePath = path.join(fileDir, filename);
+  writeFileSync(filePath, "%PDF-fake-contents");
+  insertRecord(db, "proj1", spec.entities[0], {
+    title: "Contract",
+    attachment: JSON.stringify({ url: `/api/uploads/proj1/Document/${filename}`, name: "contract.pdf", size: 19, mimeType: "application/pdf" }),
+  });
+
+  const nextSpec: ProductSpec = {
+    ...spec,
+    entities: [
+      {
+        name: "Document",
+        fields: [
+          { name: "title", type: "text", required: true },
+          { name: "attachment", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const gen = runBuildPipeline(db, project, { previousSpec: spec, nextSpec, changeLabel: "Refine: attachment to text", uploadsDir });
+
+  let sawSeedDataStart = false;
+  let sawForgeSuccess = false;
+  for (;;) {
+    const step = await gen.next();
+    if (step.done) break;
+    const event = step.value;
+    if (event.agent === "Seed Data" && !sawSeedDataStart) {
+      sawSeedDataStart = true;
+      // The real proof: once Seed Data has started, Database's own
+      // migration step has already fully finished -- the exact point the
+      // old call site deleted this file from. It must still be here.
+      assert.equal(
+        existsSync(filePath),
+        true,
+        "the real upload must still exist once Seed Data starts -- cleanup must not run until after the real commit, not right after the migration step",
+      );
+    }
+    if (event.agent === "Forge" && event.status === "success") {
+      sawForgeSuccess = true;
+      assert.equal(
+        existsSync(filePath),
+        false,
+        "the real upload must actually be deleted by the time the refine reports success -- cleanup must still genuinely run once the commit it depends on has succeeded",
+      );
+    }
+  }
+  assert.ok(sawSeedDataStart, "sanity check: Seed Data must actually have been reached");
+  assert.ok(sawForgeSuccess, "sanity check: the refine must actually have reached a successful Forge/commit event");
+});

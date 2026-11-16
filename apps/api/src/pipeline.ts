@@ -969,11 +969,29 @@ export async function* runBuildPipeline(
       describeMigrationHazards(changes),
     detail: changes,
   };
-  // Round 977: once this migration has actually committed (the yield just
-  // above), clean up any file-field upload the type_changed entries in
-  // `changes` just made permanently unreachable -- see
-  // cleanupFileFieldsRetypedAway's own doc comment.
-  await cleanupFileFieldsRetypedAway(db, options.uploadsDir, project.id, changes);
+  // Round 2091: cleanupFileFieldsRetypedAway's own real, irreversible disk
+  // deletes used to run right HERE -- the moment this migration itself
+  // committed -- rather than once the spec that actually stops claiming
+  // these fields are "file" has *also* committed. Seed Data and QA (both
+  // just below) are real, genuinely-failable steps between this point and
+  // the real commit (updateProjectSpec/insertCheckpoint, near the bottom
+  // of this function): QA failing is this function's own *designed*
+  // control-flow branch for stopping a build/refine before publishing it
+  // (`return` right after its own "stopping before publishing this build"
+  // event) -- not a hypothetical. Deleting these files before that point
+  // meant a QA failure (or anything else added between here and the real
+  // commit in the future) left the project's spec rolled back to exactly
+  // what it was before this run -- still correctly claiming the retyped
+  // field is "file" -- while the real uploads it points at were already
+  // gone: a dangling-reference/data-loss hazard, not an access-control
+  // one, and a different failure mode than the access-revoked race round
+  // 2090 closed on this same pipeline's own Debug-repair branch (that race
+  // is on the path INTO a successful diffAndMigrate, strictly before this
+  // point; this is every path OUT of it that isn't a clean finish). The
+  // call itself moves to just after the real commit succeeds, below --
+  // see its own comment there for why that's also the right place to
+  // swallow a cleanup failure rather than let it fail an otherwise-
+  // successful build/refine.
   // Round 610 recorded the whole nextSpec into the durable history ledger
   // right here, so a later step (QA) stopping the build/refine before any
   // checkpoint got inserted couldn't orphan a new entity's real table.
@@ -1255,6 +1273,26 @@ export async function* runBuildPipeline(
       createdByUserId: options.createdByUserId ?? null,
     });
     const finalProject = getProject(db, project.id)!;
+
+    // Round 2091: only now, after updateProjectSpec/insertCheckpoint above
+    // have actually committed the spec that stops claiming these fields
+    // are "file" -- see this function's own comment where this call used
+    // to sit, right after the Database step, for the full hazard this
+    // closes. A separate try/catch, not folded into the one around this
+    // whole block: a failure in this real disk I/O must never be reported
+    // as "the build finished, but saving it failed" when the build/refine
+    // itself, just above, actually succeeded -- deleteUploadedFile's own
+    // rm() call already swallows a missing-file error the same way; this
+    // just extends that identical best-effort contract to the one query
+    // (`db.prepare(...).all()`) in cleanupFileFieldsRetypedAway that
+    // doesn't already. A leftover, never-deleted orphan upload is a known,
+    // low-severity cost -- nothing compared to what deleting it too early
+    // used to risk.
+    try {
+      await cleanupFileFieldsRetypedAway(db, options.uploadsDir, project.id, changes);
+    } catch {
+      // best-effort; the build/refine itself already committed above.
+    }
 
     yield {
       agent: "Forge",

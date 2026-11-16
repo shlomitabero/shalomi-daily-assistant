@@ -3660,23 +3660,17 @@ export function createProjectsRouter(
             // labels win for any entity/field that survives under the same name.
             carryForwardLabels(currentSpec, checkpoint.spec);
             const changes = diffAndMigrate(db, project.id, currentSpec, checkpoint.spec);
-            // Round 977: a restore can retype a field away from "file" the
-            // exact same way a /refine can -- see cleanupFileFieldsRetypedAway's
-            // own doc comment (pipeline.ts).
-            await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
-            // Round 2090: cleanupFileFieldsRetypedAway above is a genuine
-            // await -- real disk I/O (one rm() per affected row/file),
-            // proportional to row/file count -- sitting between this
-            // route's own entry-point requireProjectWriteAccess and the
-            // real commit (updateProjectSpec) right below, the exact same
-            // shape already closed on both upload routes, WhatsApp send,
-            // /refine and /answers (rounds 2086-2089). Rechecked here,
-            // right before the commit, and left to throw (403 if demoted
-            // to viewer, 404 if removed/the project itself is gone) exactly
-            // like those five other sites -- unlike pipeline.ts's own
-            // requestSpecFix repair path, no SSE response has been started
-            // here, so an ordinary thrown HttpError still turns into a
-            // clean error response via errorMiddleware.
+            // Round 2090: this route's own entry-point requireProjectWriteAccess
+            // ran before the genuine await below used to sit here (real disk
+            // I/O, proportional to row/file count) -- the exact same shape
+            // already closed on both upload routes, WhatsApp send, /refine and
+            // /answers (rounds 2086-2089). Rechecked here, right before the real
+            // commit, and left to throw (403 if demoted to viewer, 404 if
+            // removed/the project itself is gone) exactly like those five other
+            // sites -- unlike pipeline.ts's own requestSpecFix repair path, no
+            // SSE response has been started here, so an ordinary thrown
+            // HttpError still turns into a clean error response via
+            // errorMiddleware.
             requireProjectWriteAccess(db, project.id, req.userId!);
             const updated = updateProjectSpec(db, project.id, checkpoint.spec);
             // Round 1568: closes the half of docs/security.md's "No audit
@@ -3684,6 +3678,37 @@ export function createProjectsRouter(
             // own doc comment (packages/db) for why restore needed its own
             // audit columns, separate from checkpoints.createdByUserId.
             recordCheckpointRestore(db, project.id, checkpoint.id, req.userId!);
+            // Round 2091: a restore can retype a field away from "file" the
+            // exact same way a /refine can -- see cleanupFileFieldsRetypedAway's
+            // own doc comment (pipeline.ts). This call used to sit right above,
+            // BEFORE the requireProjectWriteAccess recheck and the real commit
+            // just above -- round 2090's own test for this exact route
+            // (app.test.ts) already caught and deliberately left open exactly
+            // what that ordering still cost: rechecking access and refusing to
+            // COMMIT an unauthorized restore does nothing to undo real disk
+            // deletes that already ran before that recheck ever got a chance to
+            // throw. A restore rejected that way left the project's spec
+            // completely unchanged (still correctly claiming the field is
+            // "file") while every real upload it points at was already gone --
+            // a dangling-reference/data-loss hazard, not an access-control one,
+            // that round 2090's fix never actually touched (see that test's own
+            // "known, separate, NOT-yet-fixed hazard" comment). Moved below the
+            // real commit instead: deleting a file is irreversible, so it may
+            // only happen once the spec that's about to stop claiming it's a
+            // "file" field has *actually* committed -- pipeline.ts's own
+            // /build and /refine path now follows the identical reasoning for
+            // this same call (see its own comment there). Best-effort and
+            // swallowed: deleteUploadedFile's own rm() already swallows a
+            // missing-file error the same way, and the restore itself already
+            // committed above by the time this runs, so a failure here (the one
+            // query this still runs that isn't already wrapped) is an orphaned
+            // leftover upload, never a reason to report an already-successful
+            // restore as failed.
+            try {
+              await cleanupFileFieldsRetypedAway(db, uploadsDir, project.id, changes);
+            } catch {
+              // best-effort cleanup; the restore itself already committed above.
+            }
             // An older checkpoint being restored to isn't guaranteed to be a
             // safe, monotonically-looser move the way the data migration above
             // already is (additive-only) -- it can easily be STRICTER on a field

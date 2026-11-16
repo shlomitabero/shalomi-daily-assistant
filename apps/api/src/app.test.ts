@@ -17296,32 +17296,38 @@ test("restoring a checkpoint while a refine is in flight is rejected with 409, i
 });
 
 /**
- * Round 2090: checkpoint restore's own cleanupFileFieldsRetypedAway call
- * (pipeline.ts) is a genuine await -- real disk I/O (one rm() per affected
- * row/file) -- between this route's entry-point requireProjectWriteAccess
- * and the real commit (updateProjectSpec), the exact same shape already
- * closed on both upload routes, WhatsApp send, /refine and /answers
- * (rounds 2086-2089). A comment that used to sit on this route claimed
- * "access was already established above and can't have changed in
- * between" -- false, for the same reason round 2089's /refine and /answers
- * repros already disprove it: activePipelines only blocks a second build/
- * refine/answers/restore racing this same project, never an ordinary,
- * fast, unrelated collaborator-role-change request.
+ * Round 2090 closed the AUTHORIZATION half of this race (checkpoint
+ * restore's own requireProjectWriteAccess recheck, right before the real
+ * commit) but -- as this exact test originally caught and deliberately
+ * left open, by asserting the bad outcome with a "known, separate,
+ * NOT-yet-fixed hazard" comment -- that fix did nothing about the DATA
+ * half: cleanupFileFieldsRetypedAway's own real, irreversible disk
+ * deletes still ran BEFORE that recheck, so a restore correctly rejected
+ * for a demoted collaborator had already deleted every real upload the
+ * (unchanged, still-"file"-typed) spec pointed at. Round 2091 fixes that
+ * by moving the cleanup call to AFTER the real commit (updateProjectSpec/
+ * recordCheckpointRestore) instead of before the recheck -- see that call
+ * site's own doc comment in routes/projects.ts.
  *
- * Unlike generateSpec's own network call (gateable via a real SpecProvider
- * seam -- createGatedProvider() above), real disk I/O has no such seam in
- * this app, so this uses the same real-timing technique already
- * established in this file for a disk-I/O race (see the upload-vs-demote
- * test above, round 2086): enough real files (1000; empirically ~70ms of
- * genuine rm() time on this sandbox, confirmed by timing
- * cleanupFileFieldsRetypedAway directly before writing this test) give the
- * concurrent demotion request a comfortably wide, real window to land and
- * finish while the restore's own cleanup is still genuinely in flight --
- * not a hard deterministic gate, but the same honest technique, and the
- * same order-of-magnitude safety margin, already accepted in this codebase
- * for this exact class of disk-I/O race.
+ * One consequence of fixing it that way: there is no longer any genuine
+ * await between the entry-point requireProjectWriteAccess, the recheck,
+ * and the real commit (diffAndMigrate/updateProjectSpec/
+ * recordCheckpointRestore are all synchronous DB calls) -- so a concurrent
+ * demotion can no longer land in the middle of that synchronous chunk at
+ * all, Node's single-threaded event loop only ever lets another request's
+ * handler run during an await. By the time cleanup's own real disk I/O
+ * (the one remaining genuine await) gives a concurrent demotion anywhere
+ * to land, this restore has ALREADY irrevocably committed -- so, unlike
+ * before this round, a demotion landing during that disk I/O can no
+ * longer retroactively undo it. This test keeps the exact same real-
+ * disk-I/O-timing technique and 1000-file setup as the original round-2090
+ * test (see its own reasoning, unchanged below) to prove exactly that: the
+ * restore must still succeed and its files must still actually get
+ * deleted, even with a demotion landing squarely inside cleanup's own
+ * real await window -- because by then the commit this request made is
+ * already final.
  */
-test("restoring a checkpoint that retypes a file field away from 'file' must not commit for a collaborator who was demoted to viewer while the real disk cleanup was still in flight", async () => {
+test("restoring a checkpoint that retypes a file field away from 'file' still completes (and still cleans up) for a collaborator demoted to viewer only after the real commit already landed", async () => {
   await withServer(async (baseUrl, db, uploadsDir) => {
     const ownerEmail = `restore-vs-demote-owner-${randomUUID()}@example.com`;
     const collabEmail = `restore-vs-demote-collab-${randomUUID()}@example.com`;
@@ -17399,11 +17405,14 @@ test("restoring a checkpoint that retypes a file field away from 'file' must not
     });
     restorePromise.catch(() => {});
 
-    // Short head start: the restore's own entry-point requireProjectWriteAccess
-    // and its synchronous diffAndMigrate must both have already run (same
-    // convention as the slow-upload test above) before the demotion fires,
-    // so it genuinely lands during cleanupFileFieldsRetypedAway's own real
-    // disk I/O, not before the restore handler even started.
+    // Short head start: the restore's own entry-point requireProjectWriteAccess,
+    // its synchronous diffAndMigrate, its recheck, and the real commit
+    // (updateProjectSpec/recordCheckpointRestore) are now ALL synchronous with
+    // no genuine await anywhere among them (see this test's own doc comment
+    // above) -- they must all have already run, and the commit must already
+    // be final, before the demotion fires, so it genuinely lands during
+    // cleanupFileFieldsRetypedAway's own real disk I/O instead of racing
+    // anything that still matters.
     await new Promise((resolve) => setTimeout(resolve, 5));
     const demoteRes = await fetch(`${baseUrl}/api/projects/${projectId}/collaborators/${collabUserId}/role`, {
       method: "PATCH",
@@ -17413,41 +17422,33 @@ test("restoring a checkpoint that retypes a file field away from 'file' must not
     assert.equal(demoteRes.status, 200);
 
     const restoreRes = await restorePromise;
-    assert.notEqual(restoreRes.status, 200, "must not report success once the restorer has already lost write access");
-    assert.equal(restoreRes.status, 403);
-    const restoreBody = (await restoreRes.json()) as { code?: string };
-    assert.equal(restoreBody.code, "VIEWER_READ_ONLY");
+    // Unlike before round 2091, this must now actually SUCCEED: the commit
+    // this request made was already final (synchronously, before the
+    // demotion could possibly reach it) by the time its own cleanup --
+    // entirely downstream of that commit now -- was even still running.
+    assert.equal(restoreRes.status, 200, "the restore must still succeed -- its own commit already landed before the demotion could possibly reach it");
+    const restoreBody = (await restoreRes.json()) as { project: { spec: ProductSpec } };
+    assert.deepEqual(restoreBody.project.spec, oldSpec, "the checkpoint's spec must actually have been committed");
 
-    // The real proof this round's fix actually closes: the project's own
-    // spec -- the authoritative, read-back state every other route and
-    // every other user relies on -- must still be the CURRENT one, never
-    // actually overwritten with the checkpoint's spec, for a restore whose
-    // caller had already lost write access by the time it would have
-    // committed.
+    // Confirmed independently of the response body too: the authoritative,
+    // read-back project state agrees the restore genuinely committed.
     const afterRes = await fetch(`${baseUrl}/api/projects/${projectId}`, { headers: authHeaders(ownerToken) });
     const { project: afterProject } = (await afterRes.json()) as { project: { spec: ProductSpec } };
-    assert.deepEqual(afterProject.spec, currentSpec, "the project's spec must be completely unchanged by a restore rejected this way");
+    assert.deepEqual(afterProject.spec, oldSpec, "the project's spec must reflect the restore that actually committed");
 
-    // NOT this round's fix, and left exactly as discovered rather than
-    // silently asserted away: cleanupFileFieldsRetypedAway's own real
-    // disk deletes happen BEFORE this recheck (it's the very await this
-    // recheck has to run after to catch the race at all), so by the time
-    // the recheck above threw, every one of these 1000 real files was
-    // already unlinked -- for a restore whose own spec commit, just
-    // asserted above, never actually happened. The project's spec still
-    // claims "attachment" is a "file" field, pointing existing records at
-    // uploads that no longer exist on disk: a dangling-reference hazard
-    // this round's fix does not close, and that pipeline.ts's own /build
-    // and /refine path has the identical ordering for (cleanup at line
-    // ~976, the real updateProjectSpec commit for THAT path not until
-    // line ~1242) -- so it's a pre-existing hazard on any failure between
-    // cleanup and the real commit, not something this fix introduced.
-    // Flagged for a dedicated future round rather than fixed here.
+    // The real proof of round 2091's fix: now that cleanup runs strictly
+    // AFTER that commit (never before it -- see the call site's own
+    // comment in routes/projects.ts), these 1000 real uploads must
+    // actually be gone. The spec committed above genuinely no longer
+    // claims "attachment" is a "file" field, so -- unlike before this
+    // round -- there is no dangling reference left behind: every upload
+    // deleted here was deleted only once the spec that stops pointing at
+    // it had already, successfully, stopped doing so.
     const remainingFiles = readdirSync(fileDir);
     assert.equal(
       remainingFiles.length,
       0,
-      "known, separate, NOT-yet-fixed hazard: cleanupFileFieldsRetypedAway's real deletes run before this recheck can catch the race, so they're not undone by it -- see this test's own comment",
+      "cleanup must still actually run (and succeed) once the restore it belongs to has genuinely committed",
     );
   });
 });
