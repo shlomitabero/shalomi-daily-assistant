@@ -178,6 +178,83 @@ test('a 401 on a normal endpoint clears the token and dispatches auth:expired', 
   }
 });
 
+// Every api.* entry below is a one-line wrapper over request() - until now
+// only health()/login() were ever actually called by a test (as the vehicle
+// for testing request() itself), so the other ~25 wrappers had zero
+// coverage of their own: a typo'd path, the wrong HTTP method, or a body
+// shaped differently from what the matching server route actually expects
+// (routes/*.js, read directly below) would be a real, silent production
+// bug - every one of these is called from real UI code with no test here
+// to catch it. One data-driven test per wrapper, checking exactly the
+// method/path/body it sends, closes that gap without needing to re-test
+// request() itself (already covered above) for each one.
+const ENDPOINT_CALLS = [
+  { name: 'health', call: () => api.health(), method: 'GET', path: '/api/health' },
+  { name: 'login', call: () => api.login('pw'), method: 'POST', path: '/api/login', body: { password: 'pw' } },
+  { name: 'getSettings', call: () => api.getSettings(), method: 'GET', path: '/api/settings' },
+  { name: 'updateSettings', call: () => api.updateSettings({ mode: 'research' }), method: 'PATCH', path: '/api/settings', body: { mode: 'research' } },
+  { name: 'getSources', call: () => api.getSources(), method: 'GET', path: '/api/sources' },
+  { name: 'rescanSources', call: () => api.rescanSources(), method: 'POST', path: '/api/sources/rescan' },
+  { name: 'getOpportunities', call: () => api.getOpportunities(), method: 'GET', path: '/api/opportunities' },
+  { name: 'getOpportunity', call: () => api.getOpportunity('opp1'), method: 'GET', path: '/api/opportunities/opp1' },
+  { name: 'createDigitalProduct', call: () => api.createDigitalProduct('topic', 'audience'), method: 'POST', path: '/api/opportunities/digital-product', body: { topic: 'topic', audience: 'audience' } },
+  { name: 'updateOpportunity', call: () => api.updateOpportunity('opp1', { priceUSD: 9 }), method: 'PATCH', path: '/api/opportunities/opp1', body: { priceUSD: 9 } },
+  { name: 'publishOpportunity', call: () => api.publishOpportunity('opp1'), method: 'POST', path: '/api/opportunities/opp1/publish' },
+  { name: 'rejectOpportunity', call: () => api.rejectOpportunity('opp1'), method: 'POST', path: '/api/opportunities/opp1/reject' },
+  { name: 'runAutonomousScan', call: () => api.runAutonomousScan(), method: 'POST', path: '/api/opportunities/autonomous-scan' },
+  { name: 'getApprovals', call: () => api.getApprovals(), method: 'GET', path: '/api/approvals' },
+  { name: 'approve', call: () => api.approve('opp1', 'publish_product'), method: 'POST', path: '/api/approvals', body: { opportunityId: 'opp1', actionType: 'publish_product' } },
+  { name: 'reject', call: () => api.reject('appr1'), method: 'POST', path: '/api/approvals/appr1/reject' },
+  { name: 'getLedgerSummary', call: () => api.getLedgerSummary(), method: 'GET', path: '/api/ledger/summary' },
+  { name: 'getLedgerEntries', call: () => api.getLedgerEntries(), method: 'GET', path: '/api/ledger/entries' },
+  { name: 'getActions', call: () => api.getActions(), method: 'GET', path: '/api/actions' },
+  { name: 'reportClientError', call: () => api.reportClientError('boom', '/x'), method: 'POST', path: '/api/actions/client-error', body: { message: 'boom', path: '/x' } },
+  { name: 'getFinancialWatchlist', call: () => api.getFinancialWatchlist(), method: 'GET', path: '/api/financial/watchlist' },
+  { name: 'addToWatchlist', call: () => api.addToWatchlist('AAPL'), method: 'POST', path: '/api/financial/watchlist', body: { symbol: 'AAPL' } },
+  { name: 'refreshWatchlistEntry', call: () => api.refreshWatchlistEntry('wl1'), method: 'POST', path: '/api/financial/watchlist/wl1/refresh' },
+  { name: 'removeFromWatchlist', call: () => api.removeFromWatchlist('wl1'), method: 'DELETE', path: '/api/financial/watchlist/wl1' },
+  { name: 'paperTrade', call: () => api.paperTrade({ symbol: 'AAPL', side: 'long' }), method: 'POST', path: '/api/financial/paper-trade', body: { symbol: 'AAPL', side: 'long' } },
+  { name: 'getPaperTrades', call: () => api.getPaperTrades(), method: 'GET', path: '/api/financial/paper-trades' },
+  { name: 'getDigests', call: () => api.getDigests(), method: 'GET', path: '/api/digests' },
+  { name: 'generateDigest', call: () => api.generateDigest(), method: 'POST', path: '/api/digests/generate' },
+  { name: 'getProduct', call: () => api.getProduct('my-slug'), method: 'GET', path: '/api/products/my-slug' },
+  { name: 'getProductGuide', call: () => api.getProductGuide('my-slug', 'txn1'), method: 'GET', path: '/api/products/my-slug/guide?transactionId=txn1' },
+];
+
+for (const { name, call, method, path, body } of ENDPOINT_CALLS) {
+  test(`api.${name} sends ${method} ${path}${body ? ' with the expected body' : ''}`, async () => {
+    const restore = stubFetchOnce(() => new Response(JSON.stringify({}), { status: 200, headers: { 'content-type': 'application/json' } }));
+    try {
+      await call();
+      assert.equal(globalThis.__lastFetchUrl, path);
+      // GET/DELETE calls above never pass a request body at all - fetch()
+      // itself would otherwise be the one place a stray body on one of
+      // those silently got sent with no test ever catching it.
+      assert.equal(globalThis.__lastFetchOptions.method ?? 'GET', method);
+      if (body) assert.deepEqual(JSON.parse(globalThis.__lastFetchOptions.body), body);
+      else assert.equal(globalThis.__lastFetchOptions.body, undefined);
+    } finally {
+      restore();
+    }
+  });
+}
+
+test('api.getProductGuide encodes special characters in transactionId instead of letting them corrupt the query string', async () => {
+  // transactionId comes straight from Paddle's own checkout.completed event
+  // (ProductPage.jsx) - nothing in this app controls its shape. A raw
+  // interpolation with no encoding would let a value containing "&" or "="
+  // split the query string into unintended extra parameters (or, with "#",
+  // truncate it into a URL fragment) rather than being read back as one
+  // opaque transactionId value server-side.
+  const restore = stubFetchOnce(() => new Response(JSON.stringify({}), { status: 200, headers: { 'content-type': 'application/json' } }));
+  try {
+    await api.getProductGuide('my-slug', 'a&b=c#d');
+    assert.equal(globalThis.__lastFetchUrl, '/api/products/my-slug/guide?transactionId=a%26b%3Dc%23d');
+  } finally {
+    restore();
+  }
+});
+
 test('a 401 specifically from /login never dispatches auth:expired - it just means the password was wrong', () => {
   // Dispatching auth:expired here would make AuthContext show "the
   // previous login expired" on a fresh, failed login attempt where no
