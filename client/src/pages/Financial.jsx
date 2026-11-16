@@ -164,7 +164,15 @@ export default function Financial() {
             <div className="source-row">
               <span className={`dot ${w.connected ? 'dot-on' : 'dot-off'}`} />
               <span>{w.symbol}</span>
-              <span>{w.lastPrice != null ? `$${w.lastPrice}` : 'לא מחובר'}</span>
+              {/* Every other money figure in this app goes through
+                  formatMoney's fixed 2-decimal formatting - this was the one
+                  exception, interpolating the raw price straight from
+                  twelvedata's own response with whatever decimal precision
+                  that provider happened to return for a given instrument
+                  (commonly more than 2 for some real symbols), instead of
+                  the clean, consistent "$123.45" every other price/profit
+                  figure on this page and the dashboard already shows. */}
+              <span>{w.lastPrice != null ? formatMoney(w.lastPrice) : 'לא מחובר'}</span>
               <button
                 className="btn btn-ghost"
                 onClick={() => onRefreshSymbol(w.id)}
