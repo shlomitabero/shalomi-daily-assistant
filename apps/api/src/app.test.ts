@@ -8128,6 +8128,72 @@ test("cloning a project whose name is already near the 200-char cap truncates th
 });
 
 /**
+ * Round 2034: the truncation test just above only used plain "x" characters,
+ * which never exercises the real hazard a raw `.slice(0, N)` carries -- it
+ * operates on UTF-16 code units, not code points, so it can cut an
+ * astral-plane emoji's surrogate pair exactly in half at the cut boundary,
+ * leaving a lone/unpaired high surrogate immediately before the appended
+ * " (copy)" suffix. Reproduced live against the real on-disk DB before this
+ * round's fix: that lone surrogate becomes a literal U+FFFD the moment
+ * node:sqlite encodes it to UTF-8 for the TEXT column bind -- permanent
+ * corruption, not just a display artifact. Mirrors codegen.test.ts's own
+ * identical round-1283 regression test (and its exact lone-surrogate
+ * regex) for the sibling hazard in renderManifestJson's short_name.
+ * 192 "A"s + one emoji (a 2-code-unit surrogate pair) = 194 UTF-16 code
+ * units, landing the emoji's high surrogate exactly at code-unit index 192
+ * -- the cut point for PROJECT_NAME_MAX_LENGTH(200) - " (copy)".length(7) = 193.
+ */
+test("cloning a project whose name has an emoji straddling the 200-char truncation boundary never leaves a lone/unpaired surrogate in the clone's name", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "clone-emoji-boundary-owner@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+
+    const emojiBoundaryName = `${"A".repeat(192)}😀`;
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/name`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name: emojiBoundaryName }),
+    });
+    assert.equal(renameRes.status, 200);
+
+    const cloneRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(cloneRes.status, 201);
+    const { project: cloned } = (await cloneRes.json()) as { project: { id: string; name: string } };
+    // insertProject (packages/db) returns a fresh getProject() read right
+    // after the INSERT, not the in-memory `name` string this route built --
+    // so by the time this HTTP response reflects it, a lone/unpaired
+    // surrogate has already gone through node:sqlite's own UTF-8 encode for
+    // the TEXT column bind and come back as a literal U+FFFD, not as the
+    // raw surrogate code unit. Checking for U+FFFD (not the surrogate
+    // regex codegen.test.ts's own sibling test uses, which checks a value
+    // that never round-trips through a database) is the correct, real
+    // observable symptom for this specific route.
+    assert.ok(
+      !cloned.name.includes("�"),
+      `the clone's name must never contain a U+FFFD replacement character (the on-disk symptom of a split surrogate pair), got ${JSON.stringify(cloned.name)}`,
+    );
+    assert.ok(cloned.name.endsWith(" (copy)"), "the \" (copy)\" suffix must survive the truncation");
+
+    // The real, independent proof this matters: the value actually
+    // persisted to disk must be byte-identical to what the response
+    // reported, not silently mangled a second time by whatever reads it
+    // back -- confirms the fix holds at the storage layer, not just in
+    // the JSON this one response happened to serialize.
+    const getRes = await fetch(`${baseUrl}/api/projects/${cloned.id}`, { headers: authHeaders(token) });
+    const { project: reloaded } = (await getRes.json()) as { project: { name: string } };
+    assert.equal(reloaded.name, cloned.name, "the name read back from storage must match the name the clone response reported");
+  });
+});
+
+/**
  * Round 1411: RenameEntityLabelSchema/RenameFieldLabelSchema/
  * RenameCheckpointSchema/AddRoleSchema/AddAssumptionSchema/AddPersonaSchema/
  * AddEntitySchema/AddFieldSchema all had a `.min(1)` floor (or no floor at
@@ -11712,6 +11778,53 @@ test("duplicating an entity whose label is already near the 200-char cap gets it
     assert.equal(listRes.status, 200);
     const { projects } = (await listRes.json()) as { projects: { id: string }[] };
     assert.ok(projects.some((p) => p.id === project.id), "the project must still be listed");
+  });
+});
+
+/**
+ * Round 2034: the truncation test just above only used plain "A" characters,
+ * which never exercises the real hazard a raw `.slice(0, N)` carries --
+ * mirrors this same round's identical fix/test for /projects/:id/clone's
+ * own synthesized `name` just above in this file (see that test's own doc
+ * comment for the full live-repro reasoning). 192 "A"s + one emoji (a
+ * 2-code-unit surrogate pair) = 194 UTF-16 code units, landing the emoji's
+ * high surrogate exactly at code-unit index 192 -- the cut point for
+ * SPEC_LABEL_MAX_LENGTH(200) - " (copy)".length(7) = 193.
+ */
+test("duplicating an entity whose label has an emoji straddling the 200-char truncation boundary never leaves a lone/unpaired surrogate in the new label", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "entity-duplicate-emoji-boundary@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string }[] } } };
+    const source = project.spec.entities[0];
+
+    const emojiBoundaryLabel = `${"A".repeat(192)}😀`;
+    const renameRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/label`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ label: emojiBoundaryLabel }),
+    });
+    assert.equal(renameRes.status, 200);
+
+    const res = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${source.name}/duplicate`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(res.status, 200);
+    const { project: updated } = (await res.json()) as {
+      project: { spec: { entities: { name: string; label?: string }[] } };
+    };
+    const clone = updated.spec.entities.at(-1)!;
+    assert.doesNotMatch(
+      clone.label!,
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+      `the new label must never contain a lone/unpaired surrogate, got ${JSON.stringify(clone.label)}`,
+    );
+    assert.ok(clone.label!.endsWith(" (copy)"), "the \" (copy)\" suffix must survive the truncation");
   });
 });
 

@@ -2533,9 +2533,22 @@ export function createProjectsRouter(
       // 400: this value is server-synthesized, not something the user typed
       // into an editable field, so there's nothing for a validation error to
       // ask them to fix.
+      // Round 2034: the slice itself must be code-point-aware, mirroring
+      // codegen.ts's own appInitial/renderManifestJson `[...name]` fix
+      // (round 1283) for the identical hazard -- a raw `.slice(0, N)`
+      // operates on UTF-16 code units, not code points, so it can cut an
+      // astral-plane emoji's surrogate pair in half right at this cap and
+      // leave a lone/unpaired high surrogate immediately before the
+      // appended suffix. Reproduced live: that unpaired surrogate becomes
+      // a literal U+FFFD the moment node:sqlite encodes this string to
+      // UTF-8 for the TEXT column bind -- permanent corruption at the
+      // database layer, not just a display glitch. RenameProjectSchema
+      // allows any character (no charset restriction), so an emoji-led or
+      // emoji-containing name near this length is an ordinary branding
+      // choice, not an edge case.
       const rawName = `${source.name}${suffix}`;
       const name = rawName.length > PROJECT_NAME_MAX_LENGTH
-        ? `${source.name.slice(0, PROJECT_NAME_MAX_LENGTH - suffix.length)}${suffix}`
+        ? `${[...source.name].slice(0, PROJECT_NAME_MAX_LENGTH - suffix.length).join("")}${suffix}`
         : rawName;
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${source.id}/clone`, async () => {
@@ -5663,9 +5676,17 @@ export function createProjectsRouter(
           // Truncated, not rejected with a 400, for the same reason round
           // 1410 gives: this value is server-synthesized, not something
           // the user typed into an editable field.
+          // Round 2034: the same code-point-vs-code-unit hazard round 1410's
+          // own clone route just above now closes too (see its own doc
+          // comment there for the full reasoning/live-repro) -- a raw
+          // `.slice(0, N)` can cut an astral-plane emoji's surrogate pair
+          // in half right at this cap, and the resulting lone/unpaired
+          // surrogate becomes a literal U+FFFD once this label is written
+          // to the database. EntitySchema's label has no charset
+          // restriction of its own.
           const rawLabel = `${sourceLabel}${suffix}`;
           const newLabel = rawLabel.length > SPEC_LABEL_MAX_LENGTH
-            ? `${sourceLabel.slice(0, SPEC_LABEL_MAX_LENGTH - suffix.length)}${suffix}`
+            ? `${[...sourceLabel].slice(0, SPEC_LABEL_MAX_LENGTH - suffix.length).join("")}${suffix}`
             : rawLabel;
           const name = deriveEntityName(newLabel, project.spec.entities.map((e) => e.name));
           const newEntity: Entity = {
