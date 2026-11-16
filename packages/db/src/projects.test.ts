@@ -499,6 +499,67 @@ test("deleteProject removes the project row, its real generated data table, chec
 });
 
 /**
+ * Round 2080: a real, reproducible crash found by a live Playwright survey
+ * and confirmed with this exact minimal repro -- connection.ts turns
+ * PRAGMA foreign_keys ON globally, and every relation field gets a real
+ * REFERENCES clause (migrate.ts) with no ON DELETE CASCADE. With foreign
+ * keys enforced, SQLite's own implicit "DELETE FROM" before each DROP
+ * TABLE re-checks every OTHER still-existing table's rows that reference
+ * the one being dropped -- and deleteProject's own entityNames loop drops
+ * tables in plain spec-declaration order, with zero regard for which
+ * entities' relation fields point at which. Specs are naturally authored
+ * "referenced entity first" (here: TeamMember before Project, exactly the
+ * shape the AI spec generator and every built-in template produce), so
+ * the very first entity is typically the one every other entity's
+ * relation field points AT -- dropping it first, while Project's own
+ * table (with a real row whose "owner" column still points at the
+ * TeamMember row about to vanish) still exists, used to throw a real
+ * "FOREIGN KEY constraint failed" and abort the whole delete.
+ */
+test("deleteProject does not throw FOREIGN KEY constraint failed when one entity's populated relation field points at another entity dropped earlier in the loop", () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureProjectCollaboratorsTable(db);
+  ensureCheckpointsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  ensureAutomationRulesTable(db);
+  ensureRecordDeletionsTable(db);
+  ensureCollaboratorAccessChangesTable(db);
+  ensureSchemaLabelEditsTable(db);
+  ensureAutomationRuleDeletionsTable(db);
+
+  const linkedSpec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    entities: [
+      { name: "TeamMember", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Project", fields: [{ name: "owner", type: "relation", relationTo: "TeamMember", required: false }] },
+    ],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  const project = insertProject(db, {
+    id: "linked-project",
+    ownerId: "owner1",
+    name: "Linked project",
+    description: "has a populated relation",
+    spec: linkedSpec,
+  });
+  applyMigrations(db, project.id, project.spec);
+  const teamMember = insertRecord(db, project.id, project.spec.entities[0], { name: "Dana" });
+  insertRecord(db, project.id, project.spec.entities[1], { owner: teamMember.id });
+
+  assert.doesNotThrow(() => deleteProject(db, project.id), "deleteProject must not throw FOREIGN KEY constraint failed just because TeamMember's own table happens to be dropped before Project's");
+
+  assert.equal(getProject(db, project.id), undefined, "the project row itself should be gone");
+  assert.throws(() => db.prepare(`SELECT * FROM "entity_linked_project_TeamMember"`).all(), /no such table/, "TeamMember's own table should be dropped");
+  assert.throws(() => db.prepare(`SELECT * FROM "entity_linked_project_Project"`).all(), /no such table/, "Project's own table should be dropped too");
+});
+
+/**
  * migrate.ts's diffAndMigrate is deliberately additive-only -- it never
  * drops a table for an entity removed from the spec (see its own comment).
  * deleteProject used to drop tables only for project.spec.entities, the

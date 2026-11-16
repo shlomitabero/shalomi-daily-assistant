@@ -448,9 +448,40 @@ export function deleteProject(db: ForgeDatabase, projectId: string): void {
   const entityNames = new Set(row ? extractEntityNamesFromSpecJson(row.spec_json) : []);
   for (const entityName of listAllCheckpointedEntityNames(db, projectId)) entityNames.add(entityName);
   for (const entityName of listHistoricalEntityNames(db, projectId)) entityNames.add(entityName);
-  for (const entityName of entityNames) {
-    const table = tableNameFor(projectId, entityName);
-    db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
+  // Round 2080: connection.ts turns PRAGMA foreign_keys ON globally, and
+  // every relation field gets a real REFERENCES clause (migrate.ts) with
+  // no ON DELETE CASCADE -- so with foreign keys enforced, SQLite's own
+  // implicit "DELETE FROM" before each DROP TABLE re-checks every OTHER
+  // still-existing table's rows that reference the one being dropped, and
+  // throws "FOREIGN KEY constraint failed" the moment it hits one.
+  // entityNames here is iterated in plain spec-declaration order with no
+  // regard for which entities' relation fields point at which -- and
+  // specs are naturally authored "referenced entity first" (Customer
+  // before Order, TeamMember before Project), so the entities placed
+  // first in this loop are typically exactly the ones every other
+  // entity's relation fields point AT. This isn't a rare edge case: it
+  // reproduces for any project with more than one entity linked by a
+  // populated relation field, the overwhelming majority of real ones.
+  // Scoped off only for this loop (every one of this project's own
+  // tables is being unconditionally destroyed here regardless of order,
+  // so there is no real data-integrity reason to enforce FKs across
+  // them) rather than reordered via a topological sort: unlike
+  // orderForSeeding's own dependency graph (seed.ts), entityNames can
+  // include a historical entity no longer present in any current or
+  // checkpointed spec's field list, with no relation fields available
+  // to sort by at all. Restored in a finally so a single unexpected
+  // failure mid-loop can never silently leave FK enforcement off for
+  // every later query on this same connection. deleteProject itself has
+  // no `await` anywhere in it, so nothing else on this synchronous
+  // connection can run between turning this off and restoring it.
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    for (const entityName of entityNames) {
+      const table = tableNameFor(projectId, entityName);
+      db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
   }
   deleteCheckpointsForProject(db, projectId);
   removeAllCollaborators(db, projectId);
