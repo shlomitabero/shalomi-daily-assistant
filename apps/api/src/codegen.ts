@@ -6518,6 +6518,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // in every actually-deployed/downloaded Forge AI app, exactly as it
   // could in the live preview before this round.
   const [duplicatingId, setDuplicatingId] = useState(null);
+  // Round 2061: mirrors the live Forge AI preview's own EntityPanel.tsx
+  // identical fix -- handleMoveFields below had the same gap duplicatingId
+  // itself used to have, just harder to spot since most of its callers
+  // (the board dropdown, drag-and-drop) set an absolute target value, so a
+  // racing second call there harmlessly repeats the same write. The
+  // calendar's "move one day earlier/later" quick-shift buttons compute a
+  // RELATIVE target (+/-1 day from the currently rendered date) instead,
+  // so a fast double-click fires two calls that both read the same stale
+  // pre-render date and both PATCH the same "+1 day" value -- the second
+  // click's intent is silently discarded instead of landing as "+2 days".
+  // Keyed by record id for the same reason duplicatingId is.
+  const [movingId, setMovingId] = useState(null);
   // Round 1281: this exported app's own copy of the live Forge AI preview's
   // EntityPanel.tsx writesInFlight (round 1260) -- bulkActionBusy and
   // importBusy were two fully independent in-flight-write flags here too,
@@ -6528,7 +6540,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // it could in the live preview before round 1260. Round 1363 folded
   // submitBusy in alongside them for the same reason; round 1472 folded
   // duplicatingId in alongside those.
-  const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null;
+  const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null || movingId !== null;
   const [importMessage, setImportMessage] = useState(null);
   const [importErrors, setImportErrors] = useState([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -8304,9 +8316,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     // Round 1118: covers handleMove (board dropdown) and both board/
     // calendar drag-and-drop handlers, which all funnel through here --
     // see handleDelete's own identical guard above. Round 1281: also an
-    // import (writesInFlight).
-    if (writesInFlight) return;
+    // import (writesInFlight). Round 2061: also this same record's own
+    // still-in-flight move -- see movingId's own doc comment for why this
+    // call in particular needed a self-guard that this function's board-
+    // dropdown/drag-and-drop callers never surfaced a user-visible need
+    // for.
+    if (writesInFlight || movingId === id) return;
     setError(null);
+    setMovingId(id);
     try {
       await updateRecord(entity.name, id, fields);
       await refresh();
@@ -8324,6 +8341,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       }
       setError(err.message);
       setMoveErrorId(id);
+    } finally {
+      setMovingId(null);
     }
   }
 

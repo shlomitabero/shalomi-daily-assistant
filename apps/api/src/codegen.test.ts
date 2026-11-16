@@ -10667,6 +10667,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
     let capturedError: string | undefined;
     const fn = new Function(
       "writesInFlight",
+      "movingId",
       "window",
       "requiredFileField",
       "entity",
@@ -10680,9 +10681,11 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
       "updateRecord",
       "refresh",
       "setDuplicatingId",
+      "setMovingId",
       `${displayFieldHintsSrc}\n${pickDisplayFieldSrc}\n${recordDisplayLabelSrc}\n${handleMoveFieldsSrc}\n${staleEnumValueSrc}\n${handlerSrc}\nreturn ${handlerSrc.match(/^async function (\w+)/)![1]};`,
     )(
       false,
+      null,
       { confirm: () => true },
       undefined,
       entity,
@@ -10703,6 +10706,7 @@ test("the exported EntityView's handleDuplicate/handleMove surface a failed requ
         throw rejection;
       },
       async () => {},
+      () => {},
       () => {},
     );
     await invoke(fn);
@@ -16104,9 +16108,95 @@ test("the exported EntityView's handleSubmit refuses to run while writesInFlight
   );
   assert.match(
     entityViewJsx,
-    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy \|\| duplicatingId !== null;/,
-    "writesInFlight must be declared as the derived combination of every in-flight-write flag, mirroring the live preview's own round-1260/1363/1472 fixes",
+    /const writesInFlight = bulkActionBusy \|\| importBusy \|\| submitBusy \|\| duplicatingId !== null \|\| movingId !== null;/,
+    "writesInFlight must be declared as the derived combination of every in-flight-write flag, mirroring the live preview's own round-1260/1363/1472/2061 fixes",
   );
+});
+
+/**
+ * Round 2061: ports the live preview's own identical fix (EntityPanel.tsx,
+ * round 2061) to this exported app -- the calendar's "move one day
+ * earlier/later" quick-shift buttons compute a RELATIVE target (+/-1 day
+ * from the currently rendered date), so a fast double-click fired two
+ * handleMoveFields calls that both read the same stale pre-render date and
+ * both PATCHed the identical "+1 day" value -- the second click's intent
+ * was silently discarded instead of landing as "+2 days". Mirrors
+ * handleDuplicate's own self-guard shape exactly: movingId set to the
+ * record's own id before the real work, cleared in a finally block.
+ * Executes the actual generated handleMoveFields function (extracted from
+ * real codegen output, not reimplemented here).
+ */
+test("the exported EntityView's handleMoveFields sets movingId before its real work and always clears it afterward, guarding against a relative-shift race", async () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const handlerMatch = entityViewJsx.match(/ {2}async function handleMoveFields\(id, fields\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleMoveFields in the exported EntityView");
+
+  for (const shouldSucceed of [true, false]) {
+    const movingIdCalls: (number | null)[] = [];
+    const fn = new Function(
+      "writesInFlight",
+      "movingId",
+      "setError",
+      "updateRecord",
+      "entity",
+      "refresh",
+      "setMovingId",
+      "setMoveErrorId",
+      `${handlerMatch![0]}\nreturn handleMoveFields;`,
+    )(
+      false,
+      null,
+      () => {},
+      async () => {
+        if (!shouldSucceed) throw new Error("network error");
+      },
+      { name: "Appointment" },
+      async () => {},
+      (id: number | null) => movingIdCalls.push(id),
+      () => {},
+    ) as (id: number, fields: Record<string, string>) => Promise<void>;
+
+    await fn(1, { date: "2026-11-21" });
+
+    assert.deepEqual(
+      movingIdCalls,
+      [1, null],
+      shouldSucceed
+        ? "handleMoveFields must set movingId to the record's own id before its real work and clear it back to null once updateRecord resolves"
+        : "handleMoveFields must still clear movingId back to null even when updateRecord rejects -- otherwise one failed move would leave every future move on that record permanently blocked",
+    );
+  }
+
+  // The guard itself: a second call for the exact same record while the
+  // first is still "in flight" (movingId already equal to that id) must
+  // return immediately, never reaching updateRecord.
+  let updateRecordCalls = 0;
+  const guardedFn = new Function(
+    "writesInFlight",
+    "movingId",
+    "setError",
+    "updateRecord",
+    "entity",
+    "refresh",
+    "setMovingId",
+    "setMoveErrorId",
+    `${handlerMatch![0]}\nreturn handleMoveFields;`,
+  )(
+    false,
+    1,
+    () => {},
+    async () => {
+      updateRecordCalls++;
+    },
+    { name: "Appointment" },
+    async () => {},
+    () => {},
+    () => {},
+  ) as (id: number, fields: Record<string, string>) => Promise<void>;
+
+  await guardedFn(1, { date: "2026-11-22" });
+  assert.equal(updateRecordCalls, 0, "a second handleMoveFields call for the same record already mid-move must never reach updateRecord");
 });
 
 /**
