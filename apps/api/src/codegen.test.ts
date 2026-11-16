@@ -22390,6 +22390,11 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
       "refresh",
       "setError",
       "setMoveErrorId",
+      // Round 2077: commitInlineEdit now also reads `records` to short-circuit
+      // a no-op commit -- the stored value ("Acme Corp") deliberately differs
+      // from cellDraft ("New Value") above so this test's own real commit
+      // still proceeds past that new check exactly as before.
+      "records",
       `${invalidNumberFieldSrc}\n${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
     )(
       state.editingCell,
@@ -22406,6 +22411,7 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
       },
       () => {},
       () => {},
+      [{ id: 1, name: "Acme Corp" }],
     ) as { commitInlineEdit: () => Promise<void>; handleCellBlur: () => void };
   }
 
@@ -22445,6 +22451,11 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
     "refresh",
     "setError",
     "setMoveErrorId",
+    // Round 2077: commitInlineEdit now also reads `records` to short-circuit
+    // a no-op commit -- the stored value ("Acme Corp") deliberately differs
+    // from cellDraft ("") above so this test's own required-field check still
+    // gets reached exactly as before.
+    "records",
     `${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "name" },
@@ -22461,6 +22472,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
       capturedError = msg;
     },
     () => {},
+    [{ id: 1, name: "Acme Corp" }],
   ) as () => Promise<void>;
 
   await fn();
@@ -22498,6 +22510,11 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
     "refresh",
     "setError",
     "setMoveErrorId",
+    // Round 2077: commitInlineEdit now also reads `records` to short-circuit
+    // a no-op commit -- the stored value (500) deliberately differs from
+    // cellDraft ("abc") above so this test's own invalidNumberField check
+    // still gets reached exactly as before.
+    "records",
     `${invalidNumberFieldSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "amount" },
@@ -22514,12 +22531,77 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
       capturedError = msg;
     },
     () => {},
+    [{ id: 1, amount: 500 }],
   ) as () => Promise<void>;
 
   await fn();
 
   assert.match(capturedError!, /"Amount" must be a number/, "must name the field, not let the bad string reach the server");
   assert.equal(updateCalled, false, "must not call updateRecord at all when the edited cell's value isn't actually numeric");
+});
+
+/**
+ * Round 2077: mirrors the live preview's own identical fix (EntityPanel.tsx)
+ * -- a record can carry a legacy enum value no longer in field.enumValues
+ * (migrate.ts never rewrites existing row data, and FieldInput's own enum
+ * <select> branch above deliberately keeps rendering that stale value as
+ * its own extra option so it stays visibly selected). The exported app's
+ * own commitInlineEdit used to unconditionally re-submit whatever cellDraft
+ * held with no "did anything actually change" check at all, so opening and
+ * closing a stale-enum cell untouched re-PATCHed that same stale value,
+ * rejected by coerceValue's enum check since it's no longer a current
+ * option -- a pure no-op turned into a false VALIDATION_ERROR.
+ */
+test("the exported EntityView's generated inline cell editor sends no update at all when a stale (no-longer-valid) enum cell is committed with zero changes", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(invalidNumberFieldSrc && commitSrc, "expected to find invalidNumberField and commitInlineEdit in generated output");
+
+  let updateCalled = false;
+  let refreshCalled = false;
+  let capturedEditingCell: unknown = { recordId: 1, field: "status" };
+  const fn = new Function(
+    "editingCell",
+    "writesInFlight",
+    "cellDraft",
+    "suppressCellBlurCommitRef",
+    "entity",
+    "setEditingCell",
+    "updateRecord",
+    "refresh",
+    "setError",
+    "setMoveErrorId",
+    "records",
+    `${invalidNumberFieldSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
+  )(
+    { recordId: 1, field: "status" },
+    false,
+    // cellDraft is identical to the record's own stale stored value below --
+    // the exact "opened and closed with zero changes" scenario.
+    "archived",
+    { current: false },
+    { name: "Deal", fields: [{ name: "status", label: "Status", type: "enum", enumValues: ["new", "won", "lost"] }] },
+    (next: unknown) => {
+      capturedEditingCell = next;
+    },
+    async () => {
+      updateCalled = true;
+    },
+    async () => {
+      refreshCalled = true;
+    },
+    () => {},
+    () => {},
+    [{ id: 1, status: "archived" }],
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.equal(updateCalled, false, "an untouched stale-enum cell must never call updateRecord for its own already-stored value");
+  assert.equal(refreshCalled, false, "nothing changed, so there's nothing to refresh -- this is a no-op close, not a successful save");
+  assert.equal(capturedEditingCell, null, "the cell must still close normally (editingCell cleared), same as any other untouched blur/Enter");
 });
 
 /**

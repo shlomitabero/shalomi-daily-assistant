@@ -5640,6 +5640,30 @@ export function EntityPanel({
     if (writesInFlight) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    // Round 2077: nothing to commit at all if the draft is still exactly
+    // the record's own currently-stored value for this field -- the same
+    // comparison cellEditIsDirty (above) already uses for the beforeunload
+    // warning, recomputed fresh here rather than read from that outer
+    // closure. This matters most for a STALE enum value: a /refine or
+    // checkpoint restore can narrow a field's enumValues while this exact
+    // value is still what's sitting on the record (migrate.ts never
+    // rewrites existing row data, and FieldInput's own enum <select>
+    // branch deliberately keeps rendering/selecting it -- see its own
+    // "keep it selectable" comment) -- so simply double-clicking that cell
+    // and clicking away again, with zero changes, used to re-submit that
+    // same stale value, which coerceValue's enum branch (repository.ts)
+    // rejects since it's no longer one of the field's CURRENT options --
+    // turning a pure no-op into a false, red-highlighted VALIDATION_ERROR.
+    // Skipping here, before even the missingField/invalidNumberField
+    // checks below, is also strictly safer for THEIR already-invalid-but-
+    // untouched-by-this-edit stored values (e.g. a field made required
+    // after some rows were already saved blank): leaving a value alone
+    // should never be treated as submitting an edit to it.
+    if (value === records.find((r) => r.id === recordId)?.[field]) {
+      suppressCellBlurCommitRef.current = true;
+      setEditingCell(null);
+      return;
+    }
     // Mirrors the single-record add/edit form's own missingField guard and
     // handleBulkUpdate's identical check (round 702) -- the third sibling
     // mutation path through this same FieldInput/isInlineEditableField set

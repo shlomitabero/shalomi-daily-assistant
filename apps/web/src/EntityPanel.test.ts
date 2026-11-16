@@ -16026,6 +16026,11 @@ test("EntityPanel's inline cell editor suppresses a stale post-commit blur inste
       // Round 1400: commitInlineEdit now also checks writesInFlight -- not
       // under test here, so false, matching the real app's own default.
       "writesInFlight",
+      // Round 2077: commitInlineEdit now also reads `records` to short-circuit
+      // a no-op commit -- the stored value ("Acme Corp") deliberately differs
+      // from cellDraft ("New Value") above so this test's own real commit
+      // still proceeds past that new check exactly as before.
+      "records",
       `${code}\nreturn { commitInlineEdit, handleCellBlur };`,
     )(
       state.editingCell,
@@ -16043,6 +16048,7 @@ test("EntityPanel's inline cell editor suppresses a stale post-commit blur inste
       () => {},
       () => {},
       false,
+      [{ id: 1, name: "Acme Corp" }],
     ) as { commitInlineEdit: () => Promise<void>; handleCellBlur: () => void };
   }
 
@@ -16218,6 +16224,53 @@ test("EntityPanel's inline cell editor refuses to commit a non-numeric value for
         amountCell.querySelector("input") !== null,
         "the cell must stay open for editing (not silently closed) so the user can fix the value without double-clicking again",
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2077: a record can carry a legacy enum value no longer in
+ * field.enumValues (e.g. after a /refine or checkpoint restore narrows a
+ * field's options -- migrate.ts never rewrites existing row data, and
+ * FieldInput's own enum <select> branch above deliberately keeps rendering
+ * that stale value as its own extra <option> so it stays visibly selected,
+ * see that branch's own "keep it selectable" comment). commitInlineEdit
+ * used to unconditionally re-submit whatever cellDraft held, with no check
+ * for whether anything had actually changed -- so simply double-clicking
+ * that cell and clicking away again, with zero edits, re-PATCHed the exact
+ * same stale value, which coerceValue's enum check (repository.ts) rejects
+ * since it's no longer one of the field's CURRENT options: a pure no-op
+ * interaction turned into a false, red-highlighted VALIDATION_ERROR.
+ * Confirms opening and closing a stale-enum cell untouched now sends no
+ * request at all.
+ */
+test("EntityPanel's inline cell editor sends no PATCH at all when a stale (no-longer-valid) enum cell is opened and closed with zero changes", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "archived" }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const statusCell = document.querySelectorAll("table tbody td")[2] as HTMLTableCellElement;
+      fireEvent.doubleClick(statusCell);
+      const select = statusCell.querySelector("select") as HTMLSelectElement;
+      assert.equal(select.value, "archived", "the stale value must still render as the select's own selected option, not silently blank");
+
+      fireEvent.blur(select);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(patchCount, 0, "an untouched stale-enum cell must never send a PATCH for its own already-stored value");
+      assert.equal(store[0].status, "archived", "the mock server's own record must be untouched");
+      assert.equal(document.querySelector("p.error"), null, "no error banner should be shown -- nothing was actually submitted, so there's nothing to reject");
+      assert.equal(statusCell.querySelector("select"), null, "the cell must still close normally, same as any other untouched blur");
     } finally {
       globalThis.fetch = originalFetch;
     }

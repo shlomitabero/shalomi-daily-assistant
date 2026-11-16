@@ -8376,6 +8376,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (writesInFlight) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    // Round 2077: nothing to commit at all if the draft is still exactly
+    // the record's own currently-stored value -- see the live Forge AI
+    // preview's EntityPanel.tsx handleSubmit's own identical doc comment.
+    // A stale enum value left untouched would otherwise re-submit and get
+    // rejected by coerceValue's enum check, turning a pure no-op into a
+    // false VALIDATION_ERROR.
+    if (value === records.find((r) => r.id === recordId)?.[field]) {
+      suppressCellBlurCommitRef.current = true;
+      setEditingCell(null);
+      return;
+    }
     // Mirrors handleBulkUpdate's own identical check above -- without it,
     // clearing a required cell and committing fires a doomed PATCH.
     const fieldDef = entity.fields.find((f) => f.name === field);
