@@ -1747,7 +1747,16 @@ function buildCombinedCalendarFeedIcs(entities, recordsByEntityName) {
         })
         .filter((line) => line !== null);
       lines.push("BEGIN:VEVENT");
-      lines.push(foldFeedIcsLine(\`UID:\${feedIcsEscapeText(entity.name)}-\${record.id}@${project.id}.forge-ai\`));
+      // Round 2170: mirrors the live preview's own round-2167 fix
+      // (calendarFeed.ts's uidSuffix) -- without the "-all" suffix here,
+      // this combined feed emitted the exact same UID as the per-entity
+      // feed above for the same record, violating RFC 5545's "MUST be
+      // globally unique" UID requirement and making a calendar client
+      // that's subscribed to both feeds for this exported app collapse
+      // one feed's events into updates of the other's. The per-entity
+      // feed's own UID format above is left untouched so an existing
+      // per-entity subscriber never sees its UID change.
+      lines.push(foldFeedIcsLine(\`UID:\${feedIcsEscapeText(entity.name)}-\${record.id}@${project.id}-all.forge-ai\`));
       lines.push(\`DTSTAMP:\${dtstamp}\`);
       lines.push(\`DTSTART;VALUE=DATE:\${formatFeedIcsDate(start)}\`);
       lines.push(\`DTEND;VALUE=DATE:\${formatFeedIcsDate(end)}\`);

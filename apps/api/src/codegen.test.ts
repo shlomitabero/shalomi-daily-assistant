@@ -480,6 +480,87 @@ test("generated server.js serves a real combined calendar feed merging every dat
   }
 });
 
+/**
+ * Round 2170: mirrors the live backend's own round-2167 fix
+ * (calendarFeed.test.ts's "produce different UIDs" test) -- the exported
+ * app's server.js has its own separate, duplicated copy of both the
+ * per-entity and combined feed builders, and round 2167's own write-up
+ * never mentioned codegen.ts, unlike the immediately adjacent rounds
+ * 2168/2169 which explicitly ported their own fixes here. Before this
+ * round, both feeds emitted the byte-identical UID for the same record,
+ * so a real subscriber to both feeds for one exported app saw one feed's
+ * events collapse into updates of the other's.
+ */
+test("generated server.js's per-entity and combined calendar feeds produce different UIDs for the exact same record, instead of colliding", async () => {
+  const dealEntity: Entity = {
+    name: "Deal",
+    label: "Deals",
+    fields: [
+      { name: "title", label: "Title", type: "text", required: true },
+      { name: "eventDate", label: "Event Date", type: "date", required: true },
+    ],
+  };
+  const feedProject: Project = { ...project, spec: { ...project.spec, entities: [dealEntity] } };
+  const files = generateExportFiles(feedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-feed-uid-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        const dealRes = await fetch(`http://localhost:${port}/api/Deal`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Trip to Eilat", eventDate: "2026-11-05" }),
+        });
+        assert.equal(dealRes.status, 201);
+
+        const singleRes = await fetch(`http://localhost:${port}/api/calendar/Deal.ics`);
+        assert.equal(singleRes.status, 200);
+        const singleIcs = await singleRes.text();
+        assert.match(singleIcs, /UID:Deal-1@/, "the per-entity feed's own UID format must stay exactly as it was before this round");
+        const singleUid = /UID:(.+)/.exec(singleIcs)![1];
+
+        const combinedRes = await fetch(`http://localhost:${port}/api/calendar/all/feed.ics`);
+        assert.equal(combinedRes.status, 200);
+        const combinedIcs = await combinedRes.text();
+        const combinedUid = /UID:(.+)/.exec(combinedIcs)![1];
+
+        assert.notEqual(combinedUid, singleUid, "the combined feed must use a different UID than the per-entity feed for the exact same record");
+        assert.match(combinedUid, /-all\.forge-ai\r?$/, "the combined feed's UID must carry its own distinguishing suffix");
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("generated server.js's combined calendar feed 404s when NO entity in the project has a date field at all, instead of serving an always-empty feed", async () => {
   const noDateEntityA: Entity = {
     name: "Task",
