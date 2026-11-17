@@ -2029,7 +2029,19 @@ export function parseCsv(text: string): string[][] {
     // in the file, silently merging an arbitrary number of real rows into
     // one garbled field and shifting every column after it, with zero
     // error or warning ever surfaced.
-    if (ch === '"' && field === "") {
+    // Round 2118: `field === ""` above was too strict -- a delimiter
+    // followed by a space before a quoted field (a common "comma + space"
+    // export convention, distinct from Excel's own no-space style) left
+    // `field` holding that leading whitespace by the time the quote is
+    // reached, so this never fired: the quote was treated as ordinary
+    // literal content, and the comma inside what should have been one
+    // quoted field split the row into extra columns, shifting every
+    // column after it. `field.trim() === ""` still correctly excludes a
+    // quote appearing after real content (round 2072's own `3" steel
+    // rod` case); resetting `field` drops the leading whitespace rather
+    // than keeping it as part of the quoted value.
+    if (ch === '"' && field.trim() === "") {
+      field = "";
       inQuotes = true;
       i++;
       continue;

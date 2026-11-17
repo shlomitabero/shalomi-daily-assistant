@@ -2373,6 +2373,25 @@ test("parseCsv treats a stray mid-field quote as literal content, not the start 
   ]);
 });
 
+/**
+ * Round 2118: round 2072's own fix above (`field === ""`) was too strict --
+ * a delimiter followed by a space before a quoted field (a common
+ * "comma + space" export convention, distinct from Excel's own no-space
+ * style) left `field` holding that leading whitespace by the time the
+ * quote was reached, so the quote-opening check never fired: the quote
+ * was treated as ordinary literal content, and the comma inside what
+ * should have been one quoted field split the row into extra columns,
+ * shifting every column after it.
+ */
+test("parseCsv still opens a quoted field when the opening quote is preceded by whitespace after the delimiter", () => {
+  const csv = 'Name,Description,Price,InStock\r\nWidget, "a nice, long description",19.99,true\r\n';
+  const rows = parseCsv(csv);
+  assert.deepEqual(rows, [
+    ["Name", "Description", "Price", "InStock"],
+    ["Widget", "a nice, long description", "19.99", "true"],
+  ]);
+});
+
 test("parseCsv round-trips output produced by recordsToCsv", () => {
   const fields: Field[] = [
     { name: "name", label: "Name", type: "text", required: true },
