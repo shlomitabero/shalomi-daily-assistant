@@ -50322,3 +50322,26 @@ The existing round-2106 regression test's three sentences all happen to keep "fo
 **Tests/verification:** Confirmed the regex gap in isolation with a direct `node -e` test, then confirmed it through the real engine via a scratch `tsx` script before and after the fix. Added a new test in `packages/spec-engine/src/heuristic.test.ts` right after the existing round-2106 Courier test, using the two sentences that reproduced the bug. Verified fail-before/pass-after via `git stash` (stashing only the `domainEntities.ts` fix, keeping the new test): failed exactly as predicted before the fix, passed cleanly after. Ran the full `packages/spec-engine` test suite (358/358 passing) and `apps/api`'s build (clean, since it bundles `@forge/spec-engine`) before committing.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2150: Volunteer's "volunteer information" exclusion had the same bounded-window defeat as round 2149's Courier fix
+
+**The process:** Round 2149's survey directed round 2150 toward reading apps/web/src/WhatsAppPanel.tsx and AutomationsPanel.tsx in full (previously only spot-checked), templates.ts, SpecListItemRemover.tsx, and specifically a systematic search for other fixed-distance word-window regexes in domainEntities.ts that could be defeated the same way round 2149's Courier regex was. The survey agent found exactly that: a second instance of the same defeat class, in the Volunteer entity's keyword regex.
+
+**The bug:** Round 2108 excluded the everyday verb sense of "volunteer" ("volunteer a phone number", "volunteer information") from matching the nonprofit Volunteer entity, using `(?!\s+(?:\S+\s+){0,1}information\b)` — allowing at most one word between "volunteer" and "information". A natural signup-form phrasing that names what kind of information (e.g. "volunteer some additional contact information") puts two or more words before "information", escaping the window. Confirmed live through the real engine:
+```
+"A simple signup form for an event. Users enter their name and email, and can optionally volunteer some additional contact information too."
+ -> [ 'Volunteer' ]   // fabricated nonprofit entity, generic catch-all lost entirely
+```
+This is the identical failure mode round 2108's own comment already describes as the bug it fixed — just triggered by one extra word than the `{0,1}` window allows.
+
+**The fix:** Widened the bounded `(?:\S+\s+){0,1}` repetition to an unbounded `(?:\S+\s+)*`, in `packages/spec-engine/src/domainEntities.ts`'s Volunteer keyword regex — the same remedy as round 2149's Courier fix:
+```js
+// before: /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+){0,1}information\b)/
+/\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+)*information\b)/
+```
+
+The survey agent also flagged a secondary, lower-confidence observation worth a future round's judgment: the Deal entity's "deals" regex at domainEntities.ts:640 uses a `{0,2}` word-window between "close/closing/closed" and "deals", which is a false-NEGATIVE mirror of the same class (a legitimate CRM phrase like "close bigger, more complex enterprise deals with our clients" could fail to match at all) — not independently pursued this round since it wasn't confirmed whether other co-occurring keywords mask it in practice.
+
+**Tests/verification:** Confirmed the regex gap in isolation via `node -e`, then via the real engine with a scratch `tsx` script before and after the fix. Added a new test in `packages/spec-engine/src/heuristic.test.ts` right after the existing round-2131 Volunteer test, using the sentence that reproduced the bug. Verified fail-before/pass-after via `git stash` (stashing only the `domainEntities.ts` fix, keeping the new test): failed exactly as predicted before the fix, passed cleanly after. Ran the full `packages/spec-engine` test suite (359/359 passing) and `apps/api`'s build (clean) before committing.
+
+Live: https://forge-ai-m7p7.onrender.com
