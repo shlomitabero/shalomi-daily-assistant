@@ -91,6 +91,22 @@ export default function Approvals() {
               <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status] ?? a.status}</span>
             </div>
             <p className="hint">פעולה: {actionTypeLabel(a.actionType)}{opp?.status === 'published' && ' — כבר בוצעה'}</p>
+            {/* Every other list page in this app (the activity log, the daily
+                digest list, the watchlist's own lastUpdatedAt) shows some
+                timestamp - this card was the one exception, even though
+                routes/approvals.js already stamps createdAt/approvedAt/
+                rejectedAt on every entry. Without it, the owner had no way
+                to tell from this page how long something has been sitting
+                here, or when a past approve/reject actually happened,
+                short of cross-referencing the activity log. approvedAt/
+                rejectedAt over createdAt for a resolved approval - the
+                moment the owner actually acted is more useful here than
+                the moment it was first created, a split second earlier in
+                practice for 'approved' but potentially much earlier for a
+                'rejected' one created under a previous mode. */}
+            <p className="hint" style={{ margin: '-4px 0 0' }}>
+              {a.status === 'approved' ? `אושר ב-${new Date(a.approvedAt).toLocaleString('he-IL')}` : `בוטל ב-${new Date(a.rejectedAt).toLocaleString('he-IL')}`}
+            </p>
             <div className="field-row">
               <Link className="link" to={`/opportunities/${a.opportunityId}`}>לכרטיס ההזדמנות ←</Link>
               {stillActionable && (
