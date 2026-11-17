@@ -43,9 +43,17 @@ const MAX_ACTIONS_LOG_ENTRIES = 500;
 // testing) permanently grew actions_log forever, exactly the unbounded-growth
 // risk this whole pruning mechanism exists to prevent, for the one type most
 // likely to accumulate fastest during active testing.
+//
+// routes/actions.js's resolveUnrecordedSale now lets the owner stamp
+// detail.resolvedAt on a blocked entry once they've actually dealt with it -
+// at that point it's exactly as resolved as a successful sale (its "real,
+// still-open payment problem" is gone), so protecting it from pruning
+// forever regardless would recreate the same unbounded-growth risk this
+// function exists to prevent, just for a slightly later-closing type of
+// entry instead of an already-successful one.
 function isUnprunable(entry) {
   if (entry.type === 'login_attempt') return true;
-  if (entry.type === 'sale_confirmed') return String(entry.result).startsWith('blocked');
+  if (entry.type === 'sale_confirmed') return String(entry.result).startsWith('blocked') && !entry.detail?.resolvedAt;
   return false;
 }
 

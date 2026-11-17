@@ -272,11 +272,11 @@ test('logAction prunes the oldest prunable entries once the cap is exceeded, kee
   assert.equal(remaining.some((a) => a.detail.i === 500), true);
 });
 
-test('logAction never prunes a sale_confirmed entry, even a very old one past the cap', () => {
+test('logAction never prunes an unresolved blocked sale_confirmed entry, even a very old one past the cap', () => {
   // ledger.js's countUnrecordedSales() scans this type's ENTIRE lifetime
-  // history - a blocked sale_confirmed means a real payment went
-  // unrecorded, with no route that ever marks it resolved, so dropping an
-  // old one could silently hide a real, still-open payment problem.
+  // history for an unresolved one - a blocked sale_confirmed means a real
+  // payment went unrecorded, so dropping an old, still-unresolved one
+  // could silently hide a real, still-open payment problem.
   __resetForTests();
   const oldSale = db.actions_log.insert({
     id: makeId('act'), type: 'sale_confirmed', detail: { transactionId: 'txn_old' },
@@ -290,7 +290,29 @@ test('logAction never prunes a sale_confirmed entry, even a very old one past th
     });
   }
   logAction({ type: 'draft_product', detail: {}, result: 'success' });
-  assert.ok(db.actions_log.get(oldSale.id), 'the old sale_confirmed entry must survive pruning');
+  assert.ok(db.actions_log.get(oldSale.id), 'the old, unresolved sale_confirmed entry must survive pruning');
+});
+
+test('logAction DOES prune an old blocked sale_confirmed entry the owner has already resolved', () => {
+  // routes/actions.js's resolveUnrecordedSale stamps detail.resolvedAt once
+  // the owner has dealt with a blocked entry themselves - at that point
+  // it's exactly as resolved as a successful sale, so keeping it
+  // unprunable forever regardless would recreate the same unbounded-growth
+  // risk this function exists to prevent.
+  __resetForTests();
+  const oldResolved = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { transactionId: 'txn_old', resolvedAt: new Date('2020-02-01').toISOString() },
+    result: 'blocked: bad amount',
+    createdAt: new Date('2020-01-01').toISOString(),
+  });
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(Date.now() + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: {}, result: 'success' });
+  assert.equal(db.actions_log.get(oldResolved.id), null, 'a resolved blocked sale_confirmed is safe to prune like any other entry');
 });
 
 test('logAction DOES prune an old successful sale_confirmed entry, unlike a blocked one', () => {
