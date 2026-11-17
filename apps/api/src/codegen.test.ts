@@ -17104,6 +17104,69 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
 });
 
 /**
+ * Round 2139: ports the live preview's own round-2138 fix
+ * (entityFormatting.ts's buildImportRecords/buildImportRecordsFromJson) --
+ * the inbound-webhook route has tolerated an ISO-8601 timestamp (e.g.
+ * "2024-01-15T00:00:00Z", the shape Date.prototype.toISOString() itself
+ * produces) for a date field since round 1551, extracting and keeping just
+ * the valid YYYY-MM-DD prefix, but this generated app's own independent
+ * CSV/JSON import copy never got that leniency and hard-rejected the exact
+ * same value shape. Executes the actual generated buildImportRecords/
+ * buildImportRecordsFromJson/isValidDate functions (extracted from real
+ * codegen output, not reimplemented here) for both import paths.
+ */
+test("the exported EntityView's own generated buildImportRecords and buildImportRecordsFromJson accept an ISO-8601 timestamp for a date field, keeping just its date prefix", () => {
+  const dateProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          label: "Appointment",
+          fields: [
+            { name: "date", label: "Date", type: "date", required: true },
+            { name: "notes", label: "Notes", type: "text" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(dateProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fields = dateProject.spec.entities[0].fields;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function csvFieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function csvFieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc && importJsonSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords/buildImportRecordsFromJson in generated output",
+  );
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+
+  const { buildImportRecords, buildImportRecordsFromJson } = new Function(
+    `${allEntitiesDecl}\n${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\n${importJsonSrc}\nreturn { buildImportRecords, buildImportRecordsFromJson };`,
+  )();
+
+  const csvRows = [
+    ["Date", "Notes"],
+    ["2024-01-15T00:00:00Z", "timestamp"],
+  ];
+  const csvResult = buildImportRecords(fields, csvRows);
+  assert.deepEqual(csvResult.errors, []);
+  assert.deepEqual(csvResult.records, [{ date: "2024-01-15", notes: "timestamp" }]);
+
+  const jsonResult = buildImportRecordsFromJson(fields, [{ date: "2024-01-15T00:00:00Z", notes: "timestamp" }], {});
+  assert.deepEqual(jsonResult.errors, []);
+  assert.deepEqual(jsonResult.records, [{ date: "2024-01-15", notes: "timestamp" }]);
+});
+
+/**
  * Regression test for round 1084's Explore survey finding: mirrors the
  * live preview's own round-1084 fix (entityFormatting.ts) -- FieldSchema's
  * enumLabels has no uniqueness constraint, so two different declared

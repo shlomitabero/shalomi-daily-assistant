@@ -4497,11 +4497,28 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
         }
         record[field.name] = matches[0];
       } else if (field.type === "date") {
-        if (!isValidDate(raw)) {
-          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
-          break;
-        }
+        // Round 2139 (ported): mirrors the live preview's own round-2138
+        // fix (entityFormatting.ts's buildImportRecords) -- the same
+        // WEBHOOK_DATE_PREFIX leniency the inbound-webhook route has had
+        // since round 1551 for an ISO-8601 timestamp like
+        // "2024-01-15T00:00:00Z" (the shape Date.prototype.toISOString()
+        // itself produces) was never ported to this file's own
+        // independent copy of the CSV import logic, so it hard-rejected a
+        // value the webhook route accepts. Declared locally since this
+        // function's own copy is out of scope from entityFormatting.ts's
+        // module-level CSV_DATE_PREFIX, the same reason CSV_PARENTHESIZED_NEGATIVE
+        // above is redeclared locally too.
+        const CSV_DATE_PREFIX = /^\\d{4}-\\d{2}-\\d{2}/;
         record[field.name] = raw;
+        if (!isValidDate(raw)) {
+          const match = CSV_DATE_PREFIX.exec(raw);
+          if (match && isValidDate(match[0])) {
+            record[field.name] = match[0];
+          } else {
+            rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
+            break;
+          }
+        }
       } else {
         record[field.name] = raw;
       }
@@ -4759,11 +4776,28 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         }
         record[field.name] = matches[0];
       } else if (field.type === "date") {
-        if (typeof raw !== "string" || !isValidDate(raw)) {
+        if (typeof raw !== "string") {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
           break;
         }
         record[field.name] = raw;
+        // Round 2139 (ported): mirrors the live preview's own round-2138
+        // fix (entityFormatting.ts's buildImportRecordsFromJson) -- same
+        // WEBHOOK_DATE_PREFIX leniency buildImportRecords above already
+        // gets, just missing here for a hand-edited JSON file. Declared
+        // locally for the same reason CSV_DATE_PREFIX is redeclared
+        // locally in buildImportRecords above -- that function's own copy
+        // is out of scope here.
+        if (!isValidDate(raw)) {
+          const CSV_DATE_PREFIX = /^\\d{4}-\\d{2}-\\d{2}/;
+          const match = CSV_DATE_PREFIX.exec(raw);
+          if (match && isValidDate(match[0])) {
+            record[field.name] = match[0];
+          } else {
+            rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
+            break;
+          }
+        }
       } else {
         if (typeof raw !== "string") {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't valid text for field "\${field.label || field.name}".\`;
