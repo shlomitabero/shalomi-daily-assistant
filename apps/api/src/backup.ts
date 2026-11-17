@@ -37,18 +37,30 @@ type Lang = "he" | "en";
  * construction completely unguarded. A "/" would create an unintended
  * nested folder inside the downloaded archive, breaking this feature's
  * own "one flat CSV per entity" promise -- and replacing every path
- * separator also rules out path traversal (a naive unzip tool interprets
- * "../" as a directory-escaping component only when "/" is actually
- * present to split the path into segments; a flat filename with no
- * separators at all, even one containing literal dots, can never do
- * that). Deliberately narrower than tableNameFor's full ASCII-only
- * sanitization: only the characters that are actually unsafe in a zip/
- * filesystem path are replaced, so a real Hebrew entity name stays
- * human-readable in the archive's own file listing -- the entire point
- * of this feature.
+ * separator rules out path traversal FOR THIS FUNCTION'S OWN RESULT USED
+ * ALONE (a flat filename with no separators at all, even one containing
+ * literal dots, can never be interpreted as a directory-escaping path
+ * component). Round 2095: that guarantee does NOT extend to a caller
+ * that goes on to build its own path by joining this result with "/"
+ * itself -- addUploadedFileEntries's own `${entityDir}/files/...` entry
+ * does exactly that, and this function deliberately leaves "." alone
+ * (for a readable "Report.csv"-shaped name), so an entity named EXACTLY
+ * ".." sanitized to itself and then, once joined with that "/", became a
+ * real, literal "../files/..." zip-slip (CWE-22) entry in the downloaded
+ * archive -- confirmed live. EntitySchema.name has no identifier-shape
+ * restriction (unlike FieldSchema.name's own SAFE_FIELD_NAME refine), so
+ * this is reachable through an ordinary AI-generated or heuristic-
+ * fallback spec, not just direct API/DB manipulation. Neutralizing a
+ * pure "."/".." RESULT here closes it for every current and future
+ * caller, not just addUploadedFileEntries's own call site. Deliberately
+ * narrower than tableNameFor's full ASCII-only sanitization otherwise:
+ * only the characters that are actually unsafe in a zip/filesystem path
+ * are replaced, so a real Hebrew entity name stays human-readable in the
+ * archive's own file listing -- the entire point of this feature.
  */
 function sanitizeZipEntryName(name: string): string {
-  return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+  const sanitized = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+  return sanitized === "." || sanitized === ".." ? `_${sanitized}_` : sanitized;
 }
 
 /**

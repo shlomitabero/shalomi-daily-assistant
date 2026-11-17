@@ -579,6 +579,73 @@ test("generateBackupZipEntries disambiguates an uploaded-file directory prefix t
 });
 
 /**
+ * Round 2095: sanitizeZipEntryName deliberately leaves "." untouched (see
+ * its own doc comment, and round 1434's test just above, for why -- a
+ * readable "Report.csv"-shaped name). That's safe for the flat
+ * "<name>.csv" entries, which never have a "/" added around them -- but
+ * addUploadedFileEntries's own uploaded-file entries DO add their own
+ * "/" right after the sanitized name (`${entityDir}/files/...`). An
+ * entity literally named exactly ".." sanitizes to itself unchanged,
+ * which then makes that entry's real path LITERALLY "../files/..." -- a
+ * genuine zip-slip (CWE-22) traversal entry, confirmed live before this
+ * fix: `generateBackupZipEntries` really did produce an entry whose path
+ * started with "../". EntitySchema.name has no identifier-shape
+ * restriction (unlike FieldSchema.name's own SAFE_FIELD_NAME refine), so
+ * this is reachable through an ordinary AI-generated or heuristic-
+ * fallback spec, not just direct API/DB manipulation.
+ */
+test("generateBackupZipEntries never produces a zip-slip (\"../\") entry for an entity named exactly \"..\"", () => {
+  const traversalProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "..",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(traversalProject);
+  const traversalEntity = traversalProject.spec.entities[0];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filename = `${randomUUID()}.pdf`;
+    // Mirrors where a real upload for this exact entity name actually
+    // lands on disk (resolveUploadedFilePath/the real upload route both
+    // join uploadsDir, projectId, entityName the same way) -- one
+    // directory above the project's own upload folder.
+    mkdirSync(path.join(uploadsDir, traversalProject.id, ".."), { recursive: true });
+    const realBytes = Buffer.from("%PDF-fake-attachment-bytes");
+    writeFileSync(path.join(uploadsDir, traversalProject.id, "..", filename), realBytes);
+    const { id } = insertRecord(db, traversalProject.id, traversalEntity, {
+      name: "Row one",
+      attachment: JSON.stringify({ url: `/api/uploads/${traversalProject.id}/../${filename}`, name: "scan.pdf", size: realBytes.length, mimeType: "application/pdf" }),
+    });
+
+    const entries = generateBackupZipEntries(db, traversalProject, {}, uploadsDir);
+
+    for (const entry of entries) {
+      assert.equal(
+        entry.path.startsWith("../") || entry.path === ".." || entry.path.includes("/../"),
+        false,
+        `entry path "${entry.path}" must never contain a real ".." path component`,
+      );
+    }
+    const fileEntry = entries.find((e) => e.path.endsWith(`-attachment-scan.pdf`));
+    assert.ok(fileEntry, "the uploaded file must still be included, just under a neutralized directory name");
+    assert.deepEqual(fileEntry!.content, realBytes);
+    assert.equal(fileEntry!.path, `_.._/files/${id}-attachment-scan.pdf`);
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1936: round 1434's own dedup above only re-checks an EXACT
  * flat-path match against a bumped candidate -- it never re-checks
  * whether that candidate is already in use as a DIRECTORY PREFIX by an
