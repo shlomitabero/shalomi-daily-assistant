@@ -2550,38 +2550,52 @@ export function createProjectsRouter(
     "/projects/:id/clone",
     projectCreationRateLimiter,
     asyncRoute(async (req, res) => {
-      const source = requireProjectAccess(db, req.params.id, req.userId!);
-      const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";
-      // Round 1410: this route builds its own `name` by string concatenation
-      // and writes it straight to insertProject, bypassing CreateProjectSchema/
-      // RenameProjectSchema entirely -- so the PROJECT_NAME_MAX_LENGTH ceiling
-      // those two schemas enforce everywhere else silently didn't apply here.
-      // Repeatedly cloning a clone chains this suffix with no bound
-      // ("X" -> "X (copy)" -> "X (copy) (copy)" -> ...), and the result feeds
-      // straight into the same collaborator-broadcast emails round 1408
-      // closed this exact amplification for. Truncated, not rejected with a
-      // 400: this value is server-synthesized, not something the user typed
-      // into an editable field, so there's nothing for a validation error to
-      // ask them to fix.
-      // Round 2034: the slice itself must be code-point-aware, mirroring
-      // codegen.ts's own appInitial/renderManifestJson `[...name]` fix
-      // (round 1283) for the identical hazard -- a raw `.slice(0, N)`
-      // operates on UTF-16 code units, not code points, so it can cut an
-      // astral-plane emoji's surrogate pair in half right at this cap and
-      // leave a lone/unpaired high surrogate immediately before the
-      // appended suffix. Reproduced live: that unpaired surrogate becomes
-      // a literal U+FFFD the moment node:sqlite encodes this string to
-      // UTF-8 for the TEXT column bind -- permanent corruption at the
-      // database layer, not just a display glitch. RenameProjectSchema
-      // allows any character (no charset restriction), so an emoji-led or
-      // emoji-containing name near this length is an ordinary branding
-      // choice, not an edge case.
-      const rawName = `${source.name}${suffix}`;
-      const name = rawName.length > PROJECT_NAME_MAX_LENGTH
-        ? `${[...source.name].slice(0, PROJECT_NAME_MAX_LENGTH - suffix.length).join("")}${suffix}`
-        : rawName;
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${source.id}/clone`, async () => {
+      // Round 2099: requireProjectAccess used to run here, BEFORE
+      // withIdempotency, exactly the anti-pattern rounds 1609/2098 already
+      // fixed elsewhere (and the precedent this route's own sibling, DELETE
+      // /projects/:id, documents at round 945) -- a lookup placed outside
+      // withIdempotency's callback still runs against CURRENT access state
+      // on every call, including a genuine replay with the same
+      // X-Idempotency-Key. A collaborator who successfully cloned a project
+      // (caching a real 201 under that key) but then had their access
+      // revoked before a lost response's retry landed would see that
+      // already-succeeded clone 404 PROJECT_NOT_FOUND on the replay. Like
+      // DELETE /projects/:id before it, requireProjectAccess now moves
+      // INSIDE the callback (a genuine retry never reaches it), and the
+      // idempotency route key is built from req.params.id directly rather
+      // than source.id, since no `source` project exists yet at that point.
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/clone`, async () => {
+        const source = requireProjectAccess(db, req.params.id, req.userId!);
+        const suffix = isHebrewText(source.description) ? " (עותק)" : " (copy)";
+        // Round 1410: this route builds its own `name` by string concatenation
+        // and writes it straight to insertProject, bypassing CreateProjectSchema/
+        // RenameProjectSchema entirely -- so the PROJECT_NAME_MAX_LENGTH ceiling
+        // those two schemas enforce everywhere else silently didn't apply here.
+        // Repeatedly cloning a clone chains this suffix with no bound
+        // ("X" -> "X (copy)" -> "X (copy) (copy)" -> ...), and the result feeds
+        // straight into the same collaborator-broadcast emails round 1408
+        // closed this exact amplification for. Truncated, not rejected with a
+        // 400: this value is server-synthesized, not something the user typed
+        // into an editable field, so there's nothing for a validation error to
+        // ask them to fix.
+        // Round 2034: the slice itself must be code-point-aware, mirroring
+        // codegen.ts's own appInitial/renderManifestJson `[...name]` fix
+        // (round 1283) for the identical hazard -- a raw `.slice(0, N)`
+        // operates on UTF-16 code units, not code points, so it can cut an
+        // astral-plane emoji's surrogate pair in half right at this cap and
+        // leave a lone/unpaired high surrogate immediately before the
+        // appended suffix. Reproduced live: that unpaired surrogate becomes
+        // a literal U+FFFD the moment node:sqlite encodes this string to
+        // UTF-8 for the TEXT column bind -- permanent corruption at the
+        // database layer, not just a display glitch. RenameProjectSchema
+        // allows any character (no charset restriction), so an emoji-led or
+        // emoji-containing name near this length is an ordinary branding
+        // choice, not an edge case.
+        const rawName = `${source.name}${suffix}`;
+        const name = rawName.length > PROJECT_NAME_MAX_LENGTH
+          ? `${[...source.name].slice(0, PROJECT_NAME_MAX_LENGTH - suffix.length).join("")}${suffix}`
+          : rawName;
         const cloned = insertProject(db, {
           id: randomUUID(),
           ownerId: req.userId!,

@@ -3064,6 +3064,67 @@ test("POST /projects/:id/clone retried with the same idempotency key after the f
 });
 
 /**
+ * Round 2099: requireProjectAccess used to run BEFORE withIdempotency here,
+ * the exact anti-pattern rounds 1609/2098 already fixed elsewhere (and the
+ * precedent round 945's own DELETE /projects/:id fix documents) -- a check
+ * placed outside withIdempotency's callback still runs against CURRENT
+ * access state on every call, including a genuine replay with the same
+ * X-Idempotency-Key. A collaborator whose clone already fully succeeded
+ * (cached under a key) but who then lost access before a lost response's
+ * retry landed would see that already-succeeded clone 404
+ * PROJECT_NOT_FOUND on the replay, instead of the cached 201.
+ */
+test("POST /projects/:id/clone replays its cached success on a genuine idempotency-key retry, even if the caller's access was revoked afterward", async () => {
+  await withServer(async (baseUrl, db) => {
+    const ownerToken = await signup(baseUrl, "clone-idem-revoked-owner@example.com");
+    const collabToken = await signup(baseUrl, "clone-idem-revoked-collab@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string } };
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+      method: "POST",
+      headers: authHeaders(ownerToken),
+      body: JSON.stringify({ email: "clone-idem-revoked-collab@example.com" }),
+    });
+
+    const collabUser = findUserByEmail(db, "clone-idem-revoked-collab@example.com")!;
+    const headers = { ...authHeaders(collabToken), "x-idempotency-key": "clone-revoked-repro-key" };
+
+    // The real clone: it genuinely succeeds while the collaborator still
+    // has access, caching this exact 201 under the idempotency key.
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, { method: "POST", headers });
+    assert.equal(firstRes.status, 201);
+    const first = (await firstRes.json()) as { project: { id: string } };
+
+    // Access is revoked AFTER the clone already succeeded -- simulating
+    // the owner removing the collaborator in the gap before the client's
+    // own response for the call above was lost in transit.
+    await fetch(`${baseUrl}/api/projects/${project.id}/collaborators/${collabUser.id}`, { method: "DELETE", headers: authHeaders(ownerToken) });
+
+    // A genuine fetchWithWakeRetry replay with the SAME key must replay
+    // the cached success -- not re-run requireProjectAccess against the
+    // collaborator's now-revoked access, and not create a second clone.
+    const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/clone`, { method: "POST", headers });
+    assert.equal(
+      replayRes.status,
+      201,
+      "a replay with the same idempotency key must replay the cached success, not 404 PROJECT_NOT_FOUND against the now-revoked access",
+    );
+    const replay = (await replayRes.json()) as { project: { id: string } };
+    assert.equal(replay.project.id, first.project.id, "the replay must return the exact same cloned project, not a new one");
+
+    // Listed as the collaborator, not the owner: the clone is owned by the
+    // collaborator, and they've since been removed from the source project.
+    const listRes = await fetch(`${baseUrl}/api/projects`, { headers: authHeaders(collabToken) });
+    const { projects } = (await listRes.json()) as { projects: { id: string }[] };
+    assert.equal(projects.length, 1, "exactly one clone must exist -- the replay must not have inserted a second one");
+  });
+});
+
+/**
  * Round 1601: PATCH /projects/:id/name and /description were the last two
  * "rename X" PATCH mutations in this app never given the withIdempotency()
  * wrap every sibling rename already has (round 960's own doc comment gives
