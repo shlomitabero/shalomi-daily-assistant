@@ -3271,6 +3271,24 @@ test("isAllowedWebhookUrl accepts a real public http(s) URL and rejects non-http
   assert.equal(isAllowedWebhookUrl("http://[::1]/abc"), false);
 });
 
+/**
+ * Round 2128: a trailing dot is the fully-qualified spelling of the exact
+ * same hostname (DNS treats "localhost." and "localhost" as identical).
+ * Node's URL parser already strips a numeric IPv4 literal's trailing dot
+ * before `hostname` is read (so "http://127.0.0.1./x" and "http://127.0.0.1/x"
+ * both normalize to the same hostname, and BLOCKED_IPV4_HOSTNAME_PATTERNS
+ * above catches both for free), but it leaves an opaque hostname's trailing
+ * dot untouched -- "localhost." stays "localhost." -- so the old exact-match
+ * `/^localhost$/i` pattern let this one-character FQDN variant straight
+ * through. Also confirms the fix adds no false positive: "localhost.evil.com"
+ * (a real public subdomain, not the same host at all) must stay allowed.
+ */
+test("isAllowedWebhookUrl also blocks localhost's fully-qualified ('localhost.') spelling, not just the bare form", () => {
+  assert.equal(isAllowedWebhookUrl("http://localhost./abc"), false, "a trailing dot is just the FQDN spelling of the same blocked host");
+  assert.equal(isAllowedWebhookUrl("http://LOCALHOST./abc"), false, "must be case-insensitive too, matching the bare-form check");
+  assert.equal(isAllowedWebhookUrl("http://localhost.evil.com/abc"), true, "a real public subdomain must not be caught by the trailing-dot allowance");
+});
+
 test("isAllowedWebhookUrl also blocks an IPv4-mapped IPv6 literal wrapping a blocked IPv4 address, in both dotted and hex form", () => {
   assert.equal(
     isAllowedWebhookUrl("http://[::ffff:169.254.169.254]/latest/meta-data/"),

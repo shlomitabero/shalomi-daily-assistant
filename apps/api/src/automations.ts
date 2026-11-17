@@ -831,7 +831,15 @@ const BLOCKED_IPV4_HOSTNAME_PATTERNS = [
 // bracketed IPv6-literal form a URL's own hostname can take), so none of
 // these can ever collide with a real public domain name's spelling.
 const BLOCKED_OTHER_HOSTNAME_PATTERNS = [
-  /^localhost$/i,
+  // A trailing dot is the fully-qualified spelling of the same hostname
+  // (DNS treats "localhost." and "localhost" as identical), and unlike a
+  // numeric IPv4 literal's trailing dot -- which Node's URL parser already
+  // strips before `hostname` is read, so BLOCKED_IPV4_HOSTNAME_PATTERNS
+  // above gets that normalization for free -- the parser leaves an opaque
+  // hostname's trailing dot untouched ("localhost." stays "localhost.").
+  // Without the optional dot here, that one-character FQDN variant slipped
+  // straight past this exact-match pattern.
+  /^localhost\.?$/i,
   // IPv6's own "unspecified address" analogue of 0.0.0.0 above --
   // connecting to it routes to the local host the same way 0.0.0.0 does,
   // and Node's URL parser canonicalizes every all-zero spelling
