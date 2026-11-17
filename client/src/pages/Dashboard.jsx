@@ -179,10 +179,19 @@ export default function Dashboard() {
       {unrecordedSales > 0 && (
         <div className="card" style={{ borderColor: 'var(--accent)', background: 'rgba(220, 38, 38, 0.08)' }}>
           <p style={{ margin: '0 0 6px', fontWeight: 700 }}>🚨 תשלומים אמיתיים שלא נרשמו</p>
-          <p className="hint" style={{ margin: 0 }}>
+          <p className="hint" style={{ margin: '0 0 10px' }}>
             {unrecordedSales} תשלומים אמיתיים התקבלו אך לא נרשמו ביומן בגלל שגיאה בעיבוד — בדוק ביומן הפעולות ואת לוגי השרת.
             אין מסלול אוטומטי לתיקון זה; הכסף כבר התקבל אבל לא חושב ברווח/הפסד עד שזה יטופל.
           </p>
+          {/* Every other banner on this page links straight to where the
+              owner actually acts (emergencyStop/nearBudget/nearMaxLoss all
+              point to /settings) - this was the one exception, telling the
+              owner to "check the activity log" with no link there at all.
+              routes/actions.js's resolveUnrecordedSale (added this hour) now
+              gives the activity log an actual "סמן כטופל" action for this
+              exact entry, making this link the direct path from the alert
+              to resolving it, not just a vague pointer. */}
+          <Link className="btn btn-primary" to="/activity">ליומן הפעולות</Link>
         </div>
       )}
 
