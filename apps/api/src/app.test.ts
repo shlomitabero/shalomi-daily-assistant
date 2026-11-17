@@ -5206,6 +5206,128 @@ test("POST .../automations/:ruleId/runs/:runId/retry re-fires a failed record-tr
 });
 
 /**
+ * Round 2098: findEntity/getRecord used to run BEFORE withIdempotency,
+ * not inside its callback -- but withIdempotency's own "done" branch
+ * (idempotency.ts) returns the cached response WITHOUT ever calling that
+ * callback, so a lookup placed outside it still ran against CURRENT
+ * database state on every call, including a genuine replay with the same
+ * X-Idempotency-Key (the exact anti-pattern round 1609 already fixed in
+ * webhookIn.ts). A retry that had ALREADY succeeded -- already sent the
+ * real message, already cached a 200 under this key -- could still 404
+ * AUTOMATION_RUN_RECORD_GONE on a replay (fetchWithWakeRetry's own
+ * documented retry-after-success risk) if the record was deleted in
+ * between, instead of replaying the cached success.
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry replays its cached success on a genuine idempotency-key retry, even if the record was deleted afterward", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `retry-idempotent-replay-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [
+          {
+            name: "Customer",
+            fields: [
+              { name: "name", type: "text", required: true },
+              { name: "phone", type: "text", required: true },
+            ],
+          },
+        ],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Customers", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_created",
+          actionType: "send_whatsapp",
+          toMode: "field",
+          toField: "phone",
+          messageTemplate: "Hi {{name}}, welcome!",
+        }),
+      });
+      const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+      // WhatsApp deliberately never connected before this -- fails the
+      // same documented one-shot way the adjacent test above relies on.
+      const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "Dana Levi", phone: "972501234567" }),
+      });
+      const { record } = (await createRes.json()) as { record: { id: number } };
+
+      let runs: { id: string; status: string; recordId: number | null }[] = [];
+      for (let i = 0; i < 40 && runs.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const runsRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, { headers: authHeaders(token) });
+        ({ runs } = (await runsRes.json()) as { runs: typeof runs });
+      }
+      assert.equal(runs[0]!.status, "failed");
+      const failedRunId = runs[0]!.id;
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      // The real retry: it genuinely succeeds and sends the real message,
+      // caching this exact 200/"sent" response under idempotencyKey.
+      const idempotencyKey = randomUUID();
+      const firstRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${failedRunId}/retry`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "X-Idempotency-Key": idempotencyKey },
+      });
+      assert.equal(firstRetryRes.status, 200);
+      const { run: sentRun } = (await firstRetryRes.json()) as { run: { id: string; status: string } | null };
+      assert.equal(sentRun?.status, "sent", "sanity check: the retry must have genuinely succeeded before the replay below");
+      assert.equal(createdSockets[0].sendCalls.length, 1, "sanity check: the real message was actually sent exactly once so far");
+
+      // The record is deleted AFTER the retry already succeeded --
+      // simulating any actor deleting it in the gap before the client's
+      // own response for the call above was lost in transit.
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Customer/${record.id}`, { method: "DELETE", headers: authHeaders(token) });
+
+      // A genuine fetchWithWakeRetry replay with the SAME key must
+      // replay the cached success -- not re-run findEntity/getRecord
+      // against the record's now-gone current state, and not send a
+      // second real WhatsApp message.
+      const replayRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${failedRunId}/retry`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "X-Idempotency-Key": idempotencyKey },
+      });
+      assert.equal(
+        replayRes.status,
+        200,
+        "a replay with the same idempotency key must replay the cached success, not 404 AUTOMATION_RUN_RECORD_GONE against the now-deleted record",
+      );
+      const { run: replayedRun } = (await replayRes.json()) as { run: { id: string; status: string } | null };
+      assert.equal(replayedRun?.id, sentRun?.id, "the replay must return the exact same cached run, not a new one");
+      assert.equal(createdSockets[0].sendCalls.length, 1, "a genuine idempotency-key replay must NOT send a second real message");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 991: unlike record_created/field_equals (exercised by the retry
  * test just above), a "record_deleted" rule's own triggering event IS
  * that record's deletion -- getRecord(db, project.id, entity, run.recordId)

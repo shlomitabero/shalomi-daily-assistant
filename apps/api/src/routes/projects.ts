@@ -6438,34 +6438,48 @@ export function createProjectsRouter(
         res.status(status).json(body);
         return;
       }
-      const entity = findEntity(project, rule.entityName);
-      // Round 991, revised round 1837: a run's OWN recordSnapshot (not the
-      // rule's CURRENT trigger name) is what says its triggering record is
-      // gone and getRecord below is GUARANTEED to find nothing -- a rule
-      // can fire on a deletion via either the "record_deleted" trigger or
-      // an "inbound_webhook" trigger matching a delete event (round 1688),
-      // and either way recordAutomationRun's own event-driven capture
-      // (see fireWebhookAction/fireEmailAction/fireRule's own recordSnapshot
-      // lines) is the one source of truth for whether a snapshot exists to
-      // replay against. record_created/field_equals runs never get one and
-      // still intentionally re-fetch the record's CURRENT state below,
-      // unchanged.
-      let record: EntityRecord;
-      if (run.recordSnapshot) {
-        record = JSON.parse(run.recordSnapshot) as EntityRecord;
-      } else {
-        const current = getRecord(db, project.id, entity, run.recordId);
-        if (!current) {
-          throw new HttpError(404, "The record this automation would send no longer exists", "AUTOMATION_RUN_RECORD_GONE");
-        }
-        record = current;
-      }
+      // Round 2098: findEntity/getRecord used to run here, BEFORE
+      // withIdempotency -- but withIdempotency's own "done" branch
+      // (idempotency.ts) returns the cached response WITHOUT ever calling
+      // its callback, so a lookup placed outside it still runs against
+      // CURRENT database state on every call, including a replay with the
+      // same X-Idempotency-Key (the exact anti-pattern round 1609 fixed in
+      // webhookIn.ts, and the PATCH .../:recordId route's own comment
+      // already names). A retry that already succeeded once -- already
+      // sent the real WhatsApp message, already cached a 200 under this
+      // key -- could still 404 AUTOMATION_RUN_RECORD_GONE on a genuine
+      // fetchWithWakeRetry replay if the record was deleted by any actor
+      // in between, instead of replaying the cached success. Both lookups
+      // now live inside the callback, so a replay skips them entirely.
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
         `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
         async () => {
+          const entity = findEntity(project, rule.entityName);
+          // Round 991, revised round 1837: a run's OWN recordSnapshot (not
+          // the rule's CURRENT trigger name) is what says its triggering
+          // record is gone and getRecord below is GUARANTEED to find
+          // nothing -- a rule can fire on a deletion via either the
+          // "record_deleted" trigger or an "inbound_webhook" trigger
+          // matching a delete event (round 1688), and either way
+          // recordAutomationRun's own event-driven capture (see
+          // fireWebhookAction/fireEmailAction/fireRule's own recordSnapshot
+          // lines) is the one source of truth for whether a snapshot
+          // exists to replay against. record_created/field_equals runs
+          // never get one and still intentionally re-fetch the record's
+          // CURRENT state below, unchanged.
+          let record: EntityRecord;
+          if (run.recordSnapshot) {
+            record = JSON.parse(run.recordSnapshot) as EntityRecord;
+          } else {
+            const current = getRecord(db, project.id, entity, run.recordId);
+            if (!current) {
+              throw new HttpError(404, "The record this automation would send no longer exists", "AUTOMATION_RUN_RECORD_GONE");
+            }
+            record = current;
+          }
           // Round 1837: re-pass "deleted" whenever we're replaying from a
           // snapshot, so a retry that itself fails again still captures a
           // fresh recordSnapshot on the new run instead of silently losing
