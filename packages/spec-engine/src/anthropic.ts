@@ -6,6 +6,17 @@ import { fetchAnthropic } from "./anthropicFetch.js";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
+/**
+ * Round 2144: this prompt's own language-consistency rule, and generate()'s
+ * own explicit languageDirective below, both named every other free-text
+ * output field ("summary"/"roles"/"assumptions"/"openQuestions"/"label")
+ * but never "personas" -- even though App.tsx (round 775) renders personas
+ * as ordinary localized text right alongside those same fields. The exact
+ * same mismatch (a persona rendered in the wrong language next to
+ * correctly-localized siblings) is the bug round 1266 already fixed for
+ * templates.ts's own hardcoded defaults; this real AI-generation path had
+ * the identical gap, just never ported.
+ */
 export const SYSTEM_PROMPT = `You are the Product Manager Agent inside Forge AI, an AI software creation platform.
 Given a plain-language business description, output ONLY a single JSON object (no prose, no markdown fences)
 matching exactly this shape:
@@ -39,7 +50,7 @@ Rules:
   you do supply a "recommendation", default to the option that covers MORE of what the user is likely to
   need, not the option that does the least.
 - Every entity/field "name" MUST stay a plain ASCII identifier (e.g. "Customer", "dueDate") no matter what
-  language the user wrote in — these become real SQL table/column names. Write "summary", "roles",
+  language the user wrote in — these become real SQL table/column names. Write "summary", "personas", "roles",
   "assumptions", "openQuestions", and every entity/field "label" in the SAME language and script the user's
   description was written in (e.g. Hebrew in, Hebrew labels and summary out). "label" is the only place
   non-ASCII text belongs.
@@ -84,8 +95,8 @@ export class AnthropicSpecProvider implements SpecProvider {
       isHebrewOverride === undefined
         ? ""
         : isHebrewOverride
-          ? "\n\n[Write every \"label\", \"summary\", \"roles\", \"assumptions\", and \"openQuestions\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
-          : "\n\n[Write every \"label\", \"summary\", \"roles\", \"assumptions\", and \"openQuestions\" entry in English, regardless of what language any part of the request below is written in.]";
+          ? "\n\n[Write every \"label\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
+          : "\n\n[Write every \"label\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in English, regardless of what language any part of the request below is written in.]";
     const response = await fetchAnthropic(
       this.fetchImpl,
       ANTHROPIC_API_URL,

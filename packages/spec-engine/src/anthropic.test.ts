@@ -22,6 +22,18 @@ test("SYSTEM_PROMPT explicitly tells the model roles must never be empty, matchi
   assert.match(SYSTEM_PROMPT, /roles.*must never be an empty array/i);
 });
 
+/**
+ * Round 2144: the prompt's language-consistency rule named every other
+ * free-text output field ("summary"/"roles"/"assumptions"/"openQuestions"/
+ * "label") but never "personas" -- even though App.tsx renders personas as
+ * ordinary localized text right alongside those same fields, the exact
+ * mismatch round 1266 already fixed for templates.ts's own defaults.
+ */
+test("SYSTEM_PROMPT's language-consistency rule names personas alongside every other free-text output field", () => {
+  assert.match(SYSTEM_PROMPT, /Write "summary", "personas", "roles"/);
+  assert.match(SYSTEM_PROMPT, /SAME language and script/);
+});
+
 test("generate() returns the parsed spec on a clean JSON response", async () => {
   const fakeFetch = (async () =>
     new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(VALID_SPEC) }] }), {
@@ -57,9 +69,14 @@ test("generate() appends an explicit language directive to the request when isHe
   await provider.generate("a CRM for my business", false);
   assert.match(capturedContent!, /Write every.*in English/i, "isHebrewOverride: false must pin English explicitly");
   assert.match(capturedContent!, /^a CRM for my business/, "the original description text must still lead the message");
+  // Round 2144: "personas" was missing from this directive even though
+  // every other free-text output field was named -- App.tsx renders it as
+  // ordinary localized text right alongside them.
+  assert.match(capturedContent!, /"summary", "personas", "roles"/, "the English directive must name personas alongside every other free-text field");
 
   await provider.generate("a CRM for my business", true);
   assert.match(capturedContent!, /Write every.*in Hebrew/i, "isHebrewOverride: true must pin Hebrew explicitly");
+  assert.match(capturedContent!, /"summary", "personas", "roles"/, "the Hebrew directive must name personas alongside every other free-text field");
 
   await provider.generate("a CRM for my business");
   assert.equal(capturedContent, "a CRM for my business", "omitting isHebrewOverride must send the description exactly as before this round, with no directive appended");
