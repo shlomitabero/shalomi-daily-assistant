@@ -1504,7 +1504,25 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "membership plan" additions didn't cover, since neither is a
       // substring of "memberships". The bare singular "membership" is a
       // substring of "memberships" too, so one addition covers both.
-      "membership",
+      // Round 2107: that bare word, with no guard at all, is also the
+      // ordinary English noun for ANY enrollment/access concept, not just
+      // a recurring-billing business -- "reader memberships" (a library
+      // loan tracker) and "member memberships" (a community garden's plot
+      // access) both spuriously matched Subscription, and since
+      // matchEntities suppresses the generic DEFAULT_ENTITY the moment
+      // ANY rule matches, the real domain was lost entirely (confirmed
+      // live: both examples returned ONLY ['Subscription'], vs. ['Item']
+      // once "membership(s)" alone is removed from the same text). Unlike
+      // this file's other collisions, no single local phrase cleanly
+      // separates the two readings -- round 1690's own business-type list
+      // (gym/studio/co-working-space) is the actual signal, just not
+      // always adjacent to the word "membership" itself (e.g. the round-
+      // 1708 example's own disambiguator, "fitness studio", sits several
+      // words away). So this checks the whole description for ANY of
+      // those business/billing cues, in either order relative to
+      // "membership(s)" itself, via two forward-only lookaheads (one from
+      // each side) rather than a single bounded-distance lookaround.
+      /\bmemberships?\b(?=[\s\S]*\b(?:fees?|dues|plans?|pricing|price|monthly|pay(?:ment|ing)?|studio|gym|fitness|yoga|club|co-?working)\b)|\b(?:fees?|dues|plans?|pricing|price|monthly|pay(?:ment|ing)?|studio|gym|fitness|yoga|club|co-?working)\b(?=[\s\S]*\bmemberships?\b)/,
       // Bare "מנוי" (round 563) is a substring of the ordinary plural
       // "אומנויות"/"אמנויות" ("arts"/"crafts", as in "אומנויות לחימה" --
       // martial arts), so a plain arts/crafts-school description spuriously

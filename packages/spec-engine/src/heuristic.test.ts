@@ -266,6 +266,46 @@ test("recognizes the app's own built-in 'Fitness studio' example description as 
   assert.ok(spec.entities.some((e) => e.name === "Subscription"), "the built-in Fitness studio example must match the Subscription entity");
 });
 
+/**
+ * Round 2107: round 1708's own fix above added a bare "membership"
+ * keyword with no guard at all -- "membership" is the ordinary English
+ * noun for ANY enrollment/access concept, not just a recurring-billing
+ * business. A library-loan tracker's "reader memberships" and a
+ * community garden's "member memberships" (plot access) both spuriously
+ * matched Subscription -- and since matchEntities suppresses the generic
+ * catch-all entity the moment ANY rule matches, the real domain was lost
+ * entirely. Confirmed live before this fix: both descriptions below
+ * returned ONLY ['Subscription'] (title/customerId/status/monthlyPrice
+ * fields, Active/Paused/Cancelled enum), with no library or garden
+ * entity at all.
+ */
+test("a library-loan tracker's 'reader memberships' and a community garden's 'member memberships' never match the Subscription entity, even though the bare word 'membership' does for a real gym/studio description", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const library = await provider.generate(
+    "A library system for tracking book loans, due dates, and reader memberships so the librarian knows who has which book.",
+  );
+  assert.ok(!library.entities.some((e) => e.name === "Subscription"), "'reader memberships' in a library tracker must never match Subscription");
+
+  const communityGarden = await provider.generate(
+    "A community garden app tracking plot assignments, watering schedules, and member memberships for who has access to which plot.",
+  );
+  assert.ok(
+    !communityGarden.entities.some((e) => e.name === "Subscription"),
+    "'member memberships' in a community-garden access tracker must never match Subscription",
+  );
+
+  // The fix must not lose real recall: the round-1708 Fitness studio
+  // example's own bare "memberships" (near "fitness studio") must still match.
+  const fitnessStudio = await provider.generate(
+    "An app for managing memberships and classes at a fitness studio, with customers, trainers, and a weekly class schedule.",
+  );
+  assert.ok(
+    fitnessStudio.entities.some((e) => e.name === "Subscription"),
+    "the real Fitness studio example must still get a Subscription entity",
+  );
+});
+
 test("recognizes 'trainers'/'מאמנים' as Employee staff, in both the English and Hebrew built-in 'Fitness studio' example descriptions", async () => {
   // Round 1720: the app's own home-screen built-in example (apps/web/src/
   // i18n/language.ts, home.examples.gym.text/home.examples.gym.text [he])
