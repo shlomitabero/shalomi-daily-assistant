@@ -43,6 +43,20 @@ function logWebhookSignatureFailure(detail, result) {
 // on a malformed/unexpected payload — always responds, even on failure,
 // since a crash here would take down the entire app for every other request.
 export function paddleWebhookHandler(req, res) {
+  // Mirrors routes/auth.js's own identical early-return for a missing
+  // OWNER_PASSWORD: before Paddle is ever configured (the owner hasn't set
+  // PADDLE_WEBHOOK_SECRET yet), verifyPaddleSignature below returns false
+  // unconditionally for every request (its own first line treats a missing
+  // secret the same as a missing signature) - without this check first,
+  // every request here during that normal pre-setup window (a scanner/bot
+  // probing common paths, routine before the owner ever finishes setup)
+  // would get logged as webhook_signature_failed, the same real-attack
+  // signal a genuinely forged request triggers once Paddle IS configured.
+  // That's not a security event - it's just "billing isn't set up yet" -
+  // the same reason login() never logs a login_attempt for this case either.
+  if (!process.env.PADDLE_WEBHOOK_SECRET) {
+    return res.status(503).send('billing not configured');
+  }
   let rawBody;
   try {
     rawBody = req.body.toString('utf8');

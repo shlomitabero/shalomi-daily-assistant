@@ -15,14 +15,17 @@ import { totalSpentSoFar, totalLossSoFar, todayKey } from './ledger.js';
 // reasoning, smaller cap, since a brute-force attempt can log far faster)
 // - every OTHER type was left unbounded.
 //
-// A blocked sale_confirmed must never be pruned: ledger.js's
+// An UNRESOLVED blocked sale_confirmed must never be pruned: ledger.js's
 // countUnrecordedSales() scans this type's ENTIRE lifetime history (a
 // blocked sale_confirmed means a real payment came in and was never
-// recorded, with no route that ever marks it resolved), so dropping an old
-// one could silently hide a real, still-open payment problem. login_attempt
-// already has its own tighter, dedicated cap - pruning it again here would
-// just be redundant, not wrong, but excluding it keeps this cap's own
-// accounting simple. Every other type is only ever read either capped
+// recorded), so dropping an old, still-unresolved one could silently hide
+// a real, still-open payment problem. routes/actions.js's
+// resolveUnrecordedSale lets the owner mark one resolved once they've
+// actually dealt with it - see isUnprunable below for how that changes
+// this. login_attempt already has its own tighter, dedicated cap -
+// pruning it again here would just be redundant, not wrong, but excluding
+// it keeps this cap's own accounting simple. Every other type is only
+// ever read either capped
 // (listActions: 200 most recent) or scoped to today (generateDailyDigest,
 // executeGatedAction's own idempotency check below) - nothing else needs
 // more than a bounded recent history - listActions() itself never shows

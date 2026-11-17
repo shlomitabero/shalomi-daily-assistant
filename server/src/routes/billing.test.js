@@ -67,6 +67,24 @@ test('getBillingConfigured reports configured once the API key, client token, an
   });
 });
 
+test('a webhook received before PADDLE_WEBHOOK_SECRET is configured is rejected without logging it as a security signal', () => {
+  // Mirrors login()'s own identical early-return for a missing
+  // OWNER_PASSWORD - before Paddle is configured, verifyPaddleSignature
+  // would return false unconditionally for every request, which would
+  // otherwise log the exact same real-attack signal a genuinely forged
+  // request triggers once Paddle IS configured, for what is really just
+  // "billing isn't set up yet" (a scanner/bot probing a common path, or
+  // routine testing before setup finishes).
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: undefined }, () => {
+    const req = { headers: { 'paddle-signature': 'ts=1;h1=anything' }, body: Buffer.from('{}'), ip: '203.0.113.7' };
+    const res = makeRes();
+    paddleWebhookHandler(req, res);
+    assert.equal(res.statusCode, 503);
+    assert.equal(db.actions_log.where((a) => a.type === 'webhook_signature_failed').length, 0);
+  });
+});
+
 test('a webhook with an invalid signature is rejected and never touches the ledger', () => {
   __resetForTests();
   withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
