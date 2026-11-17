@@ -5029,27 +5029,45 @@ test("isEditableEventTarget recognizes INPUT/TEXTAREA/SELECT and contentEditable
  * doesn't silently slip through unconsidered either.
  */
 test("canNavigateHome blocks the go-home link on \"home\" and \"building\", and on any view while a refine is running", () => {
-  assert.equal(canNavigateHome("home", false), false, "already home -- nothing to navigate to");
-  assert.equal(canNavigateHome("building", false), false, "a full-page build is actively streaming");
-  assert.equal(canNavigateHome("spec", false), true, "spec review has no streaming BuildProgress to interrupt");
-  assert.equal(canNavigateHome("preview", false), true, "an idle preview screen is safe to leave");
-  assert.equal(canNavigateHome("preview", true), false, "a refine's own compact BuildProgress is streaming on this exact view");
-  assert.equal(canNavigateHome("spec", true), false, "refineRunning must block every view, not just preview, in case a future view can also host a live refine");
-  assert.equal(canNavigateHome("building", true), false, "both guards agreeing is still blocked");
+  assert.equal(canNavigateHome("home", false, false), false, "already home -- nothing to navigate to");
+  assert.equal(canNavigateHome("building", false, false), false, "a full-page build is actively streaming");
+  assert.equal(canNavigateHome("spec", false, false), true, "spec review has no streaming BuildProgress to interrupt");
+  assert.equal(canNavigateHome("preview", false, false), true, "an idle preview screen is safe to leave");
+  assert.equal(canNavigateHome("preview", true, false), false, "a refine's own compact BuildProgress is streaming on this exact view");
+  assert.equal(canNavigateHome("spec", true, false), false, "refineRunning must block every view, not just preview, in case a future view can also host a live refine");
+  assert.equal(canNavigateHome("building", true, false), false, "both guards agreeing is still blocked");
+});
+
+/**
+ * Round 2157: handleBuild's own real await (answerQuestions, on the
+ * "spec" review screen) sets `busy` the same way the sibling Back/Build
+ * buttons already correctly guard on (disabled={busy}) -- but
+ * canNavigateHome had no busy parameter at all, so the brand-logo link
+ * stayed clickable throughout that window. Clicking it navigated home
+ * with no cancellation of the in-flight request; when it later resolved,
+ * its stale continuation ran unconditionally, silently teleporting the
+ * user from the home screen they'd just navigated to into the
+ * "Building..." screen for a project they'd already left.
+ */
+test("canNavigateHome also blocks the go-home link while handleBuild's own request is in flight (busy), on every view", () => {
+  assert.equal(canNavigateHome("spec", false, true), false, "handleBuild's own answerQuestions request is in flight on the spec review screen");
+  assert.equal(canNavigateHome("preview", false, true), false, "busy must block every view, not just spec, in case a future view can also host this same in-flight request");
+  assert.equal(canNavigateHome("spec", false, false), true, "sanity check: busy=false alone must not block navigation on its own");
 });
 
 /**
  * Static-wiring test: confirms the real brand-logo link in App.tsx's JSX
- * actually calls canNavigateHome(view, refineRunning) to decide whether to
- * render a clickable <button> vs. plain unclickable text, rather than some
- * other condition that silently drifts from canNavigateHome's own rules.
+ * actually calls canNavigateHome(view, refineRunning, busy) to decide
+ * whether to render a clickable <button> vs. plain unclickable text,
+ * rather than some other condition that silently drifts from
+ * canNavigateHome's own rules.
  */
-test("App's brand-logo link renders as a real button only when canNavigateHome(view, refineRunning) is true", () => {
+test("App's brand-logo link renders as a real button only when canNavigateHome(view, refineRunning, busy) is true", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   assert.match(
     appSrc,
-    /return canNavigateHome\(view, refineRunning\) \? \(\s*<button type="button" className="brand-row brand-row-link" onClick=\{handleGoHome\}/,
-    "expected the brand-logo link to be gated on canNavigateHome(view, refineRunning)",
+    /return canNavigateHome\(view, refineRunning, busy\) \? \(\s*<button type="button" className="brand-row brand-row-link" onClick=\{handleGoHome\}/,
+    "expected the brand-logo link to be gated on canNavigateHome(view, refineRunning, busy)",
   );
 });
 

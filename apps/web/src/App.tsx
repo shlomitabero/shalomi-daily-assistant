@@ -469,9 +469,24 @@ export function isEditableEventTarget(target: EventTarget | null): boolean {
  * compact BuildProgress while its streamRefine() request is still in
  * flight -- the exact silent, unguarded exit the "building" check was
  * written to prevent, just reached from a different view.
+ *
+ * Round 2157: the identical hazard, a third time, on the "spec" review
+ * screen -- handleBuild's own real await (answerQuestions, when the user
+ * answered a question or wrote an Additional request) is correctly
+ * guarded on `busy` for its sibling Back/Build buttons (disabled={busy}),
+ * but this link had no `busy` parameter at all, so it stayed clickable
+ * throughout that same window. Clicking it navigated home via
+ * handleGoHome with no cancellation of the in-flight request -- when it
+ * later resolved, its stale continuation ran unconditionally against the
+ * closure's own project/answered/request, calling setProject and then
+ * unconditionally setView("building"), silently teleporting the user
+ * from the home screen they'd just navigated to into a full-page
+ * "Building..." screen for a project they'd already left. Confirmed
+ * live: create a project, type an Additional request, click Build, then
+ * immediately click the brand logo before answerQuestions resolves.
  */
-export function canNavigateHome(view: "home" | "spec" | "building" | "preview", refineRunning: boolean): boolean {
-  return view !== "home" && view !== "building" && !refineRunning;
+export function canNavigateHome(view: "home" | "spec" | "building" | "preview", refineRunning: boolean, busy: boolean): boolean {
+  return view !== "home" && view !== "building" && !refineRunning && !busy;
 }
 
 /**
@@ -2621,8 +2636,10 @@ function AppContent() {
             // BuildProgress on "preview" -- see canNavigateHome's own
             // comment) -- BuildProgress's own design only ever offers a way
             // out on failure, and this shouldn't silently disagree with that
-            // by giving a second, unguarded exit.
-            return canNavigateHome(view, refineRunning) ? (
+            // by giving a second, unguarded exit. Also not clickable while
+            // handleBuild's own real await is in flight (busy) -- see
+            // canNavigateHome's own round-2157 comment.
+            return canNavigateHome(view, refineRunning, busy) ? (
               <button type="button" className="brand-row brand-row-link" onClick={handleGoHome} title={t("topbar.goHome")}>
                 {brandContent}
               </button>
