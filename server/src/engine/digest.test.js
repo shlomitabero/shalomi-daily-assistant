@@ -205,3 +205,20 @@ test('says nothing about login attempts when there were none, or when the caller
   const digestOmitted = buildDailyDigest({ ledgerSummary });
   assert.doesNotMatch(digestOmitted.text, /ניסיונות התחברות/);
 });
+
+test('warns about failed webhook signature checks today - the Paddle webhook is exactly as public and unauthenticated as /login', () => {
+  // routes/billing.js logs a 'webhook_signature_failed' entry on a forged
+  // or malformed request trying to fake a "payment confirmed" event -
+  // same reasoning as failedLoginAttemptsToday just above, just for this
+  // other public, unauthenticated route.
+  const digest = buildDailyDigest({ ledgerSummary, failedWebhookSignaturesToday: 2 });
+  assert.match(digest.text, /2 בקשות עם חתימת webhook לא תקינה/);
+});
+
+test('says nothing about webhook signature failures when there were none, or when the caller never passes the field at all', () => {
+  const digestZero = buildDailyDigest({ ledgerSummary, failedWebhookSignaturesToday: 0 });
+  assert.doesNotMatch(digestZero.text, /חתימת webhook/);
+
+  const digestOmitted = buildDailyDigest({ ledgerSummary });
+  assert.doesNotMatch(digestOmitted.text, /חתימת webhook/);
+});

@@ -47,6 +47,7 @@ export function generateDailyDigest(now = new Date()) {
     market_quote_fetch: 'שליפת מחיר שוק',
     remove_from_watchlist: 'הסרת סימבול ממעקב',
     settings_updated: 'עדכון הגדרות',
+    webhook_signature_failed: 'חתימת webhook לא תקינה',
   };
   // Every 'failed' writer in this codebase puts the real, useful diagnostic
   // text under detail.error (draft_product, autonomous_scan, publish_product)
@@ -136,6 +137,16 @@ export function generateDailyDigest(now = new Date()) {
     (a) => todayKey(new Date(a.createdAt)) === today && a.type === 'login_attempt'
   ).length;
 
+  // Same reasoning as failedLoginAttemptsToday just above - routes/billing.js's
+  // webhook is exactly as public and unauthenticated as /login, so a failed
+  // signature check there is the same kind of real security signal (a
+  // forged or malformed request trying to fake a "payment confirmed"
+  // webhook), not just a one-off Railway log line nobody but the owner
+  // debugging a real issue would ever look at.
+  const failedWebhookSignaturesToday = db.actions_log.where(
+    (a) => todayKey(new Date(a.createdAt)) === today && a.type === 'webhook_signature_failed'
+  ).length;
+
   const settings = getSettings();
   const digest = buildDailyDigest({
     ledgerSummary, actionsToday, failuresToday, topOpportunity,
@@ -147,7 +158,7 @@ export function generateDailyDigest(now = new Date()) {
     // directly here rather than importing from a route file keeps the
     // existing services->routes dependency direction intact.
     jwtSecretConfigured: Boolean(process.env.JWT_SECRET),
-    failedLoginAttemptsToday,
+    failedLoginAttemptsToday, failedWebhookSignaturesToday,
   });
 
   // The owner can click "generate now" on the Digests page any number of

@@ -32,7 +32,17 @@ export function paddleWebhookHandler(req, res) {
       secret: process.env.PADDLE_WEBHOOK_SECRET,
     });
     if (!valid) {
+      // console.error alone only ever reached Railway's own log viewer -
+      // routes/auth.js already treats a failed login attempt as a real
+      // security signal worth the owner's own in-app activity log (this is
+      // a personal console, reachable on the open internet), and this
+      // endpoint is exactly as public and unauthenticated - a forged or
+      // malformed request trying to fake a "payment confirmed" webhook is
+      // the same kind of signal, just against this one public route
+      // instead of /login. req.ip, not the Paddle-Signature header's own
+      // claimed source - same reasoning as login's own req.ip capture.
       console.error('Paddle webhook signature check failed');
+      logAction({ type: 'webhook_signature_failed', detail: { ip: req.ip }, result: 'blocked: חתימת ה-webhook אינה תקינה' });
       return res.status(400).send('invalid signature');
     }
 

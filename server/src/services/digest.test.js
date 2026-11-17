@@ -282,6 +282,25 @@ test('generateDailyDigest ignores a login_attempt entry from a previous day when
   assert.doesNotMatch(digest.text, /ניסיונות התחברות/);
 });
 
+test('generateDailyDigest counts today\'s real webhook_signature_failed entries and warns in the digest text', () => {
+  // Same reasoning as login_attempt's own equivalent test above - must
+  // actually reach generateDailyDigest() via a real actions_log scan of
+  // entries routes/billing.js itself would log.
+  __resetForTests();
+  const now = new Date().toISOString();
+  db.actions_log.insert({ id: makeId('act'), type: 'webhook_signature_failed', detail: { ip: '1.2.3.4' }, result: 'blocked: חתימת ה-webhook אינה תקינה', createdAt: now });
+  db.actions_log.insert({ id: makeId('act'), type: 'webhook_signature_failed', detail: { ip: '5.6.7.8' }, result: 'blocked: חתימת ה-webhook אינה תקינה', createdAt: now });
+  const digest = generateDailyDigest();
+  assert.match(digest.text, /2 בקשות עם חתימת webhook לא תקינה/);
+});
+
+test('generateDailyDigest ignores a webhook_signature_failed entry from a previous day when counting today\'s', () => {
+  __resetForTests();
+  db.actions_log.insert({ id: makeId('act'), type: 'webhook_signature_failed', detail: { ip: '1.2.3.4' }, result: 'blocked: חתימת ה-webhook אינה תקינה', createdAt: '2020-01-01T00:00:00.000Z' });
+  const digest = generateDailyDigest();
+  assert.doesNotMatch(digest.text, /חתימת webhook/);
+});
+
 test('generateDailyDigest reflects research mode (the default) in the text', () => {
   __resetForTests();
   const digest = generateDailyDigest();

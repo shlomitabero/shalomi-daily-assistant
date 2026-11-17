@@ -78,6 +78,25 @@ test('a webhook with an invalid signature is rejected and never touches the ledg
   });
 });
 
+test('a webhook with an invalid signature logs the source ip as a real security signal, like a failed login attempt', () => {
+  // This endpoint is exactly as public and unauthenticated as /login -
+  // routes/auth.js already treats a failed login attempt as worth the
+  // owner's own in-app activity log, not just a Railway log line nobody
+  // but the owner debugging a real issue would ever look at, and a
+  // forged/malformed webhook trying to fake a "payment confirmed" event
+  // is the same kind of signal.
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const req = makeReq(completedTxn({ opportunityId: 'opp_1' }), 'whsec_wrong');
+    req.ip = '203.0.113.7';
+    paddleWebhookHandler(req, makeRes());
+    const logged = db.actions_log.where((a) => a.type === 'webhook_signature_failed');
+    assert.equal(logged.length, 1);
+    assert.match(logged[0].result, /^blocked:/);
+    assert.equal(logged[0].detail.ip, '203.0.113.7');
+  });
+});
+
 test('a verified transaction.completed records real revenue and bumps the opportunity sales count', () => {
   __resetForTests();
   withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {

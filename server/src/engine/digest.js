@@ -10,6 +10,7 @@ export function buildDailyDigest({
   // configured" warning just because the field was left out.
   jwtSecretConfigured = true,
   failedLoginAttemptsToday = 0,
+  failedWebhookSignaturesToday = 0,
 }) {
   // Dashboard.jsx warns the owner in the app itself once spentSoFar/
   // lossSoFar reaches 80% of budget/maxLoss - but the whole point of a
@@ -76,6 +77,14 @@ export function buildDailyDigest({
     // the owner has no particular reason to open on an ordinary day.
     ...(failedLoginAttemptsToday > 0
       ? [`🔒 ${failedLoginAttemptsToday} ניסיונות התחברות כושלים היום — אם זה לא אתה, זה סימן שמישהו מנסה לנחש את הסיסמה.`]
+      : []),
+    // Same reasoning as failedLoginAttemptsToday just above - the Paddle
+    // webhook (routes/billing.js) is exactly as public and unauthenticated
+    // as /login, so a failed signature check there is the same kind of
+    // real security signal (a forged or malformed request trying to fake a
+    // "payment confirmed" webhook), worth a daily mention here too.
+    ...(failedWebhookSignaturesToday > 0
+      ? [`🔒 ${failedWebhookSignaturesToday} בקשות עם חתימת webhook לא תקינה התקבלו היום בנתיב התשלומים — אם זה לא Paddle, ייתכן שמנסים לזייף אישור תשלום.`]
       : []),
     // Answers "is the scanner even running" directly, every single day,
     // without the owner having to open the activity log and count entries

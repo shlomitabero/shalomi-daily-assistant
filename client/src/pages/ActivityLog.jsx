@@ -141,6 +141,14 @@ export default function ActivityLog() {
             {a.type === 'login_attempt' && a.detail?.ip && (
               <p className="hint log-reason">מקור: {a.detail.ip}</p>
             )}
+            {/* routes/billing.js's webhook handler logs the source ip the
+                same way login_attempt already does - this endpoint is
+                exactly as public and unauthenticated as /login, so a
+                failed signature check here deserves the same "where did
+                this come from" visibility. */}
+            {a.type === 'webhook_signature_failed' && a.detail?.ip && (
+              <p className="hint log-reason">מקור: {a.detail.ip}</p>
+            )}
             {/* routes/financial.js logs symbol/error on every failed
                 market_quote_fetch (addToWatchlist/refreshWatchlistEntry's
                 own real call to the external market data provider) - without

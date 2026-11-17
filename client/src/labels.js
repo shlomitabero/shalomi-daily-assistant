@@ -27,6 +27,7 @@ export const ACTION_TYPE_LABEL = {
   market_quote_fetch: 'שליפת מחיר שוק',
   remove_from_watchlist: 'הסרת סימבול ממעקב',
   settings_updated: 'עדכון הגדרות',
+  webhook_signature_failed: 'חתימת webhook לא תקינה',
 };
 
 export function actionTypeLabel(type) {
