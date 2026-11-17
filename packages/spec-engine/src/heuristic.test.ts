@@ -4589,6 +4589,41 @@ test("Property's 'דירה למכירה'/'דירה להשכרה' keywords also m
 });
 
 /**
+ * Round 2110: the same "genuinely ambiguous whole word" shape round 1828
+ * already fixed for the English "property" -- Hebrew "נכס"/"נכסים" is the
+ * ordinary general-finance/accounting word for "asset(s)" (balance-sheet
+ * assets, intangible IP assets), not specifically real estate, and had no
+ * exclusion at all.
+ */
+test("Property's 'נכס'/'נכסים' keyword doesn't spuriously match the generic financial/IP 'asset(s)' sense", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const financialAssets = await provider.generate(
+    "אפליקציה לניהול נכסים והתחייבויות של החברה לצורך דוחות כספיים",
+  );
+  assert.ok(
+    !financialAssets.entities.some((e) => e.name === "Property"),
+    "'נכסים והתחייבויות... דוחות כספיים' (company assets/liabilities for financial reports) must not spuriously match Property",
+  );
+
+  const ipAssets = await provider.generate(
+    "תוכנה לרישום נכסים לא מוחשיים כמו פטנטים וזכויות יוצרים של החברה",
+  );
+  assert.ok(
+    !ipAssets.entities.some((e) => e.name === "Property"),
+    "'נכסים לא מוחשיים' (intangible IP assets) must not spuriously match Property",
+  );
+
+  // The real word still works on its own (these descriptions avoid this
+  // rule's other keywords, so a match here can only come from "נכס"/"נכסים").
+  const realAssetSale = await provider.generate("אפליקציה לניהול נכסים למכירה ולהשכרה.");
+  assert.ok(realAssetSale.entities.some((e) => e.name === "Property"), "'נכסים' (real-estate assets) must still match Property");
+
+  const realAssetSingle = await provider.generate("מערכת לניהול נכס בודד להשכרה.");
+  assert.ok(realAssetSingle.entities.some((e) => e.name === "Property"), "'נכס' (singular) must still match Property");
+});
+
+/**
  * Regression test for round 581's finding: WorkOrder's Hebrew keyword
  * "עבודת תחזוקה" (maintenance job) had no plural entry. The plural
  * "עבודות תחזוקה" replaces the ה with ות mid-word, the same

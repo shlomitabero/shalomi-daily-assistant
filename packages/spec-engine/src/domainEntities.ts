@@ -888,7 +888,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // alongside the correct Product entity. Lookbehind excludes only
       // those two specific predecessors, same style as "property"'s own
       // exclusions right above.
-      "real estate", /\b(?<!job\s)(?<!product\s)listing(s)?\b/, "apartment for rent", "נכס", "נכסים",
+      // Bare "נכס"/"נכסים" (round 2110) is the exact same "genuinely
+      // ambiguous whole word" shape round 1828 already fixed for the
+      // English "property" -- in Hebrew it's the ordinary general-finance/
+      // accounting word for "asset(s)" (balance-sheet assets, intangible
+      // assets like patents/IP), not specifically real estate. Confirmed
+      // live via matchEntities: a company-assets-and-liabilities-for-
+      // financial-reports description and an intangible-IP-assets
+      // description each spuriously matched ONLY Property, the real
+      // accounting/IP-tracking domain entirely lost. No single adjacent
+      // word disambiguates it (the real cue -- "פיננסיים"/"התחייבויות"/
+      // "דוחות כספיים" -- is often several words away), so this uses the
+      // same document-wide bidirectional-lookaround technique rounds
+      // 2107/2109 established: excluded when a financial/IP-asset marker
+      // co-occurs anywhere in the text, in either order relative to the
+      // keyword.
+      "real estate", /\b(?<!job\s)(?<!product\s)listing(s)?\b/, "apartment for rent",
+      /נכס(?:ים)?(?![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))(?<![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))/,
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
       // "דירה למכירה"/"דירה להשכרה" (apartment for sale/rent) had no plural
       // entries (round 580). Their plurals "דירות למכירה"/"דירות להשכרה"
