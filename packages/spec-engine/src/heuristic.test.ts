@@ -1366,6 +1366,37 @@ test("Order's keyword match does not spuriously trigger on the common idiom 'in 
 });
 
 /**
+ * Round 2130's finding: round 869's own fix only excluded the LITERAL
+ * three-word "in order to" (requiring "in " immediately before AND " to"
+ * immediately after the same occurrence) -- but "in order" without a
+ * trailing "to" is an equally common, equally unrelated idiom ("keep my
+ * daily life in order", "keep client files in order and organized")
+ * meaning "organized/valid/functioning", nothing to do with e-commerce.
+ * Confirmed live before fixing: a habit-tracker description, a law-
+ * office-filing description, and a legal-case-document description each
+ * spuriously matched Order via this exact keyword.
+ */
+test("Order's keyword match also doesn't spuriously trigger on bare 'in order' (no trailing 'to'), the same unrelated idiom round 869 only partly excluded", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const habitTracker = await provider.generate("A habit tracker to help me keep my daily life in order.");
+  assert.ok(!habitTracker.entities.some((e) => e.name === "Order"), "a habit-tracker description must not get a spurious Order entity from 'in order'");
+
+  const lawOffice = await provider.generate("An app to help a small law office keep client files in order.");
+  assert.ok(!lawOffice.entities.some((e) => e.name === "Order"), "a law-office filing description must not get a spurious Order entity from 'in order'");
+
+  const legalCase = await provider.generate("A tool for lawyers to keep their case documents in order and organized for every client.");
+  assert.ok(!legalCase.entities.some((e) => e.name === "Order"), "a legal-case-document description must not get a spurious Order entity from 'in order'");
+
+  // A genuine compound word must still match across the hyphen, the same
+  // "walk-in"/"drop-in" shape this file's other compound-word exclusions
+  // already guard: the hyphen means the preceding "in" isn't the
+  // standalone connector word the exclusion targets.
+  const walkIn = await provider.generate("An app for a shop to track walk-in orders alongside their online orders.");
+  assert.ok(walkIn.entities.some((e) => e.name === "Order"), "'walk-in orders' must still match Order -- the hyphen makes 'in' part of a compound word, not the standalone connector");
+});
+
+/**
  * Round 870's finding: the same idiom-co-occurrence pitfall round 869 fixed
  * for Order's "order" keyword also applied to Event's bare "conference"
  * keyword, just never checked there. "video conference(s)" and "conference

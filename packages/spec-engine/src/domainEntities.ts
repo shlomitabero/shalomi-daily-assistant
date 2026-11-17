@@ -382,20 +382,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // tests below rely on it matching a genuine standalone use ("Place
       // an order for pickup.", "order-management"), and this entity's own
       // other keywords (purchase/checkout/delivery) don't cover every
-      // legitimate order-tracking description on their own. The idiom
-      // itself has a fixed, three-word shape -- "in" immediately before
-      // AND "to" immediately after the very same "order(s)" occurrence --
-      // so excluding only that exact combination (not just "preceded by
-      // in" or just "followed by to" alone, either of which would also
-      // reject real uses like "order-management" or "ship orders to
-      // customers") keeps every other standalone use matching. This
-      // doesn't reach the rarer idioms that keep "order" as a genuine
-      // standalone word with unrelated meaning ("court order", "money
-      // order", "restraining order") -- accepted as residual risk, the
-      // same trade-off this file's other \b-bounded fixes already make,
-      // since "in order to" alone is overwhelmingly more common across
-      // ordinary app descriptions than all of those combined.
-      /(?<!\bin\s)\border(s)?\b|\border(s)?\b(?!\s+to\b)/, "purchase", "checkout page", "checkout flow", "online checkout",
+      // legitimate order-tracking description on their own.
+      //
+      // Round 2130: the original fix here only excluded the LITERAL
+      // three-word "in order to" (requiring "in " immediately before AND
+      // " to" immediately after the same occurrence) -- but "in order"
+      // without a trailing "to" is an equally common, equally unrelated
+      // idiom ("keep my daily life in order", "keep client files in
+      // order", "keep case documents in order and organized") meaning
+      // "organized/valid/functioning", nothing to do with e-commerce.
+      // Confirmed live before fixing: a habit-tracker description, a law-
+      // office-filing description, and a legal-case-document description
+      // each spuriously matched Order via this exact keyword. Simplified
+      // to excluding "order(s)" whenever preceded by a standalone "in "
+      // at all (covering "in order", "in order to", "in order for X to
+      // Y" uniformly), with an extra lookbehind keeping real compound
+      // words like "walk-in orders"/"drop-in orders" matching (the
+      // hyphen means that "in" isn't the standalone connector word).
+      // This doesn't reach the rarer idioms that keep "order" as a
+      // genuine standalone word with unrelated meaning ("court order",
+      // "money order", "restraining order") -- accepted as residual
+      // risk, the same trade-off this file's other \b-bounded fixes
+      // already make, since "in order (to)" alone is overwhelmingly more
+      // common across ordinary app descriptions than all of those
+      // combined.
+      /(?<!(?<!-)\bin\s)\border(s)?\b/, "purchase", "checkout page", "checkout flow", "online checkout",
       "delivery", "deliveries", "wolt",
       // "הזמנה"/"הזמנות" is a true Hebrew homograph: it means both "order"
       // (a purchase) and "invitation" (a wedding/party/event invitation --
