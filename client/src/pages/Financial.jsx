@@ -155,7 +155,12 @@ export default function Financial() {
           )}
         </div>
         <form onSubmit={onAddSymbol} className="field-row">
-          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="AAPL" disabled={addBusy} />
+          {/* maxLength=20 matches routes/financial.js's own MAX_SYMBOL_LENGTH -
+              without it, the owner could type a long string, submit, and only
+              then learn it's too long from a server round-trip; the server
+              check stays as the real guard (this is just the earlier,
+              friendlier one). */}
+          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="AAPL" disabled={addBusy} maxLength={20} />
           <button className="btn btn-ghost" type="submit" disabled={addBusy}>{addBusy ? 'מוסיף…' : 'הוסף'}</button>
         </form>
         {error && <p className="form-error">{error}</p>}
@@ -219,7 +224,8 @@ export default function Financial() {
       <form className="card form" onSubmit={onPaperTrade}>
         <h3>עסקה מדומה (סימולציה)</h3>
         <div className="field-row">
-          <input placeholder="סימבול" value={trade.symbol} onChange={(e) => setTrade({ ...trade, symbol: e.target.value })} />
+          {/* Same maxLength=20 as the watchlist symbol input above, same reason. */}
+          <input placeholder="סימבול" value={trade.symbol} onChange={(e) => setTrade({ ...trade, symbol: e.target.value })} maxLength={20} />
           <select value={trade.side} onChange={(e) => setTrade({ ...trade, side: e.target.value })}>
             <option value="long">לונג</option>
             <option value="short">שורט</option>

@@ -135,13 +135,18 @@ export default function Opportunities() {
 
       <form className="card form" onSubmit={onCreate}>
         <h3>מוצר דיגיטלי חדש (ידני)</h3>
+        {/* maxLength=200 on both inputs matches routes/opportunities.js's own
+            MAX_TOPIC_AUDIENCE_LENGTH - without it, typing past the limit and
+            submitting only then surfaced a server-side Hebrew rejection; the
+            server check remains the real guard, this is just the earlier,
+            friendlier one. */}
         <label>
           נושא
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="לדוגמה: ניהול תזרים מזומנים לעצמאים" />
+          <input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="לדוגמה: ניהול תזרים מזומנים לעצמאים" maxLength={200} />
         </label>
         <label>
           קהל מטרה
-          <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="לדוגמה: עצמאים ופרילנסרים" />
+          <input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="לדוגמה: עצמאים ופרילנסרים" maxLength={200} />
         </label>
         {error && <p className="form-error">{error}</p>}
         <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'מכין טיוטה…' : 'צור טיוטת מוצר'}</button>
