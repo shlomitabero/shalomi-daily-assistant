@@ -613,6 +613,41 @@ test("mergeRefinedSpec folds a regenerated Order entity into an existing Purchas
 });
 
 /**
+ * Round 2153: a third instance of the same bug class, Hebrew-only this
+ * time. The Volunteer & Shift Management template's own curated entity is
+ * "VolunteerEvent" (templates.ts), but its descriptionHe ("מתנדבים,
+ * אירועים וניהול משמרות.") contains domainEntities.ts's separate Event
+ * rule's own bare Hebrew keywords ("אירוע"/"אירועים"), which (unlike that
+ * rule's English keywords) match with no disambiguation at all.
+ * Confirmed live that regenerating from this template's own Hebrew
+ * description produces an entity literally named "Event", silently
+ * bolted onto any refine of a Hebrew-UI project from this template.
+ */
+test("mergeRefinedSpec folds a regenerated Event entity into an existing VolunteerEvent entity instead of duplicating it (Volunteer & Shift Management template's own alias, Hebrew-only)", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "VolunteerEvent", label: "אירוע", fields: [{ name: "name", type: "text", required: true }, { name: "date", type: "date", required: true }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Event", label: "אירוע", fields: [{ name: "name", type: "text", required: true }, { name: "venue", type: "text", required: false }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["VolunteerEvent"],
+    "must NOT add a second, duplicate event-tracking entity -- the candidate's Event concept already exists as VolunteerEvent",
+  );
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["date", "name", "venue"],
+    "VolunteerEvent's own fields must survive, with the candidate's genuinely new field (venue) folded in",
+  );
+});
+
+/**
  * Round 1973: round 1911 added entityMergeKey/ENTITY_ALIAS_GROUPS to the
  * ENTITY half of mergeRefinedSpec (the two tests just above), but never
  * updated the SCREENS half, which still matches by plain
@@ -682,18 +717,20 @@ test("detectLikelyEntityRenames stays silent for the Supplier/Vendor and Purchas
     entities: [
       { name: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
       { name: "PurchaseOrder", fields: [{ name: "orderDate", type: "date", required: true }] },
+      { name: "VolunteerEvent", fields: [{ name: "name", type: "text", required: true }] },
     ],
   });
   const candidate = baseSpec({
     entities: [
       { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
       { name: "Order", fields: [{ name: "orderDate", type: "date", required: true }] },
+      { name: "Event", fields: [{ name: "name", type: "text", required: true }] },
     ],
   });
   assert.deepEqual(
     detectLikelyEntityRenames(current, candidate),
     [],
-    "Supplier/Vendor and PurchaseOrder/Order are aliased -- mergeRefinedSpec folds them together, so there is nothing here to warn about",
+    "Supplier/Vendor, PurchaseOrder/Order, and VolunteerEvent/Event are all aliased -- mergeRefinedSpec folds them together, so there is nothing here to warn about",
   );
 });
 

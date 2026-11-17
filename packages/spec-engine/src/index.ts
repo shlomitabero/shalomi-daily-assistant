@@ -130,10 +130,26 @@ export async function generateSpec(
 // instruction ("Add a Notes field to StockMovement") added both a whole
 // new "Vendor" entity (alongside the existing "Supplier") and a whole new
 // "Order" entity (alongside the existing "PurchaseOrder").
+// Round 2153: a third instance of the same bug class, Hebrew-only this
+// time. The Volunteer & Shift Management template's own curated entity is
+// "VolunteerEvent" (templates.ts's VOLUNTEER_ENTITIES/_EN) -- but its
+// descriptionHe ("מתנדבים, אירועים וניהול משמרות.") literally contains
+// domainEntities.ts's separate Event rule's own bare Hebrew keywords
+// ("אירוע"/"אירועים"), which (unlike that rule's English keywords,
+// deliberately requiring "event planning"/"wedding(s)"/"trade show"/a
+// conference phrase) match with no disambiguation at all. Confirmed live:
+// regenerating from this template's own Hebrew description alone produces
+// an entity literally named "Event" -- the equivalent English description
+// ("Volunteers, events and shift scheduling.") does NOT, confirming the
+// asymmetry is Hebrew-specific. Any Hebrew-UI project built from this
+// template that later calls /refine with ANY instruction gets a
+// regenerated "Event" entity silently bolted onto the spec alongside the
+// pre-existing "VolunteerEvent".
 const ENTITY_ALIAS_GROUPS: string[][] = [
   ["employee", "teammember", "staff"],
   ["vendor", "supplier"],
   ["order", "purchaseorder"],
+  ["event", "volunteerevent"],
 ];
 const ENTITY_ALIAS_KEY = new Map<string, string>();
 for (const group of ENTITY_ALIAS_GROUPS) {
