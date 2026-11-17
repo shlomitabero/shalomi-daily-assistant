@@ -50298,3 +50298,27 @@ const collides = (dir: string) => {
 **Tests/verification:** Added a new test in `apps/api/src/backup.test.ts` modeled on the existing round-1936 "third entity" collision test: two entities labeled "Clients"/"CLIENTS" (names "EntityA"/"EntityB"), each with one `file` field, each with one record (ids both 1) uploading a file with the same original name "photo.jpg" — asserts every entry path is unique once case-folded, and that entity B's file lands under its own disambiguated directory prefix rather than overwriting entity A's. Verified empirically via `git stash` (stashing only the `backup.ts` fix, keeping the new test): the test failed exactly as predicted before the fix (first on the uniqueness assertion, with content proving the collision; after a lookup bug in the test itself was caught and fixed the same way round 2141/2145 caught self-inflicted mistakes, re-confirmed failing on "expected entity B's own uploaded file under its own, disambiguated directory prefix"), then passed cleanly after restoring the fix. Ran the full `apps/api` test suite (1728/1728 passing) and `npm run build` (clean) in the background before committing.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2149: Courier's font-exclusion regex had a bounded word window a longer font list could defeat
+
+**The process:** Round 2148 found nothing confident after a deep pass over entityFormatting.ts, routes/projects.ts, migrate.ts, EntityPanel.tsx, zip.ts, BuildProgress.tsx, GlobalSearchPanel.tsx, BusinessTwinPanel.tsx/twinReport.ts, whatsapp.ts, and the preference-cleanup orchestrators — all confirmed clean. It flagged several unexplored priority areas for round 2149: apps/api/src/whatsappWeb.ts (2181 lines, never read in full), WhatsAppPanel.tsx/AutomationsPanel.tsx, codegen.ts's own generated-app logic (distinct from the exhausted porting-gap vein), domainEntities.ts/templates.ts beyond parity checks, and SpecListItemRemover.tsx. The round-2149 survey agent read all of whatsappWeb.ts and large portions of codegen.ts's generated server logic without finding anything new (both already extremely well hardened), but found a genuine gap in domainEntities.ts.
+
+**The bug:** Round 2106 added a regex to stop the bare "courier" keyword from spuriously matching the "Courier"/"Courier New" monospace font name in font-picker/PDF-generator/invoice-designer descriptions, by excluding a match when "font" appears within a fixed 3-word window either side of "courier". But a very natural phrasing lists every font name first and mentions "font" only once, at the very end (e.g. "choose from Arial, Courier, or Times New Roman as the font") — putting "font" more than 3 words away on both sides, outside the window. Confirmed live through the real `matchEntities` engine (`packages/spec-engine/src/heuristic.ts`):
+```
+"A document styling tool that lets a user choose their heading typeface from Arial, Courier, or Times New Roman as the font."
+ -> [ 'Courier' ]   // real document-styling domain entirely lost
+
+"An invoice builder letting you choose Arial, Courier, or Times New Roman for the document's font."
+ -> [ 'Invoice', 'Courier' ]   // phantom Courier entity injected
+```
+The existing round-2106 regression test's three sentences all happen to keep "font" within the 3-word window (immediately before the font list, or immediately before/after "courier" itself), so none of them exercised this gap.
+
+**The fix:** `packages/spec-engine/src/domainEntities.ts`'s Courier keyword regex switched both lookarounds from a fixed `(?:\s+\S+){0,3}` word window to the same document-wide, lazy `[\s\S]*?` co-occurrence check this file already uses for an identical "disambiguating word can be far away" problem — the Property entity's own נכס fix (round 2110, a few hundred lines below). Any fixed bound can be defeated the same way by a longer list of font names, so the unbounded check is the only fix that doesn't just move the goalpost:
+```js
+// before: /(?<!\bfont\b(?:\s+\S+){0,3}\s)\bcouriers?\b(?!\s+new\b)(?!(?:\s+\S+){0,3}\s+font\b)/
+/(?<!\bfont\b[\s\S]*)\bcouriers?\b(?!\s+new\b)(?![\s\S]*?\bfont\b)/
+```
+
+**Tests/verification:** Confirmed the regex gap in isolation with a direct `node -e` test, then confirmed it through the real engine via a scratch `tsx` script before and after the fix. Added a new test in `packages/spec-engine/src/heuristic.test.ts` right after the existing round-2106 Courier test, using the two sentences that reproduced the bug. Verified fail-before/pass-after via `git stash` (stashing only the `domainEntities.ts` fix, keeping the new test): failed exactly as predicted before the fix, passed cleanly after. Ran the full `packages/spec-engine` test suite (358/358 passing) and `apps/api`'s build (clean, since it bundles `@forge/spec-engine`) before committing.
+
+Live: https://forge-ai-m7p7.onrender.com
