@@ -387,6 +387,28 @@ test("extractRefineProviderName returns null for an empty event list instead of 
 });
 
 /**
+ * Round 2142: a failed refine attempt retried via BuildProgress.tsx's own
+ * "Retry" button appends the retry's own full event stream onto the SAME
+ * refineEvents.current array (App.tsx only clears it in handleRefine, on a
+ * genuinely new instruction) -- so a completed refine's event list can
+ * carry TWO "Architect"/"running" events: the failed first attempt's
+ * (whose own providerName may have been a transient fallback), then the
+ * retry's own (the one that actually completed and is being recorded).
+ * Must report the LAST one, mirroring summarizeRefineImpact's own
+ * identical last-match fix just above it.
+ */
+test("extractRefineProviderName reports the RETRY attempt's own providerName, not a stale first-attempt value left over from a failed Retry", () => {
+  const events: AgentStepEvent[] = [
+    { agent: "Architect", status: "running", message: "…", detail: { providerName: "anthropic-fallback" } },
+    { agent: "Database", status: "failed", message: "boom" },
+    // Retry re-invokes the pipeline from scratch -- a second "running" event lands in the SAME array.
+    { agent: "Architect", status: "running", message: "…", detail: { providerName: "anthropic" } },
+    { agent: "Architect", status: "success", message: "…", detail: { newEntities: [], changedEntities: [] } },
+  ];
+  assert.equal(extractRefineProviderName(events), "anthropic", "must report the retry attempt's own providerName, the one that actually completed");
+});
+
+/**
  * New in this round: a search box narrows "Your projects" by name once
  * there are enough of them to matter. filterAndSortProjects is the pure
  * function driving it -- case-insensitive substring match, then the same

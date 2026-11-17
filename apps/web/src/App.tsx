@@ -412,18 +412,31 @@ export function summarizeRefineImpact(events: AgentStepEvent[], t: (key: string)
 /**
  * Pulls the AI-vs-heuristic provider signal (pipeline.ts's own
  * PipelineOptions.providerName) back out of a completed refine's raw event
- * list. Unlike summarizeRefineImpact above, this reads the very first event
- * (always `{agent: "Architect", status: "running"}`, emitted exactly once
- * per pipeline run) rather than the last "success" one -- a Debug-recovered
- * refine re-emits a second Architect success event, but never a second
- * "running" one, so there's nothing to disambiguate here. Round 402 closed
- * this exact gap (generateSpec()'s honest signal silently discarded) for
- * the enhance step; /refine calls the identical generateSpec() and had the
- * identical gap, just with no render location of its own before now.
+ * list. Round 2142: takes the LAST matching "running" event, not the first
+ * -- the same fix summarizeRefineImpact above already has, for a related
+ * but distinct reason. That function's own comment only covers a single
+ * run re-emitting a second Architect event (the Debug Agent recovering
+ * mid-run); this function's own gap is the embedded refine BuildProgress's
+ * "Retry" button (BuildProgress.tsx's handleRetry), which re-invokes the
+ * exact same `run` closure App.tsx passes it -- never resetting
+ * refineEvents.current (only handleRefine itself does that, on a genuinely
+ * NEW instruction). A failed attempt 1 still emits its own "running" event
+ * (yielded before the Database/QA steps that can fail) before dying, so a
+ * Retry's attempt 2 appends a second "running" event onto the SAME array --
+ * and since `generateSpec` runs fresh per attempt, its providerName can
+ * genuinely differ between them (a transient AI fallback on attempt 1,
+ * real AI on the attempt that actually completed, or vice versa). Reading
+ * the first one reported whichever attempt happened to run first, not the
+ * one `handleBuildComplete` is actually recording -- this file's own
+ * repeated "don't silently report a stale AI-vs-heuristic signal" fixes
+ * (rounds 402/406/2064) exist specifically to prevent this class of bug.
  */
 export function extractRefineProviderName(events: AgentStepEvent[]): string | null {
-  const first = events.find((e) => e.agent === "Architect" && e.status === "running");
-  const detail = first?.detail as { providerName?: string } | undefined;
+  let last: AgentStepEvent | undefined;
+  for (const e of events) {
+    if (e.agent === "Architect" && e.status === "running") last = e;
+  }
+  const detail = last?.detail as { providerName?: string } | undefined;
   return detail?.providerName ?? null;
 }
 
