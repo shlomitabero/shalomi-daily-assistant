@@ -40,6 +40,7 @@ import {
   EMAIL_TIMEOUT_ERROR,
   EMAIL_UNREACHABLE_ERROR,
   WHATSAPP_SEND_TIMEOUT_ERROR,
+  WHATSAPP_SEND_NOT_CONNECTED_ERROR,
 } from "@forge/db";
 import {
   fireRule,
@@ -2617,28 +2618,30 @@ test("hasTooManyConsecutiveFailuresToday stays tripped across a UTC date rollove
 
 /**
  * Round 1998: every prior widening of this function's own lookback
- * (2x/3x/4x/5x/6x, see the doc comments above) only ever matched the
+ * (2x/3x/4x/5x/6x/7x, see the doc comments above) only ever matched the
  * multiplier to the NUMBER of independently-retained excluded buckets
  * (WHATSAPP_NOT_CONNECTED_ERROR, EMAIL_NOT_CONFIGURED_ERROR,
  * WEBHOOK_TIMEOUT_ERROR, EMAIL_TIMEOUT_ERROR, WHATSAPP_SEND_TIMEOUT_ERROR,
- * isTest -- 6 today), with ZERO slack left over for the
- * MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY real rows this function
- * actually needs to see past them. These 6 buckets are scoped by
- * (projectId, ruleId) alone, never by actionType -- and
- * updateAutomationRule never resets a rule's automation_runs history --
+ * WHATSAPP_SEND_NOT_CONNECTED_ERROR (round 2115), isTest -- 7 today), with
+ * ZERO slack left over for the MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY
+ * real rows this function actually needs to see past them. These 7
+ * buckets are scoped by (projectId, ruleId) alone, never by actionType --
+ * and updateAutomationRule never resets a rule's automation_runs history --
  * so ONE rule, reconfigured across send_whatsapp/webhook/send_email at
  * different points while being debugged (an entirely ordinary
- * troubleshooting flow), can genuinely fill all 6 excluded buckets at
+ * troubleshooting flow), can genuinely fill all 7 excluded buckets at
  * once. This seeds exactly that: 5 genuine consecutive failures for one
- * rule today, then 20 rows in each of the 6 excluded buckets recorded
- * AFTER them (so the excluded rows are the 120 most recent for this
- * rule) -- before this round's fix, the old `6 *` lookback fetched only
- * those 120 excluded rows, the in-memory filter discarded every one, and
- * the function wrongly reported "not too many failures" even though 5
- * genuine consecutive failures from today were sitting right there in
- * the table, one row past the fetch's own limit.
+ * rule today, then 20 rows in each of the 7 excluded buckets recorded
+ * AFTER them (so the excluded rows are the 140 most recent for this
+ * rule) -- before round 1998's own fix, the old `6 *` lookback (and,
+ * before round 2115 widened it further, the old `6 *` margin would have
+ * been too narrow for this 7th bucket too) fetched only those excluded
+ * rows, the in-memory filter discarded every one, and the function
+ * wrongly reported "not too many failures" even though 5 genuine
+ * consecutive failures from today were sitting right there in the table,
+ * one row past the fetch's own limit.
  */
-test("hasTooManyConsecutiveFailuresToday still finds 5 genuine consecutive failures even after all 6 excluded buckets fill up with newer rows", () => {
+test("hasTooManyConsecutiveFailuresToday still finds 5 genuine consecutive failures even after all 7 excluded buckets fill up with newer rows", () => {
   const { db, project } = setupProject();
   const rule = insertAutomationRule(db, scheduleRuleBase());
 
@@ -2651,8 +2654,8 @@ test("hasTooManyConsecutiveFailuresToday still finds 5 genuine consecutive failu
     recordAutomationRun(db, project.id, rule.id, { status: "failed", error: "recipient not found" }, "send_whatsapp", null, null, at());
   }
 
-  // All 6 excluded buckets, each filled to its own independent retention
-  // cap, recorded AFTER the 5 genuine failures -- so they're the 120 most
+  // All 7 excluded buckets, each filled to its own independent retention
+  // cap, recorded AFTER the 5 genuine failures -- so they're the 140 most
   // recent rows for this rule, regardless of which actionType the rule
   // happens to be configured as right now.
   function flood(error: string, isTest = false) {
@@ -2662,6 +2665,7 @@ test("hasTooManyConsecutiveFailuresToday still finds 5 genuine consecutive failu
   }
   flood(WHATSAPP_NOT_CONNECTED_ERROR);
   flood(WHATSAPP_SEND_TIMEOUT_ERROR);
+  flood(WHATSAPP_SEND_NOT_CONNECTED_ERROR);
   flood(WEBHOOK_TIMEOUT_ERROR);
   flood(EMAIL_NOT_CONFIGURED_ERROR);
   flood(EMAIL_TIMEOUT_ERROR);
@@ -2670,7 +2674,7 @@ test("hasTooManyConsecutiveFailuresToday still finds 5 genuine consecutive failu
   assert.equal(
     hasTooManyConsecutiveFailuresToday(db, getAutomationRule(db, project.id, rule.id)!, at()),
     true,
-    "5 genuine consecutive failures from today must still trip the cap, even once 120 newer excluded-bucket rows sit on top of them",
+    "5 genuine consecutive failures from today must still trip the cap, even once 140 newer excluded-bucket rows sit on top of them",
   );
 });
 

@@ -26,6 +26,7 @@ import {
   EMAIL_UNREACHABLE_ERROR,
   WHATSAPP_NOT_CONNECTED_ERROR,
   WHATSAPP_SEND_TIMEOUT_ERROR,
+  WHATSAPP_SEND_NOT_CONNECTED_ERROR,
 } from "./automations.js";
 
 function baseRule(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
@@ -897,6 +898,48 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
       .get("proj1", rule.id, WHATSAPP_SEND_TIMEOUT_ERROR) as { c: number }
   ).c;
   assert.equal(timeoutCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the WhatsApp-send-timeout rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
+/**
+ * Round 2115: a DIFFERENT "WhatsApp isn't connected" case than
+ * WHATSAPP_NOT_CONNECTED_ERROR's own bucket above -- that's the sentence
+ * fireRule's/fireScheduledRule's PRE-send check produces; this is the
+ * stable snake_case short code whatsappWeb.ts's own performSend returns
+ * when its LATER re-check (run once a queued send's turn in the
+ * per-project sendQueue actually comes up) finds the connection has since
+ * dropped. fireRule/fireScheduledRule store it verbatim, so a bulk-update
+ * that fires one send_whatsapp automation per record (round 1076) all
+ * queued through the same sendQueue, racing a mid-flight disconnect,
+ * produces exactly this flood -- never given its own bucket despite the
+ * identical risk already guarded against for the sentence case.
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 WhatsApp-send-not_connected rows independently, so one kind can never evict the other", () => {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  // One genuine, distinct failure first (e.g. an actual send rejection)...
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" });
+  // ...then a flood far past the old shared-bucket cap of 20 -- e.g. 30
+  // concurrently-queued sends that each independently hit performSend's
+  // own re-check after the connection dropped mid-queue.
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: WHATSAPP_SEND_NOT_CONNECTED_ERROR });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, WHATSAPP_SEND_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, "the one genuine failure must survive a WhatsApp-send-not_connected flood of any length, not just a short one");
+
+  const notConnectedCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, WHATSAPP_SEND_NOT_CONNECTED_ERROR) as { c: number }
+  ).c;
+  assert.equal(notConnectedCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the WhatsApp-send-not_connected rows must still be capped at the normal retention limit, just in their own independent bucket");
 });
 
 /**

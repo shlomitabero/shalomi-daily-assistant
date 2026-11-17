@@ -23,6 +23,7 @@ import {
   EMAIL_TIMEOUT_ERROR,
   EMAIL_UNREACHABLE_ERROR,
   WHATSAPP_SEND_TIMEOUT_ERROR,
+  WHATSAPP_SEND_NOT_CONNECTED_ERROR,
   type AutomationFieldOperator,
   type AutomationRule,
   type ForgeDatabase,
@@ -2200,13 +2201,26 @@ const MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY = 5;
  * MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY on top of the existing 6x
  * margin guarantees the fetch always has room for the real rows it needs,
  * regardless of how many of the 6 excluded buckets this one rule happens
- * to have filled -- and needs no further widening the next time a new
- * excluded bucket is added, unlike the multiplier-only approach above.
+ * to have filled -- the margin absorbs small off-by-one slop, but the
+ * multiplier itself still has to track the real bucket COUNT, exactly
+ * like every widening before it (see round 2115 just below, which adds a
+ * 7th).
+ *
+ * Round 2115: WHATSAPP_SEND_NOT_CONNECTED_ERROR (whatsappWeb.ts's own
+ * performSend re-check, run once a queued send's turn comes up -- see
+ * that constant's own doc comment in packages/db/src/automations.ts) is
+ * excluded for the identical self-healing reason as
+ * WHATSAPP_NOT_CONNECTED_ERROR above -- it's the same "WhatsApp isn't
+ * connected right now" signal, just produced by a different, later check
+ * in the send path, and had never been given the matching exclusion
+ * despite packages/db/src/automations.ts's own retention bucket for it
+ * (added the same round). Lookback widened from 6x to 7x since there are
+ * now seven independently-retained buckets.
  */
 export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: AutomationRule, now: Date): boolean {
   const timeZone = rule.scheduleTimezone ?? "UTC";
   const today = wallClockIn(now, timeZone).date;
-  const runs = listAutomationRuns(db, rule.projectId, rule.id, 6 * AUTOMATION_RUNS_RETENTION_LIMIT + MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY)
+  const runs = listAutomationRuns(db, rule.projectId, rule.id, 7 * AUTOMATION_RUNS_RETENTION_LIMIT + MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY)
     .filter(
       (run) =>
         run.error !== WHATSAPP_NOT_CONNECTED_ERROR &&
@@ -2214,6 +2228,7 @@ export function hasTooManyConsecutiveFailuresToday(db: ForgeDatabase, rule: Auto
         run.error !== WEBHOOK_TIMEOUT_ERROR &&
         run.error !== EMAIL_TIMEOUT_ERROR &&
         run.error !== WHATSAPP_SEND_TIMEOUT_ERROR &&
+        run.error !== WHATSAPP_SEND_NOT_CONNECTED_ERROR &&
         !run.isTest,
     )
     .slice(0, MAX_CONSECUTIVE_SCHEDULE_FAILURES_PER_DAY);

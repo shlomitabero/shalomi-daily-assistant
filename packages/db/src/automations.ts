@@ -178,6 +178,34 @@ export const EMAIL_UNREACHABLE_ERROR = "Resend API request failed: could not rea
  */
 export const WHATSAPP_SEND_TIMEOUT_ERROR = "timeout";
 
+/**
+ * Round 2115: a DIFFERENT, independent "WhatsApp isn't connected" case
+ * than WHATSAPP_NOT_CONNECTED_ERROR above -- that constant is the sentence
+ * fireRule's/fireScheduledRule's own PRE-send status check produces; this
+ * stable snake_case short code is what whatsappWeb.ts's WhatsAppWebManager
+ * itself returns when ITS OWN later re-check (performSend, run only once a
+ * queued send's turn in the per-project sendQueue actually comes up) finds
+ * the connection has since dropped -- performSend's own doc comment
+ * explicitly documents this as a real, expected case ("a queued call can
+ * sit behind others for a while, and the connection may have dropped by
+ * the time its own turn actually comes up"). fireRule/fireScheduledRule
+ * store result.error verbatim with no translation, so this code -- not
+ * the bucketed sentence -- is exactly what ends up in automation_runs.
+ * Same flood risk as every sibling bucket above, and the same root cause
+ * as WHATSAPP_NOT_CONNECTED_ERROR's own round-951 bucket (a pre-send/
+ * connection-state signal, not evidence the rule itself is broken): a
+ * bulk-update fires one send_whatsapp automation per record unsuppressed
+ * (round 1076), all queued through the same sendQueue, and if the
+ * connection drops partway through that queue draining, every call still
+ * queued at that point independently gets this exact literal -- without
+ * its own bucket, that flood fell into the catch-all "everything else"
+ * prune below and could evict a genuinely different, older failure for
+ * this same rule. Confirmed this stable code is intentional, not an
+ * accident: apps/web/src/api.ts's own KNOWN_WHATSAPP_SEND_ERROR_CODES
+ * already lists it alongside WHATSAPP_SEND_TIMEOUT_ERROR's "timeout".
+ */
+export const WHATSAPP_SEND_NOT_CONNECTED_ERROR = "not_connected";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -968,6 +996,15 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, WHATSAPP_SEND_TIMEOUT_ERROR, projectId, id, WHATSAPP_SEND_TIMEOUT_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2115: mirrors the WHATSAPP_NOT_CONNECTED_ERROR bucket above, for
+  // WHATSAPP_SEND_NOT_CONNECTED_ERROR's own identical flood risk -- see
+  // that constant's own doc comment for why this is a genuinely separate
+  // literal, not a duplicate of the sentence bucket already above.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_SEND_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_SEND_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -985,8 +1022,8 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -998,6 +1035,7 @@ export function recordAutomationRun(
     EMAIL_TIMEOUT_ERROR,
     EMAIL_UNREACHABLE_ERROR,
     WHATSAPP_SEND_TIMEOUT_ERROR,
+    WHATSAPP_SEND_NOT_CONNECTED_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
@@ -1007,6 +1045,7 @@ export function recordAutomationRun(
     EMAIL_TIMEOUT_ERROR,
     EMAIL_UNREACHABLE_ERROR,
     WHATSAPP_SEND_TIMEOUT_ERROR,
+    WHATSAPP_SEND_NOT_CONNECTED_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the
