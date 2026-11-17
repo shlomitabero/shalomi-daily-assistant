@@ -17014,6 +17014,35 @@ test("the exported EntityView's own generated parseCsv treats a stray mid-field 
   ]);
 });
 
+/**
+ * Round 2137: ports the live preview's own round-2118 fix, missed when
+ * rounds 2123/2124 later ported two OTHER live-app CSV fixes (round 2119's
+ * trim fix, round 2120's enum-ambiguity fix) into this same generated
+ * parseCsv. A delimiter followed by a space before a quoted field (a
+ * common "comma + space" export convention) left `field` holding that
+ * leading whitespace by the time the quote was reached, so the exported
+ * app's own quote-opening check (`field === ""`) never fired -- the quote
+ * was read as literal content, and the comma inside what should have been
+ * one quoted field split the row into an extra column, shifting every
+ * column after it.
+ */
+test("the exported EntityView's own generated parseCsv opens a quoted field after a delimiter followed by a space, not just immediately after the delimiter", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(parseCsvSrc, "expected to find parseCsv in generated output");
+
+  const { parseCsv } = new Function(`${parseCsvSrc}\nreturn { parseCsv };`)();
+
+  const csv = 'Name,Description,Price,InStock\r\nWidget, "a nice, long description",19.99,true\r\n';
+  const rows = parseCsv(csv);
+
+  assert.deepEqual(rows, [
+    ["Name", "Description", "Price", "InStock"],
+    ["Widget", "a nice, long description", "19.99", "true"],
+  ]);
+});
+
 // Regression test: the exported app's CSV import validates numbers and enum
 // values client-side (a row-numbered error before anything is even sent to
 // the server) but, until now, silently accepted any string at all for a

@@ -4091,7 +4091,22 @@ function parseCsv(text) {
     // ANY literal quote (e.g. an inches mark like \`3" steel rod\`),
     // silently merging an arbitrary number of real rows into one
     // garbled field.
-    if (ch === '"' && field === "") {
+    // Round 2137 (ported): \`field === ""\` above was too strict -- a
+    // delimiter followed by a space before a quoted field (a common
+    // "comma + space" export convention, distinct from Excel's own
+    // no-space style) left \`field\` holding that leading whitespace by
+    // the time the quote is reached, so this never fired: the quote was
+    // treated as ordinary literal content, and the comma inside what
+    // should have been one quoted field split the row into extra
+    // columns, shifting every column after it. \`field.trim() === ""\`
+    // still correctly excludes a quote appearing after real content
+    // (round 2072's own \`3" steel rod\` case above); resetting \`field\`
+    // drops the leading whitespace rather than keeping it as part of the
+    // quoted value. See the live app's entityFormatting.ts parseCsv
+    // (round 2118) for the original fix -- rounds 2123/2124 later ported
+    // two OTHER live-app CSV fixes here but missed this one.
+    if (ch === '"' && field.trim() === "") {
+      field = "";
       inQuotes = true;
       i++;
       continue;
