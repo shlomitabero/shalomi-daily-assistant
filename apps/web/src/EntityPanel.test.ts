@@ -8900,6 +8900,85 @@ test("EntityPanel's CSV import (update-by-id branch) warns when updateRecord's o
 });
 
 /**
+ * Round 2179: mirrors handleBulkUpdate/handleBulkDuplicate's own
+ * NOT_FOUND/ENTITY_NOT_FOUND exclusion (rounds 1874/2076/2082) --
+ * `writeImportedRecords` was the one sibling write path (even round 2178,
+ * which touched this exact function one round earlier for the sibling
+ * ignoredFields bug) that never got it. Re-importing an exported file
+ * (id column present, trusted) whose row for an id another tab/collaborator
+ * deleted in the meantime used to report that row as an ordinary import
+ * failure, even though nothing was actually wrong with the file.
+ */
+test("EntityPanel's CSV import (update-by-id branch) does not report a row as a failure when its record was deleted by another tab mid-import", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@old.com" } as unknown as EntityRecord];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/1") {
+        const data = JSON.parse(init!.body as string);
+        Object.assign(store[0], data);
+        return new Response(JSON.stringify({ record: store[0] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/2") {
+        return new Response(JSON.stringify({ error: "Record 2 not found in Customer", code: "NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("tbody tr").length === 1);
+
+      // Row 2's own target record (id 2) is deleted by another tab right
+      // before this import's own concurrent PATCHes land.
+      const csvText = "id,name,email\n1,Dana,dana@new.com\n2,Ghost,ghost@example.com\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => document.querySelector(".csv-import-row .muted.small") !== null);
+
+      const buttons = Array.from(document.querySelectorAll(".csv-import-row button"));
+      const errorsButton = buttons.find((b) => /errors/i.test(b.textContent ?? ""));
+      // Compare as a boolean, never the raw DOM node -- a direct
+      // assert.equal(domElement, undefined) makes Node's util.inspect try
+      // to serialize the whole DOM tree for the failure message and hangs.
+      assert.equal(
+        errorsButton === undefined,
+        true,
+        "a row whose own record was deleted by another tab mid-import must not surface as a reportable import failure",
+      );
+      assert.equal(store[0].email, "dana@new.com", "the other row's own genuine update must still apply");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1391: `writeImportedRecords`' all-failed branch (buildImportRecords
  * returning zero parsed rows, e.g. a required file field CSV import can't
  * support) hardcoded the plural "{errorCount} errors" with no singular

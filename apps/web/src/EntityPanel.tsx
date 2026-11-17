@@ -5609,8 +5609,25 @@ export function EntityPanel({
           : createRecord(projectId, entity.name, data, { suppressAutomations: true });
       }),
     );
+    // Round 2179: mirrors handleBulkUpdate/handleBulkDuplicate's own
+    // NOT_FOUND/ENTITY_NOT_FOUND exclusion (rounds 1874/2076/2082) -- a
+    // concurrent collaborator deleting this exact record (NOT_FOUND), or a
+    // checkpoint restore/refine removing the whole entity (ENTITY_NOT_FOUND),
+    // between this file being parsed and that row's own PATCH/POST reaching
+    // the server is the same "nothing left to report as failed" case every
+    // other write path already treats this way. Left unfiltered, racing
+    // either one reported an ordinary "import failed" error for a row that
+    // was never anything wrong with the file -- just an unrelated concurrent
+    // change to the project. handleBulkUpdate/handleBulkDuplicate (same
+    // file) build a notFoundIds set keyed by id to also keep those ids
+    // selected afterward; import has no selection state to preserve, so
+    // excluding the rejection from serverErrors outright is the whole fix.
     const serverErrors = results
-      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .filter((r): r is PromiseRejectedResult => {
+        if (r.status !== "rejected") return false;
+        const code = (r.reason as Error & { code?: string }).code;
+        return code !== "NOT_FOUND" && code !== "ENTITY_NOT_FOUND";
+      })
       .map((r) => (r.reason as Error).message);
     // Round 2178: mirrors handleDuplicate/handleBulkUpdate's own ignoredFields
     // handling (rounds 2172-2174) -- a concurrent checkpoint restore/refine

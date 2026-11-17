@@ -15953,6 +15953,41 @@ test("the exported EntityView's handleImportFile/handleImportJsonFile route thro
 });
 
 /**
+ * Round 2179: mirrors the exported app's own handleBulkUpdate NOT_FOUND
+ * exclusion (round 1874) -- handleImportFile/handleImportJsonFile never
+ * got it. Re-importing an exported file (id column present, trusted)
+ * whose target record another tab/collaborator deleted in the meantime
+ * used to leak the literal, untranslated backend string (e.g. "Record 2
+ * not found in Customer") straight into the import errors list -- this
+ * file has no i18n layer at all, so there's no translated phrasing to
+ * fall back on the way the live preview has. Only checks the real
+ * generated source, the same lighter-weight convention this file already
+ * uses for handleImportFile/handleImportJsonFile just above (their own
+ * dependency graph -- parseCsv/buildImportRecords/formatImportSummary --
+ * is too entangled to isolate behaviorally the way a standalone helper
+ * like formatImportSummary itself can be).
+ */
+test("the exported EntityView's handleImportFile/handleImportJsonFile exclude a NOT_FOUND rejection from the reported import errors", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const handleImportSrc = entityViewJsx.match(/async function handleImportFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportSrc, "expected to find handleImportFile in generated output");
+  assert.match(
+    handleImportSrc!,
+    /results\.filter\(\(r\) => r\.status === "rejected" && r\.reason\.code !== "NOT_FOUND"\)/,
+    "handleImportFile must exclude a NOT_FOUND rejection from serverErrors, the same way handleBulkUpdate already does",
+  );
+
+  const handleImportJsonSrc = entityViewJsx.match(/async function handleImportJsonFile\(e\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(handleImportJsonSrc, "expected to find handleImportJsonFile in generated output");
+  assert.match(
+    handleImportJsonSrc!,
+    /results\.filter\(\(r\) => r\.status === "rejected" && r\.reason\.code !== "NOT_FOUND"\)/,
+    "handleImportJsonFile must exclude a NOT_FOUND rejection from serverErrors too",
+  );
+});
+
+/**
  * Round 1517: the "Show N possible duplicates" toggle label just above
  * hardcoded the plural with no singular form at all -- round 1391's own
  * live-preview fix for this identical string (EntityPanel.tsx, split into

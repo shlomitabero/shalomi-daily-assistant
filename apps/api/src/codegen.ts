@@ -9077,7 +9077,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           return id != null ? updateRecord(entity.name, id, data) : createRecord(entity.name, data);
         }),
       );
-      const serverErrors = results.filter((r) => r.status === "rejected").map((r) => r.reason.message);
+      // Round 2179: mirrors handleBulkUpdate's own NOT_FOUND exclusion just
+      // above -- a concurrent collaborator deleting this exact record
+      // between this file being parsed and that row's own PATCH/POST
+      // reaching the server is the same "nothing left to report as failed"
+      // case every other write path in this file already treats this way.
+      // This file has no i18n layer at all, so an unfiltered rejection here
+      // leaked the literal, untranslated backend string (e.g. "Record 42
+      // not found in Order") straight into the import errors list, exactly
+      // the failure mode handleBulkUpdate's own fix describes.
+      const serverErrors = results.filter((r) => r.status === "rejected" && r.reason.code !== "NOT_FOUND").map((r) => r.reason.message);
       let createdCount = 0;
       let updatedCount = 0;
       results.forEach((r, i) => {
@@ -9147,7 +9156,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           return id != null ? updateRecord(entity.name, id, data) : createRecord(entity.name, data);
         }),
       );
-      const serverErrors = results.filter((r) => r.status === "rejected").map((r) => r.reason.message);
+      // Round 2179: mirrors handleBulkUpdate's own NOT_FOUND exclusion just
+      // above -- a concurrent collaborator deleting this exact record
+      // between this file being parsed and that row's own PATCH/POST
+      // reaching the server is the same "nothing left to report as failed"
+      // case every other write path in this file already treats this way.
+      // This file has no i18n layer at all, so an unfiltered rejection here
+      // leaked the literal, untranslated backend string (e.g. "Record 42
+      // not found in Order") straight into the import errors list, exactly
+      // the failure mode handleBulkUpdate's own fix describes.
+      const serverErrors = results.filter((r) => r.status === "rejected" && r.reason.code !== "NOT_FOUND").map((r) => r.reason.message);
       let createdCount = 0;
       let updatedCount = 0;
       results.forEach((r, i) => {
