@@ -6734,21 +6734,30 @@ export function createProjectsRouter(
           // other scoped edit (e.g. just messageTemplate) on that same
           // rule too. Only re-validate when the patch actually supplies
           // one of the keys this validation depends on.
-          const touchesTriggerOrField =
+          //
+          // Round 2096: that gate was still one shared boolean covering two
+          // independent concerns -- the trigger side (fieldName/fieldValue/
+          // fieldOperator) and the destination side (toMode/toField) -- so a
+          // patch touching only one side still re-validated the OTHER side's
+          // possibly-stale reference. E.g. a rule whose toField went stale
+          // (disableAutomationRulesForField disabled it) got 404'd on a
+          // PATCH that only changed fieldValue, because touchesTriggerOrField
+          // was true and the destination block ran anyway. Each block must
+          // only run when the patch actually supplies a key IT depends on.
+          const touchesTrigger =
             "trigger" in parsed.data ||
             "fieldName" in parsed.data ||
             "fieldValue" in parsed.data ||
-            "fieldOperator" in parsed.data ||
-            "toMode" in parsed.data ||
-            "toField" in parsed.data;
-          if (touchesTriggerOrField) {
+            "fieldOperator" in parsed.data;
+          const touchesDestination = "toMode" in parsed.data || "toField" in parsed.data;
+          if (touchesTrigger || touchesDestination) {
             const entity = findEntity(project, existing.entityName);
-            if (next.trigger === "field_equals" && next.fieldName) {
+            if (touchesTrigger && next.trigger === "field_equals" && next.fieldName) {
               const field = findField(entity, next.fieldName);
               if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
               if (next.fieldOperator) validateAutomationFieldOperator(field, next.fieldOperator);
             }
-            if (next.toMode === "field" && next.toField) {
+            if (touchesDestination && next.toMode === "field" && next.toField) {
               validateAutomationToField(findField(entity, next.toField));
             }
           }

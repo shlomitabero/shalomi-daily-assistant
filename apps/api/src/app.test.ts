@@ -19418,6 +19418,114 @@ test("PATCH .../automations/:ruleId can re-enable a rule that was disabled becau
 });
 
 /**
+ * Round 2096: the fix just above (`touchesTriggerOrField`) was still ONE
+ * shared boolean covering two independent concerns -- the trigger side
+ * (fieldName/fieldValue/fieldOperator) and the destination side (toMode/
+ * toField). A patch that only touches the TRIGGER side still re-resolved
+ * the DESTINATION side's possibly-stale toField (and vice versa), so a rule
+ * disabled because its *toField* went stale (not its fieldName) still
+ * 404'd FIELD_NOT_FOUND on a scoped edit to fieldValue alone -- the exact
+ * same "unrelated stale reference blocks an unrelated edit" bug the test
+ * above fixed, just reopened one gate down. Mirrors that test's own
+ * restore-disables-a-rule setup, but disables the rule via its toField
+ * going stale instead of its fieldName.
+ */
+test("PATCH .../automations/:ruleId re-validates only the side (trigger vs. destination) the patch actually touches", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `split-gate-automation-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithoutPhone: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "enum", required: false, enumValues: ["New", "Won"] },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithPhone: ProductSpec = {
+      ...specWithoutPhone,
+      entities: [
+        {
+          ...specWithoutPhone.entities[0],
+          fields: [...specWithoutPhone.entities[0].fields, { name: "assigneePhone", type: "text", required: false }],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Deal tracker", description: "A CRM for tracking deals.", spec: specWithoutPhone });
+    diffAndMigrate(db, projectId, undefined, specWithoutPhone);
+    const checkpoint = insertCheckpoint(db, { id: randomUUID(), projectId, label: "Before phone field", kind: "build", spec: specWithoutPhone });
+
+    diffAndMigrate(db, projectId, specWithoutPhone, specWithPhone);
+    updateProjectSpec(db, projectId, specWithPhone);
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "field_equals",
+        fieldName: "status",
+        fieldValue: "Won",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "assigneePhone",
+        messageTemplate: "Deal won!",
+      }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    // Restoring to the checkpoint removes assigneePhone (not status), so
+    // disableAutomationRulesForField disables the rule via its toField --
+    // its own fieldName ("status") stays perfectly valid throughout.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules: beforeRules } = (await beforeRes.json()) as { rules: { id: string; enabled: boolean; toField: string | null }[] };
+    assert.equal(beforeRules[0].enabled, false, "sanity check: the restore must have disabled the rule via its stale toField");
+    assert.equal(beforeRules[0].toField, "assigneePhone", "sanity check: the rule's own toField is still the now-gone field, unchanged");
+
+    // A scoped edit to the TRIGGER side alone (fieldValue) must succeed --
+    // it has nothing to do with the destination's stale toField.
+    const fieldValueRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ fieldValue: "New" }),
+    });
+    assert.equal(
+      fieldValueRes.status,
+      200,
+      "a patch that only touches fieldValue (trigger side) must not be blocked by the rule's own unrelated stale toField (destination side)",
+    );
+
+    // But a patch that actually DOES touch the destination side must still
+    // be validated against the current (missing) toField -- not a blanket
+    // bypass, just scoped to what the patch actually changes.
+    const toFieldRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ toField: "assigneePhone" }),
+    });
+    assert.equal(toFieldRes.status, 404, "a patch that touches toField must still be validated against the rule's (still-stale) toField");
+    assert.equal(((await toFieldRes.json()) as { code?: string }).code, "FIELD_NOT_FOUND");
+  });
+});
+
+/**
  * The upload route is a new field type's whole reason to exist: a file
  * field's stored value is a JSON descriptor the client gets back from
  * this route, not something a client could ever construct on its own
