@@ -4,7 +4,7 @@ import {
   formatMoney, actionTypeLabel, resultLabel, riskLevelLabel, sideLabel,
   opportunityStatusLabel, sourceLabel, missingFieldLabel, reasonLabel,
   autonomousScanSummary, saleConfirmedSummary, refreshAllFailuresSummary,
-  latestSourceCheckTimestamp, pendingPublishApprovals,
+  latestSourceCheckTimestamp, pendingPublishApprovals, settingsChangeSummary,
 } from './labels.js';
 
 // This is the client's one module with zero React/DOM dependency - pure
@@ -305,4 +305,42 @@ test('pendingPublishApprovals drops an approval for a demo draft, which can neve
 test('pendingPublishApprovals drops an approval whose opportunity failed to load, rather than crashing', () => {
   const approvals = [{ id: 'appr_1', opportunityId: 'opp_missing' }];
   assert.equal(pendingPublishApprovals(approvals, []).length, 0);
+});
+
+test('settingsChangeSummary translates mode values instead of showing the raw English code', () => {
+  const summary = settingsChangeSummary({ mode: { from: 'research', to: 'auto_limited' } });
+  assert.equal(summary, 'מצב פעולה: מחקר בלבד ← אוטומטי מוגבל');
+});
+
+test('settingsChangeSummary shows emergencyStop as a Hebrew on/off word, not true/false', () => {
+  const summary = settingsChangeSummary({ emergencyStop: { from: false, to: true } });
+  assert.equal(summary, 'עצירת חירום: כבויה ← פעילה');
+});
+
+test('settingsChangeSummary shows null/empty as "ללא" instead of a blank or the literal word null', () => {
+  const summary = settingsChangeSummary({ maxLoss: { from: null, to: 200 } });
+  assert.equal(summary, 'הפסד מרבי: ללא ← 200');
+});
+
+test('settingsChangeSummary joins multiple changed fields from the same save', () => {
+  const summary = settingsChangeSummary({
+    budget: { from: 0, to: 500 },
+    country: { from: null, to: 'IL' },
+  });
+  assert.equal(summary, 'תקציב: 0 ← 500; מדינה: ללא ← IL');
+});
+
+test('settingsChangeSummary shows an empty string as "ללא" too, not a blank value', () => {
+  const summary = settingsChangeSummary({ country: { from: '', to: 'IL' } });
+  assert.equal(summary, 'מדינה: ללא ← IL');
+});
+
+test('settingsChangeSummary falls back to the raw value for an unrecognized mode, honest over a wrong-looking translation', () => {
+  const summary = settingsChangeSummary({ mode: { from: 'research', to: 'some_future_mode' } });
+  assert.equal(summary, 'מצב פעולה: מחקר בלבד ← some_future_mode');
+});
+
+test('settingsChangeSummary falls back to the raw field name for a field this mapping does not know about yet', () => {
+  const summary = settingsChangeSummary({ preferredCategories: { from: null, to: 'tech' } });
+  assert.equal(summary, 'preferredCategories: ללא ← tech');
 });

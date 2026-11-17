@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { __resetForTests } from '../db/store.js';
+import { db, __resetForTests } from '../db/store.js';
 import { readSettings, patchSettings } from './settings.js';
 
 function makeRes() {
@@ -203,4 +203,55 @@ test('patchSettings merges a patch without dropping fields it did not touch', ()
   assert.equal(res.body.settings.mode, 'approve');
   assert.equal(res.body.settings.budget, 300);
   assert.equal(res.body.settings.country, 'IL');
+});
+
+test('patchSettings logs a settings_updated entry with the exact before/after diff', () => {
+  // mode gates every real action, emergencyStop halts everything
+  // immediately, budget/maxLoss cap every real spend - the most
+  // consequential settings in the whole app, yet changing any of them
+  // left zero trace anywhere, unlike every other deliberate owner action
+  // this app already logs (approve/reject, publish, removing a watchlist
+  // symbol).
+  __resetForTests();
+  patchSettings({ body: { mode: 'research', emergencyStop: true } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'settings_updated');
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].result, 'success');
+  assert.deepEqual(logged[0].detail.changed.emergencyStop, { from: false, to: true });
+  // mode was already 'research' by default, so sending the same value
+  // again must not appear in the diff as a change.
+  assert.equal('mode' in logged[0].detail.changed, false);
+});
+
+test('patchSettings does not log anything when the patch is empty or changes nothing', () => {
+  // Settings.jsx's form always resubmits every field together (a
+  // controlled form) - most saves resend fields the owner never actually
+  // touched. Logging every single save regardless would bury the real,
+  // meaningful changes in a flood of "nothing happened" entries.
+  __resetForTests();
+  patchSettings({}, makeRes());
+  patchSettings({ body: { mode: 'research', country: null } }, makeRes());
+  assert.equal(db.actions_log.where((a) => a.type === 'settings_updated').length, 0);
+});
+
+test('patchSettings never logs budgetConfigured as if the owner had asked to change it', () => {
+  // budgetConfigured is an internal flag this route derives from budget,
+  // never something the owner directly sent - requestedFields (captured
+  // before it's injected into patch) must exclude it from the diff even
+  // though its own value does change.
+  __resetForTests();
+  patchSettings({ body: { budget: 500 } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'settings_updated')[0];
+  assert.deepEqual(logged.detail.changed.budget, { from: 0, to: 500 });
+  assert.equal('budgetConfigured' in logged.detail.changed, false);
+});
+
+test('patchSettings logs a request that changes nothing on a later, unrelated save separately from an earlier real change', () => {
+  __resetForTests();
+  patchSettings({ body: { mode: 'approve' } }, makeRes());
+  patchSettings({ body: { mode: 'approve', country: 'IL' } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'settings_updated');
+  assert.equal(logged.length, 2);
+  assert.deepEqual(logged[0].detail.changed, { mode: { from: 'research', to: 'approve' } });
+  assert.deepEqual(logged[1].detail.changed, { country: { from: null, to: 'IL' } });
 });

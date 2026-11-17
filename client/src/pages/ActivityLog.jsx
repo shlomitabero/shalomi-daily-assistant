@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel, autonomousScanSummary, saleConfirmedSummary } from '../labels.js';
+import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel, autonomousScanSummary, saleConfirmedSummary, settingsChangeSummary } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -157,6 +157,15 @@ export default function ActivityLog() {
                 actually removed. */}
             {a.type === 'remove_from_watchlist' && a.detail?.symbol && (
               <p className="hint log-reason">{a.detail.symbol}</p>
+            )}
+            {/* routes/settings.js now logs the exact before/after diff for
+                every settings save that actually changed something - without
+                this the row just said "עדכון הגדרות - הצלחה" with no way to
+                tell WHAT changed, for the most consequential settings in the
+                whole app (mode gates every real action; emergencyStop halts
+                everything immediately). */}
+            {a.type === 'settings_updated' && a.detail?.changed && (
+              <p className="hint log-reason">{settingsChangeSummary(a.detail.changed)}</p>
             )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>

@@ -26,6 +26,7 @@ export const ACTION_TYPE_LABEL = {
   login_attempt: 'ניסיון התחברות',
   market_quote_fetch: 'שליפת מחיר שוק',
   remove_from_watchlist: 'הסרת סימבול ממעקב',
+  settings_updated: 'עדכון הגדרות',
 };
 
 export function actionTypeLabel(type) {
@@ -253,6 +254,35 @@ export function pendingPublishApprovals(approvals, opportunities) {
     const opp = opportunities.find((o) => o.id === a.opportunityId);
     return opp?.status === 'draft' && !opp.productDraft?.demo;
   });
+}
+
+// routes/settings.js's patchSettings logs the exact before/after diff for
+// every field the owner actually changed (budget/maxLoss/country/currency/
+// mode/emergencyStop) - without this, the activity log would just show
+// "עדכון הגדרות - הצלחה" with no way to tell WHAT changed, for the most
+// consequential settings in the whole app (mode gates every real action;
+// emergencyStop halts everything immediately).
+const SETTINGS_FIELD_LABEL = {
+  budget: 'תקציב',
+  maxLoss: 'הפסד מרבי',
+  country: 'מדינה',
+  currency: 'מטבע',
+  mode: 'מצב פעולה',
+  emergencyStop: 'עצירת חירום',
+};
+const SETTINGS_MODE_VALUE_LABEL = { research: 'מחקר בלבד', approve: 'אישור לביצוע', auto_limited: 'אוטומטי מוגבל' };
+
+function formatSettingsValue(field, value) {
+  if (field === 'mode') return SETTINGS_MODE_VALUE_LABEL[value] ?? value;
+  if (field === 'emergencyStop') return value ? 'פעילה' : 'כבויה';
+  if (value === null || value === '') return 'ללא';
+  return String(value);
+}
+
+export function settingsChangeSummary(changed) {
+  return Object.entries(changed)
+    .map(([field, { from, to }]) => `${SETTINGS_FIELD_LABEL[field] ?? field}: ${formatSettingsValue(field, from)} ← ${formatSettingsValue(field, to)}`)
+    .join('; ');
 }
 
 export function missingFieldLabel(field) {

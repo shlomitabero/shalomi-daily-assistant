@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireOwner } from '../middleware/auth.js';
 import { getSettings, updateSettings } from '../services/settings.js';
+import { logAction } from '../services/execution.js';
 
 export const settingsRouter = Router();
 
@@ -16,6 +17,15 @@ export function patchSettings(req, res) {
   for (const field of ALLOWED_FIELDS) {
     if (field in (req.body ?? {})) patch[field] = req.body[field];
   }
+  // Every field here governs whether a real action ever runs at all
+  // (mode), how much real money it may spend (budget/maxLoss), or halts
+  // everything immediately (emergencyStop) - the most consequential
+  // settings in the whole app - yet changing any of them left zero trace
+  // anywhere, unlike every other deliberate owner action this app already
+  // logs (approve/reject, publish, removing a watchlist symbol). Captured
+  // before validation/updateSettings below so the diff reflects exactly
+  // what the owner asked to change, not what ALLOWED_FIELDS merely allows.
+  const requestedFields = Object.keys(patch);
   if ('mode' in patch && !VALID_MODES.includes(patch.mode)) {
     return res.status(400).json({ error: `מצב הפעולה חייב להיות אחד מ: ${VALID_MODES.join(', ')}` });
   }
@@ -69,7 +79,24 @@ export function patchSettings(req, res) {
   if ('emergencyStop' in patch && typeof patch.emergencyStop !== 'boolean') {
     return res.status(400).json({ error: 'עצירת חירום חייבת להיות ערך בוליאני (true/false)' });
   }
-  res.json({ settings: updateSettings(patch) });
+  const before = getSettings();
+  const updated = updateSettings(patch);
+  // Settings.jsx's form always resubmits every field together (a
+  // controlled form, not a per-field PATCH), so most saves resend fields
+  // the owner never actually touched - only logging what genuinely
+  // changed value keeps a save of an unrelated field from generating a
+  // misleading "nothing happened" log entry on every single save.
+  // requestedFields, not ALLOWED_FIELDS, so this never logs
+  // budgetConfigured (an internal derived flag set as a side effect of
+  // budget above, never something the owner directly asked to change).
+  const changed = {};
+  for (const field of requestedFields) {
+    if (before[field] !== updated[field]) changed[field] = { from: before[field], to: updated[field] };
+  }
+  if (Object.keys(changed).length > 0) {
+    logAction({ type: 'settings_updated', detail: { changed }, result: 'success' });
+  }
+  res.json({ settings: updated });
 }
 
 settingsRouter.get('/settings', requireOwner, readSettings);
