@@ -3577,6 +3577,72 @@ test("runAutomationsForRecordChange's webhook action never resurrects an automat
 });
 
 /**
+ * Round 2104: the two tests just above guard against the RULE/PROJECT
+ * being deleted mid-fire (round 2087) -- but `runAutomationsForRecordChange`
+ * itself never re-checks a MATCHING rule's own `enabled` flag before
+ * firing it, only once at the very top via listEnabledAutomationRulesForEntity's
+ * own one-time SQL snapshot. This loop fires every matching rule for the
+ * SAME event SEQUENTIALLY, each via a genuine network await -- so if an
+ * earlier rule's own webhook request is still in flight when a user
+ * disables a LATER rule matching this exact same event (one they just
+ * noticed is wrong), that later rule still fired once its turn came,
+ * using the stale enabled:true snapshot taken before the disable. The
+ * only existing re-check (getProject/getAutomationRule, round 2087) runs
+ * AFTER the real send regardless, and getAutomationRule's own SQL has no
+ * `enabled` filter at all -- the exact same bug class round 2103 fixed in
+ * runScheduledAutomationsCheck's own sibling loop, just never ported
+ * here. The real disabling happens from inside ruleA's own mocked fetch,
+ * genuinely racing the awaited call this production code is suspended
+ * on, the same technique the two tests above already use.
+ */
+test("runAutomationsForRecordChange re-checks a rule's own enabled flag immediately before firing it, not just once at the top of the call", async () => {
+  const { db, project } = setupProject();
+  const ruleA = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge-a",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const ruleB = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge-b",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+
+  const fetchedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL) => {
+    fetchedUrls.push(String(url));
+    // ruleA (insertion order, per listEnabledAutomationRulesForEntity's
+    // own ORDER BY) is still mid-request when ruleB gets disabled here.
+    updateAutomationRule(db, project.id, ruleB.id, { enabled: false });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await runAutomationsForRecordChange(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, "created", record, new Set(), UNUSED_UPLOADS_DIR, UNUSED_BASE_URL);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(getAutomationRule(db, project.id, ruleB.id)!.enabled, false, "sanity check: ruleB must actually be disabled now");
+  assert.deepEqual(
+    fetchedUrls,
+    ["https://hooks.example.com/forge-a"],
+    "ruleB's own webhook must NOT fire -- it was disabled while ruleA's own request was still in flight, before ruleB's own turn in this loop",
+  );
+  assert.equal(listAutomationRuns(db, project.id, ruleA.id, 10).length, 1);
+  assert.equal(listAutomationRuns(db, project.id, ruleB.id, 10).length, 0, "ruleB was never fired, so it must have no run recorded at all");
+});
+
+/**
  * Round 1165: before this round, the webhook payload carried no ruleId and
  * no per-delivery id at all -- this feature's own doc comments advertise
  * compatibility with "Zapier, Slack, Make, or any other system", every one

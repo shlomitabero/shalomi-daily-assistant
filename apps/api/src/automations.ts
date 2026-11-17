@@ -752,8 +752,27 @@ export async function runAutomationsForRecordChange(
   const rules = listEnabledAutomationRulesForEntity(db, project.id, entity.name);
   for (const rule of rules) {
     if (!matchesTrigger(rule, event, record, changedFields, entity, source)) continue;
+    // Round 2104: `rule` here is still the one-time SQL snapshot taken at
+    // the very top of this call -- but this loop fires every matching
+    // rule SEQUENTIALLY, each via a genuine `await fireRule(...)` (a real
+    // network round-trip: a WhatsApp send through its per-project queue,
+    // a webhook with up to WEBHOOK_REQUEST_TIMEOUT_MS, or an email send).
+    // Nothing here ever re-checks THIS rule's own `enabled` flag before
+    // firing it, and fireRule's/fireWebhookAction's/fireEmailAction's own
+    // post-send re-check (`getProject`/`getAutomationRule`, round 2087)
+    // only confirms the row still EXISTS -- getAutomationRule's own SQL
+    // has no `enabled` filter -- and runs AFTER the real send regardless.
+    // If an earlier rule matching this same event is still mid-await when
+    // a user disables a LATER rule in this same batch, that later rule
+    // still fired once its turn came, using the stale enabled:true
+    // snapshot taken before the disable -- the exact same bug class round
+    // 2103 just fixed in runScheduledAutomationsCheck's own loop, just
+    // never ported to this sibling function. Re-fetching right before
+    // firing closes that window with the freshest possible state.
+    const currentRule = getAutomationRule(db, project.id, rule.id);
+    if (!currentRule || !currentRule.enabled) continue;
     try {
-      await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, baseUrl, false, event);
+      await fireRule(db, whatsapp, emailSender, project, entity, currentRule, record, uploadsDir, baseUrl, false, event);
     } catch (err) {
       // Defensive only -- fireRule's own try/catch below already handles
       // every expected failure mode. This exists so a genuinely
