@@ -25770,6 +25770,76 @@ test("POST /public/webhook-in/:projectId/:entityName/:recordId/delete is rejecte
 });
 
 /**
+ * Round 2132: `normalizeBodyValues`'s relation branch unconditionally ran
+ * the raw string value through display-label matching before coerceValue
+ * ever saw it, so an empty string -- a completely natural way for an
+ * external sender (Zapier/Make, a webhook-driven unassign) to say "clear
+ * this optional relation" -- found zero matching labels and hard-rejected
+ * with INVALID_RELATION_TARGET, instead of falling through to
+ * coerceValue's own `isEmpty` handling the way every other coercible type
+ * (date/number/enum/boolean/file) in this exact function already does.
+ * Confirmed live before fixing: `{"courierId": ""}` against a record that
+ * already had a real courier assigned was rejected with a 400
+ * INVALID_RELATION_TARGET, "doesn't match any Courier record's display
+ * label" -- not what clearing an optional field should ever look like.
+ */
+test("POST /public/webhook-in/:projectId/:entityName/:recordId can clear an optional relation field with an empty string, instead of being rejected as an unmatched display label", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-clear-relation-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        { name: "Courier", fields: [{ name: "name", type: "text", required: true }] },
+        { name: "Order", fields: [{ name: "status", type: "text", required: true }, { name: "courierId", type: "relation", relationTo: "Courier", required: false }] },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Shop", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const { token: webhookToken } = (await (
+      await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) })
+    ).json()) as { token: string };
+
+    const courierRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Courier?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Dave" }),
+    });
+    const { id: courierId } = (await courierRes.json()) as { id: string };
+
+    const orderRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "pending", courierId }),
+    });
+    assert.equal(orderRes.status, 201, "sanity check: the order must actually be created referencing this courier");
+    const { id: recordId } = (await orderRes.json()) as { id: number };
+
+    const clearRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Order/${recordId}?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ courierId: "" }),
+    });
+    assert.equal(clearRes.status, 200, "an empty string for an optional relation field must clear it, not be rejected as an unmatched display label");
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, { headers: authHeaders(authToken) });
+    const { records: orders } = (await listRes.json()) as { records: { id: number; courierId: number | null }[] };
+    const order = orders.find((o) => o.id === recordId);
+    assert.ok(order, "expected the created order to still be present in the list");
+    assert.equal(order?.courierId, null, "the courier reference must actually be cleared to null");
+  });
+});
+
+/**
  * Round 1470: the new "inbound_webhook" automation trigger -- before this
  * round, the ONLY way to react to a record created via the public
  * inbound-webhook route was "record_created", which fires identically for

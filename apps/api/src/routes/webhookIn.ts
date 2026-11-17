@@ -355,6 +355,19 @@ function normalizeBodyValues(
     const value = raw.trim();
     if (field.type === "relation" && field.relationTo) {
       normalized[field.name] = value;
+      // Round 2132: an empty string here -- a completely natural way for
+      // an external sender (Zapier/Make, a webhook-driven unassign) to
+      // say "clear this relation" -- used to fall straight into the
+      // display-label matching below, find zero matches (no record has
+      // label ""), and hard-reject with INVALID_RELATION_TARGET. Every
+      // other coercible type in this function (date/number/enum/boolean,
+      // plus the file-type branch above) already lets an empty value fall
+      // through untouched into coerceValue's own `isEmpty` handling
+      // (packages/db/src/repository.ts), which clears an optional field
+      // to null or throws the accurate "is required" message for a
+      // required one -- only this branch short-circuited into a
+      // confusing, wrong rejection first.
+      if (value === "") continue;
       const targetEntity =
         allEntities.find((e) => e.name === field.relationTo) ?? allEntities.find((e) => e.name.toLowerCase() === field.relationTo!.toLowerCase());
       // `lang` matters here specifically when the target entity's own
