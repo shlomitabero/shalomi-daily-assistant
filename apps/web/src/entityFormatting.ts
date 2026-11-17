@@ -2313,6 +2313,23 @@ function normalizeDecimalSeparator(s: string): string {
 const CSV_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
 
 /**
+ * Round 2138: mirrors webhookIn.ts's own WEBHOOK_DATE_PREFIX (round 1551) --
+ * every OTHER coercion leniency on this page (currency formatting above,
+ * parenthesized negatives just above) was explicitly ported from that same
+ * file's own identical gap, but this one never was. A date field re-import
+ * of this app's own export never hits it (recordsToCsv/recordsToJson only
+ * ever emit the plain YYYY-MM-DD this file's own isValidDateString already
+ * accepts) -- but a hand-edited file, or one produced by another tool that
+ * calls `Date.prototype.toISOString()` (the shape that function itself
+ * produces, per the webhook route's own test), carries a full ISO-8601
+ * timestamp like "2024-01-15T00:00:00Z" for what is still, unambiguously,
+ * one calendar date. The identical value already round-trips cleanly
+ * through the inbound-webhook route; CSV/JSON import hard-rejected it with
+ * no leniency at all.
+ */
+const CSV_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/;
+
+/**
  * Turns parsed CSV rows into record payloads matching `fields`' types --
  * the reverse of `fieldDisplayValue`, so a file this app exported (or a
  * hand-edited copy of one) round-trips back in. Columns are matched to
@@ -2624,11 +2641,16 @@ export function buildImportRecords(
         }
         record[field.name] = matches[0];
       } else if (field.type === "date") {
-        if (!isValidDateString(raw)) {
-          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;
-          break;
-        }
         record[field.name] = raw;
+        if (!isValidDateString(raw)) {
+          const match = CSV_DATE_PREFIX.exec(raw);
+          if (match && isValidDateString(match[0])) {
+            record[field.name] = match[0];
+          } else {
+            rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;
+            break;
+          }
+        }
       } else {
         record[field.name] = raw;
       }
@@ -2915,11 +2937,20 @@ export function buildImportRecordsFromJson(
         }
         record[field.name] = matches[0];
       } else if (field.type === "date") {
-        if (typeof raw !== "string" || !isValidDateString(raw)) {
+        if (typeof raw !== "string") {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;
           break;
         }
         record[field.name] = raw;
+        if (!isValidDateString(raw)) {
+          const match = CSV_DATE_PREFIX.exec(raw);
+          if (match && isValidDateString(match[0])) {
+            record[field.name] = match[0];
+          } else {
+            rowError = `Row ${rowIndex + 1}: "${raw}" isn't a valid date (expected YYYY-MM-DD) for field "${field.label ?? field.name}".`;
+            break;
+          }
+        }
       } else {
         if (typeof raw !== "string") {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't valid text for field "${field.label ?? field.name}".`;

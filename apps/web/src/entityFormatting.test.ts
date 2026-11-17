@@ -2954,6 +2954,28 @@ test("buildImportRecords rejects a date column value that isn't a real, well-for
   }
 });
 
+/**
+ * Round 2138: mirrors app.test.ts's own identical inbound-webhook test
+ * (round 1551's WEBHOOK_DATE_PREFIX) -- the same ISO-8601 timestamp shape
+ * `Date.prototype.toISOString()` itself produces round-trips cleanly
+ * through the webhook route, but CSV import's date branch had no such
+ * leniency at all, hard-rejecting a value this app's own ecosystem (any
+ * tool exporting via that exact JS call) can plausibly hand it.
+ */
+test("buildImportRecords accepts an ISO-8601 timestamp for a date column, stripping its time component, the same leniency the inbound-webhook route already has", () => {
+  const fields: Field[] = [
+    { name: "name", type: "text", required: true },
+    { name: "dueDate", label: "Due Date", type: "date", required: true },
+  ];
+  const rows = [
+    ["name", "Due Date"],
+    ["Dana", "2024-01-15T00:00:00Z"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ name: "Dana", dueDate: "2024-01-15" }]);
+  assert.equal(result.errors.length, 0);
+});
+
 test("buildImportRecords accepts a date column value in the year 0-99 range, instead of wrongly rejecting it as invalid", () => {
   // new Date(Date.UTC(year, ...)) silently adds 1900 to a year 0-99 (legacy
   // ECMA-262 behavior), so isValidDateString's own round-trip check used to
@@ -3599,6 +3621,17 @@ test("a real record's own JSON export round-trips through recordsToJson -> build
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [{ id: 7, title: "Order A", amount: 120.5, done: true, status: "Won", courierId: 42 }]);
   assert.strictEqual(result.records[0].done, true, "a boolean must round-trip as a real JS boolean, not a string");
+});
+
+test("buildImportRecordsFromJson accepts an ISO-8601 timestamp for a date field, stripping its time component, the same leniency buildImportRecords (CSV) and the inbound-webhook route already have", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "dueDate", label: "Due Date", type: "date", required: true },
+  ];
+  const rows = [{ name: "Dana", dueDate: "2024-01-15T00:00:00Z" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, [{ name: "Dana", dueDate: "2024-01-15" }]);
+  assert.equal(result.errors.length, 0);
 });
 
 test("buildImportRecordsFromJson skips a row missing a required field and reports which row and field", () => {
