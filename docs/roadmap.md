@@ -50413,3 +50413,30 @@ Any Hebrew-UI project built from this template that later calls `/refine` with *
 **Tests/verification:** Confirmed the gap through the real engine with a scratch `tsx` script (using the template's own `spec`/`descriptionHe` fields) before and after the fix. Added a new `mergeRefinedSpec` fold-test in `packages/spec-engine/src/index.test.ts` right after the existing round-2152 Order/PurchaseOrder test, and extended the existing `detectLikelyEntityRenames` silence test to also cover the VolunteerEvent/Event pair. Verified fail-before/pass-after via `git stash`: both affected tests failed exactly as predicted before the fix, passed cleanly after. Ran the full `packages/spec-engine` test suite (364/364 passing) and `apps/api`'s build (clean) before committing.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2154: Spec Review "Entities" section permanently locked up after the first entity-level interaction
+
+**The process:** Round 2153 declared the template/ENTITY_ALIAS_GROUPS vein fully closed and mandated round 2154 read `apps/web/src/SpecListItemRemover.tsx` (1931 lines, 66 round-comments) in full, top to bottom -- this file had been queued for 5 consecutive rounds (2149-2153) but every one of those surveys found its headline bug elsewhere first. This round finally got there, and found a genuine, serious UI-lockup bug by recognizing a deviation from an established cross-file pattern.
+
+**The bug:** `EntitySummaryItem` (lines 766-767, pre-fix) computed a single combined variable:
+```js
+const anyChildOrSelfBusy = busy || duplicateBusy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
+```
+and reported that same value upward via `onBusyChange` (`App.tsx`'s `handleEntityBusyChange`, which folds every entity's report into `entityBusyMap`, which feeds `anyEntityOrAddBusy` back down as every entity's own `siblingActionBusy` prop). This is the ONLY one of five structurally-identical sibling components in this file that does this -- `RoleChip`, `AssumptionItem`, `PersonaItem`, and `FieldChip` all deliberately keep their "value reported upward" (`ownBusy`) separate from their "value used for local UI gating" (which correctly ORs in `siblingActionBusy`), specifically so the received prop never feeds back into the very aggregate it came from.
+
+Feeding `siblingActionBusy` into the reported value creates a one-way ratchet: the instant ANY entity's own flag makes `anyChildOrSelfBusy` true for even one render (e.g. opening the rename editor, then immediately cancelling it), that gets written into `entityBusyMap`. That makes `anyEntityOrAddBusy` true, fed back as `siblingActionBusy` to every entity including the one that triggered it -- so the OR keeps the reported value true forever, since `handleEntityBusyChange` only ever clears an entry when it receives `false`, and the reported value can never BE `false` again while `siblingActionBusy` stays true. The only thing that clears an entry is that specific entity unmounting.
+
+Effect: the entire Spec Review "Entities" section -- every entity's remove/duplicate buttons, every field's required-checkbox/type-select/remove-button, every `AddFieldForm`, and the page-level `AddEntityForm` -- permanently locks up with no error shown, after the very first entity-level interaction on the whole screen. Only a full page reload recovers it. Confirmed by replicating the exact reducer/effect cycle in a standalone script, which converges to a stuck `true` fixed point for every entity, including ones that were never touched.
+
+**The fix:** Split the combined variable in two, mirroring the already-correct `RoleChip`/`AssumptionItem`/`PersonaItem`/`FieldChip` pattern exactly:
+```js
+const ownBusy = busy || duplicateBusy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0;
+const anyChildOrSelfBusy = ownBusy || siblingActionBusy;
+// ...
+useEffect(() => { onBusyChange?.(entity.name, ownBusy); }, [entity.name, ownBusy, onBusyChange]);
+```
+`anyChildOrSelfBusy` (still including `siblingActionBusy`) keeps gating every local control exactly as before (the disabled props, the `siblingActionBusy` prop passed down to each `FieldChip`, `AddFieldForm`'s own disabled prop) -- only the value reported to `App.tsx` changes. Updated two now-stale cross-reference comments (one in this file, one in `App.tsx`) that described `anyChildOrSelfBusy` as "the value reported upward," which was no longer accurate.
+
+**Tests/verification:** Confirmed the stuck-forever behavior by replicating the exact reducer/effect cycle in a standalone `node -e` script before implementing. Added a new test in `apps/web/src/SpecListItemRemover.test.ts` right after the existing round-1194 instant-report test: opens the rename editor with `siblingActionBusy: false`, re-renders with `siblingActionBusy: true` (simulating App.tsx's aggregate becoming non-empty as a direct result of this entity's own report, exactly as a real mount does one commit later), cancels the rename, and asserts the reported value settles back to `false` even though `siblingActionBusy` stays `true` -- plus a check that local UI gating (the remove button) still correctly stays disabled throughout. Verified fail-before/pass-after via `git stash`: the test failed exactly as predicted before the fix. (The first draft of the test asserted no intermediate `true` call could occur after cancelling at all, which was too strict -- the rename hook's own cancel settling produces a harmless blip, same as the existing round-1194 test already tolerates; corrected to check only the final, settled value, re-confirmed fail-before/pass-after after that correction too.) Ran the full `apps/web` test suite (2169/2169 passing) and `npm run build` (clean) before committing.
+
+Live: https://forge-ai-m7p7.onrender.com
