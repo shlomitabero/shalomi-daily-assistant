@@ -3146,6 +3146,109 @@ test("generated server.js self-heals a pre-existing data.sqlite that predates th
 });
 
 /**
+ * Round 2141: ports the live preview's own round-2140 fix (repository.ts's
+ * translateNotNullConstraintError) -- a field flipped from required to
+ * optional across a refine leaves its column's physical NOT NULL
+ * constraint in place forever (this generated server's own migrations are
+ * additive-only, same reason the self-healing test above never retrofits
+ * one either). Builds a data.sqlite directly with the field's OLD
+ * (pre-refine) `NOT NULL` shape -- exactly what a real pre-existing export
+ * would have -- then starts the CURRENT generated server.js (whose spec
+ * already declares the field optional) against it.
+ */
+test("generated server.js translates a stale NOT NULL constraint (a field loosened from required to optional) into a clean error, not a raw SQLite message", async () => {
+  const loosenedProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "לקוחות",
+          fields: [
+            { name: "name", label: "שם", type: "text", required: true },
+            { name: "notes", label: "הערות", type: "text", required: false },
+          ],
+        },
+        project.spec.entities[1],
+      ],
+    },
+  };
+  const files = generateExportFiles(loosenedProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-not-null-constraint-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  // Builds the OLD (pre-refine) table shape directly -- "notes" still NOT
+  // NULL -- then seeds one row, exactly the state a real pre-existing
+  // export's data.sqlite would be in after dropping in this refined
+  // server.js without rebuilding the database from scratch.
+  const { DatabaseSync } = await import("node:sqlite");
+  const directDb = new DatabaseSync(path.join(dir, "data.sqlite"));
+  directDb.exec(`CREATE TABLE "Customer" (id INTEGER PRIMARY KEY AUTOINCREMENT, createdAt TEXT NOT NULL, "name" TEXT NOT NULL, "notes" TEXT NOT NULL, updatedAt TEXT)`);
+  directDb.prepare(`INSERT INTO "Customer" (createdAt, "name", "notes") VALUES (?, ?, ?)`).run(new Date().toISOString(), "Dana", "legacy note");
+  directDb.close();
+
+  const port = 63000 + Math.floor(Math.random() * 2000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const getRes = await fetch(`http://localhost:${port}/api/Customer`);
+    const dana = (await getRes.json()).records[0];
+
+    // Clearing the now-optional "notes" field is a perfectly legal request
+    // under the CURRENT (refined) spec -- coerce() returns null, not a
+    // thrown error -- so the only thing standing between this request and
+    // success is the column's stale physical NOT NULL constraint.
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${dana.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ notes: "" }),
+    });
+    assert.equal(patchRes.status, 400);
+    const patchBody = await patchRes.json();
+    assert.equal(patchBody.error, 'Field "notes" is required', "must be the same clean validation message every other required-field rejection in this file already gets, not a raw SQLite driver string");
+
+    const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Yossi" }),
+    });
+    assert.equal(createRes.status, 400, "a brand-new record omitting the now-optional field must hit the same stale constraint and the same clean translation");
+    const createBody = await createRes.json();
+    assert.equal(createBody.error, 'Field "notes" is required');
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1176: the guard just above compared f.relationTo to entity.name
  * with exact-case equality -- rounds 1159-1162 already established, across
  * many other files, that a relationTo string can legitimately differ in

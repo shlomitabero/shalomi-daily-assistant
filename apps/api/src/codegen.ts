@@ -593,6 +593,24 @@ function coerce(field, value) {
   return strValue;
 }
 
+// Round 2141 (ported): mirrors the live preview's own round-2140 fix
+// (repository.ts's translateNotNullConstraintError) -- a field flipped
+// from required to optional across a refine leaves its column's physical
+// NOT NULL constraint in place forever (migrations here are additive-only,
+// same reason this file's own CREATE TABLE never retrofits one either).
+// coerce() above already treats the now-optional field as correctly
+// nullable, returning null instead of throwing -- but the POST/PATCH
+// routes below only ever translated a FOREIGN KEY constraint failure,
+// falling back to \`res.status(400).json({ error: err.message })\`
+// otherwise, which leaked the raw, untranslated SQLite driver message
+// (e.g. "NOT NULL constraint failed: Customer.notes") straight into the
+// response instead of the same clean Field "notes" is required text
+// every other validation path in this file already produces.
+function translateNotNullError(err) {
+  const match = /^NOT NULL constraint failed: .+\\.(.+)$/.exec(err.message);
+  return match ? new Error(\`Field "\${match[1]}" is required\`) : err;
+}
+
 // Round 1092: mirrors repository.ts's own getRowValue exactly. A row
 // object returned by better-sqlite3 is keyed by the column's REAL,
 // physical casing (whatever it was originally CREATEd under), not
@@ -711,7 +729,7 @@ for (const entity of ENTITIES) {
       if (err.message === "FOREIGN KEY constraint failed") {
         return res.status(400).json({ error: "This record references another record that no longer exists" });
       }
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: translateNotNullError(err).message });
     }
   });
 
@@ -764,7 +782,7 @@ for (const entity of ENTITIES) {
       if (err.message === "FOREIGN KEY constraint failed") {
         return res.status(400).json({ error: "This record references another record that no longer exists" });
       }
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: translateNotNullError(err).message });
     }
   });
 
