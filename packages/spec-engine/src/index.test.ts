@@ -798,6 +798,34 @@ test("detectLikelyEntityRenames stays silent for the Supplier/Vendor and Purchas
   );
 });
 
+/**
+ * Round 2162: an unrelated candidate entity that merely shares an alias
+ * key with current's real "Order" used to make detectLikelyEntityRenames
+ * silently exclude "Order" from droppedEntities entirely -- which also
+ * meant it was never compared against the candidate's genuinely-renamed
+ * "RestaurantOrder" (identical field signature), suppressing a real
+ * rename warning the caller should have gotten. Confirmed live exactly
+ * this way before this round's fix (mergeRefinedSpec itself, fixed round
+ * 2161, correctly keeps Order/PurchaseOrder/RestaurantOrder as three
+ * distinct entities either way -- this is purely about the warning).
+ */
+test("detectLikelyEntityRenames still flags a genuine Order -> RestaurantOrder rename even when an unrelated, genuinely new PurchaseOrder shares Order's own alias key", () => {
+  const current = baseSpec({
+    entities: [{ name: "Order", fields: [{ name: "customerId", type: "text", required: true }, { name: "deliveryAddress", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "PurchaseOrder", fields: [{ name: "customerId", type: "text", required: true }, { name: "supplierId", type: "text", required: false }] },
+      { name: "RestaurantOrder", fields: [{ name: "customerId", type: "text", required: true }, { name: "deliveryAddress", type: "text", required: false }] },
+    ],
+  });
+  assert.deepEqual(
+    detectLikelyEntityRenames(current, candidate),
+    [{ from: "Order", to: "RestaurantOrder" }],
+    "Order's exact field signature reappearing under RestaurantOrder is a real rename signal that must survive the unrelated PurchaseOrder/Order alias collision",
+  );
+});
+
 test("detectLikelyEntityRenames flags an entity the candidate dropped paired with a brand-new one sharing the exact same field names", () => {
   const current = baseSpec({
     entities: [
@@ -892,6 +920,29 @@ test("detectLikelyFieldRenames still flags a rename inside an entity that was it
     entities: [{ name: "Employee", label: "Employee", fields: [{ name: "fullName", label: "Full Name", type: "text", required: true }, { name: "email", type: "text", required: false }] }],
   });
   assert.deepEqual(detectLikelyFieldRenames(current, candidate), [{ entity: "Employee", from: "Name", to: "Full Name" }]);
+});
+
+/**
+ * Round 2162: the mirror-image bug from the alias test just above -- the
+ * lookup used to resolve entityMergeKey symmetrically, so an unrelated
+ * candidate "PurchaseOrder" and current's real, unrelated "Order" (which
+ * merely share an alias key) got treated as the SAME entity, and this
+ * function fabricated a bogus "field renamed" warning between their two
+ * genuinely unrelated field sets. Confirmed live exactly this way before
+ * this round's fix.
+ */
+test("detectLikelyFieldRenames does NOT fabricate a rename between an unrelated candidate PurchaseOrder and current's own, unrelated Order entity", () => {
+  const current = baseSpec({
+    entities: [{ name: "Order", fields: [{ name: "customerId", type: "text", required: true }, { name: "deliveryAddress", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [{ name: "PurchaseOrder", fields: [{ name: "customerId", type: "text", required: true }, { name: "supplierId", type: "text", required: false }] }],
+  });
+  assert.deepEqual(
+    detectLikelyFieldRenames(current, candidate),
+    [],
+    "Order and PurchaseOrder are unrelated entities that merely share an alias key -- the fold only ever applies when the CANDIDATE's own name is the generic member, not here (PurchaseOrder is the specific member)",
+  );
 });
 
 test("detectLikelyFieldRenames finds nothing when the candidate genuinely just adds a new, unrelated field (current field survives untouched)", () => {

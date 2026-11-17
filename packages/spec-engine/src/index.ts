@@ -159,7 +159,7 @@ function entityMergeKey(name: string): string {
   const lower = name.toLowerCase();
   return ENTITY_ALIAS_KEY.get(lower) ?? lower;
 }
-// Round 2160 (this file's own commit numbering; see mergeRefinedSpec's own
+// Round 2161 (this file's own commit numbering; see mergeRefinedSpec's own
 // doc comment below for the bug this exists to fix): every group above is
 // deliberately ordered [genericDomainEngineName, ...curatedTemplateNames] --
 // "order" (the keyword rule domainEntities.ts always emits) always comes
@@ -173,6 +173,41 @@ function entityMergeKey(name: string): string {
 function isGenericAliasName(lowerName: string): boolean {
   const group = ENTITY_ALIAS_GROUPS.find((g) => g.includes(lowerName));
   return group !== undefined && group[0] === lowerName;
+}
+/**
+ * Round 2162: the directional restriction round 2161 gave mergeRefinedSpec
+ * (isGenericAliasName, above) never made it into detectLikelyEntityRenames
+ * or detectLikelyFieldRenames below -- both still resolve entityMergeKey
+ * symmetrically, so the exact same unrelated-entity collision round 2161
+ * fixed for the real merge still corrupts THESE two functions' own,
+ * separate warning logic. Confirmed live: a current "Order" (e.g. a
+ * Restaurant template's food orders) and a candidate's genuinely new,
+ * unrelated "PurchaseOrder" collide on the shared alias key, and
+ * detectLikelyFieldRenames fabricates a bogus "X's field looks like it
+ * became Y" warning between their two UNRELATED field sets (pipeline.ts's
+ * describeImpactHazards streams this straight to the user, who could act
+ * on it by deleting a field they still need on the real, untouched
+ * entity). The same collision also makes detectLikelyEntityRenames
+ * silently SWALLOW a genuine rename warning when the real dropped/added
+ * pair happens to share a tie-breaking alias collision with an unrelated
+ * entity on either side (confirmed live: current's real "Order" genuinely
+ * renamed to "RestaurantOrder" went unreported, specifically because an
+ * unrelated candidate "PurchaseOrder" shares Order's own alias key).
+ *
+ * This is the shared, direction-aware answer to "does this CURRENT
+ * entity's name refer to the same entity as this CANDIDATE entity's
+ * name" -- an exact case-insensitive match always counts (either
+ * direction), and a cross-name alias match only counts when the
+ * CANDIDATE's own name is the generic member (mirroring mergeRefinedSpec's
+ * own entityByExactName/entityByAliasAwareName split above, just phrased
+ * as a single pairwise predicate since both callers below need to test it
+ * against every entity on the OTHER side, not do a single map lookup).
+ */
+function entityNameMatchesAcrossRefine(currentName: string, candidateName: string): boolean {
+  const currentLower = currentName.toLowerCase();
+  const candidateLower = candidateName.toLowerCase();
+  if (currentLower === candidateLower) return true;
+  return isGenericAliasName(candidateLower) && entityMergeKey(candidateLower) === entityMergeKey(currentLower);
 }
 
 /**
@@ -406,12 +441,29 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
  * droppedEntities and addedEntities here, producing a misleading "X looks
  * like it was meant to become Y" warning for an entity that was never
  * actually dropped.
+ *
+ * Round 2162: the alias-key Sets above matched symmetrically -- the same
+ * unrelated-entity collision round 2161 fixed in mergeRefinedSpec (an
+ * unrelated candidate "PurchaseOrder" sharing current's "Order" alias key)
+ * could ALSO silently suppress a genuine rename right here: with current
+ * = [Order] and candidate = [PurchaseOrder, RestaurantOrder] (a real
+ * Order -> RestaurantOrder rename, PLUS an unrelated new PurchaseOrder),
+ * "Order" used to be excluded from droppedEntities entirely (its alias
+ * key collided with PurchaseOrder's), so the loop below never even got to
+ * compare it against RestaurantOrder's identical field signature --
+ * confirmed live exactly this way before this round's fix. Switched to
+ * entityNameMatchesAcrossRefine's own pairwise, direction-aware check
+ * (see its own doc comment) instead of a shared-key Set, so an unrelated
+ * entity on either side can never affect whether a DIFFERENT entity looks
+ * dropped or added.
  */
 export function detectLikelyEntityRenames(current: ProductSpec, candidate: ProductSpec): { from: string; to: string }[] {
-  const candidateNames = new Set(candidate.entities.map((entity) => entityMergeKey(entity.name)));
-  const currentNames = new Set(current.entities.map((entity) => entityMergeKey(entity.name)));
-  const droppedEntities = current.entities.filter((entity) => !candidateNames.has(entityMergeKey(entity.name)));
-  const addedEntities = candidate.entities.filter((entity) => !currentNames.has(entityMergeKey(entity.name)));
+  const droppedEntities = current.entities.filter(
+    (entity) => !candidate.entities.some((candidateEntity) => entityNameMatchesAcrossRefine(entity.name, candidateEntity.name)),
+  );
+  const addedEntities = candidate.entities.filter(
+    (entity) => !current.entities.some((currentEntity) => entityNameMatchesAcrossRefine(currentEntity.name, entity.name)),
+  );
   const fieldSignature = (entity: Entity) =>
     [...new Set(entity.fields.map((field) => field.name.toLowerCase()))].sort().join(",");
   const renames: { from: string; to: string }[] = [];
@@ -469,12 +521,24 @@ export function detectLikelyEntityRenames(current: ProductSpec, candidate: Produ
  * silently skipped, for the exact entity this function is most likely to
  * ever see a genuine rename on (it's a known hotspot for a regenerated-
  * under-a-different-name entity in the first place).
+ *
+ * Round 2162: this lookup was keyed by entityMergeKey symmetrically, the
+ * same unrelated-entity collision round 2161 fixed in mergeRefinedSpec --
+ * a current "Order" (e.g. a Restaurant template's food orders) and a
+ * candidate's genuinely new, UNRELATED "PurchaseOrder" collide on the
+ * shared alias key, so this function treated them as the SAME entity and
+ * fabricated a bogus field-rename warning between their two unrelated
+ * field sets (confirmed live: current.Order's "deliveryAddress" reported
+ * as renamed to candidate.PurchaseOrder's "supplierId"). Switched to
+ * entityNameMatchesAcrossRefine's own direction-aware check (see its own
+ * doc comment, same fix shape as detectLikelyEntityRenames above) --
+ * `currentEntity` is only resolved when either the names match exactly,
+ * or candidateEntity's own name is the alias group's generic member.
  */
 export function detectLikelyFieldRenames(current: ProductSpec, candidate: ProductSpec): { entity: string; from: string; to: string }[] {
-  const currentByLowerName = new Map(current.entities.map((entity) => [entityMergeKey(entity.name), entity]));
   const renames: { entity: string; from: string; to: string }[] = [];
   for (const candidateEntity of candidate.entities) {
-    const currentEntity = currentByLowerName.get(entityMergeKey(candidateEntity.name));
+    const currentEntity = current.entities.find((entity) => entityNameMatchesAcrossRefine(entity.name, candidateEntity.name));
     if (!currentEntity) continue;
     const candidateFieldNames = new Set(candidateEntity.fields.map((field) => field.name.toLowerCase()));
     const currentFieldNames = new Set(currentEntity.fields.map((field) => field.name.toLowerCase()));
