@@ -34,6 +34,20 @@ test("SYSTEM_PROMPT's language-consistency rule names personas alongside every o
   assert.match(SYSTEM_PROMPT, /SAME language and script/);
 });
 
+/**
+ * Round 2145: the same enumeration was still missing entity "description"
+ * -- worse, the prompt actively told the model "label" is the ONLY place
+ * non-ASCII text belongs, directly instructing it to keep description in
+ * the wrong language. EntityPanel.tsx renders entity.description as
+ * ordinary user-facing text right next to its (correctly-localized) label,
+ * and heuristic.ts/domainEntities.ts's own descriptionHe/description pair
+ * already treats it as something that must track the app's language too.
+ */
+test("SYSTEM_PROMPT's language-consistency rule names entity description, and no longer claims label is the only place non-ASCII text belongs", () => {
+  assert.match(SYSTEM_PROMPT, /every entity's own "description" in the\s+SAME language and script/);
+  assert.match(SYSTEM_PROMPT, /"label" and entity "description" are the only places/);
+});
+
 test("generate() returns the parsed spec on a clean JSON response", async () => {
   const fakeFetch = (async () =>
     new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(VALID_SPEC) }] }), {
@@ -73,10 +87,14 @@ test("generate() appends an explicit language directive to the request when isHe
   // every other free-text output field was named -- App.tsx renders it as
   // ordinary localized text right alongside them.
   assert.match(capturedContent!, /"summary", "personas", "roles"/, "the English directive must name personas alongside every other free-text field");
+  // Round 2145: "description" (entity.description) was missing too --
+  // see SYSTEM_PROMPT's own identical fix and doc comment above.
+  assert.match(capturedContent!, /"label", "description", "summary"/, "the English directive must name entity description alongside every other free-text field");
 
   await provider.generate("a CRM for my business", true);
   assert.match(capturedContent!, /Write every.*in Hebrew/i, "isHebrewOverride: true must pin Hebrew explicitly");
   assert.match(capturedContent!, /"summary", "personas", "roles"/, "the Hebrew directive must name personas alongside every other free-text field");
+  assert.match(capturedContent!, /"label", "description", "summary"/, "the Hebrew directive must name entity description alongside every other free-text field");
 
   await provider.generate("a CRM for my business");
   assert.equal(capturedContent, "a CRM for my business", "omitting isHebrewOverride must send the description exactly as before this round, with no directive appended");

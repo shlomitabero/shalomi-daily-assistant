@@ -16,6 +16,16 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * correctly-localized siblings) is the bug round 1266 already fixed for
  * templates.ts's own hardcoded defaults; this real AI-generation path had
  * the identical gap, just never ported.
+ *
+ * Round 2145: the same enumeration was STILL missing entity "description"
+ * -- worse, the rule actively told the model "label" is the ONLY place
+ * non-ASCII text belongs, directly instructing it to keep description in
+ * the wrong language. EntityPanel.tsx:5996 renders entity.description as
+ * ordinary user-facing text right next to its (correctly-localized)
+ * label, and heuristic.ts/domainEntities.ts's own descriptionHe/
+ * description pair already treats entity description as something that
+ * must track the app's detected language, exactly like label -- this
+ * prompt just never agreed.
  */
 export const SYSTEM_PROMPT = `You are the Product Manager Agent inside Forge AI, an AI software creation platform.
 Given a plain-language business description, output ONLY a single JSON object (no prose, no markdown fences)
@@ -51,9 +61,9 @@ Rules:
   need, not the option that does the least.
 - Every entity/field "name" MUST stay a plain ASCII identifier (e.g. "Customer", "dueDate") no matter what
   language the user wrote in — these become real SQL table/column names. Write "summary", "personas", "roles",
-  "assumptions", "openQuestions", and every entity/field "label" in the SAME language and script the user's
-  description was written in (e.g. Hebrew in, Hebrew labels and summary out). "label" is the only place
-  non-ASCII text belongs.
+  "assumptions", "openQuestions", every entity/field "label", and every entity's own "description" in the
+  SAME language and script the user's description was written in (e.g. Hebrew in, Hebrew labels, summary,
+  and entity descriptions out). "label" and entity "description" are the only places non-ASCII text belongs.
 - Output raw JSON only.`;
 
 export interface AnthropicProviderOptions {
@@ -95,8 +105,8 @@ export class AnthropicSpecProvider implements SpecProvider {
       isHebrewOverride === undefined
         ? ""
         : isHebrewOverride
-          ? "\n\n[Write every \"label\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
-          : "\n\n[Write every \"label\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in English, regardless of what language any part of the request below is written in.]";
+          ? "\n\n[Write every \"label\", \"description\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
+          : "\n\n[Write every \"label\", \"description\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in English, regardless of what language any part of the request below is written in.]";
     const response = await fetchAnthropic(
       this.fetchImpl,
       ANTHROPIC_API_URL,
