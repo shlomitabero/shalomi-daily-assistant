@@ -4320,7 +4320,15 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
 
     for (const field of rowError ? [] : fields) {
       const columnIndex = columnFields.findIndex((f) => f && f.name === field.name);
-      const trimmedCell = columnIndex === -1 ? "" : (row[columnIndex] || "").trim();
+      const cell = columnIndex === -1 ? "" : (row[columnIndex] || "");
+      // Round 2119 (ported): a text/longtext field's own leading/trailing
+      // whitespace is part of its stored content -- recordsToCsv/
+      // fieldDisplayValue never trim or pad it on export, so trimming it
+      // here on import was a one-directional corruption. Mirrors the live
+      // preview's own entityFormatting.ts fix exactly -- every other field
+      // type here still benefits from trimming incidental copy/paste
+      // whitespace around a structured value.
+      const trimmedCell = field.type === "text" || field.type === "longtext" ? cell : cell.trim();
       // Reverses the leading "'" that csvEscape (this file's own guard
       // against CSV/formula injection, CWE-1236) prepends to a value
       // starting with =, +, -, @, a tab/CR, or a literal "'" itself --
@@ -4415,33 +4423,34 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
         }
         record[field.name] = n;
       } else if (field.type === "enum") {
-        // A real raw-value match always wins over the label match below,
-        // the same precedence order the relation branch above gives a
-        // real display-label match over the "#<id>" shorthand.
-        const byValue = field.enumValues && field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
-        if (byValue) {
-          record[field.name] = byValue;
-          continue;
-        }
-        // Round 1084: mirrors the live preview's own round-1084 fix
-        // (entityFormatting.ts) -- FieldSchema.enumLabels has no
-        // uniqueness constraint, so two different declared values can
-        // legitimately share the identical display label. This used to
-        // call .find(), silently resolving to whichever value happened to
-        // come first in enumValues -- writing the WRONG status into a
-        // re-imported record with zero error or warning. Mirrors the
-        // relation branch's own ambiguity handling instead: only resolve
-        // by label when exactly one declared value maps to it.
-        const labelMatches = (field.enumValues || []).filter((v) => ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase());
-        if (labelMatches.length === 0) {
+        // Round 2120 (ported): a raw-value match used to win unconditional
+        // precedence over a label match, on the theory that an exact value
+        // match "can never be genuinely ambiguous" -- true for a collision
+        // among raw values alone, but enumLabels has no cross-check against
+        // enumValues either: one option's own display label can equal a
+        // DIFFERENT option's raw value (e.g. enumValues ["new","closed"]
+        // with enumLabels { new: "closed", closed: "new" }). recordsToCsv/
+        // fieldDisplayValue always export the LABEL, so re-importing this
+        // app's own, unedited export of a "new" record produced the cell
+        // "closed" -- which the old byValue-first check matched
+        // unconditionally against the *other* option's own raw value,
+        // silently flipping the record with zero error or warning. Mirrors
+        // the live preview's own round-2120 fix (entityFormatting.ts):
+        // collecting every value whose raw value OR label matches the
+        // cell, then requiring exactly one, mirrors the relation branch's
+        // own ambiguity handling right above.
+        const matches = Array.from(
+          new Set((field.enumValues || []).filter((v) => v.toLowerCase() === raw.toLowerCase() || ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase())),
+        );
+        if (matches.length === 0) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
           break;
         }
-        if (labelMatches.length > 1) {
+        if (matches.length > 1) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one option for field "\${field.label || field.name}" -- use the option's own underlying value (not its label) instead.\`;
           break;
         }
-        record[field.name] = labelMatches[0];
+        record[field.name] = matches[0];
       } else if (field.type === "date") {
         if (!isValidDate(raw)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;
@@ -4684,21 +4693,26 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         // here. A hand-edited JSON file naturally carries a field's
         // displayed label (e.g. a translated enumLabels value), not its
         // raw internal value.
-        const byValue = field.enumValues && field.enumValues.find((v) => v.toLowerCase() === raw.toLowerCase());
-        if (byValue) {
-          record[field.name] = byValue;
-          continue;
-        }
-        const labelMatches = (field.enumValues || []).filter((v) => ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase());
-        if (labelMatches.length === 0) {
+        //
+        // Round 2120 (ported): mirrors buildImportRecords' own round-2120
+        // fix above exactly -- byValue no longer wins unconditionally, since
+        // enumLabels has no cross-check against enumValues and a different
+        // option's raw value can collide with this option's own label (see
+        // that branch's own doc comment for the full reasoning). Collects
+        // every value whose raw value OR label matches, requiring exactly
+        // one.
+        const matches = Array.from(
+          new Set((field.enumValues || []).filter((v) => v.toLowerCase() === raw.toLowerCase() || ((field.enumLabels && field.enumLabels[v]) || v).toLowerCase() === raw.toLowerCase())),
+        );
+        if (matches.length === 0) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid option for field "\${field.label || field.name}".\`;
           break;
         }
-        if (labelMatches.length > 1) {
+        if (matches.length > 1) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" matches more than one option for field "\${field.label || field.name}" -- use the option's own underlying value (not its label) instead.\`;
           break;
         }
-        record[field.name] = labelMatches[0];
+        record[field.name] = matches[0];
       } else if (field.type === "date") {
         if (typeof raw !== "string" || !isValidDate(raw)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a valid date (expected YYYY-MM-DD) for field "\${field.label || field.name}".\`;

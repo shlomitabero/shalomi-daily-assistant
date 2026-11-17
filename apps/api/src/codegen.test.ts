@@ -15534,6 +15534,34 @@ test("the exported EntityView's own generated buildImportRecordsFromJson resolve
 });
 
 /**
+ * Regression test for a real bug found by round 2123's codegen-vs-live-app
+ * twin survey: this generated buildImportRecordsFromJson copy never got
+ * the live preview's own round-2120 fix (entityFormatting.ts) -- the
+ * identical cross-collision gap the sibling CSV test above this file's
+ * round-1084 test closes (a different option's own raw value equaling
+ * THIS option's label). A hand-edited JSON import file containing a label
+ * that happens to equal a different option's raw value used to silently
+ * resolve to the wrong value via the old byValue-first check, instead of
+ * being flagged as ambiguous.
+ */
+test("the exported EntityView's own generated buildImportRecordsFromJson doesn't silently flip an enum value when one option's label collides with a DIFFERENT option's own raw value", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "closed"], enumLabels: { new: "closed", closed: "new" } }];
+  const result = buildImportRecordsFromJson(fields, [{ status: "closed" }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /matches more than one option for field "Status"/);
+});
+
+/**
  * Round 1293: the identical Number(true)/Number([5]) hazard also exists on
  * a relation field's own value (a few lines further down in this same
  * function), so a boolean relation value silently matched whichever
@@ -17101,6 +17129,122 @@ test("the exported EntityView's CSV import rejects an ambiguous enum label that 
   assert.deepEqual(records, []);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /matches more than one option for field "Status"/);
+});
+
+/**
+ * Regression test for a real bug found by round 2123's codegen-vs-live-app
+ * twin survey: this generated buildImportRecords copy never got the live
+ * preview's own round-2120 fix (entityFormatting.ts) -- FieldSchema.
+ * enumLabels has no cross-check against enumValues, so one option's own
+ * display label can equal a DIFFERENT option's raw value. recordsToCsv/
+ * fieldDisplayValue always export the LABEL, so re-exporting a record
+ * whose real status is "new" (label "closed") and re-importing that exact,
+ * unedited file matched the old byValue-first check against the OTHER
+ * option's own raw value "closed" -- silently flipping the record, with
+ * zero errors reported. Executes the actual generated recordsToCsv/
+ * parseCsv/buildImportRecords functions (extracted from real codegen
+ * output, not reimplemented here) in a genuine export -> import round trip.
+ */
+test("the exported EntityView's CSV import doesn't silently flip an enum value when one option's label collides with a DIFFERENT option's own raw value", () => {
+  const statusProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "closed"], enumLabels: { new: "closed", closed: "new" } }],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(statusProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = statusProject.spec.entities[0].fields;
+  const csv = recordsToCsv(fields, [{ status: "new" }], {}, false);
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(records, []);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /matches more than one option for field "Status"/);
+});
+
+/**
+ * Regression test for a real bug found by round 2123's codegen-vs-live-app
+ * twin survey: this generated buildImportRecords copy never got the live
+ * preview's own round-2119 fix (entityFormatting.ts) -- it unconditionally
+ * trimmed every CSV cell, including text/longtext fields, even though
+ * recordsToCsv/fieldDisplayValue never trim such a value on export. A
+ * notes/address field's own meaningful leading/trailing whitespace was
+ * silently stripped on re-import. Executes the actual generated
+ * recordsToCsv/parseCsv/buildImportRecords functions in a genuine export ->
+ * import round trip.
+ */
+test("the exported EntityView's CSV import doesn't trim whitespace out of a text/longtext field's own value", () => {
+  const notesProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Order",
+          label: "Order",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "notes", label: "Notes", type: "longtext", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(notesProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const csvEscapeSrc = entityViewJsx.match(/function csvEscape\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayValueSrc = entityViewJsx.match(/function fieldDisplayValue\(field, value, relatedRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const recordsToCsvSrc = entityViewJsx.match(/function recordsToCsv\(fields, records, relatedRecords, includeId\) \{[\s\S]*?\n\}\n/)?.[0];
+  const parseCsvSrc = entityViewJsx.match(/function parseCsv\(text\) \{[\s\S]*?\n\}\n/)?.[0];
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function fieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function fieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    csvEscapeSrc && fieldDisplayValueSrc && recordsToCsvSrc && parseCsvSrc && isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find csvEscape/fieldDisplayValue/recordsToCsv/parseCsv/isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const { recordsToCsv, parseCsv, buildImportRecords } = new Function(
+    `${csvEscapeSrc}\n${fieldDisplayValueSrc}\n${recordsToCsvSrc}\n${parseCsvSrc}\n${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn { recordsToCsv, parseCsv, buildImportRecords };`,
+  )();
+
+  const fields = notesProject.spec.entities[0].fields;
+  const original = { name: "Room 204", notes: "  Leading and trailing space preserved  " };
+  const csv = recordsToCsv(fields, [original], {}, false);
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
 });
 
 /**
