@@ -69,6 +69,7 @@ function renderPanel(
   onOwnerTransferred: (project: Project, selfSharedAt: string | undefined) => void = () => {},
   readOnly = false,
   entities: Entity[] = [],
+  refineRunning = false,
 ) {
   return render(
     React.createElement(
@@ -82,6 +83,7 @@ function renderPanel(
           projectName,
           isOwner,
           readOnly,
+          refineRunning,
           currentUserId,
           entities,
           onClose: () => {},
@@ -955,6 +957,64 @@ test("CollaboratorsPanel's Leave button asks for confirmation, calls the real DE
       fireEvent.click(leaveBtn);
       await waitForCondition(() => deleteCalls === 1);
       await waitForCondition(() => leftCount === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
+ * Round 2158: canNavigateHome (App.tsx) already refuses every other exit
+ * from the preview screen while this user's own refine is actively
+ * streaming (the brand-logo link, round 2157's own fix) -- for exactly
+ * the reason stated in that function's own doc comment: BuildProgress's
+ * design only ever offers a way out on failure, so a silent, unguarded
+ * exit shouldn't exist anywhere on this screen. Self-service "Leave
+ * project" was a fourth, never-audited path to that same unguarded exit,
+ * and unlike the brand-logo link it also revokes this user's own
+ * server-side access first -- so the button itself (not just a later
+ * navigation step) must stay disabled, and handleLeave's own guard must
+ * refuse even a stale click event, while refineRunning is true.
+ */
+test("CollaboratorsPanel's Leave button is disabled, and handleLeave refuses even a direct call, while refineRunning is true", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    const me = makeCollaborator("u2", "me@example.com");
+    let deleteCalls = 0;
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/collaborators") {
+        return new Response(JSON.stringify({ collaborators: [me] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/collaborators/u2?lang=en") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    // Confirm is deliberately set to accept -- the point of this test is
+    // that the click never even reaches that far, not that declining it
+    // happens to also block the DELETE.
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    let leftCount = 0;
+    try {
+      renderPanel(false, "u2", () => (leftCount += 1), "Test Project", () => {}, false, [], true);
+      await waitForCondition(() => document.querySelectorAll(".collab-list li").length === 1);
+
+      const leaveBtn = document.querySelector(".collab-list button") as HTMLButtonElement;
+      assert.equal(leaveBtn.disabled, true, "the Leave button must be disabled while refineRunning is true");
+
+      fireEvent.click(leaveBtn);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(deleteCalls, 0, "a disabled button's click must never reach the real DELETE endpoint");
+      assert.equal(leftCount, 0, "a disabled button's click must never fire onLeft");
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.window.confirm = originalConfirm;
@@ -2237,6 +2297,7 @@ test("CollaboratorsPanel's invite form has Escape-to-clear for an in-progress dr
               projectName: "Test Project",
               isOwner: true,
               readOnly: false,
+              refineRunning: false,
               currentUserId: undefined,
               entities: [],
               onClose: () => {

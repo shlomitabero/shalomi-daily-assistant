@@ -3771,6 +3771,7 @@ function AppContent() {
               projectName={project.name}
               isOwner={user?.id === project.ownerId}
               readOnly={myRole === "viewer"}
+              refineRunning={refineRunning}
               currentUserId={user?.id}
               entities={orderedEntities}
               onClose={() => setShowCollaborators(false)}
@@ -3787,6 +3788,12 @@ function AppContent() {
                 // -- only THIS user's own access ends. purgeOwnProjectAccess
                 // (not the broad purgeProjectPreferences) scopes the
                 // cleanup to this user's own pin/seen-share entries only.
+                // Round 2158: this callback itself still runs unconditionally
+                // once onLeft fires -- the gate against leaving mid-refine
+                // belongs upstream, in CollaboratorsPanel's own refineRunning
+                // prop (passed below), which disables the Leave button (and
+                // guards handleLeave itself) before the real removeCollaborator
+                // call that would trigger this callback in the first place.
                 if (user) purgeOwnProjectAccess(user.id, project.id);
                 setShowCollaborators(false);
                 handleGoHome();

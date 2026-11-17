@@ -44,6 +44,7 @@ export function CollaboratorsPanel({
   projectName,
   isOwner,
   readOnly,
+  refineRunning,
   currentUserId,
   entities,
   onClose,
@@ -64,6 +65,26 @@ export function CollaboratorsPanel({
    * it calls.
    */
   readOnly: boolean;
+  /**
+   * Round 2158: true while THIS user's own refine is actively streaming on
+   * the preview screen behind this panel (App.tsx's refineRunning) --
+   * canNavigateHome (App.tsx) already refuses every OTHER exit from that
+   * screen (the brand-logo link, nulling `project` mid-stream) for exactly
+   * the reason stated in its own doc comment: BuildProgress's design only
+   * ever offers a way out on failure, so a silent, unguarded exit
+   * shouldn't exist anywhere else either. Self-service "Leave project"
+   * (handleLeave below) was a fourth, never-audited path to that same
+   * unguarded exit -- unlike the brand-logo link, it doesn't just swap the
+   * view, it also revokes this user's own server-side access first
+   * (removeCollaborator), so by the time onLeft would run it's already too
+   * late to simply stay on the page instead. Gating the action itself
+   * (both the button below and handleLeave's own guard) is the only fix
+   * that actually closes the gap, since this panel can also already be
+   * open from BEFORE the refine started (App.tsx's handleRefine doesn't
+   * close it), so disabling only the toolbar's own "Collaborators" open
+   * button would leave an already-open panel's Leave button reachable.
+   */
+  refineRunning: boolean;
   /** The signed-in user's own id -- lets this panel tell "my own row" apart from every other collaborator's, so only my own row ever gets a "Leave" button. */
   currentUserId: string | undefined;
   /**
@@ -563,6 +584,12 @@ export function CollaboratorsPanel({
     // removeCollaborator), so the guard is against the same state.
     if (removingUserId !== null) return;
     if (!currentUserId) return;
+    // Round 2158: see this component's own refineRunning prop doc comment
+    // -- guarding the handler itself (not just the button's disabled
+    // attribute) matches every other own-click-reentrancy guard in this
+    // file, and covers a stale click event already queued before a refine
+    // this same render hadn't started yet.
+    if (refineRunning) return;
     if (!window.confirm(t("collab.confirmLeave"))) return;
     setRemovingUserId(currentUserId);
     setError(null);
@@ -1134,7 +1161,8 @@ export function CollaboratorsPanel({
                           updatingRoleUserId !== null ||
                           transferringUserId !== null ||
                           resendingUserId !== null ||
-                          inviteBusy
+                          inviteBusy ||
+                          refineRunning
                         }
                       >
                         {removingUserId === currentUserId ? t("collab.leave.busy") : t("collab.leave")}
