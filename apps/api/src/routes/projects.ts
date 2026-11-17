@@ -6750,7 +6750,21 @@ export function createProjectsRouter(
             "fieldValue" in parsed.data ||
             "fieldOperator" in parsed.data;
           const touchesDestination = "toMode" in parsed.data || "toField" in parsed.data;
-          if (touchesTrigger || touchesDestination) {
+          // Round 2097: `findEntity` itself was still eager -- run as soon as
+          // EITHER group was touched, even when the *resulting* next.trigger/
+          // next.toMode didn't actually need an entity/field lookup at all.
+          // disableAutomationRulesForEntity (unlike disableAutomationRulesFor
+          // Field) fires when the rule's entire ENTITY is gone, not just one
+          // field -- and entityName can never be changed via PATCH (not in
+          // UpdateAutomationRuleSchema), so once that throws, EVERY future
+          // patch touching any of these 6 keys 404s forever, even one that
+          // only switches toMode from "field" to "static" with a real static
+          // number/email -- a resulting value that needs no entity at all.
+          // Only resolve the entity when the merged result actually needs it.
+          const needsEntity =
+            (touchesTrigger && next.trigger === "field_equals" && !!next.fieldName) ||
+            (touchesDestination && next.toMode === "field" && !!next.toField);
+          if (needsEntity) {
             const entity = findEntity(project, existing.entityName);
             if (touchesTrigger && next.trigger === "field_equals" && next.fieldName) {
               const field = findField(entity, next.fieldName);

@@ -19526,6 +19526,110 @@ test("PATCH .../automations/:ruleId re-validates only the side (trigger vs. dest
 });
 
 /**
+ * Round 2097: the split gate just above only covers the case where the
+ * rule's ENTITY still exists and one of its *fields* went stale --
+ * `findEntity` itself always succeeded there. `disableAutomationRulesFor
+ * Entity` (unlike disableAutomationRulesForField) fires when the rule's
+ * whole entity is gone, and `entityName` can never be changed via PATCH
+ * (not in UpdateAutomationRuleSchema) -- so `findEntity` was still called
+ * eagerly whenever either group was touched, even for a resulting value
+ * that needs no entity/field lookup at all, e.g. switching toMode from
+ * "field" to "static" with a real static number. Once the entity is gone,
+ * that made the rule permanently un-patchable on any of the 6 keys,
+ * forever -- there is no way to "fix" it by moving off the dead field
+ * reference, even though that's exactly the kind of edit that should
+ * succeed.
+ */
+test("PATCH .../automations/:ruleId doesn't need to resolve the entity at all when the patch's resulting value needs no entity/field lookup", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `whole-entity-gone-automation-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithoutDeal: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Note", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithDeal: ProductSpec = {
+      ...specWithoutDeal,
+      entities: [
+        ...specWithoutDeal.entities,
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "assigneePhone", type: "text", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Deal tracker", description: "A CRM for tracking deals.", spec: specWithoutDeal });
+    diffAndMigrate(db, projectId, undefined, specWithoutDeal);
+    const checkpoint = insertCheckpoint(db, { id: randomUUID(), projectId, label: "Before Deal entity", kind: "build", spec: specWithoutDeal });
+
+    diffAndMigrate(db, projectId, specWithoutDeal, specWithDeal);
+    updateProjectSpec(db, projectId, specWithDeal);
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "record_created",
+        actionType: "send_whatsapp",
+        toMode: "field",
+        toField: "assigneePhone",
+        messageTemplate: "New deal!",
+      }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    // Restoring to the checkpoint removes the Deal entity entirely, so
+    // disableAutomationRulesForEntity disables the rule.
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules: beforeRules } = (await beforeRes.json()) as { rules: { id: string; enabled: boolean }[] };
+    assert.equal(beforeRules[0].enabled, false, "sanity check: the restore must have disabled the rule via its now-gone entity");
+
+    // Switching toMode to "static" with a real static number needs no
+    // entity/field lookup at all -- it must succeed even though the rule's
+    // own entity ("Deal") no longer exists in the spec, and entityName
+    // itself can never be fixed via PATCH.
+    const switchToStaticRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ toMode: "static", toNumber: "+15551234567" }),
+    });
+    assert.equal(
+      switchToStaticRes.status,
+      200,
+      "switching toMode to static with a real static destination must not require resolving the rule's now-gone entity",
+    );
+
+    // But a patch that DOES still need the entity (e.g. switching back to
+    // toMode: "field") must still correctly 404 -- the entity is genuinely
+    // gone and there's nothing to resolve toField against.
+    const switchToFieldRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ toMode: "field", toField: "assigneePhone" }),
+    });
+    assert.equal(switchToFieldRes.status, 404, "a patch that actually needs the entity must still correctly 404 once it's genuinely gone");
+    assert.equal(((await switchToFieldRes.json()) as { code?: string }).code, "ENTITY_NOT_FOUND");
+  });
+});
+
+/**
  * The upload route is a new field type's whole reason to exist: a file
  * field's stored value is a JSON descriptor the client gets back from
  * this route, not something a client could ever construct on its own
