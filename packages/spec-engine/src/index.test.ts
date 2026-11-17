@@ -613,6 +613,70 @@ test("mergeRefinedSpec folds a regenerated Order entity into an existing Purchas
 });
 
 /**
+ * Round 2161: the Order/PurchaseOrder alias fold above only makes sense in
+ * ONE direction -- candidate regenerates the GENERIC name "Order" (what
+ * domainEntities.ts's own keyword rule always emits), current already has
+ * the more SPECIFIC, curated "PurchaseOrder". The reverse direction is a
+ * completely different, real scenario: a project built from a template
+ * whose OWN curated entity happens to be literally named "Order" (e.g. the
+ * Restaurant Management template's food orders) later gets a refine
+ * instruction that genuinely asks for a brand-new, unrelated
+ * "PurchaseOrder" entity (supplier procurement tracking) -- a realistic
+ * candidate shape from AnthropicSpecProvider's own LLM-driven generation,
+ * not just the deterministic heuristic engine. Before this round, the
+ * alias fold fired here too (wrongly): the candidate's "PurchaseOrder"
+ * never appeared in the merged spec at all, and the real, unrelated
+ * "Order" entity silently gained its `supplier`/`orderDate` fields
+ * instead -- confirmed live exactly this way before this round's fix.
+ */
+test("mergeRefinedSpec does NOT fold a genuinely new PurchaseOrder entity into an existing, unrelated Order entity -- the alias only applies in the other direction", () => {
+  const current = baseSpec({
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "customer", type: "text", required: true },
+          { name: "table", type: "text", required: false },
+          { name: "status", type: "text", required: false },
+          { name: "total", type: "number", required: false },
+        ],
+      },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "PurchaseOrder",
+        label: "Purchase Order",
+        fields: [
+          { name: "supplier", type: "relation", relationTo: "Supplier", required: false },
+          { name: "orderDate", type: "date", required: true },
+          { name: "status", type: "text", required: false },
+        ],
+      },
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name).sort(),
+    ["Order", "PurchaseOrder", "Supplier"],
+    "the genuinely new PurchaseOrder (and its companion Supplier) must be added as their own entities, not folded away",
+  );
+  assert.deepEqual(
+    merged.entities.find((e) => e.name === "Order")!.fields.map((f) => f.name).sort(),
+    ["customer", "status", "table", "total"],
+    "the pre-existing, unrelated Order entity must be left completely untouched -- no supplier/orderDate fields bolted onto it",
+  );
+  assert.deepEqual(
+    merged.entities.find((e) => e.name === "PurchaseOrder")!.fields.map((f) => f.name).sort(),
+    ["orderDate", "status", "supplier"],
+    "the new PurchaseOrder entity must keep every one of its own fields",
+  );
+});
+
+/**
  * Round 2153: a third instance of the same bug class, Hebrew-only this
  * time. The Volunteer & Shift Management template's own curated entity is
  * "VolunteerEvent" (templates.ts), but its descriptionHe ("מתנדבים,

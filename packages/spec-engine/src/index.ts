@@ -159,6 +159,21 @@ function entityMergeKey(name: string): string {
   const lower = name.toLowerCase();
   return ENTITY_ALIAS_KEY.get(lower) ?? lower;
 }
+// Round 2160 (this file's own commit numbering; see mergeRefinedSpec's own
+// doc comment below for the bug this exists to fix): every group above is
+// deliberately ordered [genericDomainEngineName, ...curatedTemplateNames] --
+// "order" (the keyword rule domainEntities.ts always emits) always comes
+// first, "purchaseorder" (what the Inventory & Products template itself
+// curates for the identical concept) after it. isGenericAliasName lets
+// mergeRefinedSpec tell "this literal name is the generic one these groups
+// exist to fold AWAY FROM" apart from "this literal name is a specific,
+// curated one these groups exist to fold INTO" -- the two directions are
+// NOT interchangeable (see mergeRefinedSpec's own doc comment for why
+// folding the other way corrupts an unrelated, already-existing entity).
+function isGenericAliasName(lowerName: string): boolean {
+  const group = ENTITY_ALIAS_GROUPS.find((g) => g.includes(lowerName));
+  return group !== undefined && group[0] === lowerName;
+}
 
 /**
  * Round 1714: /projects/:id/refine (apps/api/src/routes/projects.ts) calls
@@ -186,9 +201,40 @@ function entityMergeKey(name: string): string {
  * as structured context into generation itself) is a bigger redesign left
  * for a future round.
  */
+/**
+ * Round 2161: the alias-key lookup below used to be unconditional in BOTH
+ * directions -- it folded a candidate entity into an existing one whenever
+ * the two names shared an alias group, regardless of which literal name
+ * was on which side. That's correct for every documented case above
+ * (candidate regenerates the GENERIC domain-engine name, e.g. "Order",
+ * which needs to fold into current's already-existing, more SPECIFIC
+ * curated name, e.g. "PurchaseOrder"), but it also silently fires in the
+ * reverse, never-intended direction: a Restaurant-template project already
+ * has its own, unrelated "Order" entity (food orders) when a refine
+ * instruction genuinely asks for a brand-new "PurchaseOrder" entity
+ * (supplier procurement tracking) -- a real, reachable candidate shape via
+ * AnthropicSpecProvider's own LLM-driven generation, not just the
+ * deterministic heuristic engine. Confirmed live with exactly this
+ * scenario: the candidate's "PurchaseOrder" entity never appeared in the
+ * merged spec at all, and the real "Order" entity silently gained its
+ * unrelated `supplier`/`orderDate` fields instead.
+ *
+ * `entityByAliasAwareName` below is only ever populated for a current
+ * entity whose OWN literal name is the SPECIFIC (non-generic) member of
+ * its alias group -- never for one that IS the generic member -- and the
+ * alias-key lookup itself is only ever attempted when the CANDIDATE's own
+ * literal name is that generic member. Exact-name matches (both sides
+ * sharing the identical literal name already) are unaffected either way,
+ * handled by the plain `entityByExactName` lookup first.
+ */
 export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): ProductSpec {
   const mergedEntities: Entity[] = current.entities.map((entity) => ({ ...entity, fields: [...entity.fields] }));
-  const entityByLowerName = new Map(mergedEntities.map((entity) => [entityMergeKey(entity.name), entity]));
+  const entityByExactName = new Map(mergedEntities.map((entity) => [entity.name.toLowerCase(), entity]));
+  const entityByAliasAwareName = new Map<string, Entity>();
+  for (const entity of mergedEntities) {
+    const lower = entity.name.toLowerCase();
+    if (!isGenericAliasName(lower)) entityByAliasAwareName.set(entityMergeKey(entity.name), entity);
+  }
   // Round 2009: every entity named here (current's own, plus every entity
   // candidate.entities carries) is guaranteed to exist in mergedEntities by
   // the time this function returns -- either it already did, or the
@@ -204,11 +250,14 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
     ...candidate.entities.map((entity) => entityMergeKey(entity.name)),
   ]);
   for (const candidateEntity of candidate.entities) {
-    const existingEntity = entityByLowerName.get(entityMergeKey(candidateEntity.name));
+    const candidateLower = candidateEntity.name.toLowerCase();
+    const existingEntity =
+      entityByExactName.get(candidateLower) ?? (isGenericAliasName(candidateLower) ? entityByAliasAwareName.get(entityMergeKey(candidateEntity.name)) : undefined);
     if (!existingEntity) {
       const addedEntity = { ...candidateEntity, fields: [...candidateEntity.fields] };
       mergedEntities.push(addedEntity);
-      entityByLowerName.set(entityMergeKey(addedEntity.name), addedEntity);
+      entityByExactName.set(addedEntity.name.toLowerCase(), addedEntity);
+      if (!isGenericAliasName(addedEntity.name.toLowerCase())) entityByAliasAwareName.set(entityMergeKey(addedEntity.name), addedEntity);
       continue;
     }
     const fieldNameSet = new Set(existingEntity.fields.map((field) => field.name.toLowerCase()));
