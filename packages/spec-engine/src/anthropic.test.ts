@@ -109,11 +109,20 @@ test("generate() appends an explicit language directive to the request when isHe
   // Round 2145: "description" (entity.description) was missing too --
   // see SYSTEM_PROMPT's own identical fix and doc comment above.
   assert.match(capturedContent!, /"label", "description", "summary"/, "the English directive must name entity description alongside every other free-text field");
+  // Round 2165: "enumLabels" was missing too -- routes/projects.ts's
+  // /refine handler always passes an explicit isHebrewOverride, so an
+  // established-language project refined with an instruction in the
+  // OTHER language that adds an enum field had no override pinning
+  // enumLabels, unlike label/description, risking the exact
+  // label-vs-enumLabels language mismatch round 2164 fixed SYSTEM_PROMPT's
+  // own rule to prevent.
+  assert.match(capturedContent!, /"openQuestions", and "enumLabels"/, "the English directive must name enumLabels alongside every other free-text field");
 
   await provider.generate("a CRM for my business", true);
   assert.match(capturedContent!, /Write every.*in Hebrew/i, "isHebrewOverride: true must pin Hebrew explicitly");
   assert.match(capturedContent!, /"summary", "personas", "roles"/, "the Hebrew directive must name personas alongside every other free-text field");
   assert.match(capturedContent!, /"label", "description", "summary"/, "the Hebrew directive must name entity description alongside every other free-text field");
+  assert.match(capturedContent!, /"openQuestions", and "enumLabels"/, "the Hebrew directive must name enumLabels alongside every other free-text field");
 
   await provider.generate("a CRM for my business");
   assert.equal(capturedContent, "a CRM for my business", "omitting isHebrewOverride must send the description exactly as before this round, with no directive appended");

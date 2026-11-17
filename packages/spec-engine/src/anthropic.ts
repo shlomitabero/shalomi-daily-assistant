@@ -126,12 +126,30 @@ export class AnthropicSpecProvider implements SpecProvider {
     // language as the user's description" rule can't tell an established
     // project's language apart from a single Hebrew/English word that only
     // the newly-appended text happened to contain.
+    //
+    // Round 2165: this enumeration was missing "enumLabels" -- the exact
+    // same omission shape rounds 2144/2145 already fixed for personas/
+    // description, just one level removed (there it was SYSTEM_PROMPT's
+    // own "match the description's language" rule that omitted the field;
+    // here it's THIS directive, whose whole purpose is overriding that
+    // same rule with an explicit pinned language). routes/projects.ts's
+    // /refine handler always passes an explicit isHebrewOverride (lines
+    // 3371/3489: isHebrewText(project.description)) on every single
+    // refine, so this directive is live on every real refine call via the
+    // Anthropic path -- an established-Hebrew project refined with an
+    // English instruction that happens to add an enum field (e.g. "add a
+    // priority field with values low/medium/high") had an explicit,
+    // unambiguous override pinning Hebrew for label/description but
+    // nothing pinning enumLabels, which could plausibly follow the
+    // instruction's own English instead -- the exact label-vs-enumLabels
+    // language mismatch within a single field round 2164 just fixed
+    // SYSTEM_PROMPT's own rule to prevent.
     const languageDirective =
       isHebrewOverride === undefined
         ? ""
         : isHebrewOverride
-          ? "\n\n[Write every \"label\", \"description\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
-          : "\n\n[Write every \"label\", \"description\", \"summary\", \"personas\", \"roles\", \"assumptions\", and \"openQuestions\" entry in English, regardless of what language any part of the request below is written in.]";
+          ? "\n\n[Write every \"label\", \"description\", \"summary\", \"personas\", \"roles\", \"assumptions\", \"openQuestions\", and \"enumLabels\" entry in Hebrew, regardless of what language any part of the request below is written in.]"
+          : "\n\n[Write every \"label\", \"description\", \"summary\", \"personas\", \"roles\", \"assumptions\", \"openQuestions\", and \"enumLabels\" entry in English, regardless of what language any part of the request below is written in.]";
     const response = await fetchAnthropic(
       this.fetchImpl,
       ANTHROPIC_API_URL,
