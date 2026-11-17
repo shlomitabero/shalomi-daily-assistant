@@ -25,6 +25,7 @@ export const ACTION_TYPE_LABEL = {
   client_error: 'תקלה במסך',
   login_attempt: 'ניסיון התחברות',
   market_quote_fetch: 'שליפת מחיר שוק',
+  remove_from_watchlist: 'הסרת סימבול ממעקב',
 };
 
 export function actionTypeLabel(type) {

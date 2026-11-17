@@ -151,6 +151,13 @@ export default function ActivityLog() {
             {a.type === 'market_quote_fetch' && a.detail?.symbol && (
               <p className="hint log-reason">{a.detail.symbol}{a.detail.error ? ` · ${a.detail.error}` : ''}</p>
             )}
+            {/* routes/financial.js's deleteWatchlistEntry now logs the
+                removed symbol - without this the row just said "הסרת
+                סימבול ממעקב - הצלחה" with no way to tell which symbol was
+                actually removed. */}
+            {a.type === 'remove_from_watchlist' && a.detail?.symbol && (
+              <p className="hint log-reason">{a.detail.symbol}</p>
+            )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>
           </div>

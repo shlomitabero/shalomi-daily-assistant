@@ -141,9 +141,18 @@ export async function refreshWatchlistEntry(req, res) {
   res.json({ entry: updated });
 }
 
+// Every other deliberate owner action on this page already leaves a trace
+// in the activity log - addToWatchlist/refreshWatchlistEntry's own
+// real-API-call failures, createPaperTrade's own success - but removing a
+// symbol was the one exception, with no logAction call at all. Fetching
+// the entry BEFORE deleting it (store.js's own delete() only ever returns
+// whether something existed, not what it was) so the log still shows
+// which symbol the owner actually removed, not just that something did.
 export function deleteWatchlistEntry(req, res) {
-  const existed = db.financial_watchlist.delete(req.params.id);
-  if (!existed) return res.status(404).json({ error: 'לא נמצא' });
+  const entry = db.financial_watchlist.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'לא נמצא' });
+  db.financial_watchlist.delete(entry.id);
+  logAction({ type: 'remove_from_watchlist', detail: { symbol: entry.symbol }, result: 'success' });
   res.status(204).end();
 }
 

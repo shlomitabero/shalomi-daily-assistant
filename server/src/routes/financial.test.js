@@ -324,6 +324,24 @@ test('deleteWatchlistEntry removes an existing entry and 404s for one that does 
   assert.equal(res2.body.error, 'לא נמצא');
 });
 
+test('deleteWatchlistEntry logs which symbol was removed, unlike every action on this page before it', () => {
+  // addToWatchlist/refreshWatchlistEntry's own failures and createPaperTrade's
+  // own success all already leave a trace in the activity log - removing a
+  // symbol was the one deliberate owner action with none at all.
+  __resetForTests();
+  const entry = db.financial_watchlist.insert({ id: 'wl_1', symbol: 'AAPL' });
+  deleteWatchlistEntry({ params: { id: entry.id } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'remove_from_watchlist')[0];
+  assert.equal(logged.result, 'success');
+  assert.equal(logged.detail.symbol, 'AAPL');
+});
+
+test('deleteWatchlistEntry does not log anything when the entry does not exist', () => {
+  __resetForTests();
+  deleteWatchlistEntry({ params: { id: 'wl_missing' } }, makeRes());
+  assert.equal(db.actions_log.where((a) => a.type === 'remove_from_watchlist').length, 0);
+});
+
 test('createPaperTrade rejects a whitespace-only symbol instead of storing a blank-looking trade', () => {
   // Mirrors addToWatchlist's own !symbol.trim() check - without it, a
   // symbol of "   " (the client sends no trim before uppercasing either)
