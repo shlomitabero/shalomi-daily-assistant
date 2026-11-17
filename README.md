@@ -43,6 +43,7 @@ There's also a big **emergency stop** button in Settings that blocks every actio
 | `PADDLE_WEBHOOK_SECRET` | Lets Paddle securely confirm a real sale happened | vendors.paddle.com → Notifications → add destination `https://<your-deployed-domain>/api/billing/webhook`, subscribe to `transaction.completed` |
 | `PADDLE_ENV` | `sandbox` for fake test purchases (default), `production` once Paddle approves your account | set it yourself |
 | `MARKET_DATA_API_KEY` | Turns on real stock-price tracking for the financial module (simulated trading only — see below) | a free-tier provider such as twelvedata.com |
+| `DEFAULT_PRODUCT_PRICE_USD` | The starting price (in USD) a newly drafted digital product gets, before you review and adjust it per product — defaults to `9` if unset, empty, or not a valid positive number | set it yourself; always editable afterward per product on its own card |
 
 Paddle is used here (not Stripe) because Stripe does not support payouts to Israeli merchant accounts — Paddle is the seller of record and pays you out directly.
 
