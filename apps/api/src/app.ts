@@ -217,6 +217,19 @@ export function errorMiddleware(err: unknown, _req: Request, res: Response, next
     res.status(413).json({ error: "Request body is too large", code: "PAYLOAD_TOO_LARGE" });
     return;
   }
+  // Round 2171: the sibling body-parser error shape to round 2133's
+  // "entity.too.large" just above -- express.json() throws this exact
+  // plain-object shape (never an HttpError/ValidationError/NotFoundError)
+  // the instant a request body isn't syntactically valid JSON, before any
+  // route handler runs. Left unhandled, it fell through to the same
+  // generic 500 round 2133 fixed for the oversized-body case: a buggy
+  // client, a truncated request from a network hiccup, or a hand-typed
+  // curl request with malformed JSON got an opaque "Internal server
+  // error" on every POST/PATCH route instead of a real, actionable 400.
+  if (err && typeof err === "object" && (err as { type?: unknown }).type === "entity.parse.failed") {
+    res.status(400).json({ error: "Request body isn't valid JSON", code: "INVALID_JSON" });
+    return;
+  }
   // eslint-disable-next-line no-console
   console.error(err);
   res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });

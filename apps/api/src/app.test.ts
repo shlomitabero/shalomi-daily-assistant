@@ -322,6 +322,50 @@ test("POST /api/projects with a request body over express's size limit is reject
   });
 });
 
+/**
+ * Round 2171: the sibling body-parser error shape to round 2133's
+ * "entity.too.large" just above -- express.json() throws this exact
+ * plain-object shape (never an HttpError/ValidationError/NotFoundError)
+ * the instant a request body isn't syntactically valid JSON, before any
+ * route handler runs. errorMiddleware had no branch for it and fell
+ * through to the generic 500, same as round 2133's own case.
+ */
+test("errorMiddleware translates a body-parser 'entity.parse.failed' error into a real 400, not a generic 500", () => {
+  const statusCalls: number[] = [];
+  let jsonBody: unknown;
+  const fakeRes = {
+    headersSent: false,
+    status(code: number) {
+      statusCalls.push(code);
+      return this;
+    },
+    json(body: unknown) {
+      jsonBody = body;
+    },
+  };
+  const next = () => {
+    throw new Error("next() must not be called when headers have not been sent");
+  };
+
+  const malformedJsonError = { type: "entity.parse.failed", status: 400, body: '{"description": "unterminated' };
+  errorMiddleware(malformedJsonError, {} as never, fakeRes as never, next as never);
+  assert.deepEqual(statusCalls, [400], "a body-parser malformed-JSON error must get a real 400, not the generic 500");
+  assert.deepEqual(jsonBody, { error: "Request body isn't valid JSON", code: "INVALID_JSON" });
+});
+
+test("POST /api/projects with a syntactically invalid JSON body is rejected with a real 400, not a 500", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "malformed-json-body@example.com");
+    const res = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: '{"description": "unterminated',
+    });
+    assert.equal(res.status, 400, "a malformed JSON body must be rejected with 400, not fall through to a generic 500");
+    assert.equal(((await res.json()) as { code?: string }).code, "INVALID_JSON");
+  });
+});
+
 test("health check responds ok", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/health`);
