@@ -1401,6 +1401,40 @@ test("Courier's 'driver' and Product's 'stock' keywords don't spuriously trigger
   assert.ok(stock.entities.some((e) => e.name === "Product"), "a plain 'stock' description must still get a Product entity");
 });
 
+/**
+ * Round 2106: the same bare-English-word collision class as the test
+ * above, found by continuing that round's own keyword-by-keyword audit
+ * of domainEntities.ts. "Courier" (and "Courier New") is one of the most
+ * common monospace/typewriter font names in everyday software --
+ * typography pickers, PDF/document generators, invoice/template
+ * designers, code editors -- with zero connection to a delivery person.
+ * Confirmed by direct execution before the fix: a PDF-generator
+ * description naming "Arial, Courier, or Times New Roman" as font
+ * choices returned ONLY ['Courier'], losing the real document-generator
+ * domain entirely (the same severity as round 880's "menu" finding).
+ */
+test("Courier's bare keyword doesn't spuriously trigger on the 'Courier'/'Courier New' monospace font name", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pdfGenerator = await provider.generate(
+    "A PDF generator app that lets users pick a font (Arial, Courier, or Times New Roman) and export a styled document.",
+  );
+  assert.ok(!pdfGenerator.entities.some((e) => e.name === "Courier"), "a font-picker PDF generator must not get a spurious Courier entity");
+
+  const codeEditor = await provider.generate("An app that lets users pick a monospace font such as Courier New for code blocks.");
+  assert.ok(!codeEditor.entities.some((e) => e.name === "Courier"), "a monospace-font code editor must not get a spurious Courier entity");
+
+  const invoiceDesigner = await provider.generate(
+    "An invoice template designer where users can set the heading font to Courier for a typewriter look.",
+  );
+  assert.ok(!invoiceDesigner.entities.some((e) => e.name === "Courier"), "an invoice-template designer naming the Courier font must not get a spurious Courier entity");
+
+  // The fix must not lose real recall: a real courier/delivery
+  // description, with no "font" anywhere near "courier", must still match.
+  const delivery = await provider.generate("An order-management app for a restaurant with delivery, including a menu and couriers.");
+  assert.ok(delivery.entities.some((e) => e.name === "Courier"), "a real delivery-courier description must still get a Courier entity");
+});
+
 test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

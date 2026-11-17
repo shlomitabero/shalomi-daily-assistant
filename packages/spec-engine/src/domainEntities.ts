@@ -781,7 +781,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "מעובד", round 825's "מצוות", and round 829's "כשירות" fixes
       // needed lookbehind too); this excludes the specific "מ" prefix
       // while still matching every real "נהג"-based phrasing.
-      "courier", /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
+      // Round 2106: bare "courier" is also one of the most common
+      // monospace/typewriter font names in everyday software (typography
+      // pickers, PDF/document generators, invoice/template designers,
+      // code editors) -- "Courier New" and plain "Courier" in a font
+      // list have nothing to do with a delivery person. Confirmed live:
+      // a PDF-generator description naming "Arial, Courier, or Times New
+      // Roman" as font choices matched ONLY ['Courier'], losing the real
+      // document-generator domain entirely -- the same severity as round
+      // 880's "menu" finding. Excluded via the same bounded-proximity
+      // lookaround this file's other short-range collisions use: "font"
+      // within 3 words either side of "courier", or "courier" immediately
+      // followed by "new" (the single most common exact phrase). A real
+      // courier/delivery description essentially never puts the word
+      // "font" anywhere near "courier".
+      /(?<!\bfont\b(?:\s+\S+){0,3}\s)\bcouriers?\b(?!\s+new\b)(?!(?:\s+\S+){0,3}\s+font\b)/,
+      /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
       // "delivery person" had no plural entry (round 584). Unlike this
       // file's other missing-plural fixes (576-583, all Hebrew ה→ות or
       // sofit-letter swaps, or an irregular Hebrew construct plural),
