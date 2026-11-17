@@ -27,6 +27,10 @@ import {
   WHATSAPP_NOT_CONNECTED_ERROR,
   WHATSAPP_SEND_TIMEOUT_ERROR,
   WHATSAPP_SEND_NOT_CONNECTED_ERROR,
+  WHATSAPP_INVALID_PHONE_NUMBER_ERROR,
+  WHATSAPP_MISSING_COUNTRY_CODE_ERROR,
+  WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR,
+  EMAIL_INVALID_ADDRESS_ERROR,
 } from "./automations.js";
 
 function baseRule(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
@@ -940,6 +944,60 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
       .get("proj1", rule.id, WHATSAPP_SEND_NOT_CONNECTED_ERROR) as { c: number }
   ).c;
   assert.equal(notConnectedCount, AUTOMATION_RUNS_RETENTION_LIMIT, "the WhatsApp-send-not_connected rows must still be capped at the normal retention limit, just in their own independent bucket");
+});
+
+/**
+ * Round 2116: three more stable, always-identical short codes
+ * whatsappWeb.ts's sendMessage/performSend return (see
+ * WHATSAPP_INVALID_PHONE_NUMBER_ERROR's own doc comment), plus
+ * fireEmailAction's own send_email sibling (EMAIL_INVALID_ADDRESS_ERROR)
+ * -- none of the four had their own retention bucket, despite the
+ * identical flood risk already guarded against for every sibling code
+ * above: a bulk update fires one automation per record (round 1076), and
+ * a toMode:"field" rule whose destination field is bad for many records
+ * (no country code, not phone-shaped, not email-shaped) or a fixed
+ * attachment file that's been deleted produces this exact literal for
+ * every one of them.
+ */
+function assertOwnRetentionBucket(error: string, label: string) {
+  const db = openDatabase(":memory:");
+  ensureAutomationRulesTable(db);
+  const rule = insertAutomationRule(db, baseRule());
+
+  recordAutomationRun(db, "proj1", rule.id, { status: "failed", error: "recipient not found" });
+  for (let i = 0; i < 30; i++) {
+    recordAutomationRun(db, "proj1", rule.id, { status: "failed", error });
+  }
+
+  const genuineCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error != ?")
+      .get("proj1", rule.id, error) as { c: number }
+  ).c;
+  assert.equal(genuineCount, 1, `the one genuine failure must survive a ${label} flood of any length, not just a short one`);
+
+  const bucketCount = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ?")
+      .get("proj1", rule.id, error) as { c: number }
+  ).c;
+  assert.equal(bucketCount, AUTOMATION_RUNS_RETENTION_LIMIT, `the ${label} rows must still be capped at the normal retention limit, just in their own independent bucket`);
+}
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 invalid_phone_number rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(WHATSAPP_INVALID_PHONE_NUMBER_ERROR, "invalid-phone-number");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 missing_country_code rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(WHATSAPP_MISSING_COUNTRY_CODE_ERROR, "missing-country-code");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 attachment_unavailable rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR, "attachment-unavailable");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 invalid_email_address rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(EMAIL_INVALID_ADDRESS_ERROR, "invalid-email-address");
 });
 
 /**

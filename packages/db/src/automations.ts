@@ -206,6 +206,46 @@ export const WHATSAPP_SEND_TIMEOUT_ERROR = "timeout";
  */
 export const WHATSAPP_SEND_NOT_CONNECTED_ERROR = "not_connected";
 
+/**
+ * Round 2116: three more stable, always-identical snake_case short codes
+ * whatsappWeb.ts's sendMessage/performSend return -- same flood risk as
+ * WHATSAPP_SEND_NOT_CONNECTED_ERROR just above, just never traced through
+ * for these three: a toMode:"field" send_whatsapp rule whose destination
+ * field holds many records' numbers with no country code, or that aren't
+ * phone-shaped at all, fires this exact literal once per record in a
+ * bulk update (round 1076's own unsuppressed-per-record firing), and a
+ * rule with a fixed attachment file that's since been deleted/moved on
+ * disk fails identically on every subsequent firing. Confirmed stable
+ * and intentional, not an accident: apps/web/src/api.ts's own
+ * KNOWN_WHATSAPP_SEND_ERROR_CODES already lists all three alongside
+ * "not_connected"/"timeout". Unlike WHATSAPP_SEND_NOT_CONNECTED_ERROR,
+ * these are NOT added to hasTooManyConsecutiveFailuresToday's exclusion
+ * filter (apps/api/src/automations.ts) -- they're a genuine, persistent
+ * data/config problem (a wrong field mapping, a missing file), the same
+ * reasoning that already correctly keeps WEBHOOK_UNREACHABLE_ERROR/
+ * EMAIL_UNREACHABLE_ERROR out of that same filter (see that function's
+ * own doc comment: a permanently wrong configuration should still count
+ * toward the cap, not be indistinguishable from a brief, self-healing
+ * blip). Retention bucketing (preventing one rule's own history from
+ * being wiped out) and the pause cap (deciding whether to stop retrying)
+ * are independent concerns -- this fix only addresses the former.
+ */
+export const WHATSAPP_INVALID_PHONE_NUMBER_ERROR = "invalid_phone_number";
+export const WHATSAPP_MISSING_COUNTRY_CODE_ERROR = "missing_country_code";
+export const WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR = "attachment_unavailable";
+
+/**
+ * Round 2116: the "send_email" action type's own sibling of the three
+ * WhatsApp short codes just above -- fireEmailAction (apps/api/src/
+ * automations.ts) produces this exact literal when a toMode:"field"
+ * rule's resolved destination value isn't a valid email address (its
+ * own z.string().email() check). Same flood risk and same deliberate
+ * exclusion from hasTooManyConsecutiveFailuresToday's cap as the
+ * WhatsApp siblings above -- a persistently wrong field mapping should
+ * still count toward the pause cap.
+ */
+export const EMAIL_INVALID_ADDRESS_ERROR = "invalid_email_address";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -1005,6 +1045,35 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, WHATSAPP_SEND_NOT_CONNECTED_ERROR, projectId, id, WHATSAPP_SEND_NOT_CONNECTED_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2116: mirrors the bucket just above, for
+  // WHATSAPP_INVALID_PHONE_NUMBER_ERROR's own identical flood risk -- see
+  // that constant's own doc comment.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_INVALID_PHONE_NUMBER_ERROR, projectId, id, WHATSAPP_INVALID_PHONE_NUMBER_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2116: mirrors the bucket just above, for
+  // WHATSAPP_MISSING_COUNTRY_CODE_ERROR's own identical flood risk.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_MISSING_COUNTRY_CODE_ERROR, projectId, id, WHATSAPP_MISSING_COUNTRY_CODE_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2116: mirrors the bucket just above, for
+  // WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR's own identical flood risk.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR, projectId, id, WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2116: the "send_email" sibling of the three WhatsApp buckets
+  // just above, for EMAIL_INVALID_ADDRESS_ERROR's own identical flood risk.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, EMAIL_INVALID_ADDRESS_ERROR, projectId, id, EMAIL_INVALID_ADDRESS_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -1022,8 +1091,8 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -1036,6 +1105,10 @@ export function recordAutomationRun(
     EMAIL_UNREACHABLE_ERROR,
     WHATSAPP_SEND_TIMEOUT_ERROR,
     WHATSAPP_SEND_NOT_CONNECTED_ERROR,
+    WHATSAPP_INVALID_PHONE_NUMBER_ERROR,
+    WHATSAPP_MISSING_COUNTRY_CODE_ERROR,
+    WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR,
+    EMAIL_INVALID_ADDRESS_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
@@ -1046,6 +1119,10 @@ export function recordAutomationRun(
     EMAIL_UNREACHABLE_ERROR,
     WHATSAPP_SEND_TIMEOUT_ERROR,
     WHATSAPP_SEND_NOT_CONNECTED_ERROR,
+    WHATSAPP_INVALID_PHONE_NUMBER_ERROR,
+    WHATSAPP_MISSING_COUNTRY_CODE_ERROR,
+    WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR,
+    EMAIL_INVALID_ADDRESS_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the
