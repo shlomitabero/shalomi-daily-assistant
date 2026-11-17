@@ -393,6 +393,51 @@ test('patchOpportunity still accepts a zero or null cost - unlike negative, both
   assert.equal(res.body.opportunity.costs.paymentProcessing, null);
 });
 
+test('patchOpportunity rejects a conflicting paymentProcessing once a real sale has already set it', () => {
+  // billing.js's webhook writes Paddle's own real fee straight to the
+  // database the instant a real sale completes, with no client involved
+  // at all - OpportunityDetail.jsx only fetches the opportunity once, on
+  // page load, so a stale form saved afterward (editing some unrelated
+  // field) would otherwise silently revert this real fee back to
+  // "unknown" with no error telling the owner why.
+  __resetForTests();
+  const opp = insertOpportunity({ costs: { aiUsage: 0.05, paymentProcessing: 2.5 } });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { costs: { aiUsage: 0.05, paymentProcessing: null } } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.match(res.body.error, /עמלת הסליקה כבר נקבעה/);
+  // The real fee must survive the rejected patch untouched.
+  assert.equal(db.opportunities.get(opp.id).costs.paymentProcessing, 2.5);
+});
+
+test('patchOpportunity accepts a costs patch that resends the same real paymentProcessing unchanged', () => {
+  // The normal case: OpportunityDetail.jsx's form round-trips the current
+  // value on every save (a controlled form, not a per-field PATCH) - this
+  // must keep working for every OTHER field the owner still legitimately
+  // edits (riskLevel, dataQuality, revenueEstimate) on an opportunity that
+  // already has a real recorded fee.
+  __resetForTests();
+  const opp = insertOpportunity({ costs: { aiUsage: 0.05, paymentProcessing: 2.5 }, riskLevel: 'medium' });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { costs: { aiUsage: 0.1, paymentProcessing: 2.5 }, riskLevel: 'low' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.costs.paymentProcessing, 2.5);
+  assert.equal(res.body.opportunity.costs.aiUsage, 0.1);
+  assert.equal(res.body.opportunity.riskLevel, 'low');
+});
+
+test('patchOpportunity allows setting paymentProcessing for the first time, before any real sale', () => {
+  // There is no existing real value yet (null), so this is still the
+  // owner's own early estimate, not a conflict with anything Paddle has
+  // confirmed - the guard must only fire once a real value already exists.
+  __resetForTests();
+  const opp = insertOpportunity({ costs: { aiUsage: 0.05, paymentProcessing: null } });
+  const res = makeRes();
+  patchOpportunity({ params: { id: opp.id }, body: { costs: { aiUsage: 0.05, paymentProcessing: 1.5 } } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.opportunity.costs.paymentProcessing, 1.5);
+});
+
 test('patchOpportunity rejects an invalid riskLevel or dataQuality instead of storing it', () => {
   __resetForTests();
   const opp1 = insertOpportunity();

@@ -185,7 +185,27 @@ export default function OpportunityDetail() {
         </div>
         <div className="field-row">
           <label>עלות AI ($)<input type="number" step="any" value={form.aiUsage} onChange={(e) => setForm({ ...form, aiUsage: e.target.value })} /></label>
-          <label>עמלת סליקה ($)<input type="number" step="any" value={form.paymentProcessing} onChange={(e) => setForm({ ...form, paymentProcessing: e.target.value })} /></label>
+          {/* Once a real sale sets this (billing.js's webhook writes
+              Paddle's own real fee straight to the database), it's no
+              longer the owner's own estimate to edit - same locked
+              treatment priceUSD already gets after publish, for the same
+              reason: this app's one promise is to never let its own saved
+              number silently diverge from a real-money fact it already
+              knows. routes/opportunities.js's patchOpportunity now rejects
+              a conflicting value here server-side too, regardless of
+              whether this field happened to be disabled at the moment a
+              sale landed. */}
+          <label>
+            עמלת סליקה ($)
+            <input
+              type="number"
+              step="any"
+              value={form.paymentProcessing}
+              onChange={(e) => setForm({ ...form, paymentProcessing: e.target.value })}
+              disabled={opp.costs?.paymentProcessing != null}
+              title={opp.costs?.paymentProcessing != null ? 'כבר נקבעה על ידי מכירה אמיתית ב-Paddle — לא ניתן לשנות' : undefined}
+            />
+          </label>
         </div>
         <div className="field-row">
           <label>רמת סיכון

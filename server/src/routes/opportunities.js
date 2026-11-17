@@ -209,6 +209,26 @@ export function patchOpportunity(req, res) {
         return res.status(400).json({ error: `העלות "${key}" חייבת להיות מספר לא שלילי` });
       }
     }
+    // Unlike aiUsage (a fixed estimate the owner can always freely edit),
+    // paymentProcessing becomes authoritative the moment a real sale
+    // happens - billing.js's webhook writes Paddle's own real fee straight
+    // to the database the instant transaction.completed arrives, with no
+    // client involved at all. OpportunityDetail.jsx only fetches the
+    // opportunity once, on page load - if a real sale lands while the
+    // owner still has that page open, its form field keeps showing the
+    // stale pre-sale value (often empty/null). Saving ANY unrelated field
+    // afterward (riskLevel, an unrelated cost) would otherwise resend that
+    // stale costs object as-is and silently revert the just-recorded real
+    // fee back to "unknown" - the exact same "the owner's own save undoes
+    // a real-money fact this app already knew" risk already guarded for
+    // priceUSD after publish, just for this field instead.
+    if (
+      'paymentProcessing' in patch.costs &&
+      opportunity.costs?.paymentProcessing != null &&
+      patch.costs.paymentProcessing !== opportunity.costs.paymentProcessing
+    ) {
+      return res.status(409).json({ error: 'עמלת הסליקה כבר נקבעה על ידי מכירה אמיתית ב-Paddle ולא ניתן לשנות אותה כאן — רענן את העמוד כדי לראות את הערך הנוכחי' });
+    }
   }
   // priceUSD, unlike revenueEstimate/costs, is never meaningfully "unknown" —
   // a product always has a real price — so null is rejected here too, not
