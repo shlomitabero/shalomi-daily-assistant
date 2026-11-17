@@ -20022,6 +20022,102 @@ test("PATCH .../automations/:ruleId can re-enable a rule that was disabled becau
 });
 
 /**
+ * Round 2135: the gates round 2094/2096/2097 added decide whether to
+ * re-validate based only on which KEYS the patch body contains, never on
+ * whether the stored trigger/destination still actually fits the CURRENT
+ * spec -- so a bare {enabled: true} (exactly what the Automations panel's
+ * own "Enable" button sends) skipped validation entirely, even when the
+ * field a rule depends on was RETYPED (not removed) since
+ * disableAutomationRulesForField disabled it. Unlike removal (round
+ * 2094's own test just above, where findField genuinely has nothing to
+ * resolve), a retyped field still resolves fine via findEntity/findField
+ * -- it's just no longer compatible with the rule's own stored
+ * fieldValue -- so there's no excuse to skip re-checking it. Confirmed
+ * live before fixing: a Deal's enum "status" (fieldValue "Won") retyped
+ * to boolean correctly disabled the rule, but a bare {enabled: true}
+ * patch re-enabled it with fieldValue "Won" still in place, a value
+ * validateAutomationFieldValue already rejects via any OTHER edit path.
+ */
+test("PATCH .../automations/:ruleId re-validates a rule's trigger field on a bare {enabled: true} patch when the field was RETYPED (not removed), unlike round 2094's genuinely-gone case", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `reenable-retyped-field-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specEnumStatus: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "enum", required: false, enumValues: ["New", "Won"] },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specBooleanStatus: ProductSpec = {
+      ...specEnumStatus,
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "boolean", required: false },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Deal tracker", description: "A CRM for tracking deals.", spec: specEnumStatus });
+    diffAndMigrate(db, projectId, undefined, specEnumStatus);
+
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "field_equals",
+        fieldName: "status",
+        fieldValue: "Won",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "+15551234567",
+        messageTemplate: "Deal won!",
+      }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    // Retyping (not removing) the field disables the rule the same way,
+    // but findField will still resolve it -- just with an incompatible type.
+    diffAndMigrate(db, projectId, specEnumStatus, specBooleanStatus);
+    updateProjectSpec(db, projectId, specBooleanStatus);
+
+    const beforeRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules: beforeRules } = (await beforeRes.json()) as { rules: { enabled: boolean }[] };
+    assert.equal(beforeRules[0].enabled, false, "sanity check: retyping the field must still have disabled the rule");
+
+    // Exactly what clicking "Enable" in the Automations panel sends.
+    const enableRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(enableRes.status, 400, "a bare {enabled: true} patch must now be rejected -- the stored fieldValue 'Won' no longer fits the retyped boolean field");
+    assert.equal(((await enableRes.json()) as { code?: string }).code, "VALIDATION_ERROR");
+
+    const stillDisabledRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules: stillDisabledRules } = (await stillDisabledRes.json()) as { rules: { enabled: boolean }[] };
+    assert.equal(stillDisabledRules[0].enabled, false, "a rejected enable attempt must leave the rule disabled, not partially applied");
+  });
+});
+
+/**
  * Round 2096: the fix just above (`touchesTriggerOrField`) was still ONE
  * shared boolean covering two independent concerns -- the trigger side
  * (fieldName/fieldValue/fieldOperator) and the destination side (toMode/

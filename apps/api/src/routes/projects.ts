@@ -6862,6 +6862,25 @@ export function createProjectsRouter(
             "fieldValue" in parsed.data ||
             "fieldOperator" in parsed.data;
           const touchesDestination = "toMode" in parsed.data || "toField" in parsed.data;
+          // Round 2135: the gates above decide whether to re-validate based
+          // only on which KEYS the patch body contains, never on whether
+          // the stored trigger/destination still actually fits the CURRENT
+          // spec -- so a bare {enabled: true} (exactly what the
+          // Automations panel's own "Enable" button sends, AutomationsPanel
+          // .tsx's handleToggle) skipped this entirely, even when the
+          // field it depends on was RETYPED (not removed) since
+          // disableAutomationRulesForField disabled it. Unlike removal
+          // (where findField genuinely has nothing to resolve, and rounds
+          // 2094-2097 deliberately let that recovery-enable through),
+          // a retyped field still resolves fine -- it's just no longer
+          // compatible with the rule's own stored fieldValue/fieldOperator/
+          // toField -- so there was no excuse to skip re-validating it.
+          // Confirmed live: retyping a Deal's enum "status" (fieldValue
+          // "Won") to boolean disabled the rule as expected, but PATCHing
+          // {enabled: true} alone re-enabled it with fieldValue "Won"
+          // still in place -- a value validateAutomationFieldValue itself
+          // already rejects for a boolean field via any OTHER edit path.
+          const isEnabling = "enabled" in parsed.data && parsed.data.enabled === true;
           // Round 2097: `findEntity` itself was still eager -- run as soon as
           // EITHER group was touched, even when the *resulting* next.trigger/
           // next.toMode didn't actually need an entity/field lookup at all.
@@ -6873,18 +6892,33 @@ export function createProjectsRouter(
           // only switches toMode from "field" to "static" with a real static
           // number/email -- a resulting value that needs no entity at all.
           // Only resolve the entity when the merged result actually needs it.
-          const needsEntity =
-            (touchesTrigger && next.trigger === "field_equals" && !!next.fieldName) ||
-            (touchesDestination && next.toMode === "field" && !!next.toField);
-          if (needsEntity) {
-            const entity = findEntity(project, existing.entityName);
-            if (touchesTrigger && next.trigger === "field_equals" && next.fieldName) {
-              const field = findField(entity, next.fieldName);
-              if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
-              if (next.fieldOperator) validateAutomationFieldOperator(field, next.fieldOperator);
+          const needsTriggerLookup = (touchesTrigger || isEnabling) && next.trigger === "field_equals" && !!next.fieldName;
+          const needsDestinationLookup = (touchesDestination || isEnabling) && next.toMode === "field" && !!next.toField;
+          if (needsTriggerLookup || needsDestinationLookup) {
+            let entity: Entity | undefined;
+            const resolveEntity = () => (entity ??= findEntity(project, existing.entityName));
+            if (needsTriggerLookup && next.fieldName) {
+              try {
+                const field = findField(resolveEntity(), next.fieldName);
+                if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
+                if (next.fieldOperator) validateAutomationFieldOperator(field, next.fieldOperator);
+              } catch (err) {
+                // Enabling alone (not a patch that itself touches the
+                // trigger) must still let a genuinely-gone entity/field
+                // through, matching rounds 2094-2097's own recovery-enable
+                // behavior -- only a real type/shape mismatch on a field
+                // that DOES still exist is new behavior this round adds.
+                const isNotFound = err instanceof HttpError && (err.code === "ENTITY_NOT_FOUND" || err.code === "FIELD_NOT_FOUND");
+                if (!(isNotFound && isEnabling && !touchesTrigger)) throw err;
+              }
             }
-            if (touchesDestination && next.toMode === "field" && next.toField) {
-              validateAutomationToField(findField(entity, next.toField));
+            if (needsDestinationLookup && next.toField) {
+              try {
+                validateAutomationToField(findField(resolveEntity(), next.toField));
+              } catch (err) {
+                const isNotFound = err instanceof HttpError && (err.code === "ENTITY_NOT_FOUND" || err.code === "FIELD_NOT_FOUND");
+                if (!(isNotFound && isEnabling && !touchesDestination)) throw err;
+              }
             }
           }
           try {
