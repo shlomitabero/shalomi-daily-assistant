@@ -1949,6 +1949,57 @@ test("a donation description mentioning 'תורמים' (donors) does not spuriou
   assert.ok(!spec.entities.some((e) => e.name === "Appointment"), "'תורמים' must not spuriously match Appointment via a 'תור' substring");
 });
 
+/**
+ * Round 2111: unlike the collisions above (two different words sharing a
+ * substring), bare "תרומה"/"תרומות" is true polysemy -- standard Hebrew for
+ * both "charitable donation" and the unrelated everyday sense
+ * "contribution" (an academic/research/managerial contribution).
+ */
+test("Donation's 'תרומה'/'תרומות' keyword doesn't spuriously match the generic academic/managerial 'contribution' sense", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const academic = await provider.generate("פלטפורמה לדירוג התרומה המדעית של כל פרסום אקדמי בתחום הפיזיקה");
+  assert.ok(
+    !academic.entities.some((e) => e.name === "Donation"),
+    "'התרומה המדעית' (scientific contribution) must not spuriously match Donation",
+  );
+
+  const research = await provider.generate("מערכת למעקב אחרי התרומה המחקרית של כל פרופסור למחלקה באוניברסיטה");
+  assert.ok(
+    !research.entities.some((e) => e.name === "Donation"),
+    "'התרומה המחקרית' (research contribution) must not spuriously match Donation",
+  );
+
+  const managerial = await provider.generate("כלי למדידת התרומה של כל מנהל להצלחת החברה הרבעונית");
+  assert.ok(
+    !managerial.entities.some((e) => e.name === "Donation"),
+    "'התרומה של כל מנהל' (a manager's contribution) must not spuriously match Donation",
+  );
+
+  const wiki = await provider.generate("אתר ויקי לניהול תרומות של כותבים לערכים באנציקלופדיה המקוונת");
+  assert.ok(
+    !wiki.entities.some((e) => e.name === "Donation"),
+    "'תרומות של כותבים' (writers' contributions) must not spuriously match Donation",
+  );
+
+  // "דם" (blood) is bounded, not bare, since it's a substring of the
+  // unrelated common word "אדם" (person) -- confirm that doesn't
+  // spuriously satisfy the cue either.
+  const personTrap = await provider.generate("מערכת למעקב אחרי התרומה של כל אדם לקהילה המקומית");
+  assert.ok(
+    !personTrap.entities.some((e) => e.name === "Donation"),
+    "'אדם' (person) must not spuriously satisfy the 'דם' blood-donation cue via substring",
+  );
+
+  // The real word still works when an actual donor/nonprofit/blood/organ
+  // cue co-occurs.
+  const bloodDonation = await provider.generate("אפליקציה לניהול תרומות דם במרכז לתרומת דם");
+  assert.ok(bloodDonation.entities.some((e) => e.name === "Donation"), "'תרומות דם' (blood donations) must still match Donation");
+
+  const organDonation = await provider.generate("כלי לניהול תרומות איברים בבית חולים");
+  assert.ok(organDonation.entities.some((e) => e.name === "Donation"), "'תרומות איברים' (organ donations) must still match Donation");
+});
+
 test("recognizes vendor/supplier, business-expense, and customer-review descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

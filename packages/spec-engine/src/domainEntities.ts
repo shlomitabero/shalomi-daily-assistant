@@ -1669,9 +1669,28 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // than appending a suffix, so it is not a substring of "עמותה" the way
     // "תרומה"/"תרומות" already are -- a description using only the plural
     // matched no domain entity at all.
+    //
+    // Bare "תרומה"/"תרומות" (round 2111) is true polysemy, not a substring
+    // collision between two different words like the pitfalls above --
+    // "תרומה" is standard Hebrew for BOTH "charitable donation" and the
+    // completely unrelated everyday sense "contribution" (an academic,
+    // research, or managerial contribution), the same ambiguity English
+    // "contribution" has. Confirmed live via matchEntities: descriptions
+    // about a researcher's scientific/academic contribution, a manager's
+    // contribution to company results, and a wiki tracking writers'
+    // contributions each spuriously matched ONLY Donation. No single
+    // adjacent word disambiguates it, so this uses the same document-wide
+    // bidirectional-lookaround technique rounds 2107/2109/2110 established:
+    // excluded unless an actual donor/nonprofit/charity/blood/organ cue
+    // co-occurs anywhere in the text. "דם" (blood) is bounded by Hebrew-
+    // letter lookaround rather than left bare, since it's a substring of
+    // the common unrelated word "אדם" (person) and would otherwise fire
+    // on any description mentioning a person alongside unrelated
+    // "contribution" phrasing.
     keywords: [
       /\bdonations?\b/, "donor", "nonprofit", "fundraising campaign",
-      "תרומה", "תרומות", "עמותה", "עמותות",
+      /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
+      "עמותה", "עמותות",
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",
