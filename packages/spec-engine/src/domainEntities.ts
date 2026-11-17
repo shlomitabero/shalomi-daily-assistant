@@ -2293,8 +2293,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // displaced residents." matched ONLY ['Volunteer'], the identical
     // catch-all-losing failure round 2108 already fixed for every other
     // possessive determiner.
+    //
+    // Round 2150: round 2108's own "volunteer information" exclusion
+    // bounded the gap before "information" to AT MOST one intervening word
+    // (`{0,1}`) -- the exact same fixed-word-window defeat class round
+    // 2149 already fixed for the Courier font-exclusion regex just above
+    // in this file. A signup form naming what kind of information (e.g.
+    // "volunteer some additional contact information") puts two or more
+    // words before "information", escapes the window, and matches
+    // Volunteer anyway. Confirmed live: "...can optionally volunteer some
+    // additional contact information too." matched ONLY ['Volunteer'],
+    // the identical catch-all-losing failure round 2108's own comment
+    // above describes. Widened to an unbounded `(?:\S+\s+)*` repetition --
+    // any number of words before "information" now still excludes the
+    // match, the same unbounded remedy round 2149 applied.
     keywords: [
-      /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+){0,1}information\b)/,
+      /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+)*information\b)/,
       "volunteer management", "volunteer shift",
       "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
     ],

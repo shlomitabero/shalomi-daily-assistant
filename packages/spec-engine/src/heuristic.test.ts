@@ -2177,6 +2177,25 @@ test("'volunteer our building'/'volunteer our office space' never match the Volu
   assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"), "'our volunteers' (our preceding, not following, the keyword) must still get a Volunteer entity");
 });
 
+/**
+ * Round 2150: round 2108's own "volunteer information" exclusion bounded
+ * the gap before "information" to at most one intervening word -- the
+ * same fixed-word-window defeat class round 2149 already fixed for the
+ * Courier font-exclusion regex. A signup form naming what kind of
+ * information (two or more words before "information") escaped the
+ * window and matched Volunteer anyway. Confirmed live before this fix:
+ * the sentence below matched ONLY ['Volunteer'], the identical catch-all-
+ * losing failure round 2108's own comment describes.
+ */
+test("'volunteer some additional contact information' (more than one word before 'information') never matches the Volunteer entity either", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const signupForm = await provider.generate(
+    "A simple signup form for an event. Users enter their name and email, and can optionally volunteer some additional contact information too.",
+  );
+  assert.ok(!signupForm.entities.some((e) => e.name === "Volunteer"), "'volunteer some additional contact information' must never match Volunteer");
+});
+
 test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
   const provider = new HeuristicSpecProvider();
   const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");
