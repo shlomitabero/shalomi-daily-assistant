@@ -1230,6 +1230,21 @@ interface ManagedSession {
   qrDataUrl: string | null;
   phoneNumber: string | null;
   error: string | null;
+  /**
+   * The most recent raw QR string handleConnectionUpdate has seen for this
+   * session, recorded before awaiting qrToDataUrl -- Baileys refreshes the
+   * pairing QR periodically while a device link is pending, each refresh
+   * firing its own "connection.update" event, and the listener that calls
+   * handleConnectionUpdate (see its own comment) never awaits it, so two
+   * overlapping invocations' own qrToDataUrl(...) conversions race each
+   * other independently. Without this, whichever conversion happened to
+   * finish LAST won qrDataUrl, even if it was encoding the OLDER, already-
+   * superseded QR string -- the frontend (WhatsAppPanel.tsx) keeps
+   * rendering status: "qr" the whole time, so a slow-resolving stale QR
+   * silently clobbering a faster-resolving fresh one showed the user an
+   * expired code with no indication anything was wrong.
+   */
+  pendingQr: string | null;
 }
 
 export interface WhatsAppWebManagerOptions {
@@ -1458,7 +1473,7 @@ export class WhatsAppWebManager {
       return this.getStatus(projectId);
     }
 
-    const session: ManagedSession = { sock: null, status: "connecting", qrDataUrl: null, phoneNumber: null, error: null };
+    const session: ManagedSession = { sock: null, status: "connecting", qrDataUrl: null, phoneNumber: null, error: null, pendingQr: null };
     this.sessions.set(projectId, session);
 
     await this.beginConnectAttempt(projectId, session);
@@ -1556,10 +1571,18 @@ export class WhatsAppWebManager {
 
     if (update.qr) {
       session.status = "qr";
+      session.pendingQr = update.qr;
       try {
-        session.qrDataUrl = await this.qrToDataUrl(update.qr);
+        const dataUrl = await this.qrToDataUrl(update.qr);
+        // See ManagedSession.pendingQr's own doc comment -- a newer QR may
+        // have already arrived (and possibly already resolved) while this
+        // conversion was in flight; only apply this result if it's still
+        // the latest one, the same stale-async-result-discard idiom the
+        // identity check at the top of this method already uses for a
+        // replaced session.
+        if (session.pendingQr === update.qr) session.qrDataUrl = dataUrl;
       } catch (err) {
-        session.error = (err as Error).message;
+        if (session.pendingQr === update.qr) session.error = (err as Error).message;
       }
     }
 
@@ -1592,6 +1615,11 @@ export class WhatsAppWebManager {
         session.status = "connecting";
         session.qrDataUrl = null;
         session.error = null;
+        // Also clear pendingQr -- a QR conversion from before this restart
+        // that's still in flight (see ManagedSession.pendingQr's own doc
+        // comment) must not validate itself against a new QR this fresh
+        // connect attempt happens to reuse.
+        session.pendingQr = null;
         await this.beginConnectAttempt(projectId, session);
       } else {
         // Keep the session in the map (the same thing runConnectAttempt's

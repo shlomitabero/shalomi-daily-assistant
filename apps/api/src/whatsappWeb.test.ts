@@ -163,6 +163,47 @@ test("connect moves to connecting, then qr once the socket emits one, using the 
   assert.equal(afterQr.qrDataUrl, "data:image/png;base64,FAKE(raw-qr-string)");
 });
 
+/**
+ * Regression test for a real bug found by round 2125's survey: Baileys
+ * refreshes the pairing QR periodically while a device link is pending,
+ * each refresh firing its own "connection.update" event -- and the
+ * listener that calls handleConnectionUpdate (see its own comment) never
+ * awaits it, so two overlapping invocations' own qrToDataUrl(...)
+ * conversions race each other independently. Before this fix, whichever
+ * conversion happened to finish LAST won session.qrDataUrl, even if it
+ * was encoding the OLDER, already-superseded QR string -- a slow-
+ * resolving stale QR could silently clobber a faster-resolving fresh one,
+ * with status staying "qr" the whole time so the frontend never showed
+ * anything wrong. Forces the ordering inversion deterministically via the
+ * injected qrToDataUrl hook (the same injection point every other test in
+ * this file uses).
+ */
+test("a slower-resolving stale QR conversion doesn't clobber a faster-resolving fresher one", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+
+  const fake = createFakeSocket();
+  const manager = new WhatsAppWebManager({
+    db,
+    sessionsRootDir: "/tmp/forge-whatsapp-test-sessions-qr-race",
+    createSocket: async () => ({ sock: fake.sock, saveCreds: async () => {} }),
+    qrToDataUrl: async (qr) => {
+      if (qr === "QR1") await new Promise((resolve) => setTimeout(resolve, 20));
+      return `data:image/png;base64,FAKE(${qr})`;
+    },
+  });
+
+  await manager.connect("proj1");
+  fake.emitConnectionUpdate({ qr: "QR1" }); // fires first, resolves slow
+  fake.emitConnectionUpdate({ qr: "QR2" }); // fires second, resolves fast
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(manager.getStatus("proj1").qrDataUrl, "data:image/png;base64,FAKE(QR2)");
+});
+
 test("connect does not spawn a second socket while already connecting or connected", async () => {
   const { manager, getCreateSocketCalls } = setupManager();
   await manager.connect("proj1");
