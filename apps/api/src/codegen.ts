@@ -6483,7 +6483,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const loaded = migrateCollapsedGroupsFieldCase(entity.name, groupFieldName);
     const groupField = entity.fields.find((f) => f.name === groupFieldName);
     if (groupField?.type !== "enum") return new Set(loaded);
+    // Round 2169: validValues must also allow otherGroupKey's synthetic
+    // "(other)" key -- this mount-time initializer duplicates the
+    // staleness-guard effect a few hundred lines below (which round 2169
+    // already fixed), and runs FIRST, synchronously, before any effect.
+    // Without this, it stripped a persisted "(other)" collapse and wrote
+    // the stripped array back to storage before the effect ever got a
+    // chance to see the original entry, defeating that fix entirely.
     const validValues = new Set(groupField.enumValues ?? []);
+    validValues.add(otherGroupKey(groupField.enumValues));
     const filtered = loaded.filter((v) => validValues.has(v));
     if (filtered.length !== loaded.length) setPersistedCollapsedGroups(entity.name, groupFieldName, filtered);
     return new Set(filtered);
@@ -6497,7 +6505,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const boardFieldNameForInit = boardFieldForInit ? boardFieldForInit.name : "";
     const loaded = migrateCollapsedBoardColumnsFieldCase(entity.name, boardFieldNameForInit);
     if (!boardFieldForInit) return new Set(loaded);
+    // Round 2169: same otherGroupKey allowance as collapsedGroups' own
+    // initializer just above -- this duplicate mount-time filter runs
+    // before the board-column staleness-guard effect below, so it has to
+    // carry the same fix or it strips+persists the "(other)" collapse
+    // away first.
     const validValues = new Set(boardFieldForInit.enumValues ?? []);
+    validValues.add(otherGroupKey(boardFieldForInit.enumValues));
     const filtered = loaded.filter((v) => validValues.has(v));
     if (filtered.length !== loaded.length) setPersistedCollapsedBoardColumns(entity.name, boardFieldNameForInit, filtered);
     return new Set(filtered);
@@ -7245,6 +7259,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // forever the instant the user picked that field here, instead of
   // being pruned like the mount-time path already does. Mirrors that
   // initializer's own filter-and-write-back logic exactly.
+  // Round 2169: mirrors the live Forge AI preview's own round-2169 fix --
+  // validValues used to only include the field's own declared enumValues,
+  // but groupRecordsByField also adds a synthetic "(other)" group
+  // (otherGroupKey) for records whose stored value isn't any declared
+  // one, reachable via the same collapse toggle, and collapsing it got
+  // silently wiped on every remount by this exact staleness filter.
   useEffect(() => {
     const loaded = migrateCollapsedGroupsFieldCase(entity.name, groupFieldName);
     const groupFieldForEffect = entity.fields.find((f) => f.name === groupFieldName);
@@ -7253,6 +7273,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       return;
     }
     const validValues = new Set(groupFieldForEffect.enumValues ?? []);
+    validValues.add(otherGroupKey(groupFieldForEffect.enumValues));
     const filtered = loaded.filter((v) => validValues.has(v));
     if (filtered.length !== loaded.length) setPersistedCollapsedGroups(entity.name, groupFieldName, filtered);
     setCollapsedGroups(new Set(filtered));
@@ -7262,6 +7283,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // board columns are collapsed is scoped per entity+boardField too, in
   // its own separate store, and findBoardField only ever resolves to an
   // enum field, so the identical filter-and-write-back is needed here.
+  // Round 2169: mirrors the live Forge AI preview's own round-2169 fix --
+  // groupByField adds a synthetic "(other)" column (otherGroupKey) too,
+  // reachable via the same collapse toggle, and collapsing it got
+  // silently wiped on every remount by this exact staleness filter.
   useEffect(() => {
     const boardFieldNameForEffect = boardField ? boardField.name : "";
     const loaded = migrateCollapsedBoardColumnsFieldCase(entity.name, boardFieldNameForEffect);
@@ -7270,6 +7295,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       return;
     }
     const validValues = new Set(boardField.enumValues ?? []);
+    validValues.add(otherGroupKey(boardField.enumValues));
     const filtered = loaded.filter((v) => validValues.has(v));
     if (filtered.length !== loaded.length) setPersistedCollapsedBoardColumns(entity.name, boardFieldNameForEffect, filtered);
     setCollapsedBoardColumns(new Set(filtered));

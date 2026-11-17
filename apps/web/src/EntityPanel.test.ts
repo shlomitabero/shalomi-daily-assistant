@@ -11,6 +11,7 @@ import { getColumnWidths, setColumnWidth } from "./columnWidths.js";
 import { getColumnOrder, setColumnOrder } from "./columnOrder.js";
 import { getHiddenFields } from "./columnVisibility.js";
 import { getGroupByField } from "./groupByPreference.js";
+import { otherGroupKey } from "./entityFormatting.js";
 import { getCollapsedGroups } from "./collapsedGroupsPreference.js";
 import { getCollapsedBoardColumns } from "./collapsedBoardColumnsPreference.js";
 import { getViewMode } from "./viewModePreference.js";
@@ -13198,6 +13199,58 @@ test("EntityPanel's board column toggle hides only that column's cards, persists
 });
 
 /**
+ * Round 2169: the migration effect above (and its table-view sibling for
+ * collapsedGroups) only ever allowlisted the field's real declared
+ * enumValues as "still valid" -- but groupByField also adds the synthetic
+ * "(other)" column (otherGroupKey) for a record whose stored status isn't
+ * any declared value, reachable via the exact same collapse toggle as any
+ * real column. Since "(other)"'s own key is never a member of enumValues,
+ * the effect treated a persisted collapse of it as a stale entry from a
+ * renamed/removed real enum value and pruned it on every remount, silently
+ * re-expanding it every single time with no action by the user.
+ */
+test("EntityPanel's board-column toggle keeps the synthetic '(other)' column collapsed across a full unmount+remount", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "archived" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const view = renderEntityPanel();
+      await waitForCondition(() => document.querySelector(".entity-toolbar") !== null);
+
+      const boardToggle = document.querySelectorAll(".view-toggle-btn")[1] as HTMLButtonElement;
+      fireEvent.click(boardToggle);
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 4);
+
+      function findOtherColumn() {
+        return Array.from(document.querySelectorAll(".board-column")).find((col) => col.classList.contains("board-column-other")) as HTMLDivElement;
+      }
+      assert.ok(findOtherColumn(), "expected a trailing '(other)' column for the unrecognized 'archived' status");
+      assert.equal(findOtherColumn().querySelectorAll(".board-card").length, 1, "the '(other)' column must start expanded");
+
+      const otherToggle = findOtherColumn().querySelector(".board-column-toggle") as HTMLButtonElement;
+      fireEvent.click(otherToggle);
+      await waitForCondition(() => findOtherColumn().querySelectorAll(".board-card").length === 0);
+
+      // The collapsed state must survive a full unmount+remount.
+      view.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll(".board-column").length === 4);
+      assert.equal(
+        findOtherColumn().querySelectorAll(".board-card").length,
+        0,
+        "the '(other)' column must still be collapsed after a full remount, not silently re-expanded",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Regression test for round 435's finding: collapsedBoardColumnsPreference.ts
  * had the exact same missing-dimension defect round 434 fixed for
  * collapsedGroupsPreference.ts, just left open in this sibling file --
@@ -18747,6 +18800,68 @@ test("EntityPanel's group-header toggle collapses and expands just that one grou
         wonToggleAfterRemount.getAttribute("aria-expanded"),
         "false",
         "a fresh mount of the same project+entity must restore the persisted collapsed group, not reset to all-expanded",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2169: the table-view twin of the "(other)" collapse-staleness bug
+ * round 2169 also fixed for the board view above. groupRecordsByField
+ * (entityFormatting.ts) appends a synthetic "(other)" group, keyed by
+ * otherGroupKey(field.enumValues), for any record whose stored "status"
+ * isn't one of the field's declared enumValues -- and this group's own
+ * toggle is a perfectly ordinary .entity-group-toggle button, reachable
+ * just like a real enum value's group. Before the fix, the collapsedGroups
+ * staleness-guard effect's "still a real enum value" allowlist was built
+ * from field.enumValues alone, which never includes otherGroupKey's
+ * synthetic key -- so a persisted collapse of the "(other)" group got
+ * wrongly pruned as a stale/dead entry on every remount, silently
+ * re-expanding it with no user action.
+ */
+test("EntityPanel's group-header toggle keeps the synthetic '(other)' table group collapsed across a full unmount+remount", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, createdAt: "x", name: "Acme Corp", status: "new" },
+      { id: 2, createdAt: "x", name: "Globex", status: "archived" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      const firstView = renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      const groupBySelect = document.querySelector(".entity-group-by") as HTMLSelectElement;
+      fireEvent.change(groupBySelect, { target: { value: "status" } });
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+
+      function findOtherHeaderRow() {
+        return Array.from(document.querySelectorAll(".entity-group-header-row")).find((row) => row.textContent?.includes("Other"));
+      }
+      const otherHeaderRow = findOtherHeaderRow();
+      assert.ok(otherHeaderRow, "expected a trailing '(other)' group for the unrecognized 'archived' status");
+      const otherToggle = otherHeaderRow!.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.equal(otherToggle.getAttribute("aria-expanded"), "true", "the '(other)' group must start expanded");
+
+      fireEvent.click(otherToggle);
+      await waitForCondition(() => findOtherHeaderRow()!.querySelector(".entity-group-toggle")!.getAttribute("aria-expanded") === "false");
+      assert.deepEqual(
+        getCollapsedGroups("proj1", "Deal", "status", "user1"),
+        [otherGroupKey(["new", "won", "lost"])],
+        "the collapsed '(other)' group's own synthetic key must actually be persisted",
+      );
+
+      // The collapsed state must survive a full unmount+remount.
+      firstView.unmount();
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll(".entity-group-header-row").length === 2);
+      const otherToggleAfterRemount = findOtherHeaderRow()!.querySelector(".entity-group-toggle") as HTMLButtonElement;
+      assert.equal(
+        otherToggleAfterRemount.getAttribute("aria-expanded"),
+        "false",
+        "a fresh mount of the same project+entity must restore the persisted '(other)' collapse, not silently re-expand it as a stale/dead enum entry",
       );
     } finally {
       globalThis.fetch = originalFetch;

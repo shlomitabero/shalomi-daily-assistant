@@ -1194,8 +1194,16 @@ export function uniqueEnumValues(values: string[] | undefined): string[] {
  * so collapsing one silently collapsed the other too. Appending underscores
  * until the key no longer matches anything in enumValues guarantees no
  * collision, for any finite set of declared values.
+ *
+ * Round 2169: exported so EntityPanel.tsx's own collapsedGroups/
+ * collapsedBoardColumns staleness-guard effects can add this exact key to
+ * their own "still a real enum value" allowlist -- without it, collapsing
+ * the "(other)" bucket itself got silently wiped on every remount, the
+ * same enum-staleness filter wrongly treating the synthetic key as a dead
+ * value from a renamed/removed real one. See those effects' own doc
+ * comments for the full mechanism.
  */
-function otherGroupKey(enumValues: string[] | undefined): string {
+export function otherGroupKey(enumValues: string[] | undefined): string {
   const known = new Set(enumValues ?? []);
   let key = "__other__";
   while (known.has(key)) key += "_";

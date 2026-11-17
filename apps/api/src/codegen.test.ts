@@ -28671,6 +28671,103 @@ test("the exported EntityView's board-column toggle collapses and expands just t
 });
 
 /**
+ * Round 2169: mirrors the live Forge AI preview's own round-2169 fix --
+ * collapsing the synthetic "(other)" column above (test at line 5540:
+ * groupByField adds it for a record whose status isn't any of the
+ * declared enumValues) used to get silently wiped on every remount, since
+ * the migration effect's own staleness filter only ever allowlisted the
+ * field's real declared enumValues, never otherGroupKey's own synthetic
+ * key -- the exact same enum-staleness guard meant for a real value a
+ * refine renamed away, wrongly treating the "(other)" column's collapse
+ * as a stale entry too.
+ */
+test("the exported EntityView's board-column toggle keeps the synthetic '(other)' column collapsed across an unmount+remount", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      records: [
+        { id: 1, name: "Alice", status: "New" },
+        { id: 2, name: "Bob", status: "Archived" },
+      ],
+    }),
+  })) as typeof fetch;
+
+  async function waitForBoardButton(container: HTMLElement): Promise<HTMLButtonElement> {
+    for (let i = 0; i < 40; i++) {
+      const found = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Board"));
+      if (found) return found as HTMLButtonElement;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    throw new Error("waitForBoardButton: Board view-toggle button never appeared");
+  }
+
+  function findOtherColumn(container: HTMLElement): HTMLElement {
+    return Array.from(container.querySelectorAll(".board-column")).find((col) => col.classList.contains("board-column-other")) as HTMLElement;
+  }
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const firstMount = render(React.createElement(EntityView, props));
+      const boardButton = await waitForBoardButton(firstMount.container);
+      await act(async () => {
+        fireEvent.click(boardButton);
+      });
+      for (let i = 0; i < 40; i++) {
+        if (findOtherColumn(firstMount.container)) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.ok(findOtherColumn(firstMount.container), "expected a trailing '(other)' column for the unrecognized 'Archived' status");
+      assert.equal(findOtherColumn(firstMount.container).querySelectorAll(".board-card").length, 1, "the '(other)' column must start expanded");
+
+      const otherToggle = findOtherColumn(firstMount.container).querySelector(".board-column-toggle") as HTMLButtonElement;
+      await act(async () => {
+        fireEvent.click(otherToggle);
+      });
+      assert.equal(findOtherColumn(firstMount.container).querySelectorAll(".board-card").length, 0, "collapsing the '(other)' column must hide its own card");
+
+      firstMount.unmount();
+
+      const secondMount = render(React.createElement(EntityView, props));
+      await waitForBoardButton(secondMount.container);
+      for (let i = 0; i < 40; i++) {
+        if (findOtherColumn(secondMount.container)) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(
+        findOtherColumn(secondMount.container).querySelectorAll(".board-card").length,
+        0,
+        "a freshly mounted EntityView must come back up with the '(other)' column still collapsed, not silently re-expanded",
+      );
+      secondMount.unmount();
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test for round 436's finding: the exported/standalone app's
  * own generated EntityView component has this exact same group-keys-are-
  * field-independent defect the live preview's EntityPanel.tsx had fixed

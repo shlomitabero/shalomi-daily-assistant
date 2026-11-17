@@ -83,6 +83,7 @@ import {
   isTypingTarget,
   LOCALE,
   matchesSearch,
+  otherGroupKey,
   parseCsv,
   parseFieldDate,
   parseFileFieldValue,
@@ -2676,6 +2677,17 @@ export function EntityPanel({
   // up a key nothing was ever written under, silently re-expanding a group
   // the user had deliberately collapsed under the field's old casing. See
   // that function's own doc comment for the full mechanism.
+  //
+  // Round 2169: validValues used to only ever include the field's own
+  // declared enumValues -- but groupRecordsByField also adds a synthetic
+  // "(other)" group (otherGroupKey) for records whose stored value isn't
+  // any declared one, and nothing stopped the user collapsing THAT group
+  // too via the exact same toggleGroupCollapsed/UI. Since "(other)"'s own
+  // key is never a member of enumValues, this effect treated a persisted
+  // collapse of it as a stale entry from a renamed/removed real enum value
+  // (the exact case the comment above this effect describes) and pruned
+  // it on every remount, silently re-expanding it every single time.
+  // otherGroupKey(field.enumValues) added here keeps it in the allowlist.
   useEffect(() => {
     const loaded = migrateCollapsedGroupsFieldCase(projectId, entity.name, groupFieldName, userId);
     const field = entity.fields.find((f) => f.name === groupFieldName);
@@ -2684,6 +2696,7 @@ export function EntityPanel({
       return;
     }
     const validValues = new Set(field.enumValues ?? []);
+    validValues.add(otherGroupKey(field.enumValues));
     const filtered = loaded.filter((v) => validValues.has(v));
     if (filtered.length !== loaded.length) setCollapsedGroupsPreference(projectId, entity.name, groupFieldName, userId, filtered);
     setCollapsedGroups(new Set(filtered));
@@ -2727,6 +2740,11 @@ export function EntityPanel({
   // instant the refine completes, and a plain exact-match lookup would
   // silently re-expand a column the user had deliberately collapsed. See
   // that function's own doc comment for the full mechanism.
+  // Round 2169: see the identical fix and doc comment on collapsedGroups'
+  // own effect above -- groupByField adds the same synthetic "(other)"
+  // column (otherGroupKey) here too, reachable via the exact same
+  // toggleBoardColumnCollapsed/UI, and collapsing it got silently wiped on
+  // every remount by this same staleness filter before this round.
   useEffect(() => {
     const loaded = migrateCollapsedBoardColumnsFieldCase(projectId, entity.name, boardFieldName, userId);
     if (!boardField) {
@@ -2734,6 +2752,7 @@ export function EntityPanel({
       return;
     }
     const validValues = new Set(boardField.enumValues ?? []);
+    validValues.add(otherGroupKey(boardField.enumValues));
     const filtered = loaded.filter((v) => validValues.has(v));
     if (filtered.length !== loaded.length) setCollapsedBoardColumnsPreference(projectId, entity.name, boardFieldName, userId, filtered);
     setCollapsedBoardColumns(new Set(filtered));
