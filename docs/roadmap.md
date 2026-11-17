@@ -50345,3 +50345,26 @@ The survey agent also flagged a secondary, lower-confidence observation worth a 
 **Tests/verification:** Confirmed the regex gap in isolation via `node -e`, then via the real engine with a scratch `tsx` script before and after the fix. Added a new test in `packages/spec-engine/src/heuristic.test.ts` right after the existing round-2131 Volunteer test, using the sentence that reproduced the bug. Verified fail-before/pass-after via `git stash` (stashing only the `domainEntities.ts` fix, keeping the new test): failed exactly as predicted before the fix, passed cleanly after. Ran the full `packages/spec-engine` test suite (359/359 passing) and `apps/api`'s build (clean) before committing.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2151: Deal's sales-closing 'deals with' re-allow window had the same bounded-window defeat, but as a false negative
+
+**The process:** Round 2150's survey flagged a secondary lead it hadn't independently pursued: the Deal entity's "deals" keyword regex at domainEntities.ts:640 uses a `{0,2}` word-window between "close/closing/closed" and "deals" — the false-*negative* mirror of the false-positive bug class fixed in rounds 2149/2150. Round 2151's survey confirmed this is a real, unmasked standalone gap (not covered by any other Deal keyword) and found no further instances of the pattern elsewhere in the file.
+
+**The bug:** The Deal regex has two alternatives: exclude "deals" when followed by "with" (the ordinary phrasal verb "deals with" = handles/manages, round 911), but re-allow it when preceded by "close"/"closing"/"closed" within 2 words (the genuine sales-closing idiom, "close more deals with clients"). A real sales phrase with 3+ qualifying words between "close" and "deals" — adjectives describing the deals, e.g. "close bigger, more complex enterprise deals with key client accounts" — escapes the 2-word re-allow window, falls back to the phrasal-verb exclusion, and silently drops the Deal entity. Confirmed live through the real engine:
+```
+"A CRM tool to help our sales reps close bigger, more complex enterprise deals with key client accounts, track outreach emails, and log call notes."
+ -> [ 'Customer' ]   // Deal missing despite being an unambiguous sales-CRM description
+```
+Not masked by any other Deal keyword (negotiation/opportunity/עסקה all absent too).
+
+**The fix:** Unlike rounds 2149/2150 (both false-positive EXCLUSION windows, where going fully unbounded is always safe — it only ever narrows an already-positive match), this is a RE-ALLOW window: going fully unbounded would let an unrelated, much earlier "close/closing/closed" from a prior sentence re-enable a later, genuinely unconnected "deals with" phrasal verb — a new false positive. So the fix widened the bound more conservatively, to a generous `{0,6}`, and switched `\S+` to `[^\s.!?]+` so the lookbehind can never cross a sentence boundary at all:
+```js
+// before: /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+\S+){0,2}\s)\bdeals\b(?=\s+with\b)/
+/\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+[^\s.!?]+){0,6}\s)\bdeals\b(?=\s+with\b)/
+```
+
+**Tests/verification:** Confirmed both the gap and the cross-sentence false-positive guard via `node -e` (including "We closed the store at 9pm. The app deals with inventory tracking." correctly staying excluded), then via the real engine with a scratch `tsx` script before and after the fix. Added a new test in `packages/spec-engine/src/heuristic.test.ts` right after the existing round-911 Deal test, covering both the 3+-word re-allow case and the cross-sentence-leak guard. Verified fail-before/pass-after via `git stash`: failed exactly as predicted before the fix, passed cleanly after. Ran the full `packages/spec-engine` test suite (360/360 passing) and `apps/api`'s build (clean) before committing.
+
+This closes out the "bounded word-window regex" bug class first surfaced in round 2149 — three confirmed instances fixed (Courier, Volunteer, Deal) and no further occurrences found in domainEntities.ts/templates.ts/heuristic.ts after a systematic grep.
+
+Live: https://forge-ai-m7p7.onrender.com
