@@ -51,8 +51,18 @@ const MAX_ACTIONS_LOG_ENTRIES = 500;
 // forever regardless would recreate the same unbounded-growth risk this
 // function exists to prevent, just for a slightly later-closing type of
 // entry instead of an already-successful one.
+// A sustained attack on the Paddle webhook (routes/billing.js's
+// webhook_signature_failed) can log far faster than normal activity, same
+// as a login brute-force - without its own exemption here, a flood of
+// these would dominate the shared MAX_ACTIONS_LOG_ENTRIES pool, pruning
+// out everything else (draft_product, publish_product, a resolved
+// sale_confirmed, settings_updated...) faster than normal instead of just
+// itself. routes/billing.js's own logWebhookSignatureFailure gives it the
+// same dedicated, tighter cap login_attempt's own logLoginAttempt already
+// has, for exactly the same reason.
 function isUnprunable(entry) {
   if (entry.type === 'login_attempt') return true;
+  if (entry.type === 'webhook_signature_failed') return true;
   if (entry.type === 'sale_confirmed') return String(entry.result).startsWith('blocked') && !entry.detail?.resolvedAt;
   return false;
 }

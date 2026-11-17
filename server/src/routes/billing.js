@@ -18,6 +18,26 @@ export function getBillingConfigured(req, res) {
 
 billingRouter.get('/billing/configured', getBillingConfigured);
 
+const MAX_WEBHOOK_SIGNATURE_FAILURE_ENTRIES = 500;
+
+// Mirrors routes/auth.js's own logLoginAttempt exactly, same reason: a
+// sustained attack against this public, unauthenticated endpoint can log
+// far faster than normal activity, and execution.js's own isUnprunable
+// now exempts this type from the shared MAX_ACTIONS_LOG_ENTRIES pool
+// specifically so it needs its own dedicated, tighter cap here instead -
+// without one, nothing would ever bound its growth at all.
+function logWebhookSignatureFailure(detail, result) {
+  logAction({ type: 'webhook_signature_failed', detail, result });
+  const entries = db.actions_log.where((a) => a.type === 'webhook_signature_failed');
+  const excess = entries.length - MAX_WEBHOOK_SIGNATURE_FAILURE_ENTRIES;
+  if (excess > 0) {
+    entries
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .slice(0, excess)
+      .forEach((entry) => db.actions_log.delete(entry.id));
+  }
+}
+
 // Mounted separately in server.js with express.raw() — signature
 // verification needs the exact raw request body. Never crashes the process
 // on a malformed/unexpected payload — always responds, even on failure,
@@ -42,7 +62,7 @@ export function paddleWebhookHandler(req, res) {
       // instead of /login. req.ip, not the Paddle-Signature header's own
       // claimed source - same reasoning as login's own req.ip capture.
       console.error('Paddle webhook signature check failed');
-      logAction({ type: 'webhook_signature_failed', detail: { ip: req.ip }, result: 'blocked: חתימת ה-webhook אינה תקינה' });
+      logWebhookSignatureFailure({ ip: req.ip }, 'blocked: חתימת ה-webhook אינה תקינה');
       return res.status(400).send('invalid signature');
     }
 

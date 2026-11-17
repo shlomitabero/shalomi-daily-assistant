@@ -373,3 +373,24 @@ test('logAction never prunes a login_attempt entry - that type already has its o
   logAction({ type: 'draft_product', detail: {}, result: 'success' });
   assert.ok(db.actions_log.get(oldLogin.id), 'login_attempt pruning belongs to routes/auth.js alone');
 });
+
+test('logAction never prunes a webhook_signature_failed entry - that type already has its own dedicated, tighter cap', () => {
+  // Mirrors the login_attempt exemption test just above exactly - same
+  // reasoning: a sustained attack against this public, unauthenticated
+  // endpoint can log far faster than normal activity, so it needs its
+  // own cap (routes/billing.js's logWebhookSignatureFailure) instead of
+  // competing in the shared pool with everything else.
+  __resetForTests();
+  const oldFailure = db.actions_log.insert({
+    id: makeId('act'), type: 'webhook_signature_failed', detail: { ip: '1.2.3.4' }, result: 'blocked: חתימת ה-webhook אינה תקינה',
+    createdAt: new Date('2020-01-01').toISOString(),
+  });
+  for (let i = 0; i < 500; i += 1) {
+    db.actions_log.insert({
+      id: makeId('act'), type: 'draft_product', detail: { i }, result: 'success',
+      createdAt: new Date(Date.now() + i).toISOString(),
+    });
+  }
+  logAction({ type: 'draft_product', detail: {}, result: 'success' });
+  assert.ok(db.actions_log.get(oldFailure.id), 'webhook_signature_failed pruning belongs to routes/billing.js alone');
+});

@@ -78,6 +78,33 @@ test('a webhook with an invalid signature is rejected and never touches the ledg
   });
 });
 
+test('webhook_signature_failed entries are pruned once they exceed their dedicated retention cap, oldest first', () => {
+  // Mirrors routes/auth.js's own identical login_attempt pruning test -
+  // a sustained attack against this public, unauthenticated endpoint can
+  // log far faster than normal activity, and execution.js's own
+  // isUnprunable now exempts this type from the shared
+  // MAX_ACTIONS_LOG_ENTRIES pool specifically so it needs its own cap here.
+  __resetForTests();
+  withEnv({ PADDLE_WEBHOOK_SECRET: 'whsec_real' }, () => {
+    const base = Date.parse('2020-01-01T00:00:00.000Z');
+    for (let i = 0; i < 500; i += 1) {
+      db.actions_log.insert({
+        id: makeId('act'), type: 'webhook_signature_failed', detail: { ip: `seed-${i}` },
+        result: 'blocked: חתימת ה-webhook אינה תקינה', createdAt: new Date(base + i * 1000).toISOString(),
+      });
+    }
+    assert.equal(db.actions_log.where((a) => a.type === 'webhook_signature_failed').length, 500);
+
+    const req = makeReq(completedTxn({ opportunityId: 'opp_1' }), 'whsec_wrong');
+    paddleWebhookHandler(req, makeRes());
+
+    const logged = db.actions_log.where((a) => a.type === 'webhook_signature_failed');
+    assert.equal(logged.length, 500); // stayed at the cap, not 501
+    assert.equal(logged.some((a) => a.detail?.ip === 'seed-0'), false); // the oldest was pruned
+    assert.equal(logged.some((a) => a.detail?.ip === 'seed-499'), true); // a newer seed entry survives
+  });
+});
+
 test('a webhook with an invalid signature logs the source ip as a real security signal, like a failed login attempt', () => {
   // This endpoint is exactly as public and unauthenticated as /login -
   // routes/auth.js already treats a failed login attempt as worth the
