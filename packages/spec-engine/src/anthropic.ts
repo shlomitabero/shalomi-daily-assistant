@@ -26,6 +26,26 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * description pair already treats entity description as something that
  * must track the app's detected language, exactly like label -- this
  * prompt just never agreed.
+ *
+ * Round 2164: a different instance of the identical class, one level
+ * deeper -- "enumLabels" was never even in the requested JSON shape at
+ * all, not just missing from the language rule's own enumeration like
+ * personas/description were. heuristic.ts and templates.ts (the other two
+ * spec producers) both populate it deliberately so every enum value has a
+ * translated display string distinct from its own plain-ASCII
+ * `enumValues` identifier (the same name-vs-label split every entity/field
+ * already has) -- but with no mention anywhere in this prompt, the model
+ * has no way to know that field even exists, let alone populate it.
+ * Every enum-rendering path across the codebase that already has the
+ * established `field.enumLabels?.[value] ?? value` fallback
+ * (entityFormatting.ts's table cells/board columns/CSV export/search,
+ * displayField.ts's server mirror, twin.ts's enum-distribution insights,
+ * automation message interpolation) then shows the raw enumValues string
+ * verbatim -- confirmed live: a Hebrew-described app's "status" field
+ * renders the literal English-ish word "pending" inside an otherwise
+ * fully-Hebrew UI, for any enum field on any AI-generated spec via the
+ * real Anthropic path, which is nearly every entity in this platform's
+ * own domain library (status/category/priority).
  */
 export const SYSTEM_PROMPT = `You are the Product Manager Agent inside Forge AI, an AI software creation platform.
 Given a plain-language business description, output ONLY a single JSON object (no prose, no markdown fences)
@@ -35,7 +55,7 @@ matching exactly this shape:
   "summary": string,
   "personas": string[],
   "roles": string[],
-  "entities": [{ "name": string, "label"?: string, "description"?: string, "fields": [{ "name": string, "label"?: string, "type": "text"|"longtext"|"number"|"boolean"|"date"|"enum"|"relation"|"file", "required"?: boolean, "enumValues"?: string[], "relationTo"?: string }] }],
+  "entities": [{ "name": string, "label"?: string, "description"?: string, "fields": [{ "name": string, "label"?: string, "type": "text"|"longtext"|"number"|"boolean"|"date"|"enum"|"relation"|"file", "required"?: boolean, "enumValues"?: string[], "enumLabels"?: Record<string, string>, "relationTo"?: string }] }],
   "screens": [{ "name": string, "type": "list"|"form"|"dashboard", "entity"?: string }],
   "assumptions": string[],
   "openQuestions": [{ "question": string, "options": string[], "recommendation"?: string }]
@@ -52,7 +72,12 @@ Rules:
 - "roles" must never be an empty array. Every app has at least one role: the person who owns/runs it. For a
   single-user app with no distinct user types, still include one role for that owner (e.g. "Admin" or
   "Owner") rather than returning no roles at all.
-- "enum" fields must include enumValues. "relation" fields must include relationTo naming another entity.
+- "enum" fields must include enumValues. "enumValues" entries, like every field/entity "name", MUST stay plain
+  ASCII identifiers (e.g. "pending", "completed") regardless of what language the description is written in --
+  also include "enumLabels": an object mapping EVERY one of those enumValues to its translated display text in
+  the SAME language and script as the description (e.g. {"pending": "בהמתנה", "completed": "הושלם"} for a
+  Hebrew app), the exact same name-vs-label split every entity/field already has. "relation" fields must
+  include relationTo naming another entity.
 - Use "file" for a field that is a genuine document/image/attachment (a resume, ID photo, invoice, contract
   scan) the description implies someone uploads -- not for anything that's really just text (a URL, a name).
 - State genuine assumptions you made instead of asking unnecessary questions.

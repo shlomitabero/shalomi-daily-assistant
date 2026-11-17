@@ -48,6 +48,25 @@ test("SYSTEM_PROMPT's language-consistency rule names entity description, and no
   assert.match(SYSTEM_PROMPT, /"label" and entity "description" are the only places/);
 });
 
+/**
+ * Round 2164: a deeper instance of the same class as the two tests above
+ * -- "enumLabels" was missing not just from the language rule's own
+ * enumeration, but from the requested JSON shape entirely, so the model
+ * had no way to know that field exists at all. heuristic.ts and
+ * templates.ts (the other two spec producers) both populate it
+ * deliberately so every enum value has a translated display string
+ * distinct from its own plain-ASCII enumValues identifier -- confirmed
+ * live that a Field shaped exactly as this prompt instructed before this
+ * fix (enumValues present, enumLabels absent) renders the raw enumValue
+ * through entityFormatting.ts's own established `enumLabels?.[value] ??
+ * value` fallback, instead of a translated word.
+ */
+test("SYSTEM_PROMPT's JSON shape includes enumLabels, and its enum rule tells the model enumValues stay ASCII while enumLabels carries the translated text", () => {
+  assert.match(SYSTEM_PROMPT, /"enumLabels"\?:\s*Record<string,\s*string>/);
+  assert.match(SYSTEM_PROMPT, /enumValues.*MUST stay plain\s+ASCII identifiers/s);
+  assert.match(SYSTEM_PROMPT, /also include "enumLabels".*SAME language and script as the description/s);
+});
+
 test("generate() returns the parsed spec on a clean JSON response", async () => {
   const fakeFetch = (async () =>
     new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(VALID_SPEC) }] }), {
