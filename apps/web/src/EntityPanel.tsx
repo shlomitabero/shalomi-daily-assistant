@@ -5612,14 +5612,34 @@ export function EntityPanel({
     const serverErrors = results
       .filter((r): r is PromiseRejectedResult => r.status === "rejected")
       .map((r) => (r.reason as Error).message);
+    // Round 2178: mirrors handleDuplicate/handleBulkUpdate's own ignoredFields
+    // handling (rounds 2172-2174) -- a concurrent checkpoint restore/refine
+    // removing a field between this file being parsed and a row's own
+    // PATCH/POST reaching the server (routes/projects.ts's
+    // computeIgnoredFields) used to be silently discarded here: every
+    // fulfilled result was only ever checked for created-vs-updated, never
+    // for its own ignoredFields, so an import whose rows had a field
+    // silently dropped still reported a clean "N records imported
+    // successfully." Folded into the generic importErrors/errorCount bucket
+    // (not importWarnings, whose own show/hide button text is hardcoded to
+    // "possible duplicate(s)" and would be actively misleading here).
+    const ignoredFieldErrors: string[] = [];
     let createdCount = 0;
     let updatedCount = 0;
     results.forEach((r, i) => {
       if (r.status !== "fulfilled") return;
       if ((parsedRecords[i] as { id?: number }).id != null) updatedCount += 1;
       else createdCount += 1;
+      const ignoredFields = r.value?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        ignoredFieldErrors.push(
+          ignoredFields.length === 1
+            ? t("entity.form.fieldNoLongerExists.one", { field: ignoredFields[0] })
+            : t("entity.form.fieldNoLongerExists.many", { fields: ignoredFields.join(", ") }),
+        );
+      }
     });
-    const allErrors = [...parseErrors, ...serverErrors];
+    const allErrors = [...parseErrors, ...serverErrors, ...ignoredFieldErrors];
     setImportErrors(allErrors);
     setImportMessage(
       updatedCount === 0 && allErrors.length === 0
@@ -5643,8 +5663,24 @@ export function EntityPanel({
     setError(null);
     setMovingId(id);
     try {
-      await updateRecord(projectId, entity.name, id, fields);
+      const result = await updateRecord(projectId, entity.name, id, fields);
       await refresh();
+      // Round 2178: mirrors commitInlineEdit's own round-2172 ignoredFields
+      // handling -- this PATCH's return value used to be discarded entirely,
+      // so a concurrent checkpoint restore/refine removing the very field
+      // being dragged/changed (typically the board's own status/group-by
+      // field) between the drag starting and this PATCH landing silently
+      // did nothing, with the card just snapping back to its old column and
+      // zero warning shown.
+      const ignoredFields = result?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        setError(
+          ignoredFields.length === 1
+            ? t("entity.form.fieldNoLongerExists.one", { field: ignoredFields[0] })
+            : t("entity.form.fieldNoLongerExists.many", { fields: ignoredFields.join(", ") }),
+        );
+        setMoveErrorId(id);
+      }
     } catch (err) {
       const error = err as Error & { code?: string };
       // Round 1873: mirrors handleSubmit's own round-1864 fix -- another

@@ -1876,6 +1876,65 @@ test("EntityPanel's handleMoveFields sets movingId before its real work and alwa
 });
 
 /**
+ * Round 2178: mirrors commitInlineEdit's own round-2172 ignoredFields fix --
+ * handleMoveFields (the board dropdown, Kanban drag, and calendar drag all
+ * funnel through here) discarded updateRecord's own return value entirely,
+ * so a concurrent checkpoint restore/refine removing the very field being
+ * dragged/changed (typically the board's own status/group-by field)
+ * between the drag starting and this PATCH landing silently did nothing --
+ * the card just snapped back to its old column with zero warning shown.
+ */
+test("EntityPanel's handleMoveFields warns when updateRecord's own ignoredFields reports the moved field was silently dropped, instead of a bare success", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleMoveFields\(id: number, fields: Record<string, string>\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleMoveFields in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  let capturedError: string | null = null;
+  let capturedMoveErrorId: number | null = null;
+  let refreshCalled = 0;
+  const fn = new Function(
+    "writesInFlight",
+    "movingId",
+    "setError",
+    "updateRecord",
+    "projectId",
+    "entity",
+    "refresh",
+    "setMovingId",
+    "setMoveErrorId",
+    "t",
+    `${code}\nreturn handleMoveFields;`,
+  )(
+    false,
+    null,
+    (msg: string | null) => {
+      capturedError = msg;
+    },
+    async () => ({ record: { id: 1, status: "won" }, ignoredFields: ["status"] }),
+    "proj1",
+    { name: "Deal" },
+    async () => {
+      refreshCalled += 1;
+    },
+    () => {},
+    (id: number | null) => {
+      capturedMoveErrorId = id;
+    },
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+  ) as (id: number, fields: Record<string, string>) => Promise<void>;
+
+  await fn(1, { status: "won" });
+
+  assert.match(
+    capturedError!,
+    /entity\.form\.fieldNoLongerExists\.one:\{"field":"status"\}/,
+    "a drag/drop whose own moved field got dropped must surface the real 'field no longer exists' warning naming it, not a bare success",
+  );
+  assert.equal(capturedMoveErrorId, 1, "the card/row must be flagged the same way a genuine move failure already is");
+  assert.equal(refreshCalled, 1, "refresh() must still run");
+});
+
+/**
  * The other half: NOT clicking Undo must commit every real delete in the
  * batch once the undo window actually elapses, mirroring single-delete's
  * own equivalent test -- the whole point is a temporary reprieve for the
@@ -8758,6 +8817,81 @@ test("EntityPanel's CSV import surfaces a possible-duplicate warning for a new r
         document.querySelector(".csv-import-warnings")!.textContent ?? "",
         /Dana/,
         "the revealed warning text must name the actual duplicated value",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2178: `writeImportedRecords` (shared by CSV and JSON import for the
+ * "update an existing record by id" branch) discarded updateRecord's own
+ * ignoredFields entirely -- every fulfilled result was only ever checked
+ * for created-vs-updated, never for a field the server silently dropped
+ * because a concurrent checkpoint restore/refine removed it between this
+ * file being parsed and the PATCH landing. Re-importing an exported CSV
+ * (id column present, trusted) whose own "email" field no longer exists on
+ * this entity used to report a clean "Updated 1 record", with the drop
+ * never surfaced anywhere.
+ */
+test("EntityPanel's CSV import (update-by-id branch) warns when updateRecord's own ignoredFields reports a field was silently dropped, instead of a clean 'Updated' summary", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", email: "dana@old.com" } as unknown as EntityRecord];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Customer") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Customer/1") {
+        const data = JSON.parse(init!.body as string);
+        Object.assign(store[0], data);
+        return new Response(JSON.stringify({ record: store[0], ignoredFields: ["email"] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(EntityPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              entity: CUSTOMER_IMPORT_ENTITY,
+              allEntities: [CUSTOMER_IMPORT_ENTITY],
+              onEntityRenamed: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll("tbody tr").length === 1);
+
+      const csvText = "id,name,email\n1,Dana,dana@new.com\n";
+      const file = new File([csvText], "customers.csv", { type: "text/csv" });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+      fireEvent.change(fileInput);
+
+      await waitForCondition(() => document.querySelector(".csv-import-row .muted.small") !== null);
+
+      const buttons = Array.from(document.querySelectorAll(".csv-import-row button"));
+      const errorsButton = buttons.find((b) => /errors/i.test(b.textContent ?? ""));
+      assert.ok(errorsButton, "a dropped field on an otherwise-successful update must surface through the generic errors toggle, not vanish silently");
+
+      fireEvent.click(errorsButton!);
+      await waitForCondition(() => document.querySelector(".csv-import-errors") !== null);
+      assert.match(
+        document.querySelector(".csv-import-errors")!.textContent ?? "",
+        /email/,
+        "the revealed warning must name the actual field the server reported as ignored",
       );
     } finally {
       globalThis.fetch = originalFetch;
