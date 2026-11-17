@@ -5785,8 +5785,27 @@ export function EntityPanel({
     suppressCellBlurCommitRef.current = true;
     setEditingCell(null);
     try {
-      await updateRecord(projectId, entity.name, recordId, { [field]: value });
+      const saveResult = await updateRecord(projectId, entity.name, recordId, { [field]: value });
       await refresh();
+      // Round 2172: mirrors handleSubmit's own round-2085 fix for the
+      // identical race -- another tab/collaborator restoring a Time
+      // Machine checkpoint can shrink this entity's own live field set
+      // between this cell's double-click and its Enter/blur commit.
+      // repository.ts's updateRecord still applies every field that IS
+      // current, but silently drops the now-gone one -- without this,
+      // the typed edit vanished with a plain 200 and zero indication
+      // anything went wrong, and the stale "field" kept rendering
+      // indefinitely (refresh() only re-fetches records, never the
+      // entity's own field list).
+      const ignoredFields = saveResult.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        setError(
+          ignoredFields.length === 1
+            ? t("entity.form.fieldNoLongerExists.one", { field: ignoredFields[0] })
+            : t("entity.form.fieldNoLongerExists.many", { fields: ignoredFields.join(", ") }),
+        );
+        setMoveErrorId(recordId);
+      }
     } catch (err) {
       const error = err as Error & { code?: string };
       // Round 1873: mirrors handleSubmit's own round-1864 fix -- another

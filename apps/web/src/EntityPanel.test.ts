@@ -22489,6 +22489,56 @@ test("EntityPanel's inline cell edit does not surface a raw error or highlight t
   });
 });
 
+/**
+ * Round 2172: the sibling of this same file's round-2085 handleSubmit
+ * ignoredFields test -- commitInlineEdit funnels through the identical
+ * updateRecord PATCH, which can still succeed with a 200 while silently
+ * dropping the committed field itself when another tab/collaborator's
+ * Time Machine checkpoint restore shrinks this entity's field set between
+ * this cell's double-click and its Enter/blur commit (repository.ts's
+ * updateRecord only ever looks at the entity's CURRENT fields). Before
+ * this round, commitInlineEdit never inspected the PATCH response's own
+ * ignoredFields array, so the user's typed edit vanished with zero
+ * indication anything went wrong.
+ */
+test("EntityPanel's inline cell edit warns that the field's own edit wasn't saved when the server reports it as ignoredFields, instead of showing a bare, misleadingly-complete success", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(init.body as string);
+        Object.assign(store[0], body);
+        return new Response(JSON.stringify({ record: store[0], ignoredFields: ["name"] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      const nameCell = document.querySelectorAll("table tbody td")[1] as HTMLTableCellElement;
+      fireEvent.doubleClick(nameCell);
+      const input = nameCell.querySelector('input[type="text"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Acme Corporation" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitForCondition(() => document.querySelector("p.error") !== null);
+      assert.match(document.querySelector("p.error")!.textContent ?? "", /name/, "the warning must name the actual ignored field, not a generic message");
+      assert.equal(
+        document.querySelector("table tbody tr")?.className.includes("record-row-move-error"),
+        true,
+        "the affected row must be highlighted, the same way the generic-error branch just above already does",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("EntityPanel's board-view move drops the ghost card (instead of leaving it stuck, highlighted red) when its PATCH 404s NOT_FOUND because another tab already fully deleted the record", async () => {
   await withJsdom(async () => {
     const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new" }];
