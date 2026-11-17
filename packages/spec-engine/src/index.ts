@@ -345,6 +345,25 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
       if (candidateLower === "order" && existingEntity.name.toLowerCase() === "purchaseorder" && candidateField.name.toLowerCase() === "customername") {
         continue;
       }
+      // Round 2180: the same bug class as round 2177's own skip just above,
+      // a different alias pair -- domainEntities.ts's own "Event" rule ("an
+      // event the business organizes or manages") carries a REQUIRED
+      // `status` enum (Planned/Confirmed/Completed/Cancelled), but the
+      // Volunteer & Shift Management template's curated "VolunteerEvent"
+      // (templates.ts) has no status concept at all (name/date/location/
+      // description only). `combinedDescription` re-matches Event's bare
+      // Hebrew keywords on every single /refine of such a project
+      // (round 2153's own finding -- no disambiguation in the Hebrew
+      // phrasing, unlike English), so this folds in on the very first
+      // /refine ever run, permanently bolting an unpopulated required
+      // field onto VolunteerEvent and breaking record creation the exact
+      // same way round 2177 documented for customerName/PurchaseOrder.
+      // `venue`/`capacity` fold in too but are both optional, so they don't
+      // break anything -- skipping only the one field that actually is
+      // broken, same scoping discipline as round 2177's own fix.
+      if (candidateLower === "event" && existingEntity.name.toLowerCase() === "volunteerevent" && candidateField.name.toLowerCase() === "status") {
+        continue;
+      }
       existingEntity.fields.push(candidateField);
       fieldNameSet.add(candidateField.name.toLowerCase());
     }

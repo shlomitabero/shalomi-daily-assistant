@@ -753,6 +753,49 @@ test("mergeRefinedSpec folds a regenerated Event entity into an existing Volunte
 });
 
 /**
+ * Round 2180: the same bug class as round 2177's own fix, a different
+ * alias pair. domainEntities.ts's real "Event" rule ("an event the
+ * business organizes or manages") carries a REQUIRED `status` enum, but
+ * the Volunteer & Shift Management template's curated "VolunteerEvent"
+ * (templates.ts) has no status concept at all. Round 2153's own fold
+ * above only exercised a hand-built candidate's non-required `venue`
+ * field, never the real Event entity's own required `status` -- folding
+ * that in permanently, on the very first /refine of such a project,
+ * breaks creating a new VolunteerEvent record (nothing ever populates an
+ * orphaned required field), the same failure mode round 2177 documented
+ * for Order/PurchaseOrder's customerName. Confirmed live with the real
+ * engine before this fix.
+ */
+test("mergeRefinedSpec does NOT fold Event's own required status field into VolunteerEvent, even though its other genuinely new fields still fold in", () => {
+  const current = baseSpec({
+    entities: [{ name: "VolunteerEvent", label: "אירוע", fields: [{ name: "name", type: "text", required: true }] }],
+  });
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "Event",
+        label: "אירוע",
+        fields: [
+          { name: "venue", type: "text", required: false },
+          { name: "status", type: "enum", required: true, enumValues: ["Planned", "Confirmed", "Completed", "Cancelled"] },
+        ],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["VolunteerEvent"],
+    "must still fold into the existing VolunteerEvent, not add a second event-tracking entity",
+  );
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["name", "venue"],
+    "status must be skipped (VolunteerEvent has no status concept and nothing would ever populate it), while venue -- a genuinely new, optional field -- still folds in exactly as before",
+  );
+});
+
+/**
  * Round 1973: round 1911 added entityMergeKey/ENTITY_ALIAS_GROUPS to the
  * ENTITY half of mergeRefinedSpec (the two tests just above), but never
  * updated the SCREENS half, which still matches by plain
