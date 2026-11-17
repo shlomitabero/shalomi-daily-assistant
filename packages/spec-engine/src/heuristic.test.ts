@@ -2012,6 +2012,36 @@ test("recognizes field-service/repair, nonprofit-volunteer, and legal-case descr
   assert.ok(legalHe.entities.some((e) => e.name === "Case"));
 });
 
+/**
+ * Round 2108: bare "volunteer" collides with the extremely common
+ * everyday VERB sense ("offer something unprompted") -- "volunteer a
+ * phone number", "volunteer their email address", "volunteer
+ * information" -- with zero connection to a nonprofit's donate-your-time
+ * Volunteer entity. Confirmed live before this fix: an ordinary generic
+ * signup-form description matched ONLY ['Volunteer'], fabricating a
+ * nonprofit entity (name/phone/email/role/status/joinedDate fields) and
+ * losing even the generic catch-all entirely.
+ */
+test("'volunteer a phone number'/'volunteer information'/'volunteer their email' never match the Volunteer entity, even though the bare word 'volunteer(s)' does for a real nonprofit description", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const signupForm = await provider.generate(
+    "A simple signup form app. Users enter their name and email, and can optionally volunteer a phone number too.",
+  );
+  assert.ok(!signupForm.entities.some((e) => e.name === "Volunteer"), "'volunteer a phone number' in a signup form must never match Volunteer");
+
+  const survey = await provider.generate("People can volunteer information about themselves.");
+  assert.ok(!survey.entities.some((e) => e.name === "Volunteer"), "'volunteer information' must never match Volunteer");
+
+  const emailSignup = await provider.generate("Visitors may volunteer their email address for updates.");
+  assert.ok(!emailSignup.entities.some((e) => e.name === "Volunteer"), "'volunteer their email address' must never match Volunteer");
+
+  // The fix must not lose real recall: a real nonprofit description's own
+  // bare "volunteers" must still match.
+  const nonprofit = await provider.generate("An app to manage our volunteers and their shifts.");
+  assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"), "a real nonprofit-volunteer description must still get a Volunteer entity");
+});
+
 test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
   const provider = new HeuristicSpecProvider();
   const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");

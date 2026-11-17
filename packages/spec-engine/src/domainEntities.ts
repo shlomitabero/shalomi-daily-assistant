@@ -2175,8 +2175,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // Pairs naturally with Donation for an NGO/community-org idea, and the
     // two entities are expected to both fire together on "nonprofit"/
     // "עמותה" without conflict.
+    // Round 2108: bare "volunteer" collides with the extremely common
+    // everyday VERB sense ("offer something unprompted") -- "volunteer a
+    // phone number", "volunteer their email address", "volunteer
+    // information" -- with zero connection to a nonprofit's donate-your-
+    // time Volunteer entity. Confirmed live: an ordinary generic signup-
+    // form description ("...can optionally volunteer a phone number
+    // too.") matched ONLY ['Volunteer'], fabricating a nonprofit entity
+    // and losing even the generic catch-all. Excluded the clean,
+    // unambiguous direct-object-complement cases (a/an/their/his/her/its/
+    // my/your + noun, or "information") the same verb sense always uses.
+    // Deliberately NOT excluding "volunteer to VERB" or "volunteer for
+    // X" -- those genuinely overlap with the real nonprofit sense ("sign
+    // up to volunteer for the food bank", "volunteers who want to tutor
+    // kids") with no single guard separating the two readings, the same
+    // judgment call round 1722 already made for "lead"/"leads".
     keywords: [
-      "volunteer", "volunteer management", "volunteer shift",
+      /\bvolunteers?\b(?!\s+(?:a|an|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+){0,1}information\b)/,
+      "volunteer management", "volunteer shift",
       "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
     ],
     labelHe: "מתנדבים",
