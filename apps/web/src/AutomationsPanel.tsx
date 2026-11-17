@@ -1091,7 +1091,21 @@ export function AutomationsPanel({
       // once the delete actually went through).
       if (editingRuleId === rule.id) resetToCreateMode();
     } catch (err) {
-      setError((err as Error).message);
+      // Round 2117: mirrors handleToggle's own identical fix (round 1875) --
+      // another tab/collaborator can delete this exact rule between this
+      // tab's confirmed Delete click and the DELETE reaching the server
+      // (arguably the single handler most likely to race against another
+      // deletion of the very same row), 404ing AUTOMATION_RULE_NOT_FOUND.
+      // Before this fix, this catch block treated that identically to every
+      // other failure -- the stale row stayed fully re-enabled in the list,
+      // and a raw backend string sat in the error banner, repeating the
+      // same dead-end 404 on every further Delete click.
+      const error = err as Error & { code?: string };
+      if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+        loadRules();
+        return;
+      }
+      setError(error.message);
     } finally {
       setBusyRuleId(null);
     }

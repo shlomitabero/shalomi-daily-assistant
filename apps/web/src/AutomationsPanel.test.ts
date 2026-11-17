@@ -4740,6 +4740,55 @@ test("deleting the rule currently open for editing returns the form to create mo
 });
 
 /**
+ * Round 2117: mirrors handleToggle's own identical NOT_FOUND fix (round
+ * 1875, see the test just below) -- every other mutating handler in this
+ * file (handleSubmit/handleToggle/handleRetryRun/handleTestRule/
+ * handleToggleHistory) was specifically patched to catch
+ * AUTOMATION_RULE_NOT_FOUND and call loadRules() so a now-gone rule's row
+ * quietly disappears instead of repeating a confusing 404 -- handleDelete,
+ * arguably the single handler most likely to legitimately race against
+ * another deletion of the very same row, was never given this treatment.
+ * Confirms a confirmed Delete click against a rule another tab/
+ * collaborator already deleted drops the row instead of leaving it fully
+ * re-enabled with a stuck raw error banner.
+ */
+test("deleting a rule that was already deleted by another tab/collaborator drops the row instead of showing a stuck error", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let deletedElsewhere = false;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: deletedElsewhere ? [] : [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/automations/rule1") {
+        deletedElsewhere = true;
+        return new Response(JSON.stringify({ error: "Automation rule \"rule1\" not found", code: "AUTOMATION_RULE_NOT_FOUND" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(document.querySelector(".automations-rule-actions .danger") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+      assert.equal(document.querySelector("p.error"), null, "no raw 404 error banner should be left showing -- this is a clean drop of an already-gone rule, not a delete failure the user needs to retry");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1875: round 803 (just above) fixed the SAME-tab sequence --
  * deleting the rule this tab's own form is mid-edit on, via this tab's own
  * Delete button. It never considered another tab/collaborator deleting
