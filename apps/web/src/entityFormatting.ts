@@ -1907,6 +1907,43 @@ export function fieldDisplayLabel(field: Field, occurrences: Map<string, number>
 }
 
 /**
+ * A case-insensitive sibling of fieldLabelOccurrences/fieldDisplayLabel
+ * above, used ONLY by recordsToCsv's own header row and matchesHeader
+ * below -- every other caller of the case-sensitive originals is purely
+ * visual display (a table header, a print sheet, a calendar export), where
+ * two labels differing only by case ARE already distinguishable to a
+ * sighted reader, so widening that shared helper's own collision check
+ * would needlessly add a "(fieldName)" suffix to on-screen text that was
+ * never actually ambiguous to look at. matchesHeader's own column-matching
+ * compares every text case-INsensitively though (so a re-imported CSV
+ * still matches its own header regardless of how a spreadsheet happens to
+ * capitalize it back), which this function's case-SENSITIVE original
+ * doesn't account for: a field with no label (whose effective label falls
+ * back to its own, lowercase `name`) and a DIFFERENT field whose own
+ * declared `label` happens to equal that name except for case (e.g. a bare
+ * "status" field alongside a "state" field labeled "Status") produced two
+ * visually-distinct-looking, unsuffixed CSV headers that nonetheless
+ * collided under matchesHeader's case-insensitive comparison -- silently
+ * swapping the two fields' data on re-import after nothing more than an
+ * ordinary spreadsheet column reorder. Used together, these two keep
+ * recordsToCsv's own header row and buildImportRecords' own column
+ * matching in sync about exactly which collisions need disambiguating.
+ */
+function csvFieldLabelOccurrences(fields: Field[]): Map<string, number> {
+  const occurrences = new Map<string, number>();
+  for (const f of fields) {
+    const label = (f.label ?? f.name).toLowerCase();
+    occurrences.set(label, (occurrences.get(label) ?? 0) + 1);
+  }
+  return occurrences;
+}
+
+function csvFieldDisplayLabel(field: Field, occurrences: Map<string, number>): string {
+  const label = field.label ?? field.name;
+  return (occurrences.get(label.toLowerCase()) ?? 0) > 1 ? `${label} (${field.name})` : label;
+}
+
+/**
  * Builds a real, Excel-friendly CSV (CRLF line endings, quoted fields where
  * needed) from an entity's records -- so "download my data" means an
  * actual spreadsheet a business owner can open, not a JSON dump. A relation
@@ -1932,8 +1969,8 @@ export function recordsToCsv(
   relatedRecords: RelatedRecordsByEntity = {},
   includeId = false,
 ): string {
-  const labelOccurrences = fieldLabelOccurrences(fields);
-  const headerCells = fields.map((f) => fieldDisplayLabel(f, labelOccurrences));
+  const labelOccurrences = csvFieldLabelOccurrences(fields);
+  const headerCells = fields.map((f) => csvFieldDisplayLabel(f, labelOccurrences));
   const header = (includeId ? ["id", ...headerCells] : headerCells).map(csvEscape).join(",");
   const rows = records.map((record) => {
     const cells = fields.map((f) => fieldDisplayValue(f, record[f.name], lang, allEntities, relatedRecords));
@@ -2156,7 +2193,7 @@ function matchesHeader(header: string, field: Field, labelOccurrences: Map<strin
   return (
     normalized === field.name.toLowerCase() ||
     normalized === (field.label ?? "").toLowerCase() ||
-    normalized === fieldDisplayLabel(field, labelOccurrences).toLowerCase()
+    normalized === csvFieldDisplayLabel(field, labelOccurrences).toLowerCase()
   );
 }
 
@@ -2371,7 +2408,7 @@ export function buildImportRecords(
   // cell, silently duplicating that field's data into the other and
   // dropping the other's real column entirely.
   const claimedFieldNames = new Set<string>();
-  const labelOccurrences = fieldLabelOccurrences(fields);
+  const labelOccurrences = csvFieldLabelOccurrences(fields);
   const columnFields: (Field | null)[] = header.map((cell, index) => {
     // The id column is consumed above, not matched against real fields --
     // see this function's own doc comment on why "id" can never be one.

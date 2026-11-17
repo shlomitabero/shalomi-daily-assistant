@@ -3264,6 +3264,34 @@ test("two same-labeled fields' CSV export round-trips back through buildImportRe
 });
 
 /**
+ * Regression test for a real bug found by round 2121's fuzz-testing survey:
+ * the round-637/657 disambiguation above only triggers when two fields
+ * share the identical EFFECTIVE label (case-sensitively) -- but
+ * matchesHeader compares every header text case-INsensitively, so a field
+ * with no label (whose effective label falls back to its own, lowercase
+ * `name`) and a DIFFERENT field whose own declared `label` happens to
+ * equal that name except for case produced two visually-distinct,
+ * UNSUFFIXED CSV headers ("status","Status") that still collided under
+ * matchesHeader's case-insensitive comparison. Reordering those two
+ * columns -- an entirely ordinary spreadsheet edit -- before re-importing
+ * the app's own, otherwise-unedited export silently swapped the two
+ * fields' values, with zero errors or warnings reported.
+ */
+test("a field with no label and a DIFFERENT field whose label collides with it only by case still round-trips correctly after the two CSV columns are reordered", () => {
+  const fields: Field[] = [
+    { name: "status", type: "text", required: false },
+    { name: "state", label: "Status", type: "text", required: false },
+  ];
+  const original = { status: "AAA-status-value", state: "BBB-state-value" };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const reorderedRows = rows.map((row) => [row[1], row[0]]); // an ordinary spreadsheet column swap
+  const result = buildImportRecords(fields, reorderedRows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [original]);
+});
+
+/**
  * Round 683: a real bug found by the survey -- CSV import always created a
  * new record, even when re-importing a file the app itself had just
  * exported, because nothing in the export/import round trip carried a
