@@ -8563,6 +8563,13 @@ test("cloning a project whose name has an emoji straddling the 200-char truncati
       `the clone's name must never contain a U+FFFD replacement character (the on-disk symptom of a split surrogate pair), got ${JSON.stringify(cloned.name)}`,
     );
     assert.ok(cloned.name.endsWith(" (copy)"), "the \" (copy)\" suffix must survive the truncation");
+    // Round 2143: this exact name never actually exercised the 200-char
+    // CAP itself -- round 2034's own code-point slice took the emoji's
+    // 1 code point as "the whole rest of the budget" (193 code points, the
+    // same as the source's own code-point count), so nothing was actually
+    // truncated, and the result landed at 201 UTF-16 code units: 1 over
+    // the documented ceiling PROJECT_NAME_MAX_LENGTH exists to enforce.
+    assert.ok(cloned.name.length <= 200, `expected the clone's name to stay within the 200-char cap, got ${cloned.name.length} characters`);
 
     // The real, independent proof this matters: the value actually
     // persisted to disk must be byte-identical to what the response
@@ -12207,6 +12214,12 @@ test("duplicating an entity whose label has an emoji straddling the 200-char tru
       `the new label must never contain a lone/unpaired surrogate, got ${JSON.stringify(clone.label)}`,
     );
     assert.ok(clone.label!.endsWith(" (copy)"), "the \" (copy)\" suffix must survive the truncation");
+    // Round 2143: mirrors the clone-project test's own identical addition
+    // just above in this file -- round 2034's code-point slice took the
+    // emoji as the entirety of its own 193-code-point budget, truncating
+    // nothing and landing the result at 201 UTF-16 code units, 1 over the
+    // documented SPEC_LABEL_MAX_LENGTH ceiling.
+    assert.ok(clone.label!.length <= 200, `expected the new label to stay within the 200-char cap, got ${clone.label!.length} characters`);
   });
 });
 

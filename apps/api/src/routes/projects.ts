@@ -2607,10 +2607,29 @@ export function createProjectsRouter(
         // allows any character (no charset restriction), so an emoji-led or
         // emoji-containing name near this length is an ordinary branding
         // choice, not an edge case.
+        // Round 2143: round 2034's own fix above capped the slice at a
+        // CODE-POINT count, but PROJECT_NAME_MAX_LENGTH (and every other
+        // length check in this file) measures UTF-16 code UNITS -- the same
+        // unit `.length` always measures. An astral code point is 1 array
+        // element but 2 UTF-16 units, so slicing to N code points can still
+        // produce MORE than N UTF-16 units once an emoji falls inside the
+        // slice window, silently exceeding the exact 200-char ceiling this
+        // whole block exists to enforce (reproduced live: a 192-"A"+emoji
+        // source name clones to a 201-character result). Accumulating
+        // actual UTF-16 length one whole code point at a time -- never
+        // splitting a surrogate pair, since each loop iteration adds a full
+        // code point or none at all -- fixes both hazards at once.
         const rawName = `${source.name}${suffix}`;
-        const name = rawName.length > PROJECT_NAME_MAX_LENGTH
-          ? `${[...source.name].slice(0, PROJECT_NAME_MAX_LENGTH - suffix.length).join("")}${suffix}`
-          : rawName;
+        let name = rawName;
+        if (rawName.length > PROJECT_NAME_MAX_LENGTH) {
+          const budget = PROJECT_NAME_MAX_LENGTH - suffix.length;
+          let truncated = "";
+          for (const ch of source.name) {
+            if (truncated.length + ch.length > budget) break;
+            truncated += ch;
+          }
+          name = `${truncated}${suffix}`;
+        }
         const cloned = insertProject(db, {
           id: randomUUID(),
           ownerId: req.userId!,
@@ -5891,10 +5910,22 @@ export function createProjectsRouter(
           // surrogate becomes a literal U+FFFD once this label is written
           // to the database. EntitySchema's label has no charset
           // restriction of its own.
+          // Round 2143: mirrors the clone route's own identical round-2143
+          // fix (see its doc comment there for the full reasoning) -- a
+          // code-POINT slice is still the wrong budget for a UTF-16
+          // code-UNIT cap, so an emoji inside the slice window could still
+          // push the result past SPEC_LABEL_MAX_LENGTH by a character.
           const rawLabel = `${sourceLabel}${suffix}`;
-          const newLabel = rawLabel.length > SPEC_LABEL_MAX_LENGTH
-            ? `${[...sourceLabel].slice(0, SPEC_LABEL_MAX_LENGTH - suffix.length).join("")}${suffix}`
-            : rawLabel;
+          let newLabel = rawLabel;
+          if (rawLabel.length > SPEC_LABEL_MAX_LENGTH) {
+            const budget = SPEC_LABEL_MAX_LENGTH - suffix.length;
+            let truncated = "";
+            for (const ch of sourceLabel) {
+              if (truncated.length + ch.length > budget) break;
+              truncated += ch;
+            }
+            newLabel = `${truncated}${suffix}`;
+          }
           const name = deriveEntityName(newLabel, project.spec.entities.map((e) => e.name));
           const newEntity: Entity = {
             ...entity,
