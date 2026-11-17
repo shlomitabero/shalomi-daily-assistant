@@ -789,6 +789,40 @@ test("a field renamed only by letter case across a refine stays readable, writab
 });
 
 /**
+ * Round 2140: diffAndMigrate only reacts to a field's TYPE changing
+ * (prevField.type !== field.type), never to `required` alone, so flipping
+ * `name` from required to optional across a refine leaves the column's
+ * original NOT NULL constraint in place forever (SQLite can't retroactively
+ * drop it either). coerceValue correctly treats the now-optional field as
+ * nullable and returns null instead of throwing -- so, before this fix,
+ * the raw, untranslated SQLite `Error: NOT NULL constraint failed:
+ * ....name` reached the caller unchanged instead of the clean
+ * `ValidationError` a genuinely-required field already gets, for both a
+ * brand-new insert that omits the field and an update that clears it.
+ */
+test("a field loosened from required to optional across a refine can be omitted/cleared, instead of throwing a raw, untranslated NOT NULL error", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const created = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" });
+
+  const loosened: Entity = { ...customer, fields: [{ ...customer.fields[0], required: false }, customer.fields[1], customer.fields[2]] };
+  const changes = diffAndMigrate(db, "proj1", spec, { ...spec, entities: [loosened] });
+  assert.deepEqual(changes, [], "loosening required alone is not itself a reportable migration change");
+
+  assert.throws(
+    () => insertRecord(db, "proj1", loosened, { status: "New" }),
+    (err: unknown) => err instanceof ValidationError && (err as Error).message === 'Field "name" is required',
+    "omitting the now-optional field must throw the SAME clean ValidationError a genuinely-required field gets, not a raw SQLite error",
+  );
+
+  assert.throws(
+    () => updateRecord(db, "proj1", loosened, created.id, { name: "" }),
+    (err: unknown) => err instanceof ValidationError && (err as Error).message === 'Field "name" is required',
+    "clearing the now-optional field on an existing row must throw the same clean ValidationError, not a raw SQLite error",
+  );
+});
+
+/**
  * Round 1037: a self-referencing relation field (field.relationTo ===
  * this entity's own name -- e.g. Employee.managerId -> Employee, a
  * completely ordinary, schema-legal pattern) had no guard anywhere in the

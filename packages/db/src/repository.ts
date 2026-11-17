@@ -372,6 +372,33 @@ function ensureUpdatedAtColumn(db: ForgeDatabase, table: string): void {
   }
 }
 
+/**
+ * Round 2140: a field whose `required` flips from true to false on a
+ * refine (same name, same type) leaves the column's physical SQLite NOT
+ * NULL constraint in place forever -- migrate.ts's diffAndMigrate only
+ * reacts to a field's TYPE changing, never to `required` alone, and SQLite
+ * itself can't retroactively drop a NOT NULL constraint anyway (existing
+ * rows have no value to backfill it with). coerceValue above already
+ * treats the now-optional field as correctly nullable, returning `null`
+ * instead of throwing -- so the single physical write below is really
+ * still enforcing the SAME "this field needs a value" rule coerceValue's
+ * own required-check already expresses, just one layer later and as a
+ * raw, untranslated `Error` instead of the `ValidationError` a genuinely-
+ * required field already gets. Without this, every insertRecord/
+ * updateRecord caller saw this as an indistinguishable 500, the exact
+ * "field is required" rejection text every other path already surfaces as
+ * a clean 400.
+ */
+function translateNotNullConstraintError(err: unknown): never {
+  if (err instanceof Error) {
+    const match = /^NOT NULL constraint failed: .+\.(.+)$/.exec(err.message);
+    if (match) {
+      throw new ValidationError(`Field "${match[1]}" is required`);
+    }
+  }
+  throw err;
+}
+
 export function insertRecord(
   db: ForgeDatabase,
   projectId: string,
@@ -389,7 +416,12 @@ export function insertRecord(
   const stmt = db.prepare(
     `INSERT INTO ${quoteIdentifier(table)} (createdAt, createdByUserId, ${columns.map(quoteIdentifier).join(", ")}) VALUES (${placeholders})`,
   );
-  const result = stmt.run(createdAt, createdByUserId ?? null, ...values);
+  let result: ReturnType<typeof stmt.run>;
+  try {
+    result = stmt.run(createdAt, createdByUserId ?? null, ...values);
+  } catch (err) {
+    translateNotNullConstraintError(err);
+  }
   const id = Number(result.lastInsertRowid);
   // Round 1231: mirrors updateRecord's own round-1037/1176 self-reference
   // guard, which this function never got. The new row's id is only known
@@ -519,7 +551,11 @@ export function updateRecord(
     `${quoteIdentifier("updatedByUserId")} = ?`,
     `${quoteIdentifier("updatedAt")} = ?`,
   ].join(", ");
-  db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, updatedByUserId ?? null, updatedAt, id);
+  try {
+    db.prepare(`UPDATE ${quoteIdentifier(table)} SET ${setClause} WHERE id = ?`).run(...values, updatedByUserId ?? null, updatedAt, id);
+  } catch (err) {
+    translateNotNullConstraintError(err);
+  }
   return getRecord(db, projectId, entity, id)!;
 }
 
