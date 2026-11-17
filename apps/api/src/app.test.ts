@@ -6500,6 +6500,103 @@ test("POST .../automations/:ruleId/test fires a schedule rule immediately (bypas
 });
 
 /**
+ * Round 2102: findEntity and the record-lookup/no-records check used to
+ * run BEFORE withIdempotency here, not inside its callback -- the same
+ * anti-pattern rounds 945/2098/2099/2101 already fixed elsewhere (round
+ * 2098 in particular fixed this exact route's own immediate neighbor,
+ * .../runs/:runId/retry, for the identical shape, but missed this
+ * sibling). A test-send that had already succeeded (already sent the real
+ * message, already cached a 200 under an idempotency key) could 400
+ * AUTOMATION_TEST_NO_RECORDS on a genuine replay if the triggering record
+ * was deleted afterward, instead of returning the cached success.
+ */
+test("POST .../automations/:ruleId/test replays its cached success on a genuine idempotency-key retry, even if the triggering record was deleted afterward", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl, db) => {
+      const email = `automation-test-idem-${randomUUID()}@example.com`;
+      const token = await signup(baseUrl, email);
+      const owner = findUserByEmail(db, email)!;
+
+      const spec: ProductSpec = {
+        summary: "test",
+        personas: [],
+        roles: ["Admin"],
+        entities: [{ name: "Order", fields: [{ name: "customerName", type: "text", required: true }] }],
+        screens: [],
+        assumptions: [],
+        openQuestions: [],
+      };
+      const projectId = randomUUID();
+      insertProject(db, { id: projectId, ownerId: owner.id, name: "Orders", description: "test", spec });
+      diffAndMigrate(db, projectId, undefined, spec);
+      markProjectBuilt(db, projectId);
+
+      await fetch(`${baseUrl}/api/projects/${projectId}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550001111:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/automations`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          trigger: "record_created",
+          actionType: "send_whatsapp",
+          toMode: "static",
+          toNumber: "972500000000",
+          messageTemplate: "Test message",
+        }),
+      });
+      const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+      const recordRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+        body: JSON.stringify({ customerName: "Only record" }),
+      });
+      const { record } = (await recordRes.json()) as { record: { id: number } };
+
+      const headers = { ...authHeaders(token), "x-idempotency-key": "automation-test-idem-repro-key" };
+
+      // The real test-send: it genuinely succeeds while the record still exists, caching this exact 200 under the key.
+      const firstRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/test`, { method: "POST", headers });
+      assert.equal(firstRes.status, 200);
+      const first = (await firstRes.json()) as { run: { status: string } | null };
+      assert.equal(first.run?.status, "sent", "sanity check: the test-send must have genuinely succeeded before the replay below");
+      assert.equal(createdSockets[0].sendCalls.length, 1, "sanity check: the real message was actually sent exactly once so far");
+
+      // The triggering record is deleted AFTER the test-send already
+      // succeeded -- simulating any actor deleting it in the gap before
+      // the client's own response for the call above was lost in transit.
+      await fetch(`${baseUrl}/api/projects/${projectId}/entities/Order/${record.id}`, {
+        method: "DELETE",
+        headers: { ...authHeaders(token), "x-suppress-automations": "true" },
+      });
+
+      // A genuine fetchWithWakeRetry replay with the SAME key must replay
+      // the cached success -- not re-run the no-records check against the
+      // entity's now-empty table, and not send a second real message.
+      const replayRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/test`, { method: "POST", headers });
+      assert.equal(
+        replayRes.status,
+        200,
+        "a replay with the same idempotency key must replay the cached success, not 400 AUTOMATION_TEST_NO_RECORDS against the now-empty entity",
+      );
+      const replay = (await replayRes.json()) as { run: { status: string } | null };
+      assert.deepEqual(replay, first, "the replayed response must be identical to what the first attempt actually returned");
+      assert.equal(createdSockets[0].sendCalls.length, 1, "a genuine idempotency-key replay must NOT send a second real message");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db);
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 1261: this route's own test above already confirms a schedule
  * rule's Test bypasses isScheduledRuleDue's due-time gate -- but it never
  * checked the SIDE EFFECT of that successful fire: fireScheduledRule used

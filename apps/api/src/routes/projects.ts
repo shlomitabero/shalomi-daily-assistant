@@ -6599,37 +6599,51 @@ export function createProjectsRouter(
         res.status(status).json(body);
         return;
       }
-      const entity = findEntity(project, rule.entityName);
-      // Round 998: a record-triggered rule can be created before the
-      // project is ever built (rule creation itself has no project.status
-      // guard, same as every other automation route -- an intentional,
-      // already-tested pattern: pre-configuring automations ahead of the
-      // first build), in which case this entity's own real per-project SQL
-      // table (only ever created by diffAndMigrate, from the build/refine
-      // pipeline) genuinely doesn't exist yet. Checked here, not with a
-      // blanket route-level guard, and folded into the exact same "no
-      // records yet" outcome right below -- from this route's own point of
-      // view the two situations are functionally identical (there is
-      // nothing to test against), and every other automation route stays
-      // fully usable on a not-yet-built project exactly as before.
-      // Before this check, calling this route for any trigger other than
-      // "schedule" against such a project threw a raw, uncaught
-      // `SqliteError: no such table`, surfaced as a generic 500 instead of
-      // this same clean, already-documented 400.
-      const record = project.status === "built" ? listRecords(db, project.id, entity)[0] : undefined;
-      if (!record) {
-        throw new HttpError(
-          400,
-          `There are no ${entity.label} records yet to test this rule against -- create one first, then try again`,
-          "AUTOMATION_TEST_NO_RECORDS",
-        );
-      }
+      // Round 2102: findEntity and the record-lookup/no-records check used
+      // to run here, BEFORE withIdempotency -- the exact anti-pattern
+      // rounds 945/2098/2099/2101 already fixed elsewhere (round 2098 in
+      // particular fixed this route's own immediate neighbor, .../runs/
+      // :runId/retry, for the identical shape, but missed this sibling).
+      // withIdempotency's own "done" branch (idempotency.ts) returns the
+      // cached response WITHOUT ever invoking this callback, so a check
+      // placed outside it still ran against CURRENT database state on
+      // every call, including a genuine replay with the same
+      // X-Idempotency-Key. A test-send that had already succeeded (already
+      // sent the real message, already cached a 200 under this key) could
+      // 400 AUTOMATION_TEST_NO_RECORDS on a replay if the triggering
+      // record was deleted afterward, instead of returning the cached
+      // success.
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
         `POST /projects/${project.id}/automations/${rule.id}/test`,
         async () => {
+          const entity = findEntity(project, rule.entityName);
+          // Round 998: a record-triggered rule can be created before the
+          // project is ever built (rule creation itself has no project.status
+          // guard, same as every other automation route -- an intentional,
+          // already-tested pattern: pre-configuring automations ahead of the
+          // first build), in which case this entity's own real per-project SQL
+          // table (only ever created by diffAndMigrate, from the build/refine
+          // pipeline) genuinely doesn't exist yet. Checked here, not with a
+          // blanket route-level guard, and folded into the exact same "no
+          // records yet" outcome right below -- from this route's own point of
+          // view the two situations are functionally identical (there is
+          // nothing to test against), and every other automation route stays
+          // fully usable on a not-yet-built project exactly as before.
+          // Before this check, calling this route for any trigger other than
+          // "schedule" against such a project threw a raw, uncaught
+          // `SqliteError: no such table`, surfaced as a generic 500 instead of
+          // this same clean, already-documented 400.
+          const record = project.status === "built" ? listRecords(db, project.id, entity)[0] : undefined;
+          if (!record) {
+            throw new HttpError(
+              400,
+              `There are no ${entity.label} records yet to test this rule against -- create one first, then try again`,
+              "AUTOMATION_TEST_NO_RECORDS",
+            );
+          }
           // Round 1276: isManualTest=true -- see fireRule's own doc comment
           // on that parameter. Mirrors the schedule branch's identical
           // isManualTest=true just above (round 1261), for the exact same
