@@ -322,6 +322,29 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
       if (candidateField.type === "relation" && candidateField.relationTo && !resolvableEntityKeys.has(entityMergeKey(candidateField.relationTo))) {
         continue;
       }
+      // Round 2177: domainEntities.ts's own "Order" rule ("a purchase placed
+      // by a customer") and the Inventory & Products template's curated
+      // "PurchaseOrder" ("a business's own purchase FROM a supplier",
+      // templates.ts) are opposite-direction business concepts that only
+      // share an ENTITY_ALIAS_GROUPS entry (round 2152) to stop refine from
+      // spawning a duplicate order-tracking entity -- folding in every
+      // genuinely-new candidate field alongside that is still correct in
+      // general (an Order candidate's own brand-new field can be a
+      // legitimate addition to PurchaseOrder too), but breaks down
+      // specifically for `customerName`, which identifies WHO the
+      // counterparty is: a supplier purchase order has no customer at all.
+      // Confirmed live: the very first /refine ever run on an Inventory &
+      // Products project permanently bolts a required, unlabeled
+      // `customerName` onto PurchaseOrder (combinedDescription re-appends
+      // the project's own stored description, which always matches Order's
+      // keyword rule), after which creating a new PurchaseOrder record 400s
+      // with VALIDATION_ERROR since nothing ever populates it. Skipping only
+      // this one literal field, only for this one alias pair, leaves every
+      // other candidate field (including a genuinely new one) merged in
+      // exactly as round 2152 intended.
+      if (candidateLower === "order" && existingEntity.name.toLowerCase() === "purchaseorder" && candidateField.name.toLowerCase() === "customername") {
+        continue;
+      }
       existingEntity.fields.push(candidateField);
       fieldNameSet.add(candidateField.name.toLowerCase());
     }

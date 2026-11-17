@@ -613,6 +613,47 @@ test("mergeRefinedSpec folds a regenerated Order entity into an existing Purchas
 });
 
 /**
+ * Round 2177: the Order/PurchaseOrder fold above correctly stops a
+ * duplicate entity and correctly folds in a genuinely new field
+ * (totalAmount) -- but Order ("a purchase placed by a customer",
+ * domainEntities.ts) and PurchaseOrder ("a business's own purchase FROM a
+ * supplier", templates.ts) are opposite-direction concepts that only share
+ * an alias key to prevent that duplicate. domainEntities.ts's real Order
+ * rule's own `customerName` field has no business on a supplier purchase
+ * order, and bolting it on as a required field permanently breaks creating
+ * a new PurchaseOrder record (nothing ever has a "customer" to populate it
+ * with). Confirmed live with the real engine/templates before this fix.
+ */
+test("mergeRefinedSpec does NOT fold Order's own customerName field into PurchaseOrder, even though every other genuinely new field still folds in", () => {
+  const current = baseSpec({
+    entities: [{ name: "PurchaseOrder", label: "Purchase Order", fields: [{ name: "status", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [
+      {
+        name: "Order",
+        label: "Order",
+        fields: [
+          { name: "customerName", type: "text", required: true },
+          { name: "totalAmount", type: "number", required: false },
+        ],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["PurchaseOrder"],
+    "must still fold into the existing PurchaseOrder, not add a second order-tracking entity",
+  );
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["status", "totalAmount"],
+    "customerName must be skipped (a supplier purchase order has no customer), while totalAmount -- a genuinely new, unrelated field -- still folds in exactly as before",
+  );
+});
+
+/**
  * Round 2161: the Order/PurchaseOrder alias fold above only makes sense in
  * ONE direction -- candidate regenerates the GENERIC name "Order" (what
  * domainEntities.ts's own keyword rule always emits), current already has
