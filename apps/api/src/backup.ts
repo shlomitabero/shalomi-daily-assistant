@@ -518,7 +518,29 @@ function addUploadedFileEntries(
   // disambiguated into -- confirmed live via generateBackupZipEntries.
   // `collides` now checks both shapes with the same `entries.some` dedup
   // pattern already used throughout this function.
-  const collides = (dir: string) => entries.some((e) => e.path === dir || e.path.startsWith(`${dir}/`));
+  //
+  // Round 2147: this comparison was still case-SENSITIVE, unlike every
+  // other dedup helper in this file (uniqueWhatsAppLogPath's own
+  // existingLower Set, and the flat ".csv" loop's own `.toLowerCase()`
+  // compare just below in generateBackupZipEntries) -- both already case-
+  // fold for the documented reason that an unzip tool silently overwrites
+  // one entry with another when two ZIP paths differ only by letter case
+  // on a case-insensitive filesystem (the default on Windows/macOS). Since
+  // round 2100, entityDir is built from entity.label, which (per that
+  // round's own comment just above) has "no uniqueness guarantee from
+  // ProductSpecSchema" and is freely user-editable after build -- so two
+  // entities relabeled to, say, "Clients" and "CLIENTS" sanitize to
+  // "Clients"/"CLIENTS", this case-sensitive `collides` never catches the
+  // match, and their real uploaded files -- e.g. both named "photo.jpg"
+  // under record id 1, a realistic collision since ids restart at 1 per
+  // entity and field names/original filenames are commonly reused --
+  // land at "Clients/files/1-photo-photo.jpg" and
+  // "CLIENTS/files/1-photo-photo.jpg": distinct inside the ZIP but
+  // identical once extracted, so one silently overwrites the other.
+  const collides = (dir: string) => {
+    const lowerDir = dir.toLowerCase();
+    return entries.some((e) => e.path.toLowerCase() === lowerDir || e.path.toLowerCase().startsWith(`${lowerDir}/`));
+  };
   // Round 2100: entity.name -> entityDisplayLabel, the exact same bug
   // class round 2081 already fixed for the single-entity CSV/JSON/ICS
   // export buttons (EntityPanel.tsx) -- this whole-project backup's own

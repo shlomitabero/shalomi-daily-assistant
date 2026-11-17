@@ -797,6 +797,104 @@ test("generateBackupZipEntries disambiguates a third entity's directory prefix t
 });
 
 /**
+ * Round 2147: addUploadedFileEntries's own `collides` dedup (used to build
+ * entityDir) was still case-SENSITIVE, unlike every other dedup helper in
+ * this file (uniqueWhatsAppLogPath, and the flat ".csv" loop in
+ * generateBackupZipEntries). Since round 2100, entityDir is built from
+ * entity.label, which ProductSpecSchema never enforces uniqueness on --
+ * two entities relabeled to text that only collides once letter-cased
+ * (e.g. "Clients" and "CLIENTS") sanitize to themselves unchanged in
+ * different cases, so this case-sensitive `collides` never caught the
+ * match, and both entities' uploaded files (sharing a record id and an
+ * original filename, an entirely realistic case since ids restart at 1
+ * per entity) landed at paths that differ only by letter case -- distinct
+ * inside the ZIP, but identical once extracted on a case-insensitive
+ * filesystem (the default on Windows/macOS), so one silently overwrites
+ * the other.
+ */
+test("generateBackupZipEntries disambiguates an uploaded-file directory prefix that collides with another entity's own directory prefix only by letter case", () => {
+  const caseCollisionProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "EntityA",
+          label: "Clients",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "photo", type: "file", required: false },
+          ],
+        },
+        {
+          name: "EntityB",
+          label: "CLIENTS",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "photo", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(caseCollisionProject);
+  const entityA = caseCollisionProject.spec.entities[0];
+  const entityB = caseCollisionProject.spec.entities[1];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-backup-test-"));
+  try {
+    const filenameA = `${randomUUID()}.jpg`;
+    mkdirSync(path.join(uploadsDir, caseCollisionProject.id, "EntityA"), { recursive: true });
+    const bytesA = Buffer.from("jpeg-entity-A-bytes");
+    writeFileSync(path.join(uploadsDir, caseCollisionProject.id, "EntityA", filenameA), bytesA);
+    const { id: idA } = insertRecord(db, caseCollisionProject.id, entityA, {
+      name: "Row A",
+      photo: JSON.stringify({ url: `/api/uploads/${caseCollisionProject.id}/EntityA/${filenameA}`, name: "photo.jpg", size: bytesA.length, mimeType: "image/jpeg" }),
+    });
+
+    const filenameB = `${randomUUID()}.jpg`;
+    mkdirSync(path.join(uploadsDir, caseCollisionProject.id, "EntityB"), { recursive: true });
+    const bytesB = Buffer.from("jpeg-entity-B-bytes");
+    writeFileSync(path.join(uploadsDir, caseCollisionProject.id, "EntityB", filenameB), bytesB);
+    const { id: idB } = insertRecord(db, caseCollisionProject.id, entityB, {
+      name: "Row B",
+      photo: JSON.stringify({ url: `/api/uploads/${caseCollisionProject.id}/EntityB/${filenameB}`, name: "photo.jpg", size: bytesB.length, mimeType: "image/jpeg" }),
+    });
+
+    const entries = generateBackupZipEntries(db, caseCollisionProject, {}, uploadsDir);
+
+    // Both ids and both original filenames are identical ("1"/"photo.jpg"),
+    // so the only thing that could possibly disambiguate the two uploaded
+    // files is the entityDir itself -- which must therefore differ by more
+    // than just letter case.
+    assert.equal(idA, 1);
+    assert.equal(idB, 1);
+    const entryA = entries.find((e) => e.path === `Clients/files/${idA}-photo-photo.jpg`);
+    assert.ok(entryA, "expected entity A's own uploaded file under its plain, undisambiguated directory prefix");
+    assert.deepEqual(entryA!.content, bytesA);
+
+    const paths = entries.map((e) => e.path.toLowerCase());
+    const lowerCounts = new Map<string, number>();
+    for (const p of paths) lowerCounts.set(p, (lowerCounts.get(p) ?? 0) + 1);
+    for (const [p, count] of lowerCounts) {
+      assert.equal(count, 1, `entry path "${p}" (case-folded) must be unique across the whole ZIP, not just case-sensitively unique`);
+    }
+
+    // Once properly disambiguated, entity B's own directory prefix gets a
+    // bumped suffix (e.g. "CLIENTS (2)") that no longer case-folds to
+    // entryA's own "Clients" -- so look it up by its distinctive leaf
+    // filename (unique in this test to entity B's own record/field/
+    // original-name combination) rather than guessing the exact bumped
+    // string, and simply exclude entryA's own exact path.
+    const entryB = entries.find((e) => e.path !== entryA!.path && e.path.endsWith(`/${idB}-photo-photo.jpg`));
+    assert.ok(entryB, "expected entity B's own uploaded file under its own, disambiguated directory prefix");
+    assert.notEqual(entryB!.path, `CLIENTS/files/${idB}-photo-photo.jpg`, "entity B's directory prefix must be disambiguated, not collide with entity A's by letter case alone");
+    assert.deepEqual(entryB!.content, bytesB);
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1270: migrate.ts's own case-insensitive rename detection treats a
  * case-only entity rename (e.g. "applicant" -> "Applicant") as a true
  * no-op at the db layer -- but createUploadMiddleware wrote this file's
