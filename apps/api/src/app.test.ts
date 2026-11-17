@@ -275,6 +275,52 @@ test("errorMiddleware still sends a normal response when headers have not been s
   assert.deepEqual(jsonBody, { error: "Internal server error", code: "INTERNAL_ERROR" });
 });
 
+/**
+ * Round 2133: express.json()/express.urlencoded() (registered in
+ * createApp with no explicit `limit`, so each defaults to 100kb) throw
+ * this exact plain-object shape -- never an HttpError/ValidationError/
+ * NotFoundError -- the instant a request body exceeds that limit, before
+ * any route handler runs. errorMiddleware had no branch for it and fell
+ * through to the generic 500, so an ordinary oversized-but-legitimate
+ * request (a long text paste) got an opaque "Internal server error"
+ * instead of a real, actionable 413.
+ */
+test("errorMiddleware translates a body-parser 'entity.too.large' error into a real 413, not a generic 500", () => {
+  const statusCalls: number[] = [];
+  let jsonBody: unknown;
+  const fakeRes = {
+    headersSent: false,
+    status(code: number) {
+      statusCalls.push(code);
+      return this;
+    },
+    json(body: unknown) {
+      jsonBody = body;
+    },
+  };
+  const next = () => {
+    throw new Error("next() must not be called when headers have not been sent");
+  };
+
+  const payloadTooLargeError = { type: "entity.too.large", status: 413, expected: 200000, length: 200000, limit: 102400 };
+  errorMiddleware(payloadTooLargeError, {} as never, fakeRes as never, next as never);
+  assert.deepEqual(statusCalls, [413], "a body-parser size-limit error must get a real 413, not the generic 500");
+  assert.deepEqual(jsonBody, { error: "Request body is too large", code: "PAYLOAD_TOO_LARGE" });
+});
+
+test("POST /api/projects with a request body over express's size limit is rejected with a real 413, not a 500", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "oversized-body@example.com");
+    const res = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "x".repeat(200_000) }),
+    });
+    assert.equal(res.status, 413, "an oversized request body must be rejected with 413, not fall through to a generic 500");
+    assert.equal(((await res.json()) as { code?: string }).code, "PAYLOAD_TOO_LARGE");
+  });
+});
+
 test("health check responds ok", async () => {
   await withServer(async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/health`);

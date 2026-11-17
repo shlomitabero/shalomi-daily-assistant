@@ -202,6 +202,21 @@ export function errorMiddleware(err: unknown, _req: Request, res: Response, next
     res.status(404).json({ error: err.message, code: "NOT_FOUND" });
     return;
   }
+  // Round 2133: express.json()/express.urlencoded() (both registered
+  // above with no explicit `limit`) throw this plain, non-Error-subclass
+  // object shape -- never an HttpError/ValidationError/NotFoundError --
+  // the instant a request body exceeds their shared 100kb default, before
+  // any route handler ever runs. Every legitimate oversized-input case
+  // this codebase already guards against (AnswerQuestionsSchema's 2000-char
+  // cap, GENERATED_SPEC_MAX_LIST_ITEMS, etc.) assumes its own 400/422 is
+  // the worst case a client sees -- this one fell through to the generic
+  // branch below instead, so an ordinary long-text paste (a CSV pasted
+  // into a text field, a sizeable automation template) got an opaque,
+  // unactionable 500 "Internal server error" instead of a real 413.
+  if (err && typeof err === "object" && (err as { type?: unknown }).type === "entity.too.large") {
+    res.status(413).json({ error: "Request body is too large", code: "PAYLOAD_TOO_LARGE" });
+    return;
+  }
   // eslint-disable-next-line no-console
   console.error(err);
   res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
