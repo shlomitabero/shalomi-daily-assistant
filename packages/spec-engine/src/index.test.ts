@@ -547,6 +547,72 @@ test("mergeRefinedSpec folds a regenerated Employee entity into an existing Staf
 });
 
 /**
+ * Round 2152: the exact same bug class as round 1911's Employee/TeamMember
+ * finding just above, never ported to the Inventory & Products template.
+ * That template's own curated entity is "Supplier" (not "Vendor"), but its
+ * stored description ("...suppliers, purchase orders...") contains
+ * domainEntities.ts's separate Vendor rule's own "supplier(s)" keyword --
+ * confirmed live via the real heuristic engine that refining a fresh
+ * Inventory & Products project with an unrelated instruction silently
+ * added a whole new "Vendor" entity alongside the existing "Supplier".
+ */
+test("mergeRefinedSpec folds a regenerated Vendor entity into an existing Supplier entity instead of duplicating it (Inventory & Products template's own alias)", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }, { name: "contactPerson", type: "text", required: false }, { name: "phone", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Vendor", label: "Vendor", fields: [{ name: "name", type: "text", required: true }, { name: "email", type: "text", required: false }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["Supplier"],
+    "must NOT add a second, duplicate supplier-tracking entity -- the candidate's Vendor concept already exists as Supplier",
+  );
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["contactPerson", "email", "name", "phone"],
+    "Supplier's own fields must survive, with the candidate's genuinely new field (email) folded in, same as an exact-name merge already does",
+  );
+});
+
+/**
+ * Round 2152: the same Inventory & Products template gap for its
+ * purchasing-document entity -- the template's own curated entity is
+ * "PurchaseOrder" (not "Order"), but its stored description ("...purchase
+ * orders...") contains domainEntities.ts's separate Order rule's own
+ * "order(s)"/"purchase" keywords. Confirmed live the identical duplicate-
+ * entity failure for this pair.
+ */
+test("mergeRefinedSpec folds a regenerated Order entity into an existing PurchaseOrder entity instead of duplicating it (Inventory & Products template's own alias)", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "PurchaseOrder", label: "Purchase Order", fields: [{ name: "orderDate", type: "date", required: true }, { name: "status", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Order", label: "Order", fields: [{ name: "orderDate", type: "date", required: true }, { name: "totalAmount", type: "number", required: false }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["PurchaseOrder"],
+    "must NOT add a second, duplicate order-tracking entity -- the candidate's Order concept already exists as PurchaseOrder",
+  );
+  assert.deepEqual(
+    merged.entities[0].fields.map((f) => f.name).sort(),
+    ["orderDate", "status", "totalAmount"],
+    "PurchaseOrder's own fields must survive, with the candidate's genuinely new field (totalAmount) folded in",
+  );
+});
+
+/**
  * Round 1973: round 1911 added entityMergeKey/ENTITY_ALIAS_GROUPS to the
  * ENTITY half of mergeRefinedSpec (the two tests just above), but never
  * updated the SCREENS half, which still matches by plain
@@ -608,6 +674,26 @@ test("detectLikelyEntityRenames stays silent for the TeamMember/Employee alias p
     detectLikelyEntityRenames(current, candidate),
     [],
     "TeamMember isn't dropped and Employee isn't new -- mergeRefinedSpec now folds them together, so there is nothing here to warn about",
+  );
+});
+
+test("detectLikelyEntityRenames stays silent for the Supplier/Vendor and PurchaseOrder/Order alias pairs too (round 2152)", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "PurchaseOrder", fields: [{ name: "orderDate", type: "date", required: true }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Vendor", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "Order", fields: [{ name: "orderDate", type: "date", required: true }] },
+    ],
+  });
+  assert.deepEqual(
+    detectLikelyEntityRenames(current, candidate),
+    [],
+    "Supplier/Vendor and PurchaseOrder/Order are aliased -- mergeRefinedSpec folds them together, so there is nothing here to warn about",
   );
 });
 

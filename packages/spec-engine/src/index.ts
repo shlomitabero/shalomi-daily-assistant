@@ -110,7 +110,31 @@ export async function generateSpec(
  * why detectLikelyEntityRenames's own doc comment requires an exact
  * field-signature match rather than a looser one.
  */
-const ENTITY_ALIAS_GROUPS: string[][] = [["employee", "teammember", "staff"]];
+// Round 2152: the exact same bug class as the Employee/TeamMember/Staff
+// case this comment describes above, just never ported to the Inventory
+// & Products template (templates.ts's INVENTORY_ENTITIES/_EN). That
+// template's own curated entities are named "Supplier" (not "Vendor")
+// and "PurchaseOrder" (not "Order") -- but its permanently-stored project
+// description ("...products, suppliers, purchase orders and stock
+// movements."/Hebrew "...ספקים, הזמנות רכש...") literally contains
+// domainEntities.ts's separate Vendor rule's own keywords ("supplier(s)",
+// "procurement", "ספקים", "רכש") and separate Order rule's own keywords
+// ("order(s)", "purchase", Hebrew "הזמנ(ה|ות)"). /refine's own
+// combinedDescription (routes/projects.ts) re-appends that description on
+// every refine, re-firing those matches regardless of the actual new
+// instruction, and since "vendor"/"supplier" and "order"/"purchaseorder"
+// weren't aliased, mergeRefinedSpec silently added brand-new, duplicate
+// Vendor and Order entities (their own SQL tables and screens) alongside
+// the pre-existing Supplier/PurchaseOrder. Confirmed live: refining a
+// fresh Inventory & Products project with a completely unrelated
+// instruction ("Add a Notes field to StockMovement") added both a whole
+// new "Vendor" entity (alongside the existing "Supplier") and a whole new
+// "Order" entity (alongside the existing "PurchaseOrder").
+const ENTITY_ALIAS_GROUPS: string[][] = [
+  ["employee", "teammember", "staff"],
+  ["vendor", "supplier"],
+  ["order", "purchaseorder"],
+];
 const ENTITY_ALIAS_KEY = new Map<string, string>();
 for (const group of ENTITY_ALIAS_GROUPS) {
   for (const name of group) ENTITY_ALIAS_KEY.set(name, group[0]);
