@@ -13,6 +13,7 @@ import {
   listCheckpoints,
   listHistoricalEntityNames,
   recordEntityHistory,
+  recordFieldTypeHistory,
   renameCheckpoint,
   tryGetCheckpoint,
 } from "./checkpoints.js";
@@ -144,6 +145,50 @@ test("findLastKnownFieldType still recovers a removed field's last declared type
     findLastKnownFieldType(db, "proj1", "Customer", "status"),
     "date",
     "status's last known type must survive purely from the durable ledger, even though the one checkpoint that ever declared it is gone",
+  );
+});
+
+/**
+ * Round 2160: recordFieldTypeHistory's own upsert is keyed on exact-case
+ * (projectId, entityName, fieldName) -- a cosmetic recase of a field
+ * (round 988's own "never treat like a real drop" convention) doesn't
+ * update the existing row, it inserts a SECOND row under the new casing.
+ * findLastKnownFieldType's case-insensitive fallback then had two
+ * candidate rows with no recency signal (no ORDER BY, no timestamp) to
+ * pick between, and could return the OLDER casing's now-stale type instead
+ * of the genuinely most-recently-declared one -- exactly the ambiguity
+ * this ledger exists to resolve for migrate.ts's reused-column branch.
+ * Confirms the fix: recording a field under one casing/type and then a
+ * later casing/type for the exact same field leaves the ledger holding
+ * only the later type, however the lookup is cased.
+ */
+test("recordFieldTypeHistory's upsert drops a field's stale case-variant row once the same field is recorded again under a different casing, so findLastKnownFieldType can never return the older, stale type", () => {
+  const db = openDatabase(":memory:");
+  ensureCheckpointsTable(db);
+
+  const specWithStatusEnum: ProductSpec = {
+    ...validSpec,
+    entities: [{ ...validSpec.entities[0]!, fields: [...validSpec.entities[0]!.fields, { name: "Status", type: "enum", required: false }] }],
+  };
+  recordFieldTypeHistory(db, "proj1", specWithStatusEnum);
+
+  const specWithStatusRecasedToText: ProductSpec = {
+    ...validSpec,
+    entities: [{ ...validSpec.entities[0]!, fields: [...validSpec.entities[0]!.fields, { name: "status", type: "text", required: false }] }],
+  };
+  recordFieldTypeHistory(db, "proj1", specWithStatusRecasedToText);
+
+  const rows = db
+    .prepare("SELECT entityName, fieldName, type FROM checkpoint_field_type_history WHERE projectId = ? AND lower(fieldName) = 'status'")
+    .all("proj1") as { entityName: string; fieldName: string; type: string }[];
+  assert.equal(rows.length, 1, "recording the field under a new casing must leave exactly one row for it, not one per casing ever seen");
+  assert.equal(rows[0]!.fieldName, "status", "the surviving row must be the most recently recorded casing");
+  assert.equal(rows[0]!.type, "text", "the surviving row must carry the most recently recorded type");
+
+  assert.equal(
+    findLastKnownFieldType(db, "proj1", "Customer", "STATUS"),
+    "text",
+    "a lookup under yet a third casing must resolve to the genuinely most-recent type (text), never the stale superseded one (enum)",
   );
 });
 

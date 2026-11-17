@@ -197,11 +197,21 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
   const upsertFieldType = db.prepare(
     "INSERT INTO checkpoint_field_type_history (projectId, entityName, fieldName, type) VALUES (?, ?, ?, ?) ON CONFLICT (projectId, entityName, fieldName) DO UPDATE SET type = excluded.type",
   );
+  // Round 2160: same stale-case-variant cleanup as recordFieldTypeHistory's
+  // own doc comment (the live write path this backfill mirrors) -- without
+  // it, a project whose history already contains a cosmetic recase before
+  // this round ran would still have both casings' rows sitting here after
+  // the backfill, leaving findLastKnownFieldType's fallback exactly as
+  // ambiguous as it was for brand-new data.
+  const deleteStaleCasingsBackfill = db.prepare(
+    "DELETE FROM checkpoint_field_type_history WHERE projectId = ? AND lower(entityName) = lower(?) AND lower(fieldName) = lower(?) AND NOT (entityName = ? AND fieldName = ?)",
+  );
   const checkpointSpecRowsOldestFirst = db
     .prepare("SELECT projectId, spec_json FROM checkpoints ORDER BY createdAt ASC, rowid ASC")
     .all() as { projectId: string; spec_json: string }[];
   for (const row of checkpointSpecRowsOldestFirst) {
     for (const [entityName, fieldName, type] of extractFieldTypesFromSpecJson(row.spec_json)) {
+      deleteStaleCasingsBackfill.run(row.projectId, entityName, fieldName, entityName, fieldName);
       upsertFieldType.run(row.projectId, entityName, fieldName, type);
     }
   }
@@ -209,6 +219,7 @@ export function ensureCheckpointsTable(db: ForgeDatabase): void {
     const currentSpecRows = db.prepare("SELECT id AS projectId, spec_json FROM projects").all() as { projectId: string; spec_json: string }[];
     for (const row of currentSpecRows) {
       for (const [entityName, fieldName, type] of extractFieldTypesFromSpecJson(row.spec_json)) {
+        deleteStaleCasingsBackfill.run(row.projectId, entityName, fieldName, entityName, fieldName);
         upsertFieldType.run(row.projectId, entityName, fieldName, type);
       }
     }
@@ -285,13 +296,35 @@ export function recordEntityHistory(db: ForgeDatabase, projectId: string, spec: 
  * type, not just "has this field ever existed," so a later call for the
  * same (projectId, entityName, fieldName) deliberately overwrites an
  * earlier one's type.
+ *
+ * Round 2160: the upsert's own ON CONFLICT key is exact-case, so a cosmetic
+ * recase of an entity/field name (round 988's own "never treat like a real
+ * drop" convention) doesn't update the existing row -- it inserts a SECOND
+ * row under the new casing, leaving the old casing's row (and its now-stale
+ * type) behind forever. findLastKnownFieldType's own case-insensitive
+ * fallback then has two or more candidate rows to choose between with no
+ * recency signal at all (no ORDER BY, no timestamp column), so it can
+ * return whichever stale casing SQLite's unordered scan happens to surface
+ * first -- not the genuinely most-recently-declared type migrate.ts's
+ * reused-column branch needs to tell a real date<->enum reuse from a benign
+ * text<->text one (see findLastKnownFieldType's own doc comment). Deleting
+ * every OTHER case-variant row for this exact (projectId, entityName,
+ * fieldName) identity before upserting keeps this ledger down to at most
+ * one row per case-insensitive field, so there's never more than one
+ * candidate left for the fallback to pick between -- fixing the ambiguity
+ * at the one place new rows are ever written, rather than trying to teach
+ * the read-time fallback to guess at recency after the fact.
  */
 export function recordFieldTypeHistory(db: ForgeDatabase, projectId: string, spec: ProductSpec): void {
+  const deleteStaleCasings = db.prepare(
+    "DELETE FROM checkpoint_field_type_history WHERE projectId = ? AND lower(entityName) = lower(?) AND lower(fieldName) = lower(?) AND NOT (entityName = ? AND fieldName = ?)",
+  );
   const upsert = db.prepare(
     "INSERT INTO checkpoint_field_type_history (projectId, entityName, fieldName, type) VALUES (?, ?, ?, ?) ON CONFLICT (projectId, entityName, fieldName) DO UPDATE SET type = excluded.type",
   );
   for (const entity of spec.entities) {
     for (const field of entity.fields) {
+      deleteStaleCasings.run(projectId, entity.name, field.name, entity.name, field.name);
       upsert.run(projectId, entity.name, field.name, field.type);
     }
   }
