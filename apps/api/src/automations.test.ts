@@ -41,6 +41,7 @@ import {
   EMAIL_UNREACHABLE_ERROR,
   WHATSAPP_SEND_TIMEOUT_ERROR,
   WHATSAPP_SEND_NOT_CONNECTED_ERROR,
+  removeCollaborator,
 } from "@forge/db";
 import {
   fireRule,
@@ -3661,6 +3662,60 @@ test("fireRule does not deliver or log a manual Test/Retry send for a collaborat
     listAutomationRuns(db, project.id, rule.id, 10).length,
     0,
     "no run row must exist for a manual send whose caller had already lost write access by the time it resolved",
+  );
+});
+
+/**
+ * Round 2175: the sibling of the test just above, for fireWebhookAction's
+ * own CATCH (failing-request) branch specifically -- fireEmailAction's
+ * catch block already carries the round-2114 stillHasWriteAccess check
+ * (with a comment claiming it mirrors fireWebhookAction's own identical
+ * check), but fireWebhookAction's own catch block never actually got it,
+ * only its success path did. A collaborator revoked entirely while their
+ * own manual Test/Retry webhook request was still in flight still got a
+ * permanent "failed" automation_runs row logged under their now-revoked
+ * access -- reachable exactly like the round-2114 test above, just on the
+ * failure path instead of success, and via full removal instead of a
+ * mere demotion (either race triggers the same gap). The real removal
+ * happens from inside the mocked fetch itself, which then rejects --
+ * the same "genuinely races the awaited call" technique every sibling
+ * test in this file already uses.
+ */
+test("fireRule does not log a manual Test/Retry webhook FAILURE for a collaborator fully removed while the request was still in flight", async () => {
+  const { db, project } = setupProject();
+  ensureProjectCollaboratorsTable(db);
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "webhook",
+    webhookUrl: "https://hooks.example.com/forge",
+    toMode: "static",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const collabUserId = "collab1";
+  addCollaborator(db, project.id, collabUserId, "editor");
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    // The real race: the owner removes this exact caller's access
+    // entirely WHILE this webhook request is still genuinely in flight,
+    // which then goes on to fail (a dropped connection, a timeout, any
+    // other real network error).
+    removeCollaborator(db, project.id, collabUserId);
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+  try {
+    await fireRule(db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, project, orderEntity, rule, record, UNUSED_UPLOADS_DIR, UNUSED_BASE_URL, true, "updated", collabUserId);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(
+    listAutomationRuns(db, project.id, rule.id, 10).length,
+    0,
+    "no run row must exist for a manual webhook send whose caller had already lost write access by the time the (failing) request resolved",
   );
 });
 

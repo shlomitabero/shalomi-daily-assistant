@@ -1268,6 +1268,14 @@ async function fireWebhookAction(
     // the rule can be deleted during this same awaited fetch just as
     // easily on the failing path as the succeeding one.
     if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+    // Round 2175: fireEmailAction's own catch block already carries this
+    // exact check (with a comment claiming it mirrors this function's
+    // own identical check) -- but this one never actually got it. The
+    // same round-2114 hazard (the manual Test/Retry caller's write
+    // access being revoked during this same awaited network call)
+    // applies exactly as much to a failed webhook request as a
+    // successful one.
+    if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
     // Round 1327: a timed-out request rejects with fetch/undici's own
     // generic AbortError ("This operation was aborted" or similar), which
     // tells a user debugging a failed webhook rule nothing about WHY it
