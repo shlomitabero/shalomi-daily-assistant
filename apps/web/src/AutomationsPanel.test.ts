@@ -4894,6 +4894,55 @@ test("toggling a rule that was deleted by another tab/collaborator drops the row
 });
 
 /**
+ * Round 2136: round 2135's own server-side fix (routes/projects.ts) made a
+ * bare {enabled: true} PATCH -- exactly what this button sends -- throw a
+ * real VALIDATION_ERROR when the rule's stored fieldValue no longer fits
+ * the trigger field's CURRENT type (retyped, not removed, since the rule
+ * was auto-disabled). Before this test's own fix, handleToggle's catch
+ * block only special-cased AUTOMATION_RULE_NOT_FOUND/ENTITY_NOT_FOUND/
+ * FIELD_NOT_FOUND, so that VALIDATION_ERROR fell through to the generic
+ * fixed sentence ("The submitted data isn't valid...") -- correct wording
+ * for a rejected form submission, meaningless on a plain list-row button
+ * click with no form in sight and no clue the real cause is the rule's own
+ * stored condition.
+ */
+test("enabling a rule whose trigger field was retyped (not removed) shows a specific, actionable error instead of the generic form-validation sentence", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule({ enabled: false, fieldValue: "Won" })] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/automations/rule1") {
+        return new Response(JSON.stringify({ error: 'Field "status" must be "true" or "false"', code: "VALIDATION_ERROR" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(document.querySelector(".automations-rule-actions button") as HTMLButtonElement);
+
+      await waitForCondition(() => document.querySelector("p.error") !== null);
+      assert.equal(
+        document.querySelector("p.error")?.textContent,
+        "This rule can't be enabled -- its condition no longer matches this field. Edit the rule to fix it.",
+        "a retyped-field VALIDATION_ERROR on Enable must show the specific, actionable message, not the generic form-validation sentence",
+      );
+      assert.equal(document.querySelectorAll(".automations-rule-row").length, 1, "the row itself must stay -- this is a real validation failure to fix, not a vanished rule");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1976: mirrors the two tests just above, for handleTestRule's own
  * testAutomationRule call (the Test button) -- round 1875 named "6 call
  * sites" for this exact server error but only ever fixed handleSubmit/

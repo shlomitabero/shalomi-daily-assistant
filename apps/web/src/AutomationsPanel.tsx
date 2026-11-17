@@ -1064,6 +1064,27 @@ export function AutomationsPanel({
         loadRules();
         return;
       }
+      // Round 2136: round 2135's own server-side fix (routes/projects.ts)
+      // made a bare {enabled: true} PATCH -- exactly what this button
+      // sends -- re-validate the rule's stored fieldValue/fieldOperator/
+      // toField against the trigger/destination field's CURRENT type
+      // whenever that field still resolves but was RETYPED (not removed)
+      // since disableAutomationRulesForField auto-disabled the rule. That
+      // re-validation throws a real VALIDATION_ERROR (not ENTITY_NOT_FOUND/
+      // FIELD_NOT_FOUND, which the branch above already handles), which
+      // fell straight through to the generic branch below -- showing the
+      // fixed, field-agnostic "data isn't valid, check the form" sentence
+      // on a plain list-row button click with no form in sight, and no clue
+      // that the real cause is the rule's own stored condition no longer
+      // fitting the field it's attached to. `!rule.enabled` (the toggle's
+      // pre-click state, since `rule` here is the argument this closure
+      // captured, untouched by any state update) is exactly "this click was
+      // an Enable, not a Disable" -- the only direction round 2135's fix
+      // can ever re-validate.
+      if (error.code === "VALIDATION_ERROR" && !rule.enabled) {
+        setError(t("automations.enable.invalidStoredValue"));
+        return;
+      }
       setError(error.message);
     } finally {
       setBusyRuleId(null);
