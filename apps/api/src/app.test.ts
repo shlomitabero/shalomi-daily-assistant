@@ -13532,6 +13532,99 @@ test("DELETE /auth/account rejects a collaborator's concurrent mutation that lan
   );
 });
 
+/**
+ * Regression test (round 2113): the test above proves `activePipelines`
+ * correctly rejects an ORDINARY mutation (add a role) that lands during
+ * DELETE's own WhatsApp-disconnect await -- but `POST .../transfer-
+ * ownership` never checks `activePipelines` at all (it's one of the
+ * "entirely separate collaborator-management routes" round 2089's own doc
+ * comment names as unprotected by that guard), and is otherwise fully
+ * synchronous (no genuine await of its own), so it can complete inside
+ * that exact window with no guard to stop it. By the time DELETE's own
+ * await resolves, the project it's about to erase already belongs to
+ * someone else -- and `deleteProject()` had no re-check verifying the
+ * caller (the former owner) still owns it, so it erased the new owner's
+ * project out from under them with no warning.
+ */
+test("DELETE /projects/:id must not delete a project out from under its new owner after a concurrent transfer-ownership lands during its own WhatsApp-disconnect await", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  let releaseLogout!: () => void;
+  const logoutHeld = new Promise<void>((resolve) => {
+    releaseLogout = resolve;
+  });
+  let resolveLogoutEntered!: () => void;
+  const logoutEntered = new Promise<void>((resolve) => {
+    resolveLogoutEntered = resolve;
+  });
+
+  await withServer(
+    async (baseUrl) => {
+      const ownerToken = await signup(baseUrl, "transfer-delete-race-owner@example.com");
+      const newOwnerToken = await signup(baseUrl, "transfer-delete-race-newowner@example.com");
+
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ email: "transfer-delete-race-newowner@example.com" }),
+      });
+      const listRes = await fetch(`${baseUrl}/api/projects/${project.id}/collaborators`, { headers: authHeaders(ownerToken) });
+      const { collaborators } = (await listRes.json()) as { collaborators: { userId: string; email: string }[] };
+      const newOwnerUserId = collaborators.find((c) => c.email === "transfer-delete-race-newowner@example.com")!.userId;
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(ownerToken) });
+      createdSockets[0].sock.user = { id: "15550003333:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const deletePromise = fetch(`${baseUrl}/api/projects/${project.id}`, { method: "DELETE", headers: authHeaders(ownerToken) });
+
+      // Same technique as the sibling test above: wait for DELETE's own
+      // logout() await to actually be entered before firing the transfer,
+      // so it's guaranteed to land inside the window.
+      await logoutEntered;
+
+      const transferRes = await fetch(`${baseUrl}/api/projects/${project.id}/transfer-ownership`, {
+        method: "POST",
+        headers: authHeaders(ownerToken),
+        body: JSON.stringify({ userId: newOwnerUserId }),
+      });
+
+      releaseLogout();
+      const deleteRes = await deletePromise;
+
+      assert.equal(transferRes.status, 200, "the transfer itself must succeed -- it's a legitimate request from the still-valid owner session");
+      assert.equal(
+        deleteRes.status,
+        404,
+        "DELETE must be rejected once the project it was about to erase belongs to someone else, not silently proceed",
+      );
+      const deleteBody = (await deleteRes.json()) as { code?: string };
+      assert.equal(deleteBody.code, "PROJECT_NOT_FOUND");
+
+      const getAfterByNewOwner = await fetch(`${baseUrl}/api/projects/${project.id}`, { headers: authHeaders(newOwnerToken) });
+      assert.equal(getAfterByNewOwner.status, 200, "the new owner's project must still exist -- the former owner's stale DELETE must not have erased it");
+    },
+    {
+      whatsapp: (db) => {
+        const { manager, createdSockets: sockets } = createTestWhatsAppManager(db, {
+          logout: async () => {
+            resolveLogoutEntered();
+            await logoutHeld;
+          },
+        });
+        createdSockets = sockets;
+        return manager;
+      },
+    },
+  );
+});
+
 test("POST .../whatsapp/send does not insert a permanently-orphaned message row when the project is deleted while the send is still in flight", async () => {
   let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
   let releaseSend!: () => void;

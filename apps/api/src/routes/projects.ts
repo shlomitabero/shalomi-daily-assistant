@@ -2714,6 +2714,20 @@ export function createProjectsRouter(
         activePipelines.add(project.id);
         try {
           await whatsapp.disconnect(project.id).catch(() => {});
+          // Round 2113: activePipelines (just above) only ever stops another
+          // *pipeline* request from racing this one on the same project --
+          // round 2089's own doc comment names the entirely separate
+          // collaborator-management routes as unprotected by it, and
+          // POST .../transfer-ownership is exactly one of those: fully
+          // synchronous, no activePipelines check of its own. During this
+          // route's own await just above, the still-valid owner session
+          // could transfer the project away to someone else, and without
+          // this recheck, deleteProject() below would erase the NEW
+          // owner's project out from under them with no warning -- the
+          // same "genuine await between a one-time access check and the
+          // real commit" root cause already fixed on five/six other call
+          // sites (rounds 2086-2090), just on this specific route pair.
+          requireProjectOwner(db, project.id, req.userId!);
           deleteProject(db, project.id);
           await deleteProjectUploads(uploadsDir, project.id);
         } finally {
