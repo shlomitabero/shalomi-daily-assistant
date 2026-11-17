@@ -875,19 +875,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // lookbehind-alternation style this file's own "client(s)" regex
       // above already uses for an analogous multi-qualifier exclusion.
       /\b(?<!intellectual\s)(?<!lost[\s-])(?<!\b(?:material|chemical|physical|mechanical|thermal|electrical|magnetic|optical|acoustic|structural|nutritional|medicinal|healing|object|css|data|file|system|software)[\s-])propert(?:y|ies)\b(?!\s+damage\b)/,
-      // Bare "listing(s)" (round 457's own \b-bounded fix) is still a
-      // genuinely ambiguous whole word, the same "property" shape just
-      // above -- "job listing(s)" (a recruitment/job-board app) and
-      // "product listing(s)" (an e-commerce/inventory app) are both
-      // ordinary, extremely common idioms with nothing to do with real
-      // estate. Confirmed empirically before fixing: a job-posting
-      // description and a job-board description each spuriously matched
-      // ONLY Property via HeuristicSpecProvider's real matchEntities --
-      // the real JobApplicant entity never even appeared -- and a
-      // product-listings description injected a bogus Property sibling
-      // alongside the correct Product entity. Lookbehind excludes only
-      // those two specific predecessors, same style as "property"'s own
-      // exclusions right above.
+      // Bare "listing(s)" (round 457's own \b-bounded fix, then round 881's
+      // own lookbehind fix excluding "job "/"product listing(s)") is still
+      // a genuinely ambiguous whole word, the same "property" shape just
+      // above -- but round 881 only ever patched those 2 specific
+      // predecessors, and "listing(s)" is far more broadly ambiguous than
+      // that: business-directory listings, event listings, podcast/show
+      // listings, stock-market listings, and recruiter listings are all
+      // ordinary idioms with nothing to do with real estate, none excluded
+      // by round 881's own 2-idiom lookbehind. Confirmed live via
+      // matchEntities: "a directory app for local business listings",
+      // "a site for event listings", "an app for podcast episode
+      // listings", and "a job board with recruiter listings" each
+      // spuriously matched ONLY Property -- the real domain (directory,
+      // events, podcast, job board) entirely lost -- and a stock-market-
+      // listing description injected a bogus Property sibling alongside
+      // the correct Product entity. Round 2129 extends round 881's own
+      // lookbehind-alternation (same multi-word-exclusion style as
+      // "property"'s own 15-way exclusion right above) with the specific
+      // word immediately preceding "listing(s)" in each of those five
+      // phrasings -- "business"/"event"/"episode"/"market"/"recruiter" --
+      // rather than switching to a document-wide cue-requirement: a cue-
+      // requirement would also have broken the existing "an app for an
+      // agent to manage each listing and schedule viewings with buyers"
+      // test just below, a genuine real-estate description using none of
+      // "real estate"/"apartment"/"rent"/etc. anywhere in the text.
       // Bare "נכס"/"נכסים" (round 2110) is the exact same "genuinely
       // ambiguous whole word" shape round 1828 already fixed for the
       // English "property" -- in Hebrew it's the ordinary general-finance/
@@ -903,7 +915,9 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // 2107/2109 established: excluded when a financial/IP-asset marker
       // co-occurs anywhere in the text, in either order relative to the
       // keyword.
-      "real estate", /\b(?<!job\s)(?<!product\s)listing(s)?\b/, "apartment for rent",
+      "real estate",
+      /\b(?<!job\s)(?<!product\s)(?<!business\s)(?<!event\s)(?<!episode\s)(?<!market\s)(?<!recruiter\s)listing(s)?\b/,
+      "apartment for rent",
       /נכס(?:ים)?(?![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))(?<![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))/,
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
       // "דירה למכירה"/"דירה להשכרה" (apartment for sale/rent) had no plural

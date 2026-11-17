@@ -3405,6 +3405,42 @@ test("Property's 'listing' keyword doesn't spuriously match 'job listing(s)' or 
 });
 
 /**
+ * Round 2129's finding: round 881's own lookbehind fix only ever excluded
+ * "job "/"product listing(s)" -- but bare "listing(s)" is far more broadly
+ * ambiguous than those 2 idioms: business-directory, event, podcast/show,
+ * stock-market, and recruiter-phrased job-board listings are all ordinary
+ * idioms with nothing to do with real estate, none excluded by round 881's
+ * narrower fix. Confirmed live before fixing: each of the first four
+ * descriptions below spuriously matched ONLY Property via the real
+ * matchEntities -- the real domain (directory, events, podcast, job
+ * board) entirely lost -- and the stock-market one injected a bogus
+ * Property sibling alongside the correct Product entity.
+ */
+test("Property's 'listing' keyword doesn't spuriously match business/event/podcast/stock-market/recruiter 'listing(s)' either", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const businessDirectory = await provider.generate("A directory app for local business listings in the city.");
+  assert.ok(!businessDirectory.entities.some((e) => e.name === "Property"), "'business listings' alone must not spuriously match Property");
+
+  const eventListings = await provider.generate("A site for event listings happening this weekend.");
+  assert.ok(!eventListings.entities.some((e) => e.name === "Property"), "'event listings' alone must not spuriously match Property");
+
+  const podcastListings = await provider.generate("An app for managing podcast episode listings and show notes.");
+  assert.ok(!podcastListings.entities.some((e) => e.name === "Property"), "'episode listings' alone must not spuriously match Property");
+
+  const stockListing = await provider.generate("A tracker for companies considering a stock market listing.");
+  assert.ok(!stockListing.entities.some((e) => e.name === "Property"), "'market listing' alone must not spuriously match Property");
+
+  const recruiterListings = await provider.generate("A job board with recruiter listings for open positions.");
+  assert.ok(!recruiterListings.entities.some((e) => e.name === "Property"), "'recruiter listings' alone must not spuriously match Property");
+
+  // The real estate term still works, with none of the new exclusion
+  // words nearby.
+  const realListing = await provider.generate("A real estate app to manage property listings for sale.");
+  assert.ok(realListing.entities.some((e) => e.name === "Property"), "a genuine real-estate 'listings' description must still match Property");
+});
+
+/**
  * Regression test for round 558's finding: Property's bare "property"
  * keyword is genuinely ambiguous English -- it means a real-estate asset
  * in most descriptions, but "intellectual property" (patents/trademarks),
