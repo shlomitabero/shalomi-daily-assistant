@@ -15320,6 +15320,81 @@ test("EntityPanel's Enter shortcut does not hijack Enter from a focused Save/Edi
 });
 
 /**
+ * Round 2168: the same hijack shape as the Enter test just above, but for
+ * x/Delete/Backspace/d -- `enterTargetsInteractiveElement` only ever
+ * guarded Enter here, on the (incomplete) reasoning that only Enter has a
+ * native double-activation hazard on a button. But the handler's own
+ * LOGICAL action (toggle-select/delete/duplicate the visually-focused
+ * row) is exactly as wrong for these other keys regardless of any native
+ * behavior to conflict with: focus row 1 with "j", start editing row 2,
+ * move real DOM focus to the form's own Duplicate button, press "d" there
+ * -- before this round, this silently duplicated row 1 (an unrelated
+ * record the user wasn't even looking at) while row 2 was still mid-edit,
+ * with no confirmation (duplicating skips one by design).
+ */
+test("EntityPanel's 'd' shortcut does not hijack a focused Duplicate button elsewhere on the page into duplicating the wrong row", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Deal") {
+        postCount += 1;
+        const body = JSON.parse(init!.body as string);
+        const record = { id: 3, ...body };
+        store.push(record);
+        return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      for (let attempt = 0; document.querySelectorAll(".record-row-focused").length === 0 && attempt < 40; attempt++) {
+        fireEvent.keyDown(window, { key: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(
+        (document.querySelector(".record-row-focused") as HTMLElement)?.getAttribute("data-record-id"),
+        "1",
+        "sanity check: 'j' must have focused row 1 first",
+      );
+
+      const editButtons = Array.from(document.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex (row 2) row");
+      fireEvent.click(globexEdit!);
+      const nameInput = document.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      await waitForCondition(() => nameInput.value === "Globex");
+
+      const duplicateButton = Array.from(document.querySelectorAll(".record-form button")).find((b) =>
+        /duplicate/i.test(b.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.ok(duplicateButton, "expected the record form to have its own Duplicate button while editing row 2");
+      duplicateButton.focus();
+      assert.equal(document.activeElement, duplicateButton, "sanity check: real DOM focus is now on the form's own Duplicate button, not row 1");
+
+      fireEvent.keyDown(duplicateButton, { key: "d" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(postCount, 0, "'d' on the focused Duplicate button must never be hijacked into duplicating row 1, the visually-focused (but not really focused) row");
+      assert.equal(document.querySelectorAll("table tbody tr").length, 2, "no row must be duplicated by this hijacked 'd'");
+      assert.equal(nameInput.value, "Globex", "the in-progress edit of row 2 must be completely unaffected");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: "x" above lets a keyboard-only user build a
  * multi-row selection, but the only way to back OUT of it was reaching
  * for the mouse -- either the round-354 "Clear selection" button, or

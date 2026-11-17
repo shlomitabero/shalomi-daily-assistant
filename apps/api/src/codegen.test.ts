@@ -13328,6 +13328,104 @@ test("the exported EntityView's Enter shortcut does not hijack Enter from a focu
 });
 
 /**
+ * Round 2168: the same hijack shape as the Enter test just above, but for
+ * x/Delete/Backspace/d -- before this round, `enterTargetsInteractiveElement`
+ * only guarded Enter in this handler, on the (incomplete) reasoning that
+ * only Enter has a native double-activation hazard on a button. But the
+ * handler's own LOGICAL action (toggle-select/delete/duplicate the
+ * visually-focused row) is exactly as wrong for these other keys: "d" with
+ * real DOM focus on row 2's own Duplicate button (while row 1 is still only
+ * VISUALLY focused from an earlier "j" press) used to silently duplicate
+ * row 1 instead -- an unrelated record the user wasn't even looking at,
+ * while row 2 was still mid-edit. Mirrors the live preview's own round-2168
+ * fix and test.
+ */
+test("the exported EntityView's 'd' shortcut does not hijack a focused Duplicate button elsewhere on the page into duplicating the wrong row", async () => {
+  const files = generateExportFiles(project);
+  const dir = writeGeneratedWebComponent(files);
+  const store = [
+    { id: 1, name: "Acme Corp", status: "New" },
+    { id: 2, name: "Globex", status: "Won" },
+  ];
+  const originalFetch = globalThis.fetch;
+  let postCount = 0;
+  globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/Customer") {
+      return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && input === "/api/Customer") {
+      postCount += 1;
+      const body = JSON.parse(init!.body as string);
+      const record = { id: 3, ...body };
+      store.push(record);
+      return new Response(JSON.stringify({ record }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected request ${method} ${input}`);
+  }) as typeof fetch;
+
+  try {
+    await withRealLocalStorage(async () => {
+      const { EntityView } = await import(path.join(dir, "web", "src", "components", "EntityView.jsx"));
+      const customerEntity = project.spec.entities.find((e) => e.name === "Customer")!;
+      const props = {
+        entity: customerEntity,
+        highlightRecordId: null,
+        onHighlightHandled: () => {},
+        onJumpToRecord: () => {},
+        onRecordCountChange: () => {},
+      };
+
+      const { container } = render(React.createElement(EntityView, props));
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelectorAll("tbody tr").length === 2) break;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "expected both records to have loaded");
+
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "j" });
+      });
+      const focused = container.querySelector(".record-row-focused") as HTMLElement;
+      assert.equal(focused.getAttribute("data-record-id"), "1", "sanity check: 'j' must have focused row 1 first");
+
+      const editButtons = Array.from(container.querySelectorAll("table tbody button")) as HTMLButtonElement[];
+      const globexEdit = editButtons.find((b) => b.closest("tr")?.getAttribute("data-record-id") === "2" && /edit/i.test(b.textContent ?? ""));
+      assert.ok(globexEdit, "expected an Edit button on the Globex (row 2) row");
+      await act(async () => {
+        fireEvent.click(globexEdit!);
+      });
+      const nameInput = container.querySelector(".record-form input[type=text]") as HTMLInputElement;
+      assert.equal(nameInput.value, "Globex");
+
+      const duplicateButton = Array.from(container.querySelectorAll(".record-form button")).find((b) =>
+        /duplicate/i.test(b.textContent ?? ""),
+      ) as HTMLButtonElement;
+      assert.ok(duplicateButton, "expected the record form to have its own Duplicate button while editing row 2");
+      duplicateButton.focus();
+      assert.equal(document.activeElement, duplicateButton, "sanity check: real DOM focus is now on the form's own Duplicate button, not row 1");
+
+      await act(async () => {
+        fireEvent.keyDown(duplicateButton, { key: "d" });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      assert.equal(postCount, 0, "'d' on the focused Duplicate button must never be hijacked into duplicating row 1, the visually-focused (but not really focused) row");
+      assert.equal(container.querySelectorAll("tbody tr").length, 2, "no row must be duplicated by this hijacked 'd'");
+      assert.equal(nameInput.value, "Globex", "the in-progress edit of row 2 must be completely unaffected");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 489's finding: EntityView's own j/k/x/d/Delete/Enter and "n"
  * keyboard shortcuts (all above) only ever guarded against isTypingTarget,
  * never against the exported app's one overlay dialog, GlobalSearch, being

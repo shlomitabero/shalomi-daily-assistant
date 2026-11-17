@@ -6230,14 +6230,16 @@ export function isTypingTarget(target) {
 }
 
 /**
- * True when Enter's real DOM target is a button, link, or other element
- * that already has its own native (or React-handled) meaning for Enter --
- * j/k navigation only ever moves a *visual* "focused row" highlight, never
- * calling .focus() on anything, so the real DOM target can be sitting on a
- * completely unrelated button (the form's own Save button, another row's
- * Delete/Duplicate button) while a row is still visually focused from an
- * earlier j/k press. Mirrors the live Forge AI preview's own
- * entityFormatting.ts exactly.
+ * True when a keydown's real DOM target is a button, link, or other
+ * element that already has its own native (or React-handled) meaning for
+ * that key -- j/k navigation only ever moves a *visual* "focused row"
+ * highlight, never calling .focus() on anything, so the real DOM target
+ * can be sitting on a completely unrelated button (the form's own Save
+ * button, another row's Delete/Duplicate button) while a row is still
+ * visually focused from an earlier j/k press. Used by every key below
+ * that acts on focusedRowId (Enter, x, Delete/Backspace, d), not just
+ * Enter. Mirrors the live Forge AI preview's own entityFormatting.ts
+ * exactly.
  */
 export function enterTargetsInteractiveElement(target) {
   return Boolean(target?.closest?.('button, a[href], [role="button"], summary'));
@@ -7806,13 +7808,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
    * bookmark-this-page shortcut) silently duplicated the focused row
    * instead, with no confirm dialog. Mirrors the live preview's own fix.
    *
-   * enterTargetsInteractiveElement guards a round-654 gap unique to
-   * Enter: j/k's own setFocusedRowId never calls .focus() on anything, so
+   * enterTargetsInteractiveElement guards a round-654 gap (extended round
+   * 2168 to every key below that acts on focusedRowId, not just Enter):
+   * j/k's own setFocusedRowId never calls .focus() on anything, so
    * e.target here can be sitting on a completely unrelated button (the
-   * form's own Save button) while an earlier j/k press still has some row
-   * visually focused -- without this check, Enter on that Save button got
-   * hijacked into opening the visually-focused row for editing instead of
-   * submitting the form. Mirrors the live preview's own fix.
+   * form's own Save button, another row's Delete/Duplicate button) while
+   * an earlier j/k press still has some row visually focused -- without
+   * this check, Enter on that Save button got hijacked into opening the
+   * visually-focused row for editing instead of submitting the form, and
+   * x/Delete/Backspace/d on that same button silently toggled/deleted/
+   * duplicated the wrong row entirely. Mirrors the live preview's own fix.
    */
   useEffect(() => {
     if (viewMode !== "table") return;
@@ -7840,13 +7845,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
           e.preventDefault();
           startEdit(record);
         }
-      } else if (e.key === "x" && isFocusedRowVisible) {
+      } else if (e.key === "x" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         e.preventDefault();
         toggleSelected(focusedRowId);
-      } else if ((e.key === "Delete" || e.key === "Backspace") && isFocusedRowVisible) {
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        isFocusedRowVisible &&
+        !e.defaultPrevented &&
+        !enterTargetsInteractiveElement(e.target)
+      ) {
         e.preventDefault();
         handleDelete(focusedRowId);
-      } else if (e.key === "d" && isFocusedRowVisible) {
+      } else if (e.key === "d" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         e.preventDefault();
         handleDuplicate(focusedRowId);
       } else if (e.key === "Escape" && selectedIds.size > 0) {

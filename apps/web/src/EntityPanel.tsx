@@ -3926,21 +3926,27 @@ export function EntityPanel({
    * each hijacked a different browser/OS shortcut the same way. App.tsx's
    * own Ctrl+K handler already checks this; this effect never had.
    *
-   * enterTargetsInteractiveElement guards a fourth gap (round 654), unique
-   * to Enter: j/k's own setFocusedRowId never calls .focus() on anything,
-   * so the row it highlights is only ever a visual state, never the real
-   * DOM focus -- e.target on this window-level listener can be sitting on
-   * a completely unrelated button (the form's own Save button, another
-   * row's Delete/Duplicate button, a toolbar button) the user tabbed to,
-   * while an earlier j/k press still has some row visually focused.
-   * Without this check, Enter on the Save button there got hijacked into
-   * opening the visually-focused row for editing instead of submitting
-   * the form -- silently discarding whatever unsaved edit or new-record
-   * draft was about to be submitted, with no confirmation, since the
-   * handler never looked past e.key before. The e.defaultPrevented check
-   * covers the one case the closest() walk inside it can't: a React
+   * enterTargetsInteractiveElement guards a fourth gap (round 654,
+   * extended round 2168 to every key below that acts on focusedRowId, not
+   * just Enter): j/k's own setFocusedRowId never calls .focus() on
+   * anything, so the row it highlights is only ever a visual state, never
+   * the real DOM focus -- e.target on this window-level listener can be
+   * sitting on a completely unrelated button (the form's own Save button,
+   * another row's Delete/Duplicate button, a toolbar button) the user
+   * tabbed to, while an earlier j/k press still has some row visually
+   * focused. Originally this check guarded Enter alone, on the reasoning
+   * that Enter is the one key with a NATIVE double-activation hazard on a
+   * button -- but that reasoning missed that x/Delete/Backspace/d have no
+   * native meaning on a button EITHER, yet the window-level handler's own
+   * LOGICAL action (toggle-select/delete/duplicate the visually-focused
+   * row) is exactly as wrong for them: confirmed live, j/k to row 1, click
+   * Edit on a DIFFERENT row 2 (startEdit never touches focusedRowId), Tab
+   * to row 2's own Duplicate/Delete button, press "d" -- silently
+   * duplicated row 1 instead, with no confirmation (duplicating skips one
+   * by design), while row 2 was still mid-edit. The e.defaultPrevented
+   * check covers the one case the closest() walk inside it can't: a React
    * onKeyDown on a non-native role="button" element (EntityLabelEditor's
-   * own rename trigger) that already handled this exact Enter itself.
+   * own rename trigger) that already handled this exact key itself.
    * Mirrors the identical hazard round 350 fixed for the calendar day
    * cell's own onKeyDown (`e.target !== e.currentTarget`) -- that fix
    * could compare targets directly since it's a per-element React
@@ -3974,13 +3980,19 @@ export function EntityPanel({
           e.preventDefault();
           startEdit(record);
         }
-      } else if (!readOnly && e.key === "x" && isFocusedRowVisible) {
+      } else if (!readOnly && e.key === "x" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         e.preventDefault();
         toggleSelected(focusedRowId as number);
-      } else if (!readOnly && (e.key === "Delete" || e.key === "Backspace") && isFocusedRowVisible) {
+      } else if (
+        !readOnly &&
+        (e.key === "Delete" || e.key === "Backspace") &&
+        isFocusedRowVisible &&
+        !e.defaultPrevented &&
+        !enterTargetsInteractiveElement(e.target)
+      ) {
         e.preventDefault();
         void handleDelete(focusedRowId as number);
-      } else if (!readOnly && e.key === "d" && isFocusedRowVisible) {
+      } else if (!readOnly && e.key === "d" && isFocusedRowVisible && !e.defaultPrevented && !enterTargetsInteractiveElement(e.target)) {
         e.preventDefault();
         void handleDuplicate(focusedRowId as number);
       } else if (e.key === "Escape" && selectedIds.size > 0) {
