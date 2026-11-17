@@ -173,6 +173,29 @@ test("buildCalendarFeedIcs's UID is unique per entity+record id, scoped by proje
   assert.match(icsB!, /UID:Appointment-7@projB\.forge-ai/);
 });
 
+/**
+ * Round 2167: the per-entity feed (buildCalendarFeedIcs, EntityPanel.tsx's
+ * own "Subscribe" button) and the project-wide combined feed
+ * (buildCombinedCalendarFeedIcs, CollaboratorsPanel.tsx's own combined-
+ * subscribe button) are two ordinary, real UI affordances on the same
+ * screen set -- nothing stops a user adding both URLs to their calendar
+ * app. Both used to build the exact same UID for the same project/entity/
+ * record, violating RFC 5545's own global-uniqueness requirement for UID
+ * (confirmed live: both produced the byte-identical
+ * "Appointment-7@proj1.forge-ai"). Confirms the two feeds now disagree,
+ * while buildCalendarFeedIcs's own UID format is completely unchanged
+ * from the test just above (an existing per-entity subscriber must never
+ * see a different UID for a record it already has).
+ */
+test("buildCalendarFeedIcs and buildCombinedCalendarFeedIcs produce different UIDs for the exact same project/entity/record, instead of colliding", () => {
+  const records: EntityRecord[] = [{ id: 7, appointmentDate: "2026-01-01", customerName: "Yossi Cohen", confirmed: null }];
+  const singleIcs = buildCalendarFeedIcs(entity, records, "proj1");
+  const combinedIcs = buildCombinedCalendarFeedIcs([entity], { Appointment: records }, "proj1");
+  assert.match(singleIcs!, /UID:Appointment-7@proj1\.forge-ai\r?\n/, "the per-entity feed's own UID format must stay exactly as it was before this round");
+  const combinedUid = /UID:(.+)/.exec(combinedIcs!)![1];
+  assert.notEqual(combinedUid, "Appointment-7@proj1.forge-ai", "the combined feed must use a different UID than the per-entity feed for the same record");
+});
+
 test("buildCalendarFeedIcs skips a record with a missing or unparseable date value instead of emitting a broken VEVENT", () => {
   const records: EntityRecord[] = [
     { id: 1, appointmentDate: null, customerName: "No date", confirmed: null },
@@ -547,8 +570,8 @@ test("buildCombinedCalendarFeedIcs's UID stays unique per entity+record id, so t
   const events = parseEvents(ics!);
   const uids = events.map((e) => /UID:(.+)/.exec(unfold(e))![1]);
   assert.notEqual(uids[0], uids[1], "the Appointment and Rental records both have id 1 -- their UIDs must still differ");
-  assert.match(uids[0], /^Appointment-1@proj1\.forge-ai/);
-  assert.match(uids[1], /^Rental-1@proj1\.forge-ai/);
+  assert.match(uids[0], /^Appointment-1@proj1-all\.forge-ai/);
+  assert.match(uids[1], /^Rental-1@proj1-all\.forge-ai/);
 });
 
 test("buildCombinedCalendarFeedIcs's DESCRIPTION still resolves a relation field to its related record's display label, matching buildCalendarFeedIcs's own relation support", () => {

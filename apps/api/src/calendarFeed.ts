@@ -289,6 +289,28 @@ function foldIcsLine(line: string): string {
  * shares the exact same DTSTAMP, matching a single real .ics generation
  * pass.
  */
+/**
+ * Round 2167: `uidSuffix` exists for exactly one reason -- the per-entity
+ * feed (buildCalendarFeedIcs) and the project-wide combined feed
+ * (buildCombinedCalendarFeedIcs) both call this same function for the
+ * SAME entity/record/projectId whenever a project has both an active
+ * per-entity "Subscribe" link and the combined one (two ordinary, real UI
+ * affordances on the same screen set -- EntityPanel.tsx's own
+ * handleSubscribeCalendar and CollaboratorsPanel.tsx's combined-subscribe
+ * button), and before this round the UID line below used none of the
+ * arguments that differ between those two callers, so both feeds emitted
+ * the byte-identical UID for the same record. RFC 5545 §3.8.4.7
+ * requires a UID to be globally unique; this codebase already treats a
+ * UID collision as a real bug worth preventing (buildCalendarFeedIcs's
+ * own `projectId` scoping below exists so two different PROJECTS' same-
+ * named entity never collide -- a calendar client treats importing a UID
+ * that already exists as an UPDATE of that existing event, not a new one,
+ * the exact same hazard this one just reaches via two feeds of the SAME
+ * project instead of two different projects). Defaults to "" so
+ * buildCalendarFeedIcs's own UID format is completely unchanged -- an
+ * existing per-entity subscriber must never see a different UID for a
+ * record it already has on its next refresh.
+ */
 function buildVeventLinesForEntity(
   entity: Entity,
   records: EntityRecord[],
@@ -298,6 +320,7 @@ function buildVeventLinesForEntity(
   relatedRecords: RelatedRecordsByEntity,
   lang: Lang,
   summaryPrefix: string,
+  uidSuffix: string = "",
 ): string[] {
   const dateField = findDateField(entity.fields);
   if (!dateField) return [];
@@ -379,7 +402,7 @@ function buildVeventLinesForEntity(
       })
       .filter((line): line is string => line !== null);
     lines.push("BEGIN:VEVENT");
-    lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@${projectId}.forge-ai`));
+    lines.push(foldIcsLine(`UID:${icsEscapeText(entity.name)}-${record.id}@${projectId}${uidSuffix}.forge-ai`));
     lines.push(`DTSTAMP:${dtstamp}`);
     lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(start)}`);
     lines.push(`DTEND;VALUE=DATE:${formatIcsDate(end)}`);
@@ -512,7 +535,7 @@ export function buildCombinedCalendarFeedIcs(
     // Not pre-escaped here: the shared loop's own icsEscapeText(summary)
     // call escapes the whole prefix+label string exactly once.
     const summaryPrefix = `[${entityDisplayLabel(entity, labelOccurrences)}] `;
-    eventLines.push(...buildVeventLinesForEntity(entity, records, projectId, dtstamp, allEntities, relatedRecords, lang, summaryPrefix));
+    eventLines.push(...buildVeventLinesForEntity(entity, records, projectId, dtstamp, allEntities, relatedRecords, lang, summaryPrefix, "-all"));
   }
   const lines: string[] = [
     "BEGIN:VCALENDAR",
