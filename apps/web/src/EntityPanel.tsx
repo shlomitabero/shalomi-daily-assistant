@@ -4897,7 +4897,25 @@ export function EntityPanel({
         }),
       );
       const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
-      setSelectedIds(new Set(failedIds));
+      // Round 2173: mirrors handleSubmit's own round-2085 fix and
+      // commitInlineEdit's own round-2172 fix for the identical race --
+      // a checkpoint restore removing bulkEditField between picking it
+      // and this PATCH reaching the server still gets a 200 (every other
+      // field, if any, still applies), with the dropped field flagged via
+      // ignoredFields -- but this result-processing never inspected a
+      // FULFILLED promise for it, so every one of these silently-no-op'd
+      // records was reported as a clean success: selection cleared, no
+      // warning shown, nothing changed. bulkEditField is the one field
+      // every PATCH in this batch shares, so a single warning naming it
+      // covers every ignored id, the same way commitInlineEdit's own
+      // fix uses the raw field name rather than a stale label lookup.
+      const ignoredIds = new Set(
+        ids.filter((_id, i) => {
+          const r = results[i];
+          return r.status === "fulfilled" && (r.value?.ignoredFields?.length ?? 0) > 0;
+        }),
+      );
+      setSelectedIds(new Set([...failedIds, ...ignoredIds]));
       if (failedIds.length > 0) {
         const firstFailure = results.find(
           (r, i): r is PromiseRejectedResult => r.status === "rejected" && !notFoundIds.has(ids[i]),
@@ -4907,6 +4925,8 @@ export function EntityPanel({
             ? (firstFailure.reason as Error).message
             : t("entity.bulk.updatePartialFailure", { failed: failedIds.length, total: ids.length }),
         );
+      } else if (ignoredIds.size > 0) {
+        setError(t("entity.form.fieldNoLongerExists.one", { field: bulkEditField }));
       }
       await refresh();
     } finally {

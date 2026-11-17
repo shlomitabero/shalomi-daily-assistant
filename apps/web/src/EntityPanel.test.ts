@@ -2489,6 +2489,87 @@ test("EntityPanel's handleBulkUpdate silently drops a selected record that 404s 
 });
 
 /**
+ * Round 2173: mirrors handleSubmit's own round-2085 fix and
+ * commitInlineEdit's own round-2172 fix for the identical race -- a
+ * checkpoint restore can remove bulkEditField from this entity's live
+ * field set between picking it and this PATCH reaching the server.
+ * updateRecord still resolves (every field that IS current still
+ * applies to a real record) but flags the dropped field via
+ * ignoredFields on that SAME fulfilled promise -- which this result-
+ * processing never inspected, silently reporting a batch that changed
+ * nothing at all as a clean, selection-clearing success.
+ */
+test("EntityPanel's handleBulkUpdate warns and keeps every id selected when updateRecord's own ignoredFields reports the bulk-edited field was silently dropped", async () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  const displayMatch = entityPanelSrc.match(/ {2}function bulkEditValueDisplay\(field: Field \| undefined, value: unknown\): string \{[\s\S]*?\n {2}\}\n/);
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkUpdate\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(helperMatch && displayMatch && handlerMatch, "expected to find invalidNumberField, bulkEditValueDisplay and handleBulkUpdate in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${displayMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  let capturedError: string | undefined | null = null;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+
+  const originalConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = (() => true) as typeof window.confirm;
+  try {
+    const fn = new Function(
+      "writesInFlight",
+      "setBulkActionBusy",
+      "t",
+      "projectId",
+      "entity",
+      "selectedIds",
+      "bulkEditField",
+      "bulkEditValue",
+      "setError",
+      "updateRecord",
+      "setSelectedIds",
+      "refresh",
+      `${code}\nreturn handleBulkUpdate;`,
+    )(
+      false,
+      () => {},
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+      "proj1",
+      { name: "Order", fields: [{ name: "status", required: false }] },
+      new Set([1, 2, 3]),
+      "status",
+      "Shipped",
+      (msg: string | null) => {
+        capturedError = msg;
+      },
+      async (_projectId: string, _entityName: string, id: number) => ({
+        record: { id },
+        ignoredFields: ["status"],
+      }),
+      (next: Set<number>) => {
+        capturedSelectedIds = next;
+      },
+      async () => {
+        refreshCalled += 1;
+      },
+    ) as () => Promise<void>;
+
+    await fn();
+
+    assert.match(
+      capturedError!,
+      /entity\.form\.fieldNoLongerExists\.one:\{"field":"status"\}/,
+      "a batch whose own field got dropped must surface the real 'field no longer exists' warning naming it, not a bare success",
+    );
+    assert.deepEqual(
+      [...capturedSelectedIds!].sort(),
+      [1, 2, 3],
+      "every ignored id must stay selected so the user can notice and retry, the same way a genuine failure already does",
+    );
+    assert.equal(refreshCalled, 1, "refresh() must still run");
+  } finally {
+    globalThis.window.confirm = originalConfirm;
+  }
+});
+
+/**
  * Regression test (round 625): handleBulkUpdate had NEITHER a confirmation
  * dialog NOR any undo window, unlike its sibling handleBulkDelete (which has
  * both -- window.confirm, then the same pendingDelete undo-toast mechanism
