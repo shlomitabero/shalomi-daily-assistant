@@ -15574,6 +15574,79 @@ test("POST .../integrations/whatsapp/send retried with the same idempotency key 
 });
 
 /**
+ * Round 2101: the connection-status check above used to run BEFORE
+ * withIdempotency was ever called, not inside its callback -- but
+ * withIdempotency's own "done" branch (idempotency.ts) returns the cached
+ * response WITHOUT ever invoking that callback, so a check placed outside
+ * it still ran against CURRENT connection state on every call, including a
+ * genuine replay with the same X-Idempotency-Key. A real send that already
+ * succeeded (cached under a key) would 409 WHATSAPP_NOT_CONNECTED on a
+ * fetchWithWakeRetry replay if WhatsApp disconnected afterward (this app
+ * has no auto-reconnect) -- instead of replaying the cached success.
+ */
+test("POST .../integrations/whatsapp/send replays its cached success on a genuine idempotency-key retry, even if WhatsApp disconnected afterward", async () => {
+  let createdSockets: ReturnType<typeof createFakeWhatsAppSocket>[] = [];
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "whatsapp-send-idem-disconnect@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/connect`, { method: "POST", headers: authHeaders(token) });
+      createdSockets[0].sock.user = { id: "15550004444:1@s.whatsapp.net" };
+      createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+      const headers = { ...authHeaders(token), "x-idempotency-key": "whatsapp-send-disconnect-repro-key" };
+      const sendBody = { to: "972501234567", message: "אפשר תור מחר?" };
+
+      // The real send: it genuinely succeeds while still connected, caching this exact 200 under the idempotency key.
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sendBody),
+      });
+      assert.equal(firstRes.status, 200);
+      const first = (await firstRes.json()) as { ok: boolean };
+
+      // WhatsApp disconnects AFTER the send already succeeded -- simulating
+      // a real disconnection in the gap before the client's own response
+      // for the call above was lost in transit.
+      const disconnectRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/disconnect`, { method: "POST", headers: authHeaders(token) });
+      assert.equal(disconnectRes.status, 200);
+
+      // A genuine fetchWithWakeRetry replay with the SAME key must replay
+      // the cached success -- not re-check the now-disconnected connection
+      // state, and not send a second real message.
+      const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/integrations/whatsapp/send`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sendBody),
+      });
+      assert.equal(
+        replayRes.status,
+        200,
+        "a replay with the same idempotency key must replay the cached success, not 409 WHATSAPP_NOT_CONNECTED against the now-disconnected state",
+      );
+      const replay = (await replayRes.json()) as { ok: boolean };
+      assert.deepEqual(replay, first, "the replayed response must be identical to what the first attempt actually returned");
+
+      assert.equal(createdSockets[0].sendCalls.length, 1, "a genuine idempotency-key replay must NOT send a second real message");
+    },
+    {
+      whatsapp: (db) => {
+        const created = createTestWhatsAppManager(db);
+        createdSockets = created.createdSockets;
+        return created.manager;
+      },
+    },
+  );
+});
+
+/**
  * Round 973: a manual test-send from WhatsAppPanel previously had no way to
  * attach a file at all -- only the automation path (findTemplateFileAttachment)
  * could ever pass a WhatsAppAttachment into sendMessage/performSend, even

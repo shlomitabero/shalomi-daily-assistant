@@ -3980,32 +3980,6 @@ export function createProjectsRouter(
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const { to, message, attachment } = parsed.data;
-      const connStatus = whatsapp.getStatus(project.id);
-      if (connStatus.status !== "connected") {
-        throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
-      }
-      // Round 973: `attachment.url` is client-supplied -- re-derive the
-      // expected prefix and re-validate the filename against UPLOADED_FILENAME
-      // ourselves rather than trusting it, exactly like the existing
-      // record-file reference resolution a few hundred lines above this
-      // route does for a record's own file-type field value. A URL that
-      // doesn't match the one and only shape this project's own attachment
-      // upload route ever produces (including one for a DIFFERENT project)
-      // is rejected before it ever reaches path.join, so no attacker-chosen
-      // path segment is used, and only once it matches UPLOADED_FILENAME
-      // exactly is the already-isPathInsideDir-checked uploadsDir/.../filename
-      // combination ever opened.
-      let resolvedAttachment: WhatsAppAttachment | undefined;
-      if (attachment) {
-        const filePath = resolveWhatsAppAttachmentPath(project.id, attachment.url);
-        if (!filePath) {
-          throw new HttpError(400, "Invalid attachment reference", "INVALID_ATTACHMENT");
-        }
-        if (!existsSync(filePath)) {
-          throw new HttpError(400, "Attachment file is no longer available", "ATTACHMENT_FILE_GONE");
-        }
-        resolvedAttachment = { filePath, fileName: attachment.name, mimeType: attachment.mimeType };
-      }
       // Unlike every sibling mutating route in this file (/roles,
       // /assumptions, /entities, /entities/:entityName/automations, the
       // record-creation route, …), this one was never wrapped in
@@ -4022,6 +3996,49 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/integrations/whatsapp/send`,
         async () => {
+          // Round 2101: the connection-status check and the attachment's
+          // existsSync check used to run BEFORE withIdempotency was ever
+          // called (above this callback) -- but withIdempotency's own
+          // "done" branch (idempotency.ts) returns the cached response
+          // WITHOUT ever invoking this callback, so a check placed outside
+          // it still ran against CURRENT connection/file state on every
+          // call, including a genuine replay with the same
+          // X-Idempotency-Key -- the same anti-pattern rounds 945/2098/2099
+          // already fixed for ACCESS checks specifically, just not yet
+          // ported to these two STATE checks. A retry that had already
+          // succeeded (already sent the real message, already cached a 200
+          // under this key) could 409 WHATSAPP_NOT_CONNECTED if WhatsApp
+          // disconnected afterward (this app has no auto-reconnect), or
+          // 400 ATTACHMENT_FILE_GONE after this same callback's own
+          // round-979 cleanup below deleted the single-use attachment file
+          // on the original attempt -- instead of replaying the cached
+          // success.
+          const connStatus = whatsapp.getStatus(project.id);
+          if (connStatus.status !== "connected") {
+            throw new HttpError(409, "Connect WhatsApp before sending a message", "WHATSAPP_NOT_CONNECTED");
+          }
+          // Round 973: `attachment.url` is client-supplied -- re-derive the
+          // expected prefix and re-validate the filename against UPLOADED_FILENAME
+          // ourselves rather than trusting it, exactly like the existing
+          // record-file reference resolution a few hundred lines above this
+          // route does for a record's own file-type field value. A URL that
+          // doesn't match the one and only shape this project's own attachment
+          // upload route ever produces (including one for a DIFFERENT project)
+          // is rejected before it ever reaches path.join, so no attacker-chosen
+          // path segment is used, and only once it matches UPLOADED_FILENAME
+          // exactly is the already-isPathInsideDir-checked uploadsDir/.../filename
+          // combination ever opened.
+          let resolvedAttachment: WhatsAppAttachment | undefined;
+          if (attachment) {
+            const filePath = resolveWhatsAppAttachmentPath(project.id, attachment.url);
+            if (!filePath) {
+              throw new HttpError(400, "Invalid attachment reference", "INVALID_ATTACHMENT");
+            }
+            if (!existsSync(filePath)) {
+              throw new HttpError(400, "Attachment file is no longer available", "ATTACHMENT_FILE_GONE");
+            }
+            resolvedAttachment = { filePath, fileName: attachment.name, mimeType: attachment.mimeType };
+          }
           const result = await whatsapp.sendMessage(project.id, to, message, resolvedAttachment);
           // Round 979: resolvedAttachment is single-use -- whatsapp.sendMessage
           // above (performSend, whatsappWeb.ts) already fully read it into
