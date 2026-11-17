@@ -1298,6 +1298,7 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let callCount = 0;
+    let messagesCalled = false;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -1309,6 +1310,18 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
           });
         }
         return new Response(JSON.stringify({ status: "disconnected", phoneNumber: "972501234567", qrDataUrl: null, error: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // Round 2023: listWhatsAppMessages fires unconditionally once the
+      // status fetch resolves (here, on the successful retry) -- see the
+      // round-2126 regression test's own doc comment (above, in this
+      // file) for why this branch matters beyond this test's own
+      // assertions.
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesCalled = true;
+        return new Response(JSON.stringify({ messages: [], hasMore: false, nextCursor: null }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -1343,6 +1356,7 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
         null,
         "the error+Retry row must disappear once the retry succeeds",
       );
+      await waitForCondition(() => messagesCalled);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1373,10 +1387,22 @@ test("WhatsAppPanel shows a real error with a Retry button when the initial stat
 test("WhatsAppPanel shows a 'waiting for owner/editor' message instead of a QR image when readOnly and the server has redacted qrDataUrl", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
+    let messagesCalled = false;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
         return new Response(JSON.stringify({ status: "qr", qrDataUrl: null, phoneNumber: null, error: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // Round 2023: listWhatsAppMessages fires unconditionally once the
+      // status fetch resolves -- see the round-2126 regression test's
+      // own doc comment (above, in this file) for why this branch
+      // matters beyond this test's own assertions.
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesCalled = true;
+        return new Response(JSON.stringify({ messages: [], hasMore: false, nextCursor: null }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -1411,6 +1437,7 @@ test("WhatsAppPanel shows a 'waiting for owner/editor' message instead of a QR i
       // earlier, unrelated render.
       await waitForCondition(() => /Waiting for the owner or an editor to scan the code/.test(document.body.textContent ?? ""));
       assert.equal(document.querySelector(".whatsapp-qr-image"), null, "there is no real QR code to show a viewer");
+      await waitForCondition(() => messagesCalled);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1427,10 +1454,25 @@ test("WhatsAppPanel shows a 'waiting for owner/editor' message instead of a QR i
 test("WhatsAppPanel shows an explanatory message instead of an empty box when readOnly and WhatsApp has never been connected", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
+    let messagesCalled = false;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
         return new Response(JSON.stringify({ status: "disconnected", qrDataUrl: null, phoneNumber: null, error: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // Round 2023: listWhatsAppMessages fires unconditionally on mount,
+      // regardless of connection status -- without this branch, that
+      // unconditional fetch falls through to the real globalThis.fetch
+      // once this test's own `finally` restores it (see the round-2126
+      // regression test below this file's own fix for the full story),
+      // leaking a real ~280s REQUEST_TIMEOUT_MS timer and an infinite
+      // fetchWithWakeRetry retry chain into the test runner's event loop.
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesCalled = true;
+        return new Response(JSON.stringify({ messages: [], hasMore: false, nextCursor: null }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -1460,6 +1502,7 @@ test("WhatsAppPanel shows an explanatory message instead of an empty box when re
       );
       await waitForCondition(() => /WhatsApp isn't connected to this project yet/.test(document.body.textContent ?? ""));
       assert.equal(document.querySelector(".whatsapp-connect-box button"), null, "a viewer must not see a Connect button");
+      await waitForCondition(() => messagesCalled);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1475,6 +1518,7 @@ test("WhatsAppPanel shows an explanatory message instead of an empty box when re
 test("WhatsAppPanel does not show the never-connected viewer message when a phone was previously connected", async () => {
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
+    let messagesCalled = false;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -1482,6 +1526,17 @@ test("WhatsAppPanel does not show the never-connected viewer message when a phon
           JSON.stringify({ status: "disconnected", qrDataUrl: null, phoneNumber: "972501234567", error: null }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
+      }
+      // Round 2023: listWhatsAppMessages fires unconditionally on mount --
+      // see the round-2126 regression test's own doc comment (above, in
+      // this file) for why this branch matters beyond this test's own
+      // assertions.
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesCalled = true;
+        return new Response(JSON.stringify({ messages: [], hasMore: false, nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response(null, { status: 404 });
     }) as typeof fetch;
@@ -1508,6 +1563,7 @@ test("WhatsAppPanel does not show the never-connected viewer message when a phon
       );
       await waitForCondition(() => /972501234567/.test(document.body.textContent ?? ""));
       assert.equal(/isn't connected to this project yet/.test(document.body.textContent ?? ""), false);
+      await waitForCondition(() => messagesCalled);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1595,6 +1651,7 @@ test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecu
   await withJsdom(async () => {
     const originalFetch = globalThis.fetch;
     let statusCallCount = 0;
+    let messagesCalled = false;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
       if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/status") {
@@ -1613,12 +1670,23 @@ test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecu
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      // Round 2023: listWhatsAppMessages fires unconditionally on mount --
+      // see the round-2126 regression test's own doc comment (above, in
+      // this file) for why this branch matters beyond this test's own
+      // assertions.
+      if (method === "GET" && input === "/api/projects/proj1/integrations/whatsapp/messages") {
+        messagesCalled = true;
+        return new Response(JSON.stringify({ messages: [], hasMore: false, nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response(null, { status: 404 });
     }) as typeof fetch;
 
     t.mock.timers.enable({ apis: ["setInterval"] });
     try {
-      render(
+      const view = render(
         React.createElement(
           ThemeProvider,
           null,
@@ -1657,6 +1725,15 @@ test("WhatsAppPanel's QR-pairing poll offers a real Retry button after 5 consecu
       fireEvent.click(retryButton);
       await waitForCondition(() => document.querySelector(".error-retry-row") === null);
       assert.ok(document.querySelector(".whatsapp-qr-image"), "a successful retry must resume showing the QR code");
+      await waitForCondition(() => messagesCalled);
+      // The retry leaves status "qr", so startPolling re-arms its own
+      // interval every tick (WhatsAppPanel.tsx's own `s.status === "qr"`
+      // branch) -- unmounting explicitly, before t.mock.timers.reset()
+      // switches that interval back to real timing, stops it from firing
+      // one more real-world tick against the real (post-finally) fetch in
+      // the gap between this test returning and cleanup()'s own unmount
+      // (called later, by withJsdom's outer finally).
+      view.unmount();
     } finally {
       t.mock.timers.reset();
       globalThis.fetch = originalFetch;
@@ -3830,6 +3907,21 @@ test("WhatsAppPanel's recent-number chip's hover tooltip shows the real phone nu
       const removeButton = document.querySelector(".whatsapp-recent-numbers .chip-remove") as HTMLButtonElement;
       assert.ok(!removeButton.title.includes("{number}"), "the tooltip must never show the literal, untranslated '{number}' placeholder");
       assert.ok(removeButton.title.includes("972521112233"), "the tooltip must show the real phone number");
+      // handleSendTest (WhatsAppPanel.tsx) adds the recent-number chip
+      // synchronously, well before its own later `await
+      // listWhatsAppMessages(projectId)` (round 2023) and its own
+      // `finally { setSending(false) }` -- unmounting (and this test's
+      // own `finally` restoring the real fetch) right after the chip
+      // appears, without waiting for handleSendTest's own full
+      // completion, let that later fetch() lookup resolve against the
+      // already-restored real fetch once this suspended handler resumed,
+      // instead of the mock still in place when it was first issued.
+      // Waiting for the submit button to re-enable (set in that same
+      // `finally`, after the listWhatsAppMessages await) is a robust
+      // completion signal regardless of this connected panel's own
+      // separate, real-time connected-poll interval also hitting
+      // .../messages on its own independent schedule.
+      await waitForCondition(() => !(document.querySelector('form.whatsapp-test-form button[type="submit"]') as HTMLButtonElement).disabled);
       view.unmount();
     } finally {
       globalThis.fetch = originalFetch;
