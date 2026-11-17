@@ -2168,8 +2168,27 @@ export async function runScheduledAutomationsCheck(
     // included, not just this one rule's.
     const project = tryGetProject(db, rule.projectId);
     if (!project) continue;
+    // Round 2103: `rule` here is still the one-time SQL snapshot
+    // listEnabledScheduledRules took at the very top of this tick -- but
+    // `fireScheduledRule`'s own real send below is a genuine await (a real
+    // network round-trip, or a webhook with up to a 10s timeout), and this
+    // loop fires every due rule SEQUENTIALLY within one tick. If an
+    // earlier rule's own await is still in flight when a user disables a
+    // LATER rule in this same batch (one they just noticed is wrong), this
+    // loop would still fire it once its turn comes -- the snapshot's own
+    // `enabled: true` is never re-checked anywhere between here and the
+    // real send inside fireScheduledRule, which only re-checks the row
+    // still EXISTS after sending (round 2087), never whether it's still
+    // enabled, and only after the real send already happened regardless.
+    // Re-fetching right before firing closes that window with the
+    // freshest possible state, the same "resolve what you actually need
+    // immediately before the real side effect" convention rounds 2096/
+    // 2097/2101/2102 already applied elsewhere in this exact file's own
+    // neighboring HTTP routes.
+    const currentRule = getAutomationRule(db, project.id, rule.id);
+    if (!currentRule || !currentRule.enabled) continue;
     try {
-      await fireScheduledRule(db, whatsapp, emailSender, project, rule, now);
+      await fireScheduledRule(db, whatsapp, emailSender, project, currentRule, now);
     } catch (err) {
       console.error(`Scheduled automation rule ${rule.id} on project ${project.id} failed unexpectedly`, err);
     }

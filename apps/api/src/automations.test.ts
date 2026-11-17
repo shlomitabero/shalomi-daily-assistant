@@ -2700,6 +2700,75 @@ test("runScheduledAutomationsCheck fires exactly the rules that are due right no
   assert.equal(getAutomationRule(db, "proj1", disabledDue.id)!.lastStatus, null, "disabled -- must never be considered even though its time has passed");
 });
 
+/**
+ * Round 2103: `listEnabledScheduledRules`'s own one-time SQL snapshot
+ * (taken once at the very top of this tick) is never re-checked for
+ * `enabled` anywhere between then and the real send inside
+ * fireScheduledRule -- not in this loop, not in fireScheduledRule itself
+ * (whose own round-2087 re-check only confirms the row still EXISTS,
+ * never whether it's still enabled, and only after the real send already
+ * happened regardless). Since this loop fires every due rule
+ * SEQUENTIALLY within one tick, and each real send is a genuine await, a
+ * user disabling a LATER rule in the same batch while an EARLIER rule's
+ * send is still in flight used to make no difference at all -- the later
+ * rule still fired once its turn came, using the stale `enabled: true`
+ * snapshot taken before the user ever clicked "Disable".
+ */
+test("runScheduledAutomationsCheck re-checks a rule's own enabled flag immediately before firing it, not just once at the top of the tick", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureAutomationRulesTable(db);
+  ensureWhatsAppConnectionsTable(db);
+  ensureWhatsAppMessagesTable(db);
+  const spec = { summary: "test", entities: [orderEntity], roles: ["Admin"], screens: [], openQuestions: [] };
+  const inserted = insertProject(db, { id: "proj1", ownerId: "owner1", name: "proj1", description: "test", spec });
+  applyMigrations(db, inserted.id, inserted.spec);
+  markProjectBuilt(db, inserted.id);
+
+  // Both due in the same tick, same project -- ruleA is inserted (and
+  // therefore processed) first, per listEnabledScheduledRules's own
+  // `ORDER BY createdAt ASC, rowid ASC`.
+  const ruleA = insertAutomationRule(db, scheduleRuleBase({ projectId: "proj1", scheduleTimeUtc: "09:00", toNumber: "111" }));
+  const ruleB = insertAutomationRule(db, scheduleRuleBase({ projectId: "proj1", scheduleTimeUtc: "09:00", toNumber: "222" }));
+
+  // ruleA's own send is held open on a controllable gate -- simulating
+  // the real network round-trip this exact await is in production (a
+  // WhatsApp send through the per-project queue, or a webhook with up to
+  // a 10s timeout) -- giving a user a real window to disable ruleB before
+  // its own turn in this same loop comes up.
+  const sendCalls: { to: string }[] = [];
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  const manager = {
+    getStatus(): WhatsAppConnectionState {
+      return { status: "connected", qrDataUrl: null, phoneNumber: "972500000000", error: null };
+    },
+    async sendMessage(_projectId: string, to: string): Promise<WhatsAppSendResult> {
+      sendCalls.push({ to });
+      if (to === "111") await gate;
+      return { ok: true };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  const checkPromise = runScheduledAutomationsCheck(db, manager, UNUSED_EMAIL_SENDER, new Date("2026-03-15T09:00:00.000Z"));
+
+  // Let ruleA's own send actually start (it's now parked on `gate`) before disabling ruleB.
+  for (let i = 0; i < 10 && sendCalls.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sendCalls.length, 1, "sanity check: ruleA's own send must already be in flight before ruleB is disabled");
+
+  updateAutomationRule(db, "proj1", ruleB.id, { enabled: false });
+  assert.equal(getAutomationRule(db, "proj1", ruleB.id)!.enabled, false, "sanity check: ruleB must actually be disabled now");
+
+  releaseGate();
+  await checkPromise;
+
+  assert.deepEqual(sendCalls, [{ to: "111" }], "ruleB must NOT fire -- it was disabled before this loop ever reached its own turn");
+  assert.equal(getAutomationRule(db, "proj1", ruleA.id)!.lastStatus, "sent");
+  assert.equal(getAutomationRule(db, "proj1", ruleB.id)!.lastStatus, null, "ruleB was never fired, so it must have no run recorded at all");
+});
+
 test("runScheduledAutomationsCheck skips a project whose stored spec no longer matches the current schema, instead of throwing and starving every other project's due rule in the same tick", async () => {
   // Round 1428: getProject's own strict ProductSpecSchema.parse throws for
   // this real, expected case (see packages/db's own tryRowToProject doc
