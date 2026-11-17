@@ -59,13 +59,19 @@ function revenueBySource() {
 // billing.js's webhook handler logs a 'blocked: <error>' sale_confirmed
 // entry when a real transaction.completed event's amount/fee couldn't be
 // parsed - a real customer's real payment that never made it into the
-// ledger above, and (unlike every other number on this page) no route
-// ever retries or marks it resolved. Lives here, not just inside
-// services/digest.js, so Dashboard.jsx can warn about it too without a
-// second, separate API call - this is the one other place a real-money
-// problem belongs alongside spentSoFar/lossSoFar.
+// ledger above. Lives here, not just inside services/digest.js, so
+// Dashboard.jsx can warn about it too without a second, separate API call -
+// this is the one other place a real-money problem belongs alongside
+// spentSoFar/lossSoFar.
+//
+// routes/actions.js's resolveUnrecordedSale lets the owner dismiss one of
+// these once they've actually dealt with it (checked the server logs,
+// manually recorded the real ledger entry if the money is genuinely
+// theirs) - excluding a resolved one here is what makes that dismissal
+// actually stick, instead of the same blocked entry still counting toward
+// this total (and so still showing the 🚨 banner) forever regardless.
 function countUnrecordedSales() {
-  return db.actions_log.where((a) => a.type === 'sale_confirmed' && String(a.result).startsWith('blocked')).length;
+  return db.actions_log.where((a) => a.type === 'sale_confirmed' && String(a.result).startsWith('blocked') && !a.detail?.resolvedAt).length;
 }
 
 // A single non-numeric entry (corrupted data, a future caller that skips

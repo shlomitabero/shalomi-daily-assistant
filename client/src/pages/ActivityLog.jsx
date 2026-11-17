@@ -7,8 +7,9 @@ export default function ActivityLog() {
   const [actions, setActions] = useState([]);
   const [opportunities, setOpportunities] = useState([]);
   const [error, setError] = useState('');
+  const [resolvingId, setResolvingId] = useState(null);
 
-  useEffect(() => {
+  function refresh() {
     api.getActions().then((r) => setActions(r.actions)).catch((err) => setError(err.data?.error || err.message));
     // Best-effort only: most log entries carry detail.opportunityId, but
     // without this there was no way to tell from the log alone WHICH
@@ -17,7 +18,31 @@ export default function ActivityLog() {
     // failure here just means titles don't resolve; it must never block
     // the log itself from rendering.
     api.getOpportunities().then((r) => setOpportunities(r.opportunities)).catch(() => {});
-  }, []);
+  }
+  useEffect(refresh, []);
+
+  // Until now a blocked sale_confirmed (a real customer's real payment that
+  // billing.js's webhook couldn't record) followed the owner forever, on
+  // every visit to this page and every daily digest, with no way to ever
+  // clear it - routes/actions.js's resolveUnrecordedSale lets them dismiss
+  // one once they've actually dealt with it elsewhere (checked the server
+  // logs, manually recorded the real ledger entry if the money is
+  // genuinely theirs). This only removes the alert - it never touches the
+  // ledger itself, so the confirm text says so plainly rather than implying
+  // the system verified anything.
+  async function onResolve(id) {
+    if (!window.confirm('לסמן את הבעיה הזו כטופלה? זה רק מסיר את ההתראה - אם לא תיקנת את הרישום ביומן בעצמך, הכסף עדיין לא יחושב ברווח/הפסד.')) return;
+    setError('');
+    setResolvingId(id);
+    try {
+      await api.resolveUnrecordedSale(id);
+      refresh();
+    } catch (err) {
+      setError(err.data?.error || err.message);
+    } finally {
+      setResolvingId(null);
+    }
+  }
 
   return (
     <div className="page">
@@ -55,13 +80,31 @@ export default function ActivityLog() {
                   contradicted both of those. */}
               <span className={`log-result ${
                 a.result === 'success' ? 'positive'
-                  : a.type === 'sale_confirmed' && a.result?.startsWith('blocked') ? 'negative'
+                  // A blocked sale_confirmed the owner has already marked
+                  // resolved (detail.resolvedAt) no longer represents an
+                  // open problem - muted, the same treatment every other
+                  // "the safety system working as intended" block already
+                  // gets, not the one real exception's own red.
+                  : a.type === 'sale_confirmed' && a.result?.startsWith('blocked') && !a.detail?.resolvedAt ? 'negative'
                     : a.result?.startsWith('blocked') ? 'muted'
                       : 'negative'
               }`}>
                 {a.type === 'autonomous_scan' ? autonomousScanSummary(a) : a.type === 'sale_confirmed' ? saleConfirmedSummary(a) : resultLabel(a.result)}
               </span>
             </div>
+            {/* Lets the owner dismiss a real-but-unrecorded sale once
+                they've actually dealt with it elsewhere - see onResolve's
+                own comment above for why this never touches the ledger
+                itself. */}
+            {a.type === 'sale_confirmed' && a.result?.startsWith('blocked') && (
+              a.detail?.resolvedAt ? (
+                <p className="hint positive" style={{ margin: '4px 0 0' }}>✓ סומן כטופל</p>
+              ) : (
+                <button className="btn btn-ghost" style={{ marginTop: 6 }} onClick={() => onResolve(a.id)} disabled={resolvingId === a.id}>
+                  {resolvingId === a.id ? 'מסמן…' : 'סמן כטופל'}
+                </button>
+              )
+            )}
             {opportunity && (
               <Link className="link" to={`/opportunities/${opportunity.id}`}>{opportunity.title}</Link>
             )}

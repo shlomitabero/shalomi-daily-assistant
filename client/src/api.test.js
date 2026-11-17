@@ -209,6 +209,7 @@ const ENDPOINT_CALLS = [
   { name: 'getLedgerEntries', call: () => api.getLedgerEntries(), method: 'GET', path: '/api/ledger/entries' },
   { name: 'getActions', call: () => api.getActions(), method: 'GET', path: '/api/actions' },
   { name: 'reportClientError', call: () => api.reportClientError('boom', '/x'), method: 'POST', path: '/api/actions/client-error', body: { message: 'boom', path: '/x' } },
+  { name: 'resolveUnrecordedSale', call: () => api.resolveUnrecordedSale('act1'), method: 'POST', path: '/api/actions/act1/resolve' },
   { name: 'getFinancialWatchlist', call: () => api.getFinancialWatchlist(), method: 'GET', path: '/api/financial/watchlist' },
   { name: 'addToWatchlist', call: () => api.addToWatchlist('AAPL'), method: 'POST', path: '/api/financial/watchlist', body: { symbol: 'AAPL' } },
   { name: 'refreshWatchlistEntry', call: () => api.refreshWatchlistEntry('wl1'), method: 'POST', path: '/api/financial/watchlist/wl1/refresh' },

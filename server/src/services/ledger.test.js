@@ -87,6 +87,25 @@ test('getLedgerSummary includes unrecordedSales, the count of real payments bill
   assert.equal(summary.unrecordedSales, 1);
 });
 
+test('getLedgerSummary excludes a blocked sale_confirmed entry the owner has already resolved', () => {
+  // routes/actions.js's resolveUnrecordedSale stamps detail.resolvedAt once
+  // the owner has dealt with a blocked entry themselves - without this
+  // exclusion, the dashboard's 🚨 banner and the daily digest would keep
+  // warning about it forever regardless, with the owner's own dismissal
+  // never actually taking effect.
+  __resetForTests();
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1', error: 'bad amount', resolvedAt: new Date().toISOString() },
+    result: 'blocked: bad amount', createdAt: new Date().toISOString(),
+  });
+  db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_2', error: 'bad amount' },
+    result: 'blocked: bad amount', createdAt: new Date().toISOString(),
+  });
+  const summary = getLedgerSummary();
+  assert.equal(summary.unrecordedSales, 1);
+});
+
 test('getLedgerSummary groups verified revenue by the opportunity source that produced it', () => {
   // Dashboard.jsx's "מקורות הכנסה" list needs to know which source
   // actually produced money vs. which only cost without result - this

@@ -106,6 +106,7 @@ export const api = {
 
   getActions: () => request('/actions'),
   reportClientError: (message, path) => request('/actions/client-error', { method: 'POST', body: { message, path } }),
+  resolveUnrecordedSale: (id) => request(`/actions/${id}/resolve`, { method: 'POST' }),
 
   getFinancialWatchlist: () => request('/financial/watchlist'),
   addToWatchlist: (symbol) => request('/financial/watchlist', { method: 'POST', body: { symbol } }),

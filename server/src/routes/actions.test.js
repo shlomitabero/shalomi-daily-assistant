@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, __resetForTests, makeId } from '../db/store.js';
-import { listActions, reportClientError } from './actions.js';
+import { listActions, reportClientError, resolveUnrecordedSale } from './actions.js';
 
 function makeRes() {
   const res = { statusCode: null, body: null };
@@ -100,4 +100,60 @@ test('reportClientError stores a null path when none is given, instead of an arb
   assert.equal(res.statusCode, 201);
   const logged = db.actions_log.where((a) => a.type === 'client_error')[0];
   assert.equal(logged.detail.path, null);
+});
+
+test('resolveUnrecordedSale returns 404 for an id that does not exist', () => {
+  __resetForTests();
+  const res = makeRes();
+  resolveUnrecordedSale({ params: { id: 'act_missing' } }, res);
+  assert.equal(res.statusCode, 404);
+});
+
+test('resolveUnrecordedSale rejects an entry that is not a blocked sale_confirmed', () => {
+  // A success sale_confirmed is already fully recorded in the ledger - this
+  // action only ever makes sense for the one case where it wasn't.
+  __resetForTests();
+  const entry = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1' }, result: 'success', createdAt: new Date().toISOString(),
+  });
+  const res = makeRes();
+  resolveUnrecordedSale({ params: { id: entry.id } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(db.actions_log.get(entry.id).detail.resolvedAt, undefined);
+});
+
+test('resolveUnrecordedSale rejects a blocked entry of a different type', () => {
+  __resetForTests();
+  const entry = db.actions_log.insert({
+    id: makeId('act'), type: 'publish_product', detail: {}, result: 'blocked: Paddle עדיין לא מוגדר', createdAt: new Date().toISOString(),
+  });
+  const res = makeRes();
+  resolveUnrecordedSale({ params: { id: entry.id } }, res);
+  assert.equal(res.statusCode, 409);
+});
+
+test('resolveUnrecordedSale marks a blocked sale_confirmed entry as resolved', () => {
+  __resetForTests();
+  const entry = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1', error: 'bad amount' },
+    result: 'blocked: bad amount', createdAt: new Date().toISOString(),
+  });
+  const res = makeRes();
+  resolveUnrecordedSale({ params: { id: entry.id } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.action.detail.resolvedAt);
+  // The original detail fields must survive, not be replaced.
+  assert.equal(res.body.action.detail.opportunityId, 'opp_1');
+});
+
+test('resolveUnrecordedSale rejects resolving the same entry twice', () => {
+  __resetForTests();
+  const entry = db.actions_log.insert({
+    id: makeId('act'), type: 'sale_confirmed', detail: { opportunityId: 'opp_1' }, result: 'blocked: bad amount', createdAt: new Date().toISOString(),
+  });
+  resolveUnrecordedSale({ params: { id: entry.id } }, makeRes());
+  const res = makeRes();
+  resolveUnrecordedSale({ params: { id: entry.id } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.duplicate, true);
 });
