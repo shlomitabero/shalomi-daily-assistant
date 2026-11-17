@@ -2128,6 +2128,52 @@ test("EntityPanel's bulk-actions-bar selected-count span uses the Hebrew feminin
 });
 
 /**
+ * Regression test for round 2127's i18n-string-quality survey finding: the
+ * bulk-actions-bar's own Delete/Duplicate buttons (same bar as round 2122's
+ * selectedCount fix above) read the MASCULINE definite plural "הנבחרים"
+ * ("the selected [masc.]"), while every other label in this exact bar
+ * agrees with "רשומה" (record), a FEMININE noun -- selectedCount's own
+ * "נבחרה"/"נבחרו" (fixed round 2122), and the Copy/Export/Print-list "N
+ * selected" buttons' own "נבחרת"/"נבחרות". Root cause: round 1616 copied
+ * home.myProjects.bulk.deleteSelected's "מחיקת הנבחרים" byte-for-byte --
+ * correct there, since that bar counts "פרויקט" (project), a masculine
+ * noun -- into this entity bar, which counts a different, feminine noun.
+ * No test asserted either button's own text before now, so it went
+ * uncaught, exactly like round 2122's selectedCount bug before it.
+ */
+test("EntityPanel's bulk-actions-bar Delete/Duplicate buttons use the Hebrew feminine definite plural, agreeing with 'רשומה' like selectedCount and the Copy/Export/Print buttons", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      localStorage.setItem("forge.lang", "he");
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      const barButtons = Array.from(document.querySelectorAll(".bulk-actions-bar button"));
+      const deleteButton = barButtons.find((b) => b.textContent?.includes("מחיקת"));
+      const duplicateButton = barButtons.find((b) => b.textContent?.includes("שכפול"));
+      assert.ok(deleteButton, "expected a Hebrew Delete button inside the bulk-actions-bar");
+      assert.ok(duplicateButton, "expected a Hebrew Duplicate button inside the bulk-actions-bar");
+
+      assert.match(deleteButton!.textContent ?? "", /הנבחרות/, "the Delete button must use the feminine definite plural (הנבחרות), not the masculine הנבחרים");
+      assert.doesNotMatch(deleteButton!.textContent ?? "", /הנבחרים/, "the Delete button must not read the masculine הנבחרים");
+      assert.match(duplicateButton!.textContent ?? "", /הנבחרות/, "the Duplicate button must use the feminine definite plural (הנבחרות), not the masculine הנבחרים");
+      assert.doesNotMatch(duplicateButton!.textContent ?? "", /הנבחרים/, "the Duplicate button must not read the masculine הנבחרים");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * New in this round: bulk delete/duplicate already existed, but there was
  * no way to change a single shared field's value across several selected
  * records at once (e.g. marking 15 selected orders "Shipped") without
