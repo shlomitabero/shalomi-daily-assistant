@@ -3863,7 +3863,18 @@ export function createProjectsRouter(
       try {
         files = generateExportFiles(project);
       } catch (err) {
-        const match = err instanceof Error && /^Refusing to export: unsafe (entity|field) identifier "(.+)"$/.exec(err.message);
+        // `/s` (dotAll, round 2112): without it, `.` never matches a `\n`/`\r`
+        // embedded in the captured name -- codegen.ts's assertSafe only checks
+        // the name is a plain ASCII identifier, it doesn't reject a newline,
+        // and EntitySchema (packages/shared) has no character-format check on
+        // `name` at all (unlike FieldSchema's own SAFE_FIELD_NAME refine), so
+        // an AI-generated spec with a stray newline in an entity/field name is
+        // a real, reachable case. Without `/s`, this match silently failed
+        // and fell through to `throw err`, turning exactly the unexplained,
+        // unactionable 500 this whole catch block exists to prevent (see the
+        // comment above) back into one -- just for one specific character
+        // class the round-283/284 fix didn't anticipate.
+        const match = err instanceof Error && /^Refusing to export: unsafe (entity|field) identifier "(.+)"$/s.exec(err.message);
         if (match) {
           throw new HttpError(
             422,

@@ -14962,6 +14962,62 @@ test("exporting a project whose spec has a lone non-ASCII entity name (not a col
 });
 
 /**
+ * Regression test for round 2112's finding: the catch block above translates
+ * codegen.ts's "unsafe identifier" Error into a clean 422 by regex-matching
+ * the error message and recapturing the offending name -- but without the
+ * `/s` (dotAll) flag, `.` never matches a `\n`/`\r` embedded in that name, so
+ * an entity name containing a newline falls through the `if (match)` branch
+ * entirely and rethrows the bare Error, landing back on the exact
+ * unexplained 500 this whole catch block exists to prevent. EntitySchema
+ * (packages/shared) has no character-format check on `name` at all (unlike
+ * FieldSchema's own SAFE_FIELD_NAME refine), so this is a real, reachable
+ * case for an AI-generated spec whose model response strays from the
+ * "ASCII identifier" prompt instruction with an embedded newline, not just
+ * a non-ASCII character.
+ */
+function createNewlineEntityProvider(): SpecProvider {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    entities: [{ name: "Foo\nBar", fields: [{ name: "name", type: "text", required: true }] }],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+  };
+  return { name: "newline-entity-test-provider", async generate() { return spec; } };
+}
+
+test("exporting a project whose spec has an entity name containing a newline returns a clear, translated 422 instead of a generic 500", async () => {
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl);
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A business with customers." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      const events = await collectSSE(buildRes);
+      const forge = events.find((e) => e.agent === "Forge");
+      assert.equal(forge?.status, "success", "the build must genuinely succeed with the embedded-newline name -- this is not a rejected spec, just an unexportable one");
+
+      const exportRes = await fetch(`${baseUrl}/api/projects/${project.id}/export`, { headers: authHeaders(token) });
+      assert.equal(exportRes.status, 422, "must be a clear, actionable error, not a generic 500");
+      const body = (await exportRes.json()) as { error: string; code: string };
+      assert.equal(body.code, "EXPORT_UNSAFE_IDENTIFIER");
+      assert.match(body.error, /unsafe entity identifier "Foo\nBar"/);
+    },
+    { provider: createNewlineEntityProvider() },
+  );
+});
+
+/**
  * Round 1557: unlike the /export route just above (whose own buildZip call
  * is harmless in practice, since its own "files" is a fixed-size generated-
  * app skeleton bounded by entity/field counts), /backup's own entries
