@@ -4618,8 +4618,26 @@ export function EntityPanel({
       // duplicate simply starts with that field empty, the same way its
       // own form already starts empty for a new record.
       for (const field of entity.fields) copy[field.name] = field.type === "file" ? null : record[field.name];
-      await createRecord(projectId, entity.name, copy);
+      const result = await createRecord(projectId, entity.name, copy);
       await refresh();
+      // Round 2174: mirrors handleSubmit's own round-2085 fix and
+      // commitInlineEdit's/handleBulkUpdate's own round-2172/2173 fixes
+      // for the identical race -- another tab/collaborator's checkpoint
+      // restore can remove a field from this entity's live field set
+      // between opening this stale `entity` object and this createRecord
+      // reaching the server. Unlike those edit paths, where the dropped
+      // edit is merely discarded, here the missing data gets baked
+      // silently into a brand-new permanent record with no edit left to
+      // retry -- the duplicate itself is the only record of what the
+      // user meant to copy.
+      const ignoredFields = result?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        setError(
+          ignoredFields.length === 1
+            ? t("entity.form.fieldNoLongerExists.one", { field: ignoredFields[0] })
+            : t("entity.form.fieldNoLongerExists.many", { fields: ignoredFields.join(", ") }),
+        );
+      }
     } catch (err) {
       // Round 2082: mirrors handleSubmit's own round-2076 ENTITY_NOT_FOUND
       // handling -- another tab/collaborator restoring a Time Machine
@@ -4724,7 +4742,22 @@ export function EntityPanel({
         }),
       );
       const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
-      setSelectedIds(new Set(failedIds));
+      // Round 2174: mirrors handleDuplicate's own round-2174 fix and
+      // handleBulkUpdate's round-2173 fix for the identical race -- a
+      // checkpoint restore can remove a field from this entity's live
+      // field set between opening this stale `entity` object and these
+      // createRecord calls reaching the server. Unlike handleBulkUpdate,
+      // where a dropped edit is merely discarded, here the missing data
+      // gets baked silently into brand-new permanent records with
+      // nothing left to retry -- the duplicates themselves are the only
+      // record of what the user meant to copy.
+      const ignoredIds = new Set(
+        ids.filter((_id, i) => {
+          const r = results[i];
+          return r.status === "fulfilled" && (r.value?.ignoredFields?.length ?? 0) > 0;
+        }),
+      );
+      setSelectedIds(new Set([...failedIds, ...ignoredIds]));
       if (failedIds.length > 0) {
         const firstFailure = results.find(
           (r, i): r is PromiseRejectedResult => r.status === "rejected" && !notFoundIds.has(ids[i]),
@@ -4733,6 +4766,18 @@ export function EntityPanel({
           failedIds.length === ids.length
             ? (firstFailure.reason as Error).message
             : t("entity.bulk.duplicatePartialFailure", { failed: failedIds.length, total: ids.length }),
+        );
+      } else if (ignoredIds.size > 0) {
+        const ignoredFieldNames = new Set<string>();
+        for (const i of ids.keys()) {
+          const r = results[i];
+          if (r.status === "fulfilled") for (const f of r.value?.ignoredFields ?? []) ignoredFieldNames.add(f);
+        }
+        const fields = [...ignoredFieldNames];
+        setError(
+          fields.length === 1
+            ? t("entity.form.fieldNoLongerExists.one", { field: fields[0] })
+            : t("entity.form.fieldNoLongerExists.many", { fields: fields.join(", ") }),
         );
       }
       await refresh();

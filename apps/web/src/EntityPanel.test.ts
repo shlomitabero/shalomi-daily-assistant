@@ -165,6 +165,70 @@ test("EntityPanel's handleDuplicate silently drops the action instead of surfaci
 });
 
 /**
+ * Round 2174: mirrors handleSubmit's own round-2085 fix and
+ * commitInlineEdit's/handleBulkUpdate's own round-2172/2173 fixes for the
+ * identical race -- a checkpoint restore can remove a field from this
+ * entity's live field set between opening this stale `entity` object and
+ * createRecord reaching the server. Unlike those edit paths, where the
+ * dropped edit is merely discarded, here the missing data gets baked
+ * silently into a brand-new permanent record with nothing left to retry.
+ */
+test("EntityPanel's handleDuplicate warns when createRecord's own ignoredFields reports a copied field was silently dropped, instead of showing a bare success", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleDuplicate\(id: number\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Order",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "status", type: "text", required: false },
+    ],
+  };
+  const records: EntityRecord[] = [{ id: 1, createdAt: "x", name: "Acme Corp", status: "new" }];
+
+  let capturedError: string | undefined | null = null;
+  let refreshCalled = 0;
+
+  const fn = new Function(
+    "writesInFlight",
+    "records",
+    "setError",
+    "entity",
+    "createRecord",
+    "projectId",
+    "refresh",
+    "setDuplicatingId",
+    "t",
+    `${code}\nreturn handleDuplicate;`,
+  )(
+    false,
+    records,
+    (msg: string | null) => {
+      capturedError = msg;
+    },
+    entity,
+    async () => ({ record: { id: 2, name: "Acme Corp" }, ignoredFields: ["status"] }),
+    "proj1",
+    async () => {
+      refreshCalled += 1;
+    },
+    () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+  ) as (id: number) => Promise<void>;
+
+  await fn(1);
+
+  assert.match(
+    capturedError!,
+    /entity\.form\.fieldNoLongerExists\.one:\{"field":"status"\}/,
+    "a duplicate whose own copied field got dropped must surface the real 'field no longer exists' warning naming it, not a bare success",
+  );
+  assert.equal(refreshCalled, 1, "refresh() must still run so the table shows the newly-created (incomplete) duplicate");
+});
+
+/**
  * Regression test: handleBulkDelete used to await `Promise.all(ids.map(...))`
  * inside a try/catch. A single rejected delete (a dropped connection, a
  * record another browser tab already removed) rejected the whole
@@ -329,6 +393,88 @@ test("EntityPanel's handleBulkDuplicate silently drops ids that 404 ENTITY_NOT_F
   assert.equal(capturedError, null, "an ENTITY_NOT_FOUND-only batch must never set a real error -- the entity is just gone, not a genuine failure, and setError(null) at the top of the function is the only call that should ever land");
   assert.deepEqual([...capturedSelectedIds!], [], "ENTITY_NOT_FOUND ids must not remain selected for retry -- there's nothing left to retry");
   assert.equal(refreshCalled, 1, "refresh() must still run, the same as the sibling NOT_FOUND-handling write paths");
+});
+
+/**
+ * Round 2174: mirrors handleDuplicate's own round-2174 fix and
+ * handleBulkUpdate's round-2173 fix for the identical race -- a
+ * checkpoint restore can remove a field from this entity's live field
+ * set between opening this stale `entity` object and these createRecord
+ * calls reaching the server. Unlike handleBulkUpdate, where a dropped
+ * edit is merely discarded, here the missing data gets baked silently
+ * into brand-new permanent records with nothing left to retry.
+ */
+test("EntityPanel's handleBulkDuplicate warns and keeps every id selected when createRecord's own ignoredFields reports a copied field was silently dropped", async () => {
+  const handlerMatch = entityPanelSrc.match(/ {2}async function handleBulkDuplicate\(\) \{[\s\S]*?\n {2}\}\n/);
+  const helperMatch = entityPanelSrc.match(/function staleEnumValue\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(handlerMatch && helperMatch, "expected to find handleBulkDuplicate and staleEnumValue in EntityPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entity: Entity = {
+    name: "Order",
+    fields: [
+      { name: "name", type: "text", required: true },
+      { name: "status", type: "text", required: false },
+    ],
+  };
+  const records: EntityRecord[] = [
+    { id: 1, createdAt: "x", name: "Alice", status: "new" },
+    { id: 2, createdAt: "x", name: "Bob", status: "new" },
+  ];
+
+  let capturedError: string | undefined | null = null;
+  let capturedSelectedIds: Set<number> | undefined;
+  let refreshCalled = 0;
+
+  const fn = new Function(
+    "writesInFlight",
+    "setBulkActionBusy",
+    "t",
+    "projectId",
+    "entity",
+    "records",
+    "selectedIds",
+    "setError",
+    "createRecord",
+    "setSelectedIds",
+    "refresh",
+    `${code}\nreturn handleBulkDuplicate;`,
+  )(
+    false,
+    () => {},
+    (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
+    "proj1",
+    entity,
+    records,
+    new Set([1, 2]),
+    (msg: string | null) => {
+      capturedError = msg;
+    },
+    async (_projectId: string, _entityName: string, data: Record<string, unknown>) => ({
+      record: { id: 99, ...data },
+      ignoredFields: ["status"],
+    }),
+    (next: Set<number>) => {
+      capturedSelectedIds = next;
+    },
+    async () => {
+      refreshCalled += 1;
+    },
+  ) as () => Promise<void>;
+
+  await fn();
+
+  assert.match(
+    capturedError!,
+    /entity\.form\.fieldNoLongerExists\.one:\{"field":"status"\}/,
+    "a batch whose own copied field got dropped must surface the real 'field no longer exists' warning naming it, not a bare success",
+  );
+  assert.deepEqual(
+    [...capturedSelectedIds!].sort(),
+    [1, 2],
+    "every ignored id must stay selected so the user can notice, the same way a genuine failure already does",
+  );
+  assert.equal(refreshCalled, 1, "refresh() must still run");
 });
 
 test("EntityPanel's handleBulkDuplicate never copies a 'file' field's value either, for the same reason handleDuplicate doesn't", async () => {
