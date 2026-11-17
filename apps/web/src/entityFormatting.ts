@@ -2445,7 +2445,17 @@ export function buildImportRecords(
 
     for (const field of rowError ? [] : fields) {
       const columnIndex = columnFields.findIndex((f) => f?.name === field.name);
-      const raw = columnIndex === -1 ? "" : unescapeCsvGuard((row[columnIndex] ?? "").trim());
+      const cell = columnIndex === -1 ? "" : (row[columnIndex] ?? "");
+      // A text/longtext field's own leading/trailing whitespace is part of
+      // its stored content -- recordsToCsv/fieldDisplayValue never trim or
+      // pad it on export (fieldDisplayValue's catch-all is a bare
+      // `String(value)`), so trimming it here on import was a one-directional
+      // corruption: round-trip in a notes/address field like " Room 204 "
+      // silently lost both the leading and trailing space. Every other
+      // field type here benefits from trimming incidental copy/paste
+      // whitespace around a structured value (a number, a boolean word, an
+      // enum/relation label, a date), so only text/longtext are exempted.
+      const raw = unescapeCsvGuard(field.type === "text" || field.type === "longtext" ? cell : cell.trim());
 
       if (field.type === "file") continue; // no file to attach from a CSV cell
 

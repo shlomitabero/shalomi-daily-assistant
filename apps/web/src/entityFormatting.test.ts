@@ -2473,6 +2473,19 @@ test("a value with multiple literal leading apostrophes round-trips exactly rega
   assert.deepEqual(records, [original]);
 });
 
+test("a text/longtext value with meaningful leading or trailing whitespace round-trips exactly through recordsToCsv -> parseCsv -> buildImportRecords (a real bug: buildImportRecords unconditionally trimmed every cell, silently stripping whitespace recordsToCsv/fieldDisplayValue never trim away on export)", () => {
+  const fields: Field[] = [
+    { name: "name", label: "Name", type: "text", required: true },
+    { name: "notes", label: "Notes", type: "longtext", required: false },
+  ];
+  const original = { name: "Dana", notes: " Room 204\tbuilding B " };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const { records, errors } = buildImportRecords(fields, rows);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(records, [original]);
+});
+
 test("parseCsv accepts bare LF line endings too, not just CRLF", () => {
   const rows = parseCsv("Name,Amount\nDana,10\nYossi,20");
   assert.deepEqual(rows, [
