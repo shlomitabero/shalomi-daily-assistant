@@ -2267,8 +2267,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // up to volunteer for the food bank", "volunteers who want to tutor
     // kids") with no single guard separating the two readings, the same
     // judgment call round 1722 already made for "lead"/"leads".
+    //
+    // Round 2131: the possessive-determiner list above was missing "our" --
+    // the exact same direct-object-complement shape as "their"/"his"/"my"/
+    // etc, just first-person-plural ("volunteer our building as a
+    // shelter", "volunteer our office space for community events"), with
+    // zero connection to the nonprofit Volunteer entity. Confirmed live:
+    // "During emergencies, we volunteer our building as a shelter for
+    // displaced residents." matched ONLY ['Volunteer'], the identical
+    // catch-all-losing failure round 2108 already fixed for every other
+    // possessive determiner.
     keywords: [
-      /\bvolunteers?\b(?!\s+(?:a|an|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+){0,1}information\b)/,
+      /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+){0,1}information\b)/,
       "volunteer management", "volunteer shift",
       "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
     ],

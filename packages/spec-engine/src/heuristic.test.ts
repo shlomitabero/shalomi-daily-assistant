@@ -2124,6 +2124,35 @@ test("'volunteer a phone number'/'volunteer information'/'volunteer their email'
   assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"), "a real nonprofit-volunteer description must still get a Volunteer entity");
 });
 
+/**
+ * Round 2131's finding: round 2108's own possessive-determiner exclusion
+ * list (a|an|their|his|her|its|my|your) omitted "our" -- the exact same
+ * direct-object-complement shape as the others, just first-person-plural
+ * ("volunteer our building as a shelter", "volunteer our office space
+ * for community events"), with zero connection to the nonprofit Volunteer
+ * entity. Confirmed live before fixing: each of the first three
+ * descriptions below matched ONLY ['Volunteer'], the identical catch-
+ * all-losing failure round 2108 already fixed for every other possessive
+ * determiner.
+ */
+test("'volunteer our building'/'volunteer our office space' never match the Volunteer entity either, the one possessive determiner round 2108 missed", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const shelter = await provider.generate("During emergencies, we volunteer our building as a shelter for displaced residents.");
+  assert.ok(!shelter.entities.some((e) => e.name === "Volunteer"), "'volunteer our building' must never match Volunteer");
+
+  const officeSpace = await provider.generate("The committee may volunteer our office space for community events on weekends.");
+  assert.ok(!officeSpace.entities.some((e) => e.name === "Volunteer"), "'volunteer our office space' must never match Volunteer");
+
+  const parking = await provider.generate("If asked, we volunteer our spare parking spots to neighbors during the festival.");
+  assert.ok(!parking.entities.some((e) => e.name === "Volunteer"), "'volunteer our spare parking spots' must never match Volunteer");
+
+  // The fix must not lose real recall: "our" appearing BEFORE "volunteers"
+  // (not as its own direct-object complement) must still match normally.
+  const nonprofit = await provider.generate("An app to manage our volunteers and their shifts.");
+  assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"), "'our volunteers' (our preceding, not following, the keyword) must still get a Volunteer entity");
+});
+
 test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
   const provider = new HeuristicSpecProvider();
   const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");
