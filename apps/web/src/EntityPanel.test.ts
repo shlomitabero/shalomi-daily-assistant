@@ -2060,9 +2060,21 @@ test("EntityPanel's 'Clear selection' button empties the current selection witho
  * file. The bulk-actions-bar renders whenever selectedIds.size > 0, not
  * > 1 -- see the "Clear selection" test above for the same reachability --
  * so checking exactly one row's own checkbox, the ordinary first step of
- * any bulk-select interaction, read "1 נבחרו" ("1 were selected"), not the
- * grammatically correct "1 נבחר". Verified via regex extraction of the JSX
- * call site, the same convention round 1611's own App.test.ts test uses.
+ * any bulk-select interaction, read "1 נבחרו" ("1 were selected"), not
+ * "1 נבחר". Verified via regex extraction of the JSX call site, the same
+ * convention round 1611's own App.test.ts test uses.
+ *
+ * Round 2122 correction: this doc comment (and round 1616 itself) called
+ * "1 נבחר" the grammatically correct form, copying round 1611's own fix
+ * byte-for-byte -- but round 1611's "פרויקט" (project) IS masculine,
+ * while THIS component counts "רשומה" (record), which is FEMININE (see
+ * entity.recordCount.all.one's own "1 רשומה", and every sibling "N
+ * selected" button in this exact bar, which already correctly uses the
+ * feminine "נבחרת"). "1 נבחר" fixed the singular/plural mistake but
+ * introduced a gender mistake that sat uncaught for 500+ rounds, protected
+ * by this very comment calling it correct. The real fix is "1 נבחרה" (the
+ * feminine Nifal verb, matching the existing feminine plural "נבחרו" --
+ * see the test below).
  */
 test("EntityPanel's bulk-actions-bar selected-count span branches on its own count === 1 to pick the singular i18n key", () => {
   const spanMatch = entityPanelSrc.match(/<span>\s*\{t\(\s*[\s\S]*?selectedCount[\s\S]*?\)\}\s*<\/span>/);
@@ -2072,6 +2084,47 @@ test("EntityPanel's bulk-actions-bar selected-count span branches on its own cou
     /selectedIds\.size === 1 \? "entity\.bulk\.selectedCount\.one" : "entity\.bulk\.selectedCount\.many"/,
     "expected the selected-count span to branch on a count of exactly 1, not hardcode the plural key alone",
   );
+});
+
+/**
+ * Regression test for a real bug found by round 2122's i18n-string-quality
+ * survey: entity.bulk.selectedCount.one read the MASCULINE "{count} נבחר",
+ * even though this exact bar's own sibling "N selected" buttons (Copy,
+ * Export CSV, Export JSON, Print-list -- see the test above this file's
+ * round-1453 one) all correctly use the FEMININE "נבחרת", agreeing with
+ * "רשומה" (record), the noun actually being counted here. Round 1616
+ * introduced the mistake by copying round 1611's App.tsx fix verbatim,
+ * where "1 נבחר" is correct because that bar counts "פרויקט" (project),
+ * a masculine noun -- a straight copy across two different nouns of
+ * different genders.
+ */
+test("EntityPanel's bulk-actions-bar selected-count span uses the Hebrew feminine verb form, agreeing with 'רשומה' like its sibling buttons", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "Acme Corp", status: "new" },
+      { id: 2, name: "Globex", status: "won" },
+    ];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockRecordsFetch(store) as typeof fetch;
+    try {
+      localStorage.setItem("forge.lang", "he");
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 2);
+
+      fireEvent.click(document.querySelector('td.select-col input[type="checkbox"]') as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar span")?.textContent?.includes("1") ?? false);
+      const countSpan = document.querySelector(".bulk-actions-bar span") as HTMLSpanElement;
+      assert.match(countSpan.textContent ?? "", /נבחרה/, "exactly 1 selected record's count span must use the Hebrew feminine form (נבחרה)");
+      assert.doesNotMatch(countSpan.textContent ?? "", /נבחרו/, "exactly 1 selected record's count span must not read the plural/masculine נבחרו/נבחר");
+
+      // Selecting a 2nd record must restore the (gender-neutral) plural verb form.
+      fireEvent.click(document.querySelectorAll('td.select-col input[type="checkbox"]')[1] as HTMLInputElement);
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar span")?.textContent?.includes("2") ?? false);
+      assert.match(countSpan.textContent ?? "", /נבחרו/, "2 selected records' count span must use the plural form again");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 /**

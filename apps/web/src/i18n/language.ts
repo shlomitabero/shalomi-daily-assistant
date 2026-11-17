@@ -709,7 +709,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "entity.import.errorRepeated": "{message} (x{count})",
     "entity.bulk.selectAll": "בחירת הכל",
     "entity.bulk.selectRow": "בחירת השורה",
-    "entity.bulk.selectedCount.one": "{count} נבחר",
+    "entity.bulk.selectedCount.one": "{count} נבחרה",
     "entity.bulk.selectedCount.many": "{count} נבחרו",
     "entity.bulk.deleteSelected": "🗑️ מחיקת הנבחרים",
     "entity.bulk.duplicateSelected": "📋 שכפול הנבחרים",
