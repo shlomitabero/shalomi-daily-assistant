@@ -46,6 +46,18 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * fully-Hebrew UI, for any enum field on any AI-generated spec via the
  * real Anthropic path, which is nearly every entity in this platform's
  * own domain library (status/category/priority).
+ *
+ * Round 2166: round 2164's own enumLabels fix added a THIRD required place
+ * for translated non-ASCII text (just above, in the enum-field rule) but
+ * never touched this closing sentence, which still flatly said "label"
+ * and entity "description" are the ONLY places non-ASCII text belongs --
+ * directly contradicting the rule two sentences earlier, within the same
+ * prompt, the exact same self-contradiction round 2145 itself fixed (that
+ * round's own version of this sentence named only "label" before
+ * "description" was added as a second place). A model resolving the
+ * conflict by trusting this later, more absolute-sounding statement would
+ * emit empty/ASCII-only enumLabels, reopening the exact Hebrew-enum-value
+ * rendering bug round 2164 fixed.
  */
 export const SYSTEM_PROMPT = `You are the Product Manager Agent inside Forge AI, an AI software creation platform.
 Given a plain-language business description, output ONLY a single JSON object (no prose, no markdown fences)
@@ -88,7 +100,8 @@ Rules:
   language the user wrote in — these become real SQL table/column names. Write "summary", "personas", "roles",
   "assumptions", "openQuestions", every entity/field "label", and every entity's own "description" in the
   SAME language and script the user's description was written in (e.g. Hebrew in, Hebrew labels, summary,
-  and entity descriptions out). "label" and entity "description" are the only places non-ASCII text belongs.
+  and entity descriptions out). "label", entity "description", and "enumLabels" are the only places non-ASCII
+  text belongs.
 - Output raw JSON only.`;
 
 export interface AnthropicProviderOptions {

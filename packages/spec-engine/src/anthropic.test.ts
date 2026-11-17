@@ -45,7 +45,7 @@ test("SYSTEM_PROMPT's language-consistency rule names personas alongside every o
  */
 test("SYSTEM_PROMPT's language-consistency rule names entity description, and no longer claims label is the only place non-ASCII text belongs", () => {
   assert.match(SYSTEM_PROMPT, /every entity's own "description" in the\s+SAME language and script/);
-  assert.match(SYSTEM_PROMPT, /"label" and entity "description" are the only places/);
+  assert.match(SYSTEM_PROMPT, /"label", entity "description", and "enumLabels" are the only places/);
 });
 
 /**
@@ -65,6 +65,21 @@ test("SYSTEM_PROMPT's JSON shape includes enumLabels, and its enum rule tells th
   assert.match(SYSTEM_PROMPT, /"enumLabels"\?:\s*Record<string,\s*string>/);
   assert.match(SYSTEM_PROMPT, /enumValues.*MUST stay plain\s+ASCII identifiers/s);
   assert.match(SYSTEM_PROMPT, /also include "enumLabels".*SAME language and script as the description/s);
+});
+
+/**
+ * Round 2166: round 2164's own fix above added enumLabels as a THIRD
+ * required place for translated non-ASCII text, but never touched the
+ * language-consistency rule's closing sentence a few lines later in the
+ * SAME prompt, which still flatly said "label" and entity "description"
+ * are the ONLY places non-ASCII text belongs -- directly contradicting
+ * the enum rule right above it. A model resolving the conflict by
+ * trusting this later, more absolute-sounding statement would emit
+ * empty/ASCII-only enumLabels, reopening the exact rendering bug round
+ * 2164 fixed. Confirms the closing sentence now names all three places.
+ */
+test("SYSTEM_PROMPT's closing non-ASCII-placement sentence names enumLabels too, so it no longer contradicts the enum rule's own instruction a few lines earlier", () => {
+  assert.match(SYSTEM_PROMPT, /"label", entity "description", and "enumLabels" are the only places non-ASCII\s+text belongs/);
 });
 
 test("generate() returns the parsed spec on a clean JSON response", async () => {
