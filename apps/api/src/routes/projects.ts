@@ -6,7 +6,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import multer, { MulterError } from "multer";
 import { z } from "zod";
 import type { Entity, EntityRecord, Field, Project, Screen } from "@forge/shared";
-import { CollaboratorRoleSchema, FIELD_TYPES, findOversizedGeneratedSpecField } from "@forge/shared";
+import { CollaboratorRoleSchema, FIELD_TYPES, findOversizedGeneratedSpecField, GENERATED_SPEC_MAX_LIST_ITEMS } from "@forge/shared";
 import {
   tryGetCheckpoint,
   getProject,
@@ -201,8 +201,23 @@ const AnswerQuestionsSchema = z.object({
   // (an open question's own text echoed back by the client) but capped
   // defensively like `answer`, since nothing here re-derives it from the
   // stored spec to confirm it matches.
+  //
+  // Round 2134: round 1409's own fix capped each answer's length but never
+  // the `answers` array's own length -- unlike idea/description/instruction
+  // above, which are plain strings with nothing else to cap, `answers` is
+  // the one AI-input field here shaped as an array, and it kept the exact
+  // same unbounded-array gap this round's own survey found. Confirmed live:
+  // 24 max-length answers (~96,000 chars) passed validation and reached the
+  // real generateSpec call -- the billed cost already incurred -- before
+  // being rejected only by the unrelated, downstream findOversizedGenerated
+  // SpecField check on the AI's *output*. Capped at the same
+  // GENERATED_SPEC_MAX_LIST_ITEMS that check already uses for every
+  // generated-spec list, so the request-side limit matches the one
+  // response-side limit this codebase already treats as its standard
+  // "too many items" bound.
   answers: z
     .array(z.object({ question: z.string().max(2000), answer: z.string().max(2000) }))
+    .max(GENERATED_SPEC_MAX_LIST_ITEMS, `answers must have at most ${GENERATED_SPEC_MAX_LIST_ITEMS} items`)
     .optional()
     .default([]),
   additionalRequest: z.string().max(2000).optional(),

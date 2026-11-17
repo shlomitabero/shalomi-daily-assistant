@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { mock, test } from "node:test";
 import type { AgentStepEvent, ProductSpec } from "@forge/shared";
+import { GENERATED_SPEC_MAX_LIST_ITEMS } from "@forge/shared";
 import {
   diffAndMigrate,
   findUserByEmail,
@@ -6963,6 +6964,61 @@ test("POST /projects/:id/answers retried with the same idempotency key after the
       const retry = await retryRes.json();
       assert.equal(calls, 1, "the retry must not call generateSpec a second time");
       assert.deepEqual(retry, first, "the retry must replay the original response exactly");
+    },
+    { provider },
+  );
+});
+
+/**
+ * Round 2134: round 1409's own fix capped each individual answer's length
+ * but never the `answers` array's own length -- unlike idea/description/
+ * instruction above it in this same file (plain strings, nothing else to
+ * cap), `answers` is an array, and an oversized one could still reach the
+ * real, billed generateSpec call before any rejection, only caught
+ * afterward by the unrelated output-size check on the AI's own response.
+ * A call-counting provider proves the request-side cap now actually
+ * blocks it beforehand, the same technique the idempotency test above
+ * already uses to distinguish "ran the real work" from "replayed/rejected
+ * without running it".
+ */
+test("POST /projects/:id/answers rejects an oversized answers array before ever calling generateSpec, but still works normally within the cap", async () => {
+  let calls = 0;
+  const inner = new HeuristicSpecProvider();
+  const provider: SpecProvider = {
+    name: inner.name,
+    async generate(description) {
+      calls += 1;
+      return inner.generate(description);
+    },
+  };
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "answers-cap@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+      calls = 0;
+
+      const tooMany = Array.from({ length: GENERATED_SPEC_MAX_LIST_ITEMS + 1 }, () => ({ question: "q", answer: "a" }));
+      const rejectedRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ answers: tooMany }),
+      });
+      assert.equal(rejectedRes.status, 400, `an answers array over ${GENERATED_SPEC_MAX_LIST_ITEMS} items must be rejected by validation`);
+      assert.equal(calls, 0, "generateSpec must never run for a rejected oversized answers array -- the whole point is avoiding the billed cost");
+
+      const withinCap = Array.from({ length: GENERATED_SPEC_MAX_LIST_ITEMS }, () => ({ question: "q", answer: "a" }));
+      const okRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ answers: withinCap }),
+      });
+      assert.notEqual(okRes.status, 400, "an answers array exactly at the cap must still pass validation");
+      assert.equal(calls, 1, "a within-cap answers array must still reach generateSpec normally");
     },
     { provider },
   );
