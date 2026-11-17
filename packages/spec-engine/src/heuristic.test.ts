@@ -5070,6 +5070,35 @@ test("Deal's 'deals' keyword doesn't spuriously trigger on the phrasal verb 'dea
 });
 
 /**
+ * Round 2151: the sales-closing-verb re-allow lookbehind just above
+ * bounded its own word gap to {0,2} -- the same fixed-distance-window
+ * defeat class rounds 2149/2150 already fixed elsewhere in this file for
+ * Courier/Volunteer, just a false-NEGATIVE mirror of it here: a real
+ * sales phrase with 3+ qualifying words between "close" and "deals"
+ * (adjectives describing the deals) escaped the re-allow window entirely,
+ * so "deals with" fell back to the phrasal-verb exclusion and Deal was
+ * silently dropped from an unambiguous sales-CRM description. Confirmed
+ * live before this fix: the description below matched only ['Customer'],
+ * Deal entirely missing, not masked by any other Deal keyword.
+ */
+test("Deal's sales-closing 'deals with' reading still matches with 3+ qualifying words between 'close' and 'deals'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const crm = await provider.generate(
+    "A CRM tool to help our sales reps close bigger, more complex enterprise deals with key client accounts, track outreach emails, and log call notes.",
+  );
+  assert.ok(crm.entities.some((e) => e.name === "Deal"), "'close bigger, more complex enterprise deals with' must still match Deal");
+
+  // The fix must not let an unrelated, earlier "close/closing/closed" in a
+  // DIFFERENT sentence leak across the sentence boundary and re-allow a
+  // later, genuinely unrelated phrasal-verb "deals with".
+  const unrelated = await provider.generate(
+    "We closed the store at 9pm every night. The app deals with inventory tracking, supplier orders, and stock alerts.",
+  );
+  assert.ok(!unrelated.entities.some((e) => e.name === "Deal"), "an unrelated 'closed' in an earlier sentence must never re-allow a later, unconnected 'deals with'");
+});
+
+/**
  * Round 912's finding: Expense's bare "הוצאה"/"הוצאות" keywords had the
  * same idiom-co-occurrence shape round 911 just fixed for Deal's "deals
  * with" -- "הוצאה" is a real standalone word (expense/expenditure), but

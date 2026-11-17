@@ -636,8 +636,34 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // hiring-policy idiom) or followed by " to" (the "opportunity to
     // VERB" idiom) -- the round-1722 CRM example's own "opportunity
     // tracking" phrasing is neither, so it still matches correctly.
+    // Round 2151: the sales-closing-verb lookbehind just below bounded its
+    // own word gap to {0,2} -- the false-NEGATIVE mirror of the same
+    // fixed-distance-window defeat class rounds 2149/2150 already fixed
+    // elsewhere in this file (Courier's font-exclusion, Volunteer's
+    // "volunteer information" exclusion): those were too-narrow EXCLUSION
+    // windows letting a false positive slip past; this is a too-narrow
+    // RE-ALLOW window, so a real sales phrase with 3+ qualifying words
+    // between "close" and "deals" (adjectives describing the deals, e.g.
+    // "close bigger, more complex enterprise deals with key accounts")
+    // never re-enables the "deals with" match at all, silently dropping
+    // the Deal entity from an unambiguous sales-CRM description.
+    // Confirmed live: a CRM description built around exactly that phrase
+    // matched only ['Customer'], Deal entirely missing, not masked by any
+    // other Deal keyword (negotiation/opportunity/עסקה all absent too).
+    // Widened from {0,2} to {0,6} rather than a fully unbounded `*` --
+    // unlike Courier/Volunteer's EXCLUSION windows (where unbounded only
+    // ever narrows an already-positive match, so reaching further back
+    // is always safe), this is a RE-ALLOW window: going fully unbounded
+    // would let an unrelated, much earlier "close/closing/closed" (e.g.
+    // from a prior, unconnected sentence) re-enable "deals with" for a
+    // genuinely different, later phrasal-verb use. `[^\s.!?]+` (rather
+    // than `\S+`) also stops the lookbehind from crossing a sentence
+    // boundary at all, so an earlier sentence's own "closed" can never
+    // reach into a later, unrelated "deals with" -- confirmed live: "We
+    // closed the store at 9pm. The app deals with inventory tracking."
+    // still correctly gets no Deal entity.
     keywords: [
-      /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+\S+){0,2}\s)\bdeals\b(?=\s+with\b)/,
+      /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+[^\s.!?]+){0,6}\s)\bdeals\b(?=\s+with\b)/,
       "negotiation",
       /(?<!\bequal\s)\bopportunit(?:y|ies)\b(?!\s+to\b)/,
       "עסקה",
