@@ -19312,6 +19312,112 @@ test("restoring a checkpoint surfaces a migrationWarning naming how many automat
 });
 
 /**
+ * Round 2094: the restore just above disables a rule referencing a
+ * now-gone field, and its own migrationWarning literally tells the user
+ * to "re-enable them from the Automations panel if still needed" -- but
+ * following that instruction was broken. PATCH .../automations/:ruleId
+ * used to unconditionally re-resolve the rule's CURRENT entity/field
+ * against the CURRENT spec on every patch, even one (like a bare
+ * {enabled: true}) that never touches trigger/fieldName/fieldValue/
+ * fieldOperator/toMode/toField at all -- so clicking "Enable" on exactly
+ * the rule this app's own UI told the user to re-enable always 404s
+ * FIELD_NOT_FOUND. Reuses the identical restore-disables-a-rule setup as
+ * the test just above.
+ */
+test("PATCH .../automations/:ruleId can re-enable a rule that was disabled because its field no longer exists, as long as the patch doesn't touch the field itself", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `reenable-disabled-rule-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    const specWithoutStatus: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Deal", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const specWithStatus: ProductSpec = {
+      ...specWithoutStatus,
+      entities: [
+        {
+          name: "Deal",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "enum", required: false, enumValues: ["New", "Won"] },
+          ],
+        },
+      ],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Deal tracker", description: "A CRM for tracking deals.", spec: specWithoutStatus });
+    diffAndMigrate(db, projectId, undefined, specWithoutStatus);
+    const checkpoint = insertCheckpoint(db, { id: randomUUID(), projectId, label: "Before status field", kind: "build", spec: specWithoutStatus });
+
+    diffAndMigrate(db, projectId, specWithoutStatus, specWithStatus);
+    updateProjectSpec(db, projectId, specWithStatus);
+    const ruleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Deal/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "field_equals",
+        fieldName: "status",
+        fieldValue: "Won",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "+15551234567",
+        messageTemplate: "Deal won!",
+      }),
+    });
+    const { rule } = (await ruleRes.json()) as { rule: { id: string } };
+
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/${checkpoint.id}/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+
+    const beforeToggleRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations`, { headers: authHeaders(token) });
+    const { rules: beforeRules } = (await beforeToggleRes.json()) as { rules: { id: string; enabled: boolean; fieldName: string | null }[] };
+    assert.equal(beforeRules[0].enabled, false, "sanity check: the restore must have actually disabled the rule");
+    assert.equal(beforeRules[0].fieldName, "status", "sanity check: the rule's own fieldName is still the now-gone field, unchanged");
+
+    // Exactly what clicking "Enable" in the Automations panel sends.
+    const enableRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(enableRes.status, 200, "a bare {enabled: true} patch must succeed even though the rule's own stale fieldName no longer resolves");
+    const { rule: enabled } = (await enableRes.json()) as { rule: { enabled: boolean } };
+    assert.equal(enabled.enabled, true);
+
+    // A scoped edit to an unrelated field (the message template) must
+    // succeed too, for the identical reason.
+    const messageRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ messageTemplate: "Updated message" }),
+    });
+    assert.equal(messageRes.status, 200, "a patch that only touches messageTemplate must not be blocked by the rule's own unrelated stale fieldName");
+
+    // But a patch that DOES try to touch the trigger/field must still be
+    // validated against the current (missing) field -- this isn't a
+    // blanket bypass, just scoped to what the patch actually changes.
+    const retouchRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ fieldValue: "Lost" }),
+    });
+    assert.equal(retouchRes.status, 404, "a patch that touches fieldValue must still be validated against the rule's (still-stale) fieldName");
+    assert.equal(((await retouchRes.json()) as { code?: string }).code, "FIELD_NOT_FOUND");
+  });
+});
+
+/**
  * The upload route is a new field type's whole reason to exist: a file
  * field's stored value is a JSON descriptor the client gets back from
  * this route, not something a client could ever construct on its own

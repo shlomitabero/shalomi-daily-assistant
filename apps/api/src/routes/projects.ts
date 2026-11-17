@@ -6716,14 +6716,41 @@ export function createProjectsRouter(
           if (invariantError) {
             throw new HttpError(400, invariantError, "VALIDATION_ERROR");
           }
-          const entity = findEntity(project, existing.entityName);
-          if (next.trigger === "field_equals" && next.fieldName) {
-            const field = findField(entity, next.fieldName);
-            if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
-            if (next.fieldOperator) validateAutomationFieldOperator(field, next.fieldOperator);
-          }
-          if (next.toMode === "field" && next.toField) {
-            validateAutomationToField(findField(entity, next.toField));
+          // Round 2094: a rule's own entityName/fieldName/toField can go
+          // stale -- not just via a typo-prone PATCH, but entirely on its
+          // own, the moment a checkpoint restore/refine/the pre-build spec
+          // editor removes the entity or field it targets.
+          // disableAutomationRulesForEntity/disableAutomationRulesForField
+          // (packages/db/src/automations.ts) deliberately disable such a
+          // rule rather than deleting it -- the restore route's own
+          // migrationWarning literally tells the user to "re-enable them
+          // from the Automations panel if still needed" -- but every PATCH
+          // here used to re-resolve the rule's CURRENT (possibly now-stale)
+          // entity/field against the CURRENT spec unconditionally, even for
+          // a patch that never touches trigger/field/toField at all. That
+          // made the app's own advertised recovery path -- clicking
+          // "Enable" on a disabled, orphaned rule -- 404 with a raw
+          // ENTITY_NOT_FOUND/FIELD_NOT_FOUND every time, and blocked any
+          // other scoped edit (e.g. just messageTemplate) on that same
+          // rule too. Only re-validate when the patch actually supplies
+          // one of the keys this validation depends on.
+          const touchesTriggerOrField =
+            "trigger" in parsed.data ||
+            "fieldName" in parsed.data ||
+            "fieldValue" in parsed.data ||
+            "fieldOperator" in parsed.data ||
+            "toMode" in parsed.data ||
+            "toField" in parsed.data;
+          if (touchesTriggerOrField) {
+            const entity = findEntity(project, existing.entityName);
+            if (next.trigger === "field_equals" && next.fieldName) {
+              const field = findField(entity, next.fieldName);
+              if (next.fieldValue) validateAutomationFieldValue(field, next.fieldValue);
+              if (next.fieldOperator) validateAutomationFieldOperator(field, next.fieldOperator);
+            }
+            if (next.toMode === "field" && next.toField) {
+              validateAutomationToField(findField(entity, next.toField));
+            }
           }
           try {
             const rule = updateAutomationRule(db, project.id, req.params.ruleId, parsed.data, req.userId!);

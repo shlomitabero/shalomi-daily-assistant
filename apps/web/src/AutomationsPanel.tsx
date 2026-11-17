@@ -1051,6 +1051,19 @@ export function AutomationsPanel({
         loadRules();
         return;
       }
+      // Round 2094: the server-side fix for this exact route (only
+      // re-resolving entity/field when the patch actually touches
+      // trigger/fieldName/fieldValue/fieldOperator/toMode/toField) already
+      // keeps a bare {enabled} toggle from ever hitting this -- kept here
+      // as defense-in-depth for any other scoped PATCH this handler might
+      // one day be reused for, mirroring the identical ghost-target
+      // handling every sibling in this app (SpecListItemRemover.tsx/
+      // EntityLabelEditor.tsx/FieldLabelEditor.tsx/EntityPanel.tsx) already
+      // has for the same two codes.
+      if (error.code === "ENTITY_NOT_FOUND" || error.code === "FIELD_NOT_FOUND") {
+        loadRules();
+        return;
+      }
       setError(error.message);
     } finally {
       setBusyRuleId(null);
@@ -1496,6 +1509,19 @@ export function AutomationsPanel({
           loadRules();
           return;
         }
+        // Round 2094: this rule's own entity/field can go stale entirely
+        // on its own -- a checkpoint restore/refine removing the entity it
+        // targets disables the rule but leaves its row in place
+        // (disableAutomationRulesForEntity/disableAutomationRulesForField,
+        // packages/db/src/automations.ts) -- so a retry genuinely can't
+        // succeed against a now-nonexistent entity, the same way it
+        // can't against a fully-deleted rule. loadRules() refreshes this
+        // (already-disabled) row instead of leaving the raw
+        // ENTITY_NOT_FOUND/FIELD_NOT_FOUND backend string in retryErrorByRunId.
+        if (error.code === "ENTITY_NOT_FOUND" || error.code === "FIELD_NOT_FOUND") {
+          loadRules();
+          return;
+        }
         setRetryErrorByRunId((prev) => ({ ...prev, [run.id]: error.message }));
       })
       .finally(() => setRetryingRunId((current) => (current === run.id ? null : current)));
@@ -1575,6 +1601,14 @@ export function AutomationsPanel({
         // rendering its row and this Test POST reaching the server.
         const error = err as Error & { code?: string };
         if (error.code === "AUTOMATION_RULE_NOT_FOUND") {
+          loadRules();
+          return;
+        }
+        // Round 2094: mirrors handleRetryRun's own identical fix just
+        // above -- a disabled, orphaned rule's own entity/field is
+        // genuinely gone, so Test can't succeed either; loadRules()
+        // refreshes the row instead of leaving the raw backend string.
+        if (error.code === "ENTITY_NOT_FOUND" || error.code === "FIELD_NOT_FOUND") {
           loadRules();
           return;
         }
