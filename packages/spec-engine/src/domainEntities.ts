@@ -800,13 +800,29 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // a PDF-generator description naming "Arial, Courier, or Times New
       // Roman" as font choices matched ONLY ['Courier'], losing the real
       // document-generator domain entirely -- the same severity as round
-      // 880's "menu" finding. Excluded via the same bounded-proximity
-      // lookaround this file's other short-range collisions use: "font"
-      // within 3 words either side of "courier", or "courier" immediately
-      // followed by "new" (the single most common exact phrase). A real
-      // courier/delivery description essentially never puts the word
-      // "font" anywhere near "courier".
-      /(?<!\bfont\b(?:\s+\S+){0,3}\s)\bcouriers?\b(?!\s+new\b)(?!(?:\s+\S+){0,3}\s+font\b)/,
+      // 880's "menu" finding.
+      //
+      // Round 2149: round 2106's own fix used a bounded 3-word-either-side
+      // proximity window, but a very natural way to phrase the identical
+      // scenario lists every font name first and only says "font" at the
+      // END, once, after the whole list (e.g. "choose from Arial, Courier,
+      // or Times New Roman as the font") -- "font" then sits 5+ words away
+      // from "courier", outside that window on both sides, so the bounded
+      // lookaround failed to exclude it. Confirmed live: both "...Courier,
+      // or Times New Roman as the font." and "...Courier, or Times New
+      // Roman for the document's font." still matched bare ['Courier'],
+      // the real domain lost exactly as round 2106 already describes.
+      // Switched to the same document-wide (unbounded, lazy) co-occurrence
+      // check this file already uses for an identical "disambiguating word
+      // can be far away" problem -- the Property entity's own נכס fix just
+      // below -- rather than merely widening the bound again, since any
+      // fixed bound can be defeated the same way by a longer list of font
+      // names. "courier" immediately followed by "new" is still excluded
+      // too (the single most common exact phrase, often with no nearby
+      // "font" at all, e.g. "a code editor using Courier New"). A real
+      // courier/delivery description essentially never mentions the word
+      // "font" anywhere in the same description.
+      /(?<!\bfont\b[\s\S]*)\bcouriers?\b(?!\s+new\b)(?![\s\S]*?\bfont\b)/,
       /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
       // "delivery person" had no plural entry (round 584). Unlike this
       // file's other missing-plural fixes (576-583, all Hebrew ה→ות or

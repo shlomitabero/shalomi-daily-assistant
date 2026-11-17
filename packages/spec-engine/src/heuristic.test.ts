@@ -1506,6 +1506,30 @@ test("Courier's bare keyword doesn't spuriously trigger on the 'Courier'/'Courie
   assert.ok(delivery.entities.some((e) => e.name === "Courier"), "a real delivery-courier description must still get a Courier entity");
 });
 
+/**
+ * Round 2149: round 2106's own fix (just above) only excluded "font" within
+ * a bounded 3-word window either side of "courier" -- a natural phrasing
+ * that lists every font name first and says "font" only once, at the very
+ * end, puts "font" more than 3 words away on BOTH sides, so the bounded
+ * lookaround failed to exclude it. Confirmed live before this fix: both
+ * sentences below matched bare ['Courier'], losing the real
+ * document-generator/invoice-builder domain entirely, the exact same
+ * failure round 2106 already describes.
+ */
+test("Courier's font exclusion still holds when 'font' is mentioned only once, well after a longer list of font names", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const documentStyler = await provider.generate(
+    "A document styling tool that lets a user choose their heading typeface from Arial, Courier, or Times New Roman as the font.",
+  );
+  assert.ok(!documentStyler.entities.some((e) => e.name === "Courier"), "a font-picker that names the font list before saying 'font' once must not get a spurious Courier entity");
+
+  const invoiceBuilder = await provider.generate(
+    "An invoice builder letting you choose Arial, Courier, or Times New Roman for the document's font.",
+  );
+  assert.ok(!invoiceBuilder.entities.some((e) => e.name === "Courier"), "an invoice builder that names the font list before saying 'font' once must not get a spurious Courier entity");
+});
+
 test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 
