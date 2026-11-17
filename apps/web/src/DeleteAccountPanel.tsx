@@ -16,11 +16,29 @@ import { useBeforeUnloadWarning } from "./useBeforeUnloadWarning.js";
 export function DeleteAccountPanel({
   email,
   userId,
+  refineRunning,
+  busy: buildBusy,
   onClose,
   onDeleted,
 }: {
   email: string;
   userId: string;
+  /**
+   * Round 2159: this panel can already be open from before an active
+   * refine/build starts -- the same "already-open panel" gap
+   * CollaboratorsPanel's own refineRunning prop doc comment (round 2158)
+   * describes for "Leave project", and for the same reason: App.tsx's
+   * own topbar "Delete Account" button that opens this panel is disabled
+   * while refineRunning/busy are true, but a reentrancy guard belongs on
+   * the actual destructive action itself, not only on the button that
+   * opens the door to it. Permanently deleting the account out from under
+   * an in-flight refine/build abandons that work exactly the way
+   * CollaboratorsPanel's self-service Leave did -- only far less
+   * recoverable, since there's no account left to log back into and see
+   * what, if anything, the refine produced.
+   */
+  refineRunning: boolean;
+  busy: boolean;
   onClose: () => void;
   onDeleted: (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
 }) {
@@ -126,6 +144,10 @@ export function DeleteAccountPanel({
     // callback, so a second concurrent request from a double-click fails
     // cleanly with 401 SESSION_EXPIRED rather than corrupting anything.
     if (busy) return;
+    // Round 2159: see this component's own refineRunning/busy prop doc
+    // comment above -- closes the same "already-open panel" gap
+    // CollaboratorsPanel's handleLeave guards against for refineRunning.
+    if (refineRunning || buildBusy) return;
     if (!canSubmit || !idsFetchSettled) return;
     setBusy(true);
     setError(null);
@@ -179,7 +201,11 @@ export function DeleteAccountPanel({
             <button type="button" className="secondary" onClick={onClose} disabled={busy}>
               {t("deleteAccount.cancel")}
             </button>
-            <button type="submit" className="danger" disabled={busy || !canSubmit || !idsFetchSettled}>
+            <button
+              type="submit"
+              className="danger"
+              disabled={busy || refineRunning || buildBusy || !canSubmit || !idsFetchSettled}
+            >
               {busy ? t("deleteAccount.busy") : t("deleteAccount.submit")}
             </button>
           </div>

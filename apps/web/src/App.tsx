@@ -2465,7 +2465,18 @@ function AppContent() {
   }
 
   async function handleLogout() {
-    if (!user) return;
+    // Round 2159: unlike the brand-logo link (canNavigateHome's own
+    // refineRunning/busy checks, rounds 2156/2157) and CollaboratorsPanel's
+    // self-service "Leave project" (round 2158), this button had no guard
+    // at all -- it sat right next to handleRevokeOtherSessions in the same
+    // topbar, which DOES check its own busy flag, making the omission here
+    // look like an oversight rather than a deliberate choice. Since the
+    // whole topbar (including this button) renders across every view, not
+    // just "preview"/"building", logging out mid-refine or mid-handleBuild
+    // await abandons that work exactly the same way the brand-logo click
+    // did before round 2157 -- the next login starts a fresh render with no
+    // way back into the refine/build that was still running underneath.
+    if (!user || refineRunning || busy) return;
     await logout();
     setUser(null);
     setProject(null);
@@ -2679,10 +2690,15 @@ function AppContent() {
                     ? t("topbar.logoutOtherDevices.busy")
                     : t("topbar.logoutOtherDevices")}
             </button>
-            <button type="button" className="secondary" onClick={handleLogout}>
+            <button type="button" className="secondary" onClick={handleLogout} disabled={refineRunning || busy}>
               {t("topbar.logout")}
             </button>
-            <button type="button" className="danger" onClick={() => setShowDeleteAccount(true)}>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => setShowDeleteAccount(true)}
+              disabled={refineRunning || busy}
+            >
               {t("topbar.deleteAccount")}
             </button>
           </div>
@@ -2695,6 +2711,8 @@ function AppContent() {
         <DeleteAccountPanel
           email={user.email}
           userId={user.id}
+          refineRunning={refineRunning}
+          busy={busy}
           onClose={() => setShowDeleteAccount(false)}
           onDeleted={handleAccountDeleted}
         />

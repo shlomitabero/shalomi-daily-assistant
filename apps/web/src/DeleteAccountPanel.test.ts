@@ -53,27 +53,39 @@ async function waitForCondition(check: () => boolean, maxTicks = 40): Promise<vo
   throw new Error("waitForCondition: condition never became true");
 }
 
+function panelTree(opts?: {
+  onClose?: () => void;
+  onDeleted?: (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
+  userId?: string;
+  refineRunning?: boolean;
+  busy?: boolean;
+}) {
+  return React.createElement(
+    ThemeProvider,
+    null,
+    React.createElement(
+      LanguageProvider,
+      null,
+      React.createElement(DeleteAccountPanel, {
+        email: "dana@example.com",
+        userId: opts?.userId ?? "user1",
+        refineRunning: opts?.refineRunning ?? false,
+        busy: opts?.busy ?? false,
+        onClose: opts?.onClose ?? (() => {}),
+        onDeleted: opts?.onDeleted ?? (() => {}),
+      }),
+    ),
+  );
+}
+
 function renderPanel(opts?: {
   onClose?: () => void;
   onDeleted?: (ownedProjectIds: string[], sharedProjectIds: string[]) => void;
   userId?: string;
+  refineRunning?: boolean;
+  busy?: boolean;
 }) {
-  render(
-    React.createElement(
-      ThemeProvider,
-      null,
-      React.createElement(
-        LanguageProvider,
-        null,
-        React.createElement(DeleteAccountPanel, {
-          email: "dana@example.com",
-          userId: opts?.userId ?? "user1",
-          onClose: opts?.onClose ?? (() => {}),
-          onDeleted: opts?.onDeleted ?? (() => {}),
-        }),
-      ),
-    ),
-  );
+  return render(panelTree(opts));
 }
 
 /**
@@ -614,6 +626,89 @@ test("DeleteAccountPanel's submit button guards against a fast double-click, so 
 
       pending.resolveFirstDelete?.();
       await waitForCondition(() => deletedCount === 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2159: this panel can already be open from before an active
+ * refine/build starts (App.tsx's own "Delete Account" button that opens it
+ * is disabled while refineRunning/busy, but the panel itself has no such
+ * awareness once mounted) -- the same "already-open panel" gap
+ * CollaboratorsPanel's own round-2158 refineRunning fix closed for its
+ * "Leave project" action. Mirrors that fix's own test shape (round 2158,
+ * SpecListItemRemover/CollaboratorsPanel.test.ts): render with the hazard
+ * false, confirm the button genuinely becomes enabled (proving the mount-
+ * time project-ids fetch has settled and the typed confirmation is valid --
+ * NOT just "disabled because the fetch hasn't resolved yet", a trap this
+ * round's first draft of this test fell into), THEN rerender with the
+ * hazard flipped true -- reproducing the real sequence where a refine
+ * starts elsewhere while this panel sits open -- and confirm the button
+ * goes back to disabled and a direct form submit (bypassing the disabled
+ * attribute, the same way the double-click test above bypasses it) never
+ * reaches deleteAccount().
+ */
+test("DeleteAccountPanel's submit button is disabled, and a direct form submit is refused, once refineRunning flips true on an already-open panel", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteCalls = 0;
+    globalThis.fetch = withListProjectsStub([], async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+
+    try {
+      const view = renderPanel({ refineRunning: false });
+      typeConfirmation("dana@example.com");
+      await waitForCondition(() => !submitButton().disabled);
+
+      view.rerender(panelTree({ refineRunning: true }));
+      typeConfirmation("dana@example.com");
+
+      assert.equal(submitButton().disabled, true, "the submit button must become disabled once refineRunning flips true");
+
+      fireEvent.submit(document.querySelector("form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(deleteCalls, 0, "a direct form submit must never reach deleteAccount() while refineRunning is true");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/** Same as above, for the busy (handleBuild in-flight) hazard. */
+test("DeleteAccountPanel's submit button is disabled, and a direct form submit is refused, once busy (build in-flight) flips true on an already-open panel", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let deleteCalls = 0;
+    globalThis.fetch = withListProjectsStub([], async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE" && input === "/api/auth/account?lang=en") {
+        deleteCalls += 1;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected request ${init?.method ?? "GET"} ${input}`);
+    });
+
+    try {
+      const view = renderPanel({ busy: false });
+      typeConfirmation("dana@example.com");
+      await waitForCondition(() => !submitButton().disabled);
+
+      view.rerender(panelTree({ busy: true }));
+      typeConfirmation("dana@example.com");
+
+      assert.equal(submitButton().disabled, true, "the submit button must become disabled once busy flips true");
+
+      fireEvent.submit(document.querySelector("form")!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(deleteCalls, 0, "a direct form submit must never reach deleteAccount() while busy is true");
     } finally {
       globalThis.fetch = originalFetch;
     }

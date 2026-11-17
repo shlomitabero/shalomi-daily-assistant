@@ -4226,81 +4226,90 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
  * passing, matching this routine's own "module-load crash is a strong
  * confirmation" convention.
  */
-test("App's handleLogout resets local UI state, including the live idea description and recent project searches, without clearing either's own persisted per-user storage", async () => {
+test("App's handleLogout resets local UI state, including the live idea description and recent project searches, without clearing either's own persisted per-user storage, but refuses to run at all while refineRunning or busy is true", async () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {2}async function handleLogout\(\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleLogout in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  const state: {
-    logoutCalled: boolean;
-    user: unknown;
-    project: unknown;
-    buildWarning: unknown;
-    view: string | null;
-    description: unknown;
-    error: unknown;
-    activeEntity: unknown;
-    selectedAnswers: unknown;
-    additionalRequest: unknown;
-    refineText: unknown;
-    refineHistory: unknown;
-    refineHistorySearch: unknown;
-    recentProjectSearches: unknown;
-  } = {
-    logoutCalled: false,
-    user: { id: "user1" },
-    project: { id: "p1" },
-    buildWarning: "untouched",
-    view: "preview",
-    description: "untouched",
-    error: "untouched",
-    activeEntity: "untouched",
-    selectedAnswers: "untouched",
-    additionalRequest: "untouched",
-    refineText: "untouched",
-    refineHistory: "untouched",
-    refineHistorySearch: "untouched",
-    recentProjectSearches: "untouched",
-  };
+  function run(opts: { refineRunning: boolean; busy: boolean }) {
+    const state: {
+      logoutCalled: boolean;
+      user: unknown;
+      project: unknown;
+      buildWarning: unknown;
+      view: string | null;
+      description: unknown;
+      error: unknown;
+      activeEntity: unknown;
+      selectedAnswers: unknown;
+      additionalRequest: unknown;
+      refineText: unknown;
+      refineHistory: unknown;
+      refineHistorySearch: unknown;
+      recentProjectSearches: unknown;
+    } = {
+      logoutCalled: false,
+      user: { id: "user1" },
+      project: { id: "p1" },
+      buildWarning: "untouched",
+      view: "preview",
+      description: "untouched",
+      error: "untouched",
+      activeEntity: "untouched",
+      selectedAnswers: "untouched",
+      additionalRequest: "untouched",
+      refineText: "untouched",
+      refineHistory: "untouched",
+      refineHistorySearch: "untouched",
+      recentProjectSearches: "untouched",
+    };
 
-  const fn = new Function(
-    "user",
-    "logout",
-    "setUser",
-    "setProject",
-    "setBuildWarning",
-    "setView",
-    "setDescription",
-    "setError",
-    "setActiveEntity",
-    "setSelectedAnswers",
-    "setAdditionalRequest",
-    "setRefineText",
-    "setRefineHistory",
-    "setRefineHistorySearch",
-    "setRecentProjectSearches",
-    `${code}\nreturn handleLogout;`,
-  )(
-    { id: "user1" },
-    async () => {
-      state.logoutCalled = true;
-    },
-    (v: unknown) => (state.user = v),
-    (v: unknown) => (state.project = v),
-    (v: unknown) => (state.buildWarning = v),
-    (v: string) => (state.view = v),
-    (v: unknown) => (state.description = v),
-    (v: unknown) => (state.error = v),
-    (v: unknown) => (state.activeEntity = v),
-    (v: unknown) => (state.selectedAnswers = v),
-    (v: unknown) => (state.additionalRequest = v),
-    (v: unknown) => (state.refineText = v),
-    (v: unknown) => (state.refineHistory = v),
-    (v: unknown) => (state.refineHistorySearch = v),
-    (v: unknown) => (state.recentProjectSearches = v),
-  ) as () => Promise<void>;
+    const fn = new Function(
+      "user",
+      "refineRunning",
+      "busy",
+      "logout",
+      "setUser",
+      "setProject",
+      "setBuildWarning",
+      "setView",
+      "setDescription",
+      "setError",
+      "setActiveEntity",
+      "setSelectedAnswers",
+      "setAdditionalRequest",
+      "setRefineText",
+      "setRefineHistory",
+      "setRefineHistorySearch",
+      "setRecentProjectSearches",
+      `${code}\nreturn handleLogout;`,
+    )(
+      { id: "user1" },
+      opts.refineRunning,
+      opts.busy,
+      async () => {
+        state.logoutCalled = true;
+      },
+      (v: unknown) => (state.user = v),
+      (v: unknown) => (state.project = v),
+      (v: unknown) => (state.buildWarning = v),
+      (v: string) => (state.view = v),
+      (v: unknown) => (state.description = v),
+      (v: unknown) => (state.error = v),
+      (v: unknown) => (state.activeEntity = v),
+      (v: unknown) => (state.selectedAnswers = v),
+      (v: unknown) => (state.additionalRequest = v),
+      (v: unknown) => (state.refineText = v),
+      (v: unknown) => (state.refineHistory = v),
+      (v: unknown) => (state.refineHistorySearch = v),
+      (v: unknown) => (state.recentProjectSearches = v),
+    ) as () => Promise<void>;
 
+    return { fn, state };
+  }
+
+  const { fn, state } = run({ refineRunning: false, busy: false });
   await fn();
 
   assert.equal(state.logoutCalled, true, "must call the API's own logout() to revoke the session server-side");
@@ -4317,6 +4326,26 @@ test("App's handleLogout resets local UI state, including the live idea descript
   assert.deepEqual(state.refineHistory, []);
   assert.equal(state.refineHistorySearch, "");
   assert.deepEqual(state.recentProjectSearches, [], "must clear the LIVE recentProjectSearches state too, same as the idea description above");
+
+  /**
+   * Round 2159: unlike the brand-logo link (canNavigateHome) and
+   * CollaboratorsPanel's self-service Leave (round 2158), this handler had
+   * no refineRunning/busy guard at all before this round -- logging out
+   * mid-refine/mid-build abandoned that work exactly the way those two
+   * fixes already prevent for their own exits, except there's no account
+   * left signed in afterward to see what happened.
+   */
+  const { fn: fnRefining, state: stateRefining } = run({ refineRunning: true, busy: false });
+  await fnRefining();
+  assert.equal(stateRefining.logoutCalled, false, "must never call the real logout() API while refineRunning is true");
+  assert.deepEqual(stateRefining.user, { id: "user1" }, "must leave the signed-in user untouched while refineRunning is true");
+  assert.equal(stateRefining.view, "preview", "must leave view untouched while refineRunning is true");
+
+  const { fn: fnBuilding, state: stateBuilding } = run({ refineRunning: false, busy: true });
+  await fnBuilding();
+  assert.equal(stateBuilding.logoutCalled, false, "must never call the real logout() API while busy (build in-flight) is true");
+  assert.deepEqual(stateBuilding.user, { id: "user1" }, "must leave the signed-in user untouched while busy is true");
+  assert.equal(stateBuilding.view, "preview", "must leave view untouched while busy is true");
 });
 
 /**
