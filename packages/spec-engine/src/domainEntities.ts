@@ -1936,10 +1936,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // the "excellent" inflections (all four start with "משובח") while
     // still matching every real standalone use ("משוב מלקוחות", "איסוף
     // משוב", the plural "משובים"), confirmed empirically after fixing.
+    // Round 2109: bare "דירוג" ("ranking/rating") is ordinary Hebrew for
+    // ANY ranking -- a sports/tournament leaderboard, a credit rating, an
+    // SEO/search-engine ranking, an employee-performance ranking -- none
+    // of which have anything to do with customer feedback. Confirmed
+    // empirically via the real matchEntities: "אפליקציה לניהול טבלת
+    // דירוג של שחקנים בטורניר" (a tournament leaderboard app) and
+    // "אפליקציה לדירוג אשראי של לווים" (a borrower credit-rating app)
+    // both returned ONLY [Review], the real domain entirely lost -- the
+    // same severity as this block's own "ביקורת"/"משוב" audits above.
+    // Unlike those two, no single local lookaround separates the
+    // readings (a bare ranking has no one adjacent word that always
+    // marks it as customer feedback), so this requires a customer/
+    // product/service/star-rating cue to co-occur ANYWHERE in the text,
+    // the same document-wide technique round 2107 used for the English
+    // "membership" collision -- "דירוג לקוחות"/"דירוג כוכבים למוצרים"/
+    // "דירוג שירות" still match correctly either way around.
     keywords: [
       "customer review", "customer feedback", "product review", "testimonial",
       /ביקור(?:ות|ת)(?!\s*(?:פנים|פנימית|חשבונות|תקנים|תקן|איכות|בטיחות|מס|רגולטורית|חוקית))/,
-      "חוות דעת", /משוב(?!ח)/, "דירוג",
+      "חוות דעת", /משוב(?!ח)/,
+      /דירוג(?=[\s\S]*(?:לקוח|מוצר|שירות|כוכב|מסעדה))|(?:לקוח|מוצר|שירות|כוכב|מסעדה)(?=[\s\S]*דירוג)/,
     ],
     labelHe: "ביקורות",
     descriptionHe: "ביקורת או משוב שהשאיר לקוח.",

@@ -2642,6 +2642,40 @@ test("Review's bare 'משוב' keyword doesn't spuriously match the unrelated '�
 });
 
 /**
+ * Round 2109: the same bare-Hebrew-word collision class as the "משוב"
+ * test above, found by continuing that audit's own technique to this
+ * block's other bare keyword: "דירוג" ("ranking/rating") is ordinary
+ * Hebrew for ANY ranking -- a sports/tournament leaderboard, a credit
+ * rating, an SEO/search-engine ranking, an employee-performance ranking
+ * -- none of which have anything to do with customer feedback. Confirmed
+ * empirically before this fix: a tournament-leaderboard app description
+ * and a borrower-credit-rating app description both returned ONLY
+ * [Review] via the real matchEntities, the real domain entirely lost.
+ */
+test("Review's bare 'דירוג' keyword doesn't spuriously match an unrelated tournament/credit/SEO/employee ranking, and ordinary customer-rating usage still matches", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const tournament = await provider.generate("אפליקציה לניהול טבלת דירוג של שחקנים בטורניר.", true);
+  assert.ok(!tournament.entities.some((e) => e.name === "Review"), "'דירוג שחקנים בטורניר' (tournament leaderboard) must not spuriously match Review");
+
+  const creditRating = await provider.generate("אפליקציה לדירוג אשראי של לווים.", true);
+  assert.ok(!creditRating.entities.some((e) => e.name === "Review"), "'דירוג אשראי' (credit rating) must not spuriously match Review");
+
+  const seoRanking = await provider.generate("כלי למעקב אחרי דירוג האתר במנועי חיפוש.", true);
+  assert.ok(!seoRanking.entities.some((e) => e.name === "Review"), "'דירוג האתר במנועי חיפוש' (SEO ranking) must not spuriously match Review");
+
+  const employeeRanking = await provider.generate("מערכת לדירוג עובדים לפי ביצועים.", true);
+  assert.ok(!employeeRanking.entities.some((e) => e.name === "Review"), "'דירוג עובדים' (employee performance ranking) must not spuriously match Review");
+
+  // Ordinary customer-rating usage, in either word order, must still match.
+  const customerRating = await provider.generate("אפליקציה לדירוג לקוחות למסעדה שלנו.", true);
+  assert.ok(customerRating.entities.some((e) => e.name === "Review"), "'דירוג לקוחות' (customer rating) must still match Review");
+
+  const starRating = await provider.generate("מערכת לאיסוף דירוג כוכבים למוצרים שלנו.", true);
+  assert.ok(starRating.entities.some((e) => e.name === "Review"), "'דירוג כוכבים למוצרים' (star rating for products) must still match Review");
+});
+
+/**
  * Regression test for a real bug found in round 446: Employee's bare
  * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a
  * substring of "coworker" -- an ordinary word in a plain personal
