@@ -50368,3 +50368,31 @@ Not masked by any other Deal keyword (negotiation/opportunity/עסקה all absen
 This closes out the "bounded word-window regex" bug class first surfaced in round 2149 — three confirmed instances fixed (Courier, Volunteer, Deal) and no further occurrences found in domainEntities.ts/templates.ts/heuristic.ts after a systematic grep.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2152: Inventory & Products template had the same Employee/TeamMember alias gap for Vendor/Supplier and Order/PurchaseOrder
+
+**The process:** Round 2151 declared domainEntities.ts's bounded-word-window regex vein fully closed and redirected round 2152 toward three large files that had been flagged for a full read across rounds 2149-2151 but never actually reached (each prior round found its headline bug elsewhere first). The round-2152 survey agent read both `apps/web/src/WhatsAppPanel.tsx` (1837 lines) and `apps/web/src/AutomationsPanel.tsx` (2319 lines) end-to-end and found no new gaps (both exhaustively covered already) — but found a genuine, different-feature-class bug by recognizing a familiar shape from round 1911's own fix.
+
+**The bug:** Round 1911 fixed a gap where refining any project built from the "Project & Team Tracker" or "Appointments & Clients" templates silently duplicated an "Employee" entity alongside the template's own "TeamMember"/"Staff" entity — because `/refine`'s `combinedDescription` (routes/projects.ts) re-appends the project's permanently-stored description on every refine, re-firing `domainEntities.ts`'s Employee keyword match regardless of the actual new instruction, and `mergeRefinedSpec`'s exact-name match treated the regenerated "Employee" as unrelated. The fix added `ENTITY_ALIAS_GROUPS` (`packages/spec-engine/src/index.ts`) so `entityMergeKey` folds known aliases together.
+
+That fix was never ported to the "Inventory & Products" template. Its own curated entities are named **Supplier** (not Vendor) and **PurchaseOrder** (not Order) — but its stored description ("...products, suppliers, purchase orders and stock movements.") contains `domainEntities.ts`'s separate **Vendor** rule's own keywords ("supplier(s)", "procurement", Hebrew "ספקים"/"רכש") and separate **Order** rule's own keywords ("order(s)", "purchase", Hebrew "הזמנ(ה|ות)"). Confirmed live through the real engine with a completely unrelated refine instruction:
+```
+Current entities:   ['Supplier', 'Product', 'PurchaseOrder', 'StockMovement']
+Candidate entities:  ['Order', 'Product', 'Vendor']
+Merged entities:    ['Supplier', 'Product', 'PurchaseOrder', 'StockMovement', 'Order', 'Vendor']
+```
+Both `Vendor` and `Order` were silently added as brand-new, duplicate entities (their own SQL tables and List/Form screens) alongside the pre-existing `Supplier`/`PurchaseOrder`. Confirmed this doesn't affect any other template (checked all 6), and confirmed the aliasing is architecturally safe in only one direction: `domainEntities.ts` (the refine-candidate generator) never produces entities literally named "Supplier" or "PurchaseOrder", and `templates.ts`'s curated specs never use "Vendor" or "Order" — so the new aliases can only ever engage for genuinely identical real-world concepts, never cross-contaminate a different template's own distinct "Order" entity (e.g. a restaurant/e-commerce sales order).
+
+**The fix:** Added two more alias groups to `ENTITY_ALIAS_GROUPS` in `packages/spec-engine/src/index.ts`, mirroring the existing Employee/TeamMember/Staff one exactly:
+```ts
+const ENTITY_ALIAS_GROUPS: string[][] = [
+  ["employee", "teammember", "staff"],
+  ["vendor", "supplier"],
+  ["order", "purchaseorder"],
+];
+```
+`detectLikelyEntityRenames` shares the same `entityMergeKey`, so it's covered automatically with no separate change needed (same as round 1911's own precedent).
+
+**Tests/verification:** Confirmed the gap through the real engine with a scratch `tsx` script before and after the fix (`mergeRefinedSpec`/`HeuristicSpecProvider`/`TEMPLATES` imported directly). Added three new tests in `packages/spec-engine/src/index.test.ts` modeled on the existing round-1911 Employee/TeamMember tests: two `mergeRefinedSpec` fold-tests (Vendor→Supplier, Order→PurchaseOrder) and one `detectLikelyEntityRenames` silence test for both pairs. Verified fail-before/pass-after via `git stash`: all three new tests failed exactly as predicted before the fix (nothing else), passed cleanly after. Ran the full `packages/spec-engine` test suite (363/363 passing) and `apps/api`'s build (clean, since it bundles `@forge/spec-engine`) before committing.
+
+Live: https://forge-ai-m7p7.onrender.com
