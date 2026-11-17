@@ -3958,6 +3958,36 @@ function fieldDisplayLabel(field, occurrences) {
   return (occurrences[label] || 0) > 1 ? label + " (" + field.name + ")" : label;
 }
 
+// Round 2124 (ported from the live preview's own round-2121 fix,
+// entityFormatting.ts): a case-insensitive sibling of
+// fieldLabelOccurrences/fieldDisplayLabel above, used ONLY by
+// recordsToCsv's own header row and matchesImportHeader/buildImportRecords'
+// column matching below -- every other caller of the originals is purely
+// visual display (a table header, a print sheet, a board card), where two
+// labels differing only by case ARE already distinguishable to a sighted
+// reader. matchesImportHeader compares every text case-INsensitively
+// though, which the case-sensitive originals didn't account for: a field
+// with no label (whose effective label falls back to its own, lowercase
+// name) and a DIFFERENT field whose own declared label happens to equal
+// that name except for case produced two visually-distinct, unsuffixed CSV
+// headers that nonetheless collided under matchesImportHeader's
+// case-insensitive comparison -- silently swapping the two fields' data on
+// re-import after nothing more than an ordinary spreadsheet column
+// reorder.
+function csvFieldLabelOccurrences(fields) {
+  const occurrences = {};
+  for (const f of fields) {
+    const label = (f.label || f.name).toLowerCase();
+    occurrences[label] = (occurrences[label] || 0) + 1;
+  }
+  return occurrences;
+}
+
+function csvFieldDisplayLabel(field, occurrences) {
+  const label = field.label || field.name;
+  return (occurrences[label.toLowerCase()] || 0) > 1 ? label + " (" + field.name + ")" : label;
+}
+
 // Same reasoning as fieldLabelOccurrences/fieldDisplayLabel just above, one
 // level up: an entity's display label is never enforced unique either (only
 // its name is), so two different entities can legally share a label. Global
@@ -3988,8 +4018,8 @@ export function entityDisplayLabel(entity, occurrences) {
 // only ever creating duplicates. Only the real "Export CSV" download
 // below opts in; Copy (pasted into chat/email, never re-imported) doesn't.
 function recordsToCsv(fields, records, relatedRecords, includeId) {
-  const labelOccurrences = fieldLabelOccurrences(fields);
-  const headerCells = fields.map((f) => fieldDisplayLabel(f, labelOccurrences));
+  const labelOccurrences = csvFieldLabelOccurrences(fields);
+  const headerCells = fields.map((f) => csvFieldDisplayLabel(f, labelOccurrences));
   const header = (includeId ? ["id", ...headerCells] : headerCells).map(csvEscape).join(",");
   const rows = records.map((record) => {
     const cells = fields.map((f) => fieldDisplayValue(f, record[f.name], relatedRecords));
@@ -4106,7 +4136,7 @@ function matchesImportHeader(header, field, labelOccurrences) {
   return (
     normalized === field.name.toLowerCase() ||
     normalized === (field.label || "").toLowerCase() ||
-    normalized === fieldDisplayLabel(field, labelOccurrences).toLowerCase()
+    normalized === csvFieldDisplayLabel(field, labelOccurrences).toLowerCase()
   );
 }
 
@@ -4266,7 +4296,7 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   // claimed by at most one column, in header order, so two fields sharing
   // a label don't both resolve to the same first-matching field.
   const claimedFieldNames = new Set();
-  const labelOccurrences = fieldLabelOccurrences(fields);
+  const labelOccurrences = csvFieldLabelOccurrences(fields);
   const columnFields = header.map((cell, index) => {
     if (index === idColumnIndex) return null;
     const match = fields.find((f) => !claimedFieldNames.has(f.name) && matchesImportHeader(cell, f, labelOccurrences));
