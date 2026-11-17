@@ -659,10 +659,13 @@ export function EntitySummaryItem({
    * unrelated entity's own in-flight action, the same way a field's own
    * action already waits on a sibling field's. */
   siblingActionBusy?: boolean;
-  /** Reports this entity's own anyChildOrSelfBusy state up to App.tsx,
-   * which folds every mounted EntitySummaryItem's own state into the same
-   * aggregate it feeds back via siblingActionBusy above and AddEntityForm's
-   * own disabled prop -- the other half of the same cross-gate. */
+  /** Reports this entity's own busy state (`ownBusy`, see round 2154's
+   * own doc comment -- deliberately NOT the siblingActionBusy-inclusive
+   * anyChildOrSelfBusy, or this would feed back into the very aggregate
+   * it came from) up to App.tsx, which folds every mounted
+   * EntitySummaryItem's own state into the same aggregate it feeds back
+   * via siblingActionBusy above and AddEntityForm's own disabled prop --
+   * the other half of the same cross-gate. */
   onBusyChange?: (entityName: string, busy: boolean) => void;
 }) {
   const { t } = useTranslation();
@@ -748,9 +751,10 @@ export function EntitySummaryItem({
   // entity's own children against each other.
   // Round 1194: also ORs in rename.editing -- see RoleChip's own `ownBusy`
   // doc comment (round 1147) for the general gap. It applies here too,
-  // and more severely: anyChildOrSelfBusy is the value this component
-  // reports up via onBusyChange below, which becomes a SIBLING entity's
-  // own siblingActionBusy -- without rename.editing in it, opening this
+  // and more severely: this entity's own busy state (reported up via
+  // onBusyChange below, now `ownBusy` -- see round 2154's own comment) is
+  // what becomes a SIBLING entity's own siblingActionBusy -- without
+  // rename.editing in it, opening this
   // entity's rename editor and leaving it open (unsaved) left every
   // sibling entity's remove button enabled the whole time, and entity
   // remove/rename routes have no server-side staleness check at all (see
@@ -763,20 +767,51 @@ export function EntitySummaryItem({
   // exactly the same way a sibling field action already does (same
   // unguarded, name-keyed read-modify-write shape; see handleStartRename's
   // own round-1027 comment below).
-  const anyChildOrSelfBusy =
-    busy || duplicateBusy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0 || siblingActionBusy;
+  //
+  // Round 2154: unlike RoleChip/AssumptionItem/PersonaItem's own `ownBusy`
+  // (round 1147) and FieldChip's own `ownBusy` (round 1059/1194) just
+  // below -- every one of which deliberately keeps its "value reported
+  // upward" SEPARATE from its own "value used for local UI gating" so
+  // that the received siblingActionBusy prop is never fed back into the
+  // very aggregate it came from -- this entity folded both into the ONE
+  // variable below and reported that same combined value up via
+  // onBusyChange. Confirmed live (and by replicating the exact
+  // reducer/effect cycle in a standalone script): the instant ANY
+  // entity's own flag (even just opening its rename editor for a single
+  // render, immediately cancelled) makes anyChildOrSelfBusy true, that
+  // gets written into App.tsx's entityBusyMap, which makes
+  // anyEntityOrAddBusy true, fed back as siblingActionBusy to every
+  // entity (including the one that triggered it) -- so the OR keeps
+  // anyChildOrSelfBusy true forever, even after the real action finishes,
+  // since nothing ever clears entityBusyMap's entry short of that
+  // specific entity unmounting. The whole Spec Review "Entities" section
+  // (every entity's remove/duplicate, every field's required/type/remove,
+  // every AddFieldForm, and the page-level AddEntityForm) permanently
+  // locks up after the very first entity-level interaction, recoverable
+  // only by a full page reload. `ownBusy` below is this entity's own
+  // local state only (mirrors the other three person-list items' and
+  // FieldChip's own identical pattern exactly) -- `anyChildOrSelfBusy`
+  // keeps ORing in siblingActionBusy and still gates every local control
+  // below (the disabled props, the siblingActionBusy prop passed down to
+  // each FieldChip, and AddFieldForm's own disabled prop) exactly as
+  // before; only the value reported to App.tsx changes.
+  const ownBusy = busy || duplicateBusy || rename.busy || rename.editing || addFieldBusy || Object.keys(fieldBusyMap).length > 0;
+  const anyChildOrSelfBusy = ownBusy || siblingActionBusy;
 
-  // Round 1063: reports this entity's own anyChildOrSelfBusy state (which
-  // already includes every one of its own children -- fields and
-  // AddFieldForm -- via the aggregation above) up to App.tsx on every
-  // change, keyed by this entity's own stable `name` (never changed by a
-  // label-only rename, same guarantee FieldChip's own identical reporting
-  // below relies on). A second effect, mount/unmount-only, clears this
-  // entity's own entry when it unmounts (the entity was removed) so a
-  // stale "busy" entry doesn't linger in App.tsx's aggregate forever.
+  // Round 1063: reports this entity's own busy state (which already
+  // includes every one of its own children -- fields and AddFieldForm --
+  // via the aggregation above) up to App.tsx on every change, keyed by
+  // this entity's own stable `name` (never changed by a label-only
+  // rename, same guarantee FieldChip's own identical reporting below
+  // relies on). A second effect, mount/unmount-only, clears this entity's
+  // own entry when it unmounts (the entity was removed) so a stale "busy"
+  // entry doesn't linger in App.tsx's aggregate forever.
+  // Round 2154: reports `ownBusy`, not `anyChildOrSelfBusy` -- see that
+  // variable's own doc comment above for the feedback-loop bug this
+  // closes.
   useEffect(() => {
-    onBusyChange?.(entity.name, anyChildOrSelfBusy);
-  }, [entity.name, anyChildOrSelfBusy, onBusyChange]);
+    onBusyChange?.(entity.name, ownBusy);
+  }, [entity.name, ownBusy, onBusyChange]);
   useEffect(() => {
     return () => onBusyChange?.(entity.name, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps

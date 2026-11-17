@@ -3876,6 +3876,105 @@ test("EntitySummaryItem reports its own busy state up via onBusyChange the insta
   });
 });
 
+/**
+ * Round 2154: EntitySummaryItem folded siblingActionBusy into the SAME
+ * variable (anyChildOrSelfBusy) it reports upward via onBusyChange --
+ * unlike RoleChip/AssumptionItem/PersonaItem/FieldChip, each of which
+ * deliberately keeps its own "value reported upward" (`ownBusy`)
+ * separate from its "value used for local UI gating" (which ORs in
+ * siblingActionBusy). Feeding the RECEIVED siblingActionBusy prop back
+ * into the very report that becomes App.tsx's own aggregate (and so a
+ * future siblingActionBusy) created a one-way ratchet: once this entity's
+ * own busy state (e.g. opening its rename editor for one render) made
+ * App.tsx's entityBusyMap non-empty, siblingActionBusy became true for
+ * EVERY entity including this one, and this entity's own reported value
+ * could never return to false again while mounted -- permanently
+ * disabling every control in the whole Spec Review "Entities" section.
+ * This pins that `siblingActionBusy: true` (simulating App.tsx's
+ * aggregate already being non-empty, the exact state this entity's own
+ * earlier action put it in) must NOT prevent this entity's own reported
+ * busy state from going back to false once its own local flags clear.
+ */
+test("EntitySummaryItem's own reported busy state (onBusyChange) excludes siblingActionBusy, so it can't get permanently stuck true", async () => {
+  await withJsdom(async () => {
+    const busyCalls: Array<[string, boolean]> = [];
+    const makeElement = (siblingActionBusy: boolean) =>
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          LanguageProvider,
+          null,
+          React.createElement(EntitySummaryItem, {
+            entity: baseProject.spec.entities[0],
+            allEntities: baseProject.spec.entities,
+            fieldsSummary: "name *",
+            projectId: "proj1",
+            canRemove: true,
+            onRenamed: () => {},
+            onRemoved: () => {},
+            siblingActionBusy,
+            onBusyChange: (entityName: string, busy: boolean) => busyCalls.push([entityName, busy]),
+          }),
+        ),
+      );
+
+    const view = render(makeElement(false));
+
+    // This entity's OWN action starts (opening its rename editor), the
+    // instant-report round 1194 already fixed. This is what actually
+    // caused the real bug: this same `true` value is what App.tsx folds
+    // into entityBusyMap, which is what turns siblingActionBusy true for
+    // every entity (including this one) on the very next render below.
+    fireEvent.click(document.querySelector(".entity-summary-label") as HTMLElement);
+    assert.equal(document.querySelector(".entity-summary-rename-edit") !== null, true, "the rename editor must actually be open");
+    assert.equal(
+      busyCalls.some(([name, busy]) => name === "Customer" && busy === true),
+      true,
+      "opening the rename editor must report this entity as busy",
+    );
+
+    // Simulates App.tsx's own aggregate (entityBusyMap) becoming non-empty
+    // as a DIRECT RESULT of the report just above, fed back down as this
+    // same entity's own siblingActionBusy on the next render -- exactly
+    // what a real mount does one React commit later.
+    busyCalls.length = 0;
+    view.rerender(makeElement(true));
+    assert.equal(document.querySelector(".entity-summary-rename-edit") !== null, true, "the already-open rename editor must stay open across the rerender");
+
+    // Now cancel the still-unsaved rename -- this entity's own local busy
+    // flags (rename.editing) all clear, even though siblingActionBusy is
+    // still true (another entity could genuinely still be busy).
+    fireEvent.keyDown(document.querySelector(".entity-summary-rename-edit input") as HTMLInputElement, { key: "Escape" });
+    assert.equal(document.querySelector(".entity-summary-rename-edit") === null, true, "Escape must cancel the editor without saving");
+    assert.equal(
+      busyCalls.some(([name, busy]) => name === "Customer" && busy === false),
+      true,
+      "cancelling the still-unsaved edit must report this entity as no longer busy, even though siblingActionBusy is still true -- the reported value must never include siblingActionBusy, or it can never go back to false once ANY entity's own report ever made App.tsx's entityBusyMap non-empty",
+    );
+    // The settled (most recent) reported value is what matters -- it must
+    // be false once this entity's own local flags are clear, regardless
+    // of siblingActionBusy. (An intermediate true/false blip while the
+    // rename hook's own cancel settles, same as the plain round-1194 test
+    // above already tolerates, is not itself the bug this test guards
+    // against -- a value that never SETTLES back to false is.)
+    assert.equal(
+      busyCalls.at(-1)?.[1],
+      false,
+      "the final, settled reported value must be false once this entity's own local flags are clear, regardless of siblingActionBusy",
+    );
+
+    // Local UI gating must still correctly respect siblingActionBusy --
+    // this fix must not accidentally stop disabling this entity's own
+    // controls while a sibling's action is genuinely in flight.
+    assert.equal(
+      (document.querySelector(".entity-summary-remove") as HTMLButtonElement).disabled,
+      true,
+      "the remove button must still be disabled locally while siblingActionBusy is true -- only the REPORTED value changed, not the local gating",
+    );
+  });
+});
+
 test("AddEntityForm's own input and submit button are disabled while its disabled prop is true, regardless of its own local busy state", async () => {
   await withJsdom(async () => {
     render(

@@ -639,8 +639,10 @@ function AppContent() {
    * left this one level up: AddEntityForm vs. every EntitySummaryItem's
    * own remove/rename, since closing it meant lifting busy state up
    * through this very component. `entityBusyMap` collects every mounted
-   * EntitySummaryItem's own anyChildOrSelfBusy state (reported up via its
-   * new onBusyChange prop below) and `addEntityBusy` tracks
+   * EntitySummaryItem's own busy state (its `ownBusy`, not its
+   * siblingActionBusy-inclusive `anyChildOrSelfBusy` -- see round 2154's
+   * own fix for why those must stay separate; reported up via its new
+   * onBusyChange prop below) and `addEntityBusy` tracks
    * AddEntityForm's; folded together into one `anyEntityOrAddBusy` flag
    * fed back as `siblingActionBusy` into every EntitySummaryItem and as
    * `disabled` into AddEntityForm -- mirroring EntitySummaryItem's own
