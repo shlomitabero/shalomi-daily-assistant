@@ -6486,7 +6486,10 @@ export function createProjectsRouter(
           req.userId!,
           `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
           async () => {
-            await fireScheduledRule(db, whatsapp, emailSender, project, rule);
+            // Round 2114: callerUserId re-verifies write access after this
+            // genuine await -- see automations.ts's stillHasWriteAccess own
+            // doc comment.
+            await fireScheduledRule(db, whatsapp, emailSender, project, rule, new Date(), false, req.userId!);
             const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
             return { status: 200, body: { run: latestRun ?? null } };
           },
@@ -6541,6 +6544,9 @@ export function createProjectsRouter(
           // fresh recordSnapshot on the new run instead of silently losing
           // it (fireRule's own recordSnapshot capture now keys off this
           // event, not rule.trigger -- see its own doc comment).
+          // Round 2114: the trailing req.userId! re-verifies write access
+          // after this genuine await -- see automations.ts's
+          // stillHasWriteAccess own doc comment.
           await fireRule(
             db,
             whatsapp,
@@ -6553,6 +6559,7 @@ export function createProjectsRouter(
             `${req.protocol}://${req.get("host")}`,
             false,
             run.recordSnapshot ? "deleted" : "updated",
+            req.userId!,
           );
           const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
           return { status: 200, body: { run: latestRun ?? null } };
@@ -6616,7 +6623,10 @@ export function createProjectsRouter(
             // doc comment on that parameter for why this route specifically
             // must not let a successful test mark today's real scheduled
             // occurrence as already sent.
-            await fireScheduledRule(db, whatsapp, emailSender, project, rule, new Date(), true);
+            // Round 2114: the trailing req.userId! re-verifies write access
+            // after this genuine await -- see automations.ts's
+            // stillHasWriteAccess own doc comment.
+            await fireScheduledRule(db, whatsapp, emailSender, project, rule, new Date(), true, req.userId!);
             const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
             return { status: 200, body: { run: latestRun ?? null } };
           },
@@ -6673,7 +6683,10 @@ export function createProjectsRouter(
           // on that parameter. Mirrors the schedule branch's identical
           // isManualTest=true just above (round 1261), for the exact same
           // false-positive-notification reason.
-          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`, true);
+          // Round 2114: the trailing req.userId! re-verifies write access
+          // after this genuine await -- see automations.ts's
+          // stillHasWriteAccess own doc comment.
+          await fireRule(db, whatsapp, emailSender, project, entity, rule, record, uploadsDir, `${req.protocol}://${req.get("host")}`, true, "updated", req.userId!);
           const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
           return { status: 200, body: { run: latestRun ?? null } };
         },

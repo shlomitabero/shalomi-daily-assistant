@@ -7,6 +7,7 @@ import {
   AUTOMATION_RUNS_RETENTION_LIMIT,
   findUserById,
   getAutomationRule,
+  getCollaboratorRole,
   getProject,
   tryGetProject,
   getRecord,
@@ -1018,6 +1019,30 @@ function queuedWebhookFetch(url: string, init: RequestInit): Promise<Response> {
 }
 
 /**
+ * Round 2114: mirrors routes/projects.ts's own requireProjectWriteAccess
+ * (owner always passes; a collaborator passes unless their role is
+ * "viewer"; no access/no project at all fails) but as a plain boolean
+ * instead of a throw -- fireRule/fireScheduledRule/fireWebhookAction/
+ * fireEmailAction below aren't route handlers that can turn a throw into
+ * a clean HTTP error; they're fire-and-forget background work shared by
+ * the real automatic trigger path (no human caller to check at all) and
+ * the manual Test/Retry routes (routes/projects.ts), which DO have one.
+ * requireProjectWriteAccess itself lives in routes/projects.ts (not
+ * exported) -- this is a separate re-implementation against @forge/db's
+ * own primitives, the same choice pipeline.ts's own identically-named,
+ * identically-shaped helper (round 2090) already made for the same
+ * reason, in a different file.
+ */
+function stillHasWriteAccess(db: ForgeDatabase, projectId: string, userId: string): boolean {
+  const current = tryGetProject(db, projectId);
+  if (!current) return false; // project deleted since the route's own entry-point check
+  if (current.ownerId === userId) return true;
+  const role = getCollaboratorRole(db, projectId, userId);
+  if (role === null) return false; // removed as a collaborator entirely
+  return role !== "viewer"; // demoted to viewer
+}
+
+/**
  * The webhook counterpart to the WhatsApp send in fireRule/fireScheduledRule
  * below -- posts a small JSON payload describing the event instead of
  * sending a message. `entity`/`record` are null for a schedule rule (there's
@@ -1053,6 +1078,13 @@ async function fireWebhookAction(
   // Defaults to "updated" so every pre-existing caller (which never had an
   // event to pass) keeps recordSnapshot behaving exactly as before.
   event: "created" | "updated" | "deleted" = "updated",
+  // Round 2114: only ever set by the two manual Test/Retry routes
+  // (routes/projects.ts), via fireRule/fireScheduledRule's own identical
+  // parameter -- see stillHasWriteAccess's own doc comment just above for
+  // why this needs to be checked at all, and why it's a parameter here
+  // rather than always re-derived: the real automatic trigger path has no
+  // human caller to check, and must keep behaving exactly as before.
+  callerUserId?: string,
 ): Promise<void> {
   const recordSnapshot = event === "deleted" && record ? JSON.stringify(record) : null;
   if (!rule.webhookUrl || !isAllowedWebhookUrl(rule.webhookUrl)) {
@@ -1177,6 +1209,14 @@ async function fireWebhookAction(
     // row hazard this project-existence check already guards against,
     // just for rule deletion instead of project deletion.
     if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+    // Round 2114: the checks above only ever confirm the project/rule
+    // still exist, never that the CALLER (a human hitting the manual
+    // Test/Retry route, not the background scheduler) still has write
+    // access -- see routes/projects.ts's manual WhatsApp-send route
+    // (round 2089) for the sibling fix this ports. callerUserId is only
+    // ever set for those two routes, so the real automatic trigger path
+    // (which passes nothing) is unaffected.
+    if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
     // Round 2084: a non-2xx response's own BODY almost always names the
     // actionable reason (a JSON API's error field, an HTML error page's
     // title) -- discarding it and keeping only the bare status code left
@@ -1303,6 +1343,8 @@ async function fireEmailAction(
   skipRuleSummaryUpdate: boolean = false,
   // Round 1837: see fireWebhookAction's own identical parameter just above.
   event: "created" | "updated" | "deleted" = "updated",
+  // Round 2114: see fireWebhookAction's own identical parameter just above.
+  callerUserId?: string,
 ): Promise<void> {
   const recordSnapshot = event === "deleted" && record ? JSON.stringify(record) : null;
   // Round 1188: resolve against the entity's current field casing -- see
@@ -1447,6 +1489,8 @@ async function fireEmailAction(
     // Round 2087: same rule-deletion half of this hazard as
     // fireWebhookAction's own identical fix -- see its comment.
     if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+    // Round 2114: see fireWebhookAction's own identical check just above.
+    if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
     recordAutomationRun(
       db,
       project.id,
@@ -1461,6 +1505,9 @@ async function fireEmailAction(
     );
   } catch (err) {
     if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+    // Round 2114: see fireWebhookAction's own identical check -- applies
+    // the same way to a failed send as a successful one.
+    if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
     // Round 1459: mirrors fireWebhookAction's own identical normalization
     // just above -- email.ts's ResendEmailSender.performSend throws a
     // ResendTimeoutError on its own AbortController timeout (round 2030
@@ -1544,14 +1591,20 @@ export async function fireRule(
   // "updated" so the Test route's own call site (which only ever tests a
   // currently-live record) keeps behaving exactly as before.
   event: "created" | "updated" | "deleted" = "updated",
+  // Round 2114: see stillHasWriteAccess's own doc comment and
+  // fireWebhookAction's own identical parameter. Only the manual
+  // Test/Retry routes (routes/projects.ts) pass this; the real automatic
+  // trigger path (runAutomationsForRecordChange) leaves it undefined,
+  // unchanged.
+  callerUserId?: string,
 ): Promise<void> {
   const now = new Date();
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, entity, rule, record, baseUrl, now, isManualTest, event);
+    await fireWebhookAction(db, project, entity, rule, record, baseUrl, now, isManualTest, event, callerUserId);
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir, now, isManualTest, event);
+    await fireEmailAction(db, emailSender, project, entity, rule, record, uploadsDir, now, isManualTest, event, callerUserId);
     return;
   }
   const recordSnapshot = event === "deleted" ? JSON.stringify(record) : null;
@@ -1636,6 +1689,9 @@ export async function fireRule(
   // Round 2087: same rule-deletion half of this hazard as
   // fireWebhookAction's own identical fix -- see its comment.
   if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+  // Round 2114: see fireWebhookAction's own identical check -- only ever
+  // relevant for the manual Test/Retry routes' real human caller.
+  if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
   const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
   insertWhatsAppMessage(db, {
     projectId: project.id,
@@ -1689,6 +1745,9 @@ export async function fireRule(
     // Round 2087: same rule-deletion half of this hazard as
     // fireWebhookAction's own identical fix -- see its comment.
     if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+    // Round 2114: see this function's own identical check on the primary
+    // send above.
+    if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
     insertWhatsAppMessage(db, {
       projectId: project.id,
       direction: "out",
@@ -1830,13 +1889,18 @@ export async function fireScheduledRule(
   // below) and the existing manual Retry route both leave this at its
   // default false, unchanged.
   isManualTest: boolean = false,
+  // Round 2114: see stillHasWriteAccess's own doc comment and fireRule's
+  // own identical parameter. Only the manual Test/Retry routes
+  // (routes/projects.ts) pass this; the real scheduler
+  // (runScheduledAutomationsCheck) leaves it undefined, unchanged.
+  callerUserId?: string,
 ): Promise<void> {
   if (rule.actionType === "webhook") {
-    await fireWebhookAction(db, project, null, rule, null, null, now, isManualTest);
+    await fireWebhookAction(db, project, null, rule, null, null, now, isManualTest, "updated", callerUserId);
     return;
   }
   if (rule.actionType === "send_email") {
-    await fireEmailAction(db, emailSender, project, null, rule, null, null, now, isManualTest);
+    await fireEmailAction(db, emailSender, project, null, rule, null, null, now, isManualTest, "updated", callerUserId);
     return;
   }
   const to = rule.toNumber;
@@ -1880,6 +1944,9 @@ export async function fireScheduledRule(
   // own row can be deleted during this same awaited send just as easily
   // as a record-triggered rule's can.
   if (!getProject(db, project.id) || !getAutomationRule(db, project.id, rule.id)) return;
+  // Round 2114: see fireRule's own identical check -- only ever relevant
+  // for the manual Test/Retry routes' real human caller.
+  if (callerUserId && !stillHasWriteAccess(db, project.id, callerUserId)) return;
   const match = project.status === "built" ? findMatchingRecord(db, project, to) : null;
   insertWhatsAppMessage(db, {
     projectId: project.id,

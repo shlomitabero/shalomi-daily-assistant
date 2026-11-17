@@ -6,6 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { Entity, Project } from "@forge/shared";
 import {
+  addCollaborator,
   applyMigrations,
   createUser,
   deleteAutomationRule,
@@ -26,6 +27,7 @@ import {
   listWhatsAppMessages,
   markProjectBuilt,
   openDatabase,
+  updateCollaboratorRole,
   ensureRecordDeletionsTable,
   ensureCollaboratorAccessChangesTable,
   ensureSchemaLabelEditsTable,
@@ -3574,6 +3576,70 @@ test("runAutomationsForRecordChange's webhook action never resurrects an automat
 
   assert.equal(getAutomationRule(db, project.id, rule.id), undefined, "sanity check: the rule really is gone for this test to mean anything");
   assert.equal(listAutomationRuns(db, project.id, rule.id, 10).length, 0, "no run row must exist for a rule that was deleted while this exact request was still in flight");
+});
+
+/**
+ * Round 2114: the two tests just above guard against the PROJECT/RULE
+ * itself vanishing during this same genuine network await -- but neither
+ * ever re-checked the CALLER's own access, which matters for the manual
+ * Test/Retry routes (routes/projects.ts) specifically: they're the only
+ * callers that ever pass callerUserId at all (the real automatic trigger
+ * path, runAutomationsForRecordChange, has no human caller to check and
+ * always leaves it undefined, unaffected by this fix). Before this round,
+ * a collaborator demoted to viewer while their own manual Test/Retry send
+ * was still in flight still got the message delivered and permanently
+ * logged under their now-revoked access -- the exact gap round 2089
+ * already closed for the sibling manual WhatsApp-send route
+ * (routes/projects.ts's own requireProjectWriteAccess recheck), just never
+ * ported to fireRule/fireScheduledRule/fireWebhookAction/fireEmailAction,
+ * which that route's own Test/Retry siblings share. The demotion happens
+ * from inside the fake WhatsApp manager's own sendMessage call, the same
+ * "genuinely races the awaited call" technique the tests above already
+ * use for project/rule deletion.
+ */
+test("fireRule does not deliver or log a manual Test/Retry send for a collaborator demoted to viewer while the send was still in flight", async () => {
+  const { db, project } = setupProject();
+  ensureProjectCollaboratorsTable(db);
+  const rule = insertAutomationRule(db, {
+    projectId: project.id,
+    entityName: "Order",
+    trigger: "record_created",
+    actionType: "send_whatsapp",
+    toMode: "static",
+    toNumber: "972501234567",
+    messageTemplate: "New order from {{customerName}}!",
+  });
+  const record = { id: 1, customerName: "Dana Levi", customerPhone: "972501234567", status: "New" };
+  const collabUserId = "collab1";
+  addCollaborator(db, project.id, collabUserId, "editor");
+
+  const sendCalls: unknown[] = [];
+  const manager = {
+    getStatus(): WhatsAppConnectionState {
+      return { status: "connected", qrDataUrl: null, phoneNumber: "972500000000", error: null };
+    },
+    async sendMessage(projectId: string, to: string, body: string): Promise<WhatsAppSendResult> {
+      sendCalls.push({ projectId, to, body });
+      // The real race: the owner demotes this exact caller to viewer WHILE
+      // this send is still genuinely in flight.
+      updateCollaboratorRole(db, project.id, collabUserId, "viewer");
+      return { ok: true };
+    },
+  } as unknown as WhatsAppWebManager;
+
+  await fireRule(db, manager, UNUSED_EMAIL_SENDER, project, orderEntity, rule, record, UNUSED_UPLOADS_DIR, UNUSED_BASE_URL, true, "updated", collabUserId);
+
+  assert.equal(sendCalls.length, 1, "sanity check: the send really was attempted");
+  assert.equal(
+    listWhatsAppMessages(db, project.id, 10, null).messages.length,
+    0,
+    "no message must be permanently logged for a send whose caller had already lost write access by the time it resolved",
+  );
+  assert.equal(
+    listAutomationRuns(db, project.id, rule.id, 10).length,
+    0,
+    "no run row must exist for a manual send whose caller had already lost write access by the time it resolved",
+  );
 });
 
 /**
