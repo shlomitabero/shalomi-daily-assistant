@@ -2593,12 +2593,15 @@ test("buildImportRecords rejects an ambiguous enum label that matches more than 
 });
 
 /**
- * The raw-value match must still win unambiguously even when a label
- * collision exists elsewhere on the same field -- an exported CSV cell
- * could hold either the display label or the field's own raw value (e.g.
- * a user typing the stored value directly instead of its ambiguous label),
- * and the raw-value branch is checked first precisely because it can never
- * itself be ambiguous.
+ * A raw-value match must still resolve unambiguously when a label
+ * collision exists elsewhere on the same field but doesn't involve the raw
+ * value itself -- an exported CSV cell could hold either the display label
+ * or the field's own raw value (e.g. a user typing the stored value
+ * directly instead of its ambiguous label), and this case has only one
+ * possible match either way. (Round 2120 corrected an earlier, now-false
+ * version of this comment claiming a raw-value match "can never itself be
+ * ambiguous" -- it can, when it collides with a DIFFERENT option's own
+ * label; see the new test below and the enum branch's own doc comment.)
  */
 test("buildImportRecords still resolves an enum cell matched by its own raw value unambiguously, even when a DIFFERENT value's label collides with another", () => {
   const fields: Field[] = [
@@ -2612,6 +2615,31 @@ test("buildImportRecords still resolves an enum cell matched by its own raw valu
   const result = buildImportRecords(fields, rows);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [{ name: "Dana", status: "open" }]);
+});
+
+/**
+ * Regression test for a real bug found by round 2120's fuzz-testing survey:
+ * FieldSchema.enumLabels (packages/shared) has no cross-check against
+ * enumValues either, so one option's own display label can equal a
+ * DIFFERENT option's raw value (e.g. enumValues ["new","closed"] with
+ * enumLabels { new: "closed", closed: "new" }). recordsToCsv/
+ * fieldDisplayValue always export the LABEL, so exporting a record whose
+ * real status is "new" produces the CSV cell "closed" -- before this
+ * round, re-importing that cell matched the old byValue-first check
+ * unconditionally against the *other* option's own raw value, silently
+ * flipping the record to "closed" with zero error or warning: a
+ * zero-user-error corruption from exporting and re-importing the app's own,
+ * unedited file.
+ */
+test("buildImportRecords doesn't silently flip an enum value when one option's label collides with a DIFFERENT option's own raw value", () => {
+  const fields: Field[] = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "closed"], enumLabels: { new: "closed", closed: "new" } }];
+  const original = { status: "new" };
+  const csv = recordsToCsv(fields, [original], "en");
+  const rows = parseCsv(csv);
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0]!, /matches more than one option for field "Status"/);
 });
 
 /**
@@ -3776,6 +3804,25 @@ test("buildImportRecordsFromJson still resolves an enum cell matched by its own 
   const result = buildImportRecordsFromJson(fields, rows);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [{ status: "open" }]);
+});
+
+/**
+ * Regression test for a real bug found by round 2120's fuzz-testing survey:
+ * the identical cross-collision gap the sibling CSV test above this one
+ * closes (a different option's own raw value equaling THIS option's
+ * label) -- see that test's own doc comment for the full reasoning. A
+ * hand-edited JSON import file containing a label that happens to equal a
+ * different option's raw value used to silently resolve to the wrong
+ * value via the old byValue-first check, instead of being flagged as
+ * ambiguous.
+ */
+test("buildImportRecordsFromJson doesn't silently flip an enum value when one option's label collides with a DIFFERENT option's own raw value", () => {
+  const fields: Field[] = [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["new", "closed"], enumLabels: { new: "closed", closed: "new" } }];
+  const rows = [{ status: "closed" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /matches more than one option for field "Status"/);
 });
 
 /**
