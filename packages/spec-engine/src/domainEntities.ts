@@ -611,10 +611,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // single-exclusion guard meaningfully separates the CRM-noun reading
     // from the verb reading the way "deals with" vs "close deals with"
     // could be told apart by what came immediately before it.
+    // Round 2105: the bare "opportunity"/"opportunities" keyword just
+    // below had the identical "deals with" collision shape, just never
+    // given its own guard -- "equal opportunity employer" (an everyday
+    // phrase in an HR/hiring app description) and "an opportunity to
+    // learn/attend/..." (the ordinary English idiom "opportunity to
+    // VERB", common in education/nonprofit descriptions) both fabricated
+    // a spurious Deal entity with zero sales-CRM content. Confirmed live:
+    // an HR applicant-tracker description containing "equal opportunity
+    // employer" matched ['Deal', 'JobApplicant'] instead of just
+    // ['JobApplicant']. Two independent exclusions, the same shape as the
+    // "deals" guard above: excluded when preceded by "equal " (the
+    // hiring-policy idiom) or followed by " to" (the "opportunity to
+    // VERB" idiom) -- the round-1722 CRM example's own "opportunity
+    // tracking" phrasing is neither, so it still matches correctly.
     keywords: [
       /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+\S+){0,2}\s)\bdeals\b(?=\s+with\b)/,
       "negotiation",
-      /\bopportunit(?:y|ies)\b/,
+      /(?<!\bequal\s)\bopportunit(?:y|ies)\b(?!\s+to\b)/,
       "עסקה",
       "עסקאות",
       "משא ומתן",

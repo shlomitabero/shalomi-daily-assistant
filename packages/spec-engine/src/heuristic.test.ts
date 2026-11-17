@@ -385,6 +385,42 @@ test("recognizes 'opportunity'/'הזדמנויות' and 'לידים' as Deal-sha
   assert.ok(he.entities.some((e) => e.name === "Deal"), "the Hebrew Sales CRM example must match the Deal entity");
 });
 
+/**
+ * Round 2105: the bare "opportunity"/"opportunities" keyword round 1722
+ * just added above has the identical "deals with" collision shape its
+ * own neighboring "deals" keyword was already guarded against, just
+ * never given its own guard. "equal opportunity employer" is an everyday
+ * phrase in an HR/hiring app description, and "an opportunity to
+ * learn/attend/..." is the ordinary English idiom "opportunity to VERB",
+ * common in education/nonprofit descriptions -- both fabricated a
+ * spurious Deal entity with zero sales-CRM content. Confirmed live before
+ * this fix: an HR applicant-tracker description containing "equal
+ * opportunity employer" matched ['Deal', 'JobApplicant'] instead of just
+ * ['JobApplicant'].
+ */
+test("'equal opportunity employer' and 'opportunity to VERB' never match the Deal entity, even though the bare word 'opportunity' does for a real sales-CRM description", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const hrTool = await provider.generate(
+    "An internal HR tool to track job applicants and interview schedules. We are an equal opportunity employer committed to diversity and inclusion.",
+  );
+  assert.ok(!hrTool.entities.some((e) => e.name === "Deal"), "'equal opportunity employer' must never match Deal");
+  assert.ok(hrTool.entities.some((e) => e.name === "JobApplicant"), "sanity check: the real domain entity must still match");
+
+  const educationPlatform = await provider.generate(
+    "An educational platform giving students an opportunity to learn new skills through online courses.",
+  );
+  assert.ok(!educationPlatform.entities.some((e) => e.name === "Deal"), "'an opportunity to learn' must never match Deal");
+
+  // The round-1722 CRM example's own "opportunity tracking" phrasing is
+  // neither "equal opportunity" nor "opportunity to VERB" -- it must
+  // still match, confirming this isn't a blanket suppression of the word.
+  const crm = await provider.generate(
+    "A CRM for managing leads and customers, with sales stages, meetings, and opportunity tracking.",
+  );
+  assert.ok(crm.entities.some((e) => e.name === "Deal"), "the real sales-CRM 'opportunity tracking' phrasing must still match Deal");
+});
+
 test("asks about payments (recommending Stripe) for a rental-business description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "tool rental"/"rental business" match the Rental entity but share no
   // substring with "payment"/"billing"/"invoice"/"checkout"/"stripe"/
