@@ -120,14 +120,76 @@ test("generateBackupZipEntries produces one CSV entry per entity, named after it
   const entries = generateBackupZipEntries(db, project);
   assert.deepEqual(
     entries.map((e) => e.path),
-    ["Customer.csv", "Order.csv"],
+    ["לקוחות.csv", "הזמנות.csv"],
   );
+});
+
+/**
+ * Round 2100: the per-entity CSV filename (and, with a file field and a
+ * real upload, its own file-attachments directory) used to be built from
+ * entity.name -- the fixed, internal, physical identifier that never
+ * changes once a project is built -- instead of entity.label, the
+ * user-facing text a click-to-rename can freely change afterward. The
+ * exact same bug class round 2081 already fixed for the single-entity
+ * "Export CSV/JSON/ICS" buttons (EntityPanel.tsx), just never ported to
+ * this sibling whole-project "Backup all data" export. A real Hebrew-
+ * speaking business owner (this app's primary audience) whose entity's
+ * internal name is plain ASCII while its label is the real word they
+ * renamed it to would have every file in their full data backup silently
+ * named in stale, internal-only text.
+ */
+test("generateBackupZipEntries names each entity's CSV (and file-attachments directory) after its current display label, not its fixed internal name", () => {
+  const renamedProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { ...project.spec.entities[0], label: "Customers (renamed)" },
+        { ...project.spec.entities[1], label: "Orders (renamed)" },
+      ],
+    },
+  };
+  const db = createTestDb(renamedProject);
+  const entries = generateBackupZipEntries(db, renamedProject);
+  assert.deepEqual(
+    entries.map((e) => e.path),
+    ["Customers (renamed).csv", "Orders (renamed).csv"],
+    "each entity's CSV must be named after its CURRENT display label, not its fixed internal name",
+  );
+});
+
+/**
+ * Round 2100: a label is never run through findSanitizedIdentifierCollisions
+ * (that refine only ever constrains entity.name), and is freely user-
+ * editable after build, so two entities relabeled to text that only
+ * collides once sanitizeZipEntryName strips path separators (e.g. "A/B"
+ * and "A:B", both -> "A_B") are a real possibility the per-entity CSV
+ * loop's own switch to entityDisplayLabel introduces -- confirming the
+ * same case-insensitive numeric-suffix dedup uniqueWhatsAppLogPath
+ * already uses elsewhere in this file now also covers this loop.
+ */
+test("two entities relabeled to text that only collides once sanitized still produce two distinct CSV entries, not a silent overwrite", () => {
+  const collidingLabelsProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { ...project.spec.entities[0], label: "A/B" },
+        { ...project.spec.entities[1], label: "A:B" },
+      ],
+    },
+  };
+  const db = createTestDb(collidingLabelsProject);
+  const entries = generateBackupZipEntries(db, collidingLabelsProject);
+  const paths = entries.map((e) => e.path);
+  assert.equal(new Set(paths).size, paths.length, "no two ZIP entries may share the same path");
+  assert.deepEqual(paths, ["A_B.csv", "A_B (2).csv"]);
 });
 
 test("each CSV has a real header row from field labels, even with zero records", () => {
   const db = createTestDb(project);
   const entries = generateBackupZipEntries(db, project);
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content;
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content;
   // A UTF-8 BOM prefix (Excel-friendly, matches the client's own CSV export) precedes the header.
   assert.ok(customerCsv.startsWith("﻿"));
   assert.equal(customerCsv.replace(/^﻿/, ""), "שם,סטטוס");
@@ -139,7 +201,7 @@ test("real inserted records appear in the CSV with translated enum labels, not r
   insertRecord(db, project.id, customer, { name: "Dana Levi", status: "Won" });
 
   const entries = generateBackupZipEntries(db, project);
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   const lines = customerCsv.split("\r\n");
   assert.equal(lines[0], "שם,סטטוס");
   assert.equal(lines[1], "Dana Levi,הצליח");
@@ -191,7 +253,7 @@ test("generateBackupZipEntries honors a per-entity column order passed in, inste
   const customer = project.spec.entities[0];
   insertRecord(db, project.id, customer, { name: "Dana", status: "New" });
   const entries = generateBackupZipEntries(db, project, { Customer: ["status", "name"] });
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   const [header, ...rows] = customerCsv.split("\r\n");
   assert.equal(header, "סטטוס,שם", "the header must follow the persisted order, not the entity's declared field order");
   assert.equal(rows[0], "חדש,Dana", "each row's own values must follow the exact same reordering as the header");
@@ -200,14 +262,14 @@ test("generateBackupZipEntries honors a per-entity column order passed in, inste
 test("generateBackupZipEntries falls back to an entity's declared field order when no column order was ever persisted for it", () => {
   const db = createTestDb(project);
   const entries = generateBackupZipEntries(db, project, {});
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   assert.equal(customerCsv.split("\r\n")[0], "שם,סטטוס");
 });
 
 test("generateBackupZipEntries's column order falls back to an entity's declared order when the persisted order only names a field it doesn't have, without dropping any real field", () => {
   const db = createTestDb(project);
   const entries = generateBackupZipEntries(db, project, { Customer: ["nonexistent"] });
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   assert.equal(customerCsv.split("\r\n")[0], "שם,סטטוס");
 });
 
@@ -226,7 +288,7 @@ test("generateBackupZipEntries's column order matches a persisted field name cas
   // above); the persisted order below deliberately names it "Status" to
   // simulate a case-only rename that happened after the order was saved.
   const entries = generateBackupZipEntries(db, project, { Customer: ["Status", "name"] });
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   assert.equal(
     customerCsv.split("\r\n")[0],
     "סטטוס,שם",
@@ -258,7 +320,7 @@ test("a relation field resolves to the related record's display label, not the r
   insertRecord(db, project.id, order, { amount: 150, customerId: dana.id });
 
   const entries = generateBackupZipEntries(db, project);
-  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const orderCsv = entries.find((e) => e.path === "הזמנות.csv")!.content.replace(/^﻿/, "");
   const lines = orderCsv.split("\r\n");
   assert.equal(lines[0], "סכום,לקוח");
   assert.equal(lines[1], "150,Dana Levi");
@@ -288,7 +350,7 @@ test("a relation field still resolves to the related record's display label when
   insertRecord(db, caseMismatchedProject.id, order, { amount: 150, customerId: dana.id });
 
   const entries = generateBackupZipEntries(db, caseMismatchedProject);
-  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const orderCsv = entries.find((e) => e.path === "הזמנות.csv")!.content.replace(/^﻿/, "");
   const lines = orderCsv.split("\r\n");
   assert.equal(lines[1], "150,Dana Levi", "the related customer's name must resolve even though relationTo is lowercase customer, not Customer");
 });
@@ -328,7 +390,7 @@ test("a relation field resolves correctly across a large dataset (thousands of r
   insertRecord(db, project.id, order, { amount: 999999, customerId: lastCustomer.id });
 
   const entries = generateBackupZipEntries(db, project);
-  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const orderCsv = entries.find((e) => e.path === "הזמנות.csv")!.content.replace(/^﻿/, "");
   const lines = orderCsv.split("\r\n");
   assert.equal(lines.length, customerCount + 2, "header + every order row");
   // listRecords orders by id DESC (newest first), so the most recently
@@ -345,7 +407,7 @@ test("a number >= 1000 is written unformatted, without a thousands separator (th
   insertRecord(db, project.id, order, { amount: 12345 });
 
   const entries = generateBackupZipEntries(db, project);
-  const orderCsv = entries.find((e) => e.path === "Order.csv")!.content.replace(/^﻿/, "");
+  const orderCsv = entries.find((e) => e.path === "הזמנות.csv")!.content.replace(/^﻿/, "");
   const lines = orderCsv.split("\r\n");
   assert.equal(lines[1], "12345,");
 });
@@ -356,7 +418,7 @@ test("a value containing a comma or quote is correctly CSV-escaped", () => {
   insertRecord(db, project.id, customer, { name: 'Says "hi", bye', status: "New" });
 
   const entries = generateBackupZipEntries(db, project);
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   const lines = customerCsv.split("\r\n");
   assert.equal(lines[1], '"Says ""hi"", bye",חדש');
 });
@@ -401,7 +463,7 @@ test("a boolean field renders as Excel's own TRUE/FALSE convention -- and, since
   insertRecord(db, boolProject.id, task, { title: "Never set" });
 
   const entries = generateBackupZipEntries(db, boolProject);
-  const taskCsv = entries.find((e) => e.path === "Task.csv")!.content.replace(/^﻿/, "");
+  const taskCsv = entries.find((e) => e.path === "משימות.csv")!.content.replace(/^﻿/, "");
   // listRecords returns newest-first (ORDER BY id DESC), so the rows are
   // in reverse insertion order.
   const lines = taskCsv.split("\r\n");
@@ -445,7 +507,7 @@ test("a file field renders as just the uploaded filename, not the raw JSON descr
   insertRecord(db, fileProject.id, applicant, { name: "No resume yet" });
 
   const entries = generateBackupZipEntries(db, fileProject);
-  const applicantCsv = entries.find((e) => e.path === "Applicant.csv")!.content.replace(/^﻿/, "");
+  const applicantCsv = entries.find((e) => e.path === "מועמדים.csv")!.content.replace(/^﻿/, "");
   const lines = applicantCsv.split("\r\n");
   assert.equal(lines[0], "שם,קורות חיים");
   assert.equal(lines[1], "No resume yet,", "an unset file field must render blank, not 'null' or an empty JSON shape");
@@ -491,13 +553,17 @@ test("generateBackupZipEntries includes a file field's real uploaded bytes as it
     });
 
     const entries = generateBackupZipEntries(db, fileProject, {}, uploadsDir);
-    const fileEntry = entries.find((e) => e.path === `Applicant/files/${id}-resume-dana-resume.pdf`);
+    // Round 2100: the directory is named after the entity's current
+    // display label ("מועמדים"), not its fixed internal name
+    // ("Applicant") -- resolveUploadedFilePath still resolves the real
+    // on-disk upload via the internal name underneath, unaffected.
+    const fileEntry = entries.find((e) => e.path === `מועמדים/files/${id}-resume-dana-resume.pdf`);
     assert.ok(fileEntry, "expected a real file entry alongside the CSV, named after the record id, field, and original filename");
     assert.ok(Buffer.isBuffer(fileEntry!.content), "the file entry's content must be the real binary bytes, not a string");
     assert.deepEqual(fileEntry!.content, realBytes, "the ZIP entry's bytes must exactly match what was actually uploaded");
 
     // The CSV itself is untouched -- still just the filename, exactly as before.
-    const applicantCsv = entries.find((e) => e.path === "Applicant.csv")!.content as string;
+    const applicantCsv = entries.find((e) => e.path === "מועמדים.csv")!.content as string;
     assert.match(applicantCsv, /Dana Levi,dana-resume\.pdf/);
   } finally {
     rmSync(uploadsDir, { recursive: true, force: true });
@@ -783,7 +849,7 @@ test("generateBackupZipEntries still finds a file field's real uploaded bytes af
     // entity is named "Applicant" (the CURRENT, post-rename canonical
     // name) -- the actual scenario this test exercises.
     const entries = generateBackupZipEntries(db, fileProject, {}, uploadsDir);
-    const fileEntry = entries.find((e) => e.path === `Applicant/files/${id}-resume-dana-resume.pdf`);
+    const fileEntry = entries.find((e) => e.path === `מועמדים/files/${id}-resume-dana-resume.pdf`);
     assert.ok(fileEntry, "expected the real file entry despite the entity's CURRENT canonical casing not matching the upload directory's own casing on disk");
     assert.deepEqual(fileEntry!.content, realBytes, "the ZIP entry's bytes must exactly match what was actually uploaded");
   } finally {
@@ -828,7 +894,7 @@ test("generateBackupZipEntries silently skips a file field whose upload no longe
 
     const entries = generateBackupZipEntries(db, fileProject, {}, uploadsDir);
     assert.equal(entries.filter((e) => e.path.includes("/files/")).length, 0, "no file entry should exist for an upload that was never actually on disk");
-    assert.ok(entries.find((e) => e.path === "Applicant.csv"), "the CSV itself must still be produced normally");
+    assert.ok(entries.find((e) => e.path === "מועמדים.csv"), "the CSV itself must still be produced normally");
   } finally {
     rmSync(uploadsDir, { recursive: true, force: true });
   }
@@ -859,7 +925,7 @@ test("real WhatsApp messages produce a 'WhatsApp Messages.csv' entry, correctly 
   const entries = generateBackupZipEntries(db, project);
   assert.deepEqual(
     entries.map((e) => e.path),
-    ["Customer.csv", "Order.csv", "WhatsApp Messages.csv"],
+    ["לקוחות.csv", "הזמנות.csv", "WhatsApp Messages.csv"],
   );
   const csv = entries.find((e) => e.path === "WhatsApp Messages.csv")!.content.replace(/^﻿/, "");
   const lines = csv.split("\r\n");
@@ -1113,7 +1179,7 @@ test("a value that would be interpreted as a spreadsheet formula is guarded with
   insertRecord(db, project.id, customer, { name: "=cmd|' /C calc'!A1", status: "New" });
 
   const entries = generateBackupZipEntries(db, project);
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   const lines = customerCsv.split("\r\n");
   assert.equal(lines[1], "'=cmd|' /C calc'!A1,חדש");
 });
@@ -1137,7 +1203,7 @@ test("a value starting with a literal apostrophe followed by a guarded character
   insertRecord(db, project.id, customer, { name: "'-interesting", status: "New" });
 
   const entries = generateBackupZipEntries(db, project);
-  const customerCsv = entries.find((e) => e.path === "Customer.csv")!.content.replace(/^﻿/, "");
+  const customerCsv = entries.find((e) => e.path === "לקוחות.csv")!.content.replace(/^﻿/, "");
   const lines = customerCsv.split("\r\n");
   assert.equal(lines[1], "''-interesting,חדש");
 });

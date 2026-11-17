@@ -433,7 +433,7 @@ function uniqueWhatsAppLogPath(existingPaths: string[]): string {
  * Round 964 investigated, and rejected, giving the entity-CSV entries
  * below the same existingPaths-based numeric-suffix dedup
  * uniqueWhatsAppLogPath already applies for the one hardcoded WhatsApp
- * entry -- reasoning that two entity names differing only by characters
+ * entry -- reasoning that two entity NAMES differing only by characters
  * sanitizeZipEntryName treats as equivalent (e.g. "A/B" and "A:B", both
  * -> "A_B.csv") could reach this function and silently collide. They
  * cannot: ProductSpecSchema's own findSanitizedIdentifierCollisions
@@ -449,7 +449,18 @@ function uniqueWhatsAppLogPath(existingPaths: string[]): string {
  * (packages/db/src/projects.ts) re-validates every project's spec
  * through this same ProductSpecSchema.parse on every single read, with
  * no path that hands this function a project whose spec skipped it --
- * so entity.name here can never actually produce two colliding paths.
+ * so entity.NAME alone can never actually produce two colliding paths.
+ *
+ * Round 2100: that guarantee is specific to entity.name -- it says
+ * nothing about entity.label, which ProductSpecSchema never runs through
+ * findSanitizedIdentifierCollisions at all and which is freely user-
+ * editable after build (click-to-rename). Now that the loop below builds
+ * each path from entityDisplayLabel (entity.label, not entity.name --
+ * see that fix's own comment there), two DIFFERENT labels that only
+ * collide once sanitized (e.g. one entity relabeled to "A/B", another to
+ * "A:B") are a real possibility this round 964 argument no longer rules
+ * out, so the loop below now carries its own case-insensitive numeric-
+ * suffix dedup, the same convention uniqueWhatsAppLogPath already uses.
  */
 /**
  * Round 1203: the CSV cell for a `file` field only ever carried the
@@ -476,6 +487,7 @@ function addUploadedFileEntries(
   projectId: string,
   entity: Entity,
   records: EntityRecord[],
+  labelOccurrences: Map<string, number>,
 ): void {
   const fileFields = entity.fields.filter((f) => f.type === "file");
   if (fileFields.length === 0) return;
@@ -507,7 +519,18 @@ function addUploadedFileEntries(
   // `collides` now checks both shapes with the same `entries.some` dedup
   // pattern already used throughout this function.
   const collides = (dir: string) => entries.some((e) => e.path === dir || e.path.startsWith(`${dir}/`));
-  let entityDir = sanitizeZipEntryName(entity.name);
+  // Round 2100: entity.name -> entityDisplayLabel, the exact same bug
+  // class round 2081 already fixed for the single-entity CSV/JSON/ICS
+  // export buttons (EntityPanel.tsx) -- this whole-project backup's own
+  // per-entity file-attachments directory still named itself after the
+  // entity's raw internal name, not its current user-facing label, even
+  // though this very file already defines entityDisplayLabel/
+  // entityLabelOccurrences (used only for the WhatsApp-messages CSV's row
+  // content, never wired into a path here). The `collides`-based numeric-
+  // suffix dedup just below already handles any resulting collision
+  // generically (unlike entity.name, a label has no uniqueness guarantee
+  // from ProductSpecSchema), so no further change is needed for safety.
+  let entityDir = sanitizeZipEntryName(entityDisplayLabel(entity, labelOccurrences));
   if (collides(entityDir)) {
     let suffix = 2;
     while (collides(`${entityDir} (${suffix})`)) suffix += 1;
@@ -544,19 +567,46 @@ export function generateBackupZipEntries(
     recordIndexByEntity[entity.name] = new Map(records.map((r) => [Number(r.id), r]));
   }
 
-  const entries: { path: string; content: string | Buffer }[] = allEntities.map((entity) => ({
-    path: `${sanitizeZipEntryName(entity.name)}.csv`,
-    content:
-      "﻿" +
-      entityToCsv(
-        entity,
-        recordsByEntity[entity.name],
-        allEntities,
-        recordIndexByEntity,
-        orderedFieldsFor(entity, columnOrders),
-        isHebrewText(project.description) ? "he" : "en",
-      ),
-  }));
+  // Round 2100: the per-entity CSV filename below used to be built from
+  // entity.name (the fixed internal identifier), not entity.label -- the
+  // exact same bug class round 2081 already fixed for the single-entity
+  // CSV/JSON/ICS export buttons (EntityPanel.tsx's entityDisplayLabel
+  // call), just never ported to this sibling whole-project export, even
+  // though entityDisplayLabel/entityLabelOccurrences are already defined
+  // in this very file (previously wired only into the WhatsApp-messages
+  // CSV's row content, never into a path). Unlike entity.name,
+  // ProductSpecSchema gives a label no collision-freedom guarantee under
+  // sanitizeZipEntryName (round 964's own rejected-dedup reasoning relied
+  // specifically on that name-only guarantee) -- entityDisplayLabel's own
+  // "(entity.name)" disambiguation covers two entities sharing one exact
+  // label, but two DIFFERENT labels that only collide once sanitized
+  // (e.g. "A/B" and "A:B", both -> "A_B.csv") are a new possibility this
+  // switch introduces, so this loop now needs the same case-insensitive
+  // numeric-suffix dedup uniqueWhatsAppLogPath already applies below.
+  const entityLabelOccurrences_ = entityLabelOccurrences(allEntities);
+  const entries: { path: string; content: string | Buffer }[] = [];
+  for (const entity of allEntities) {
+    const baseName = sanitizeZipEntryName(entityDisplayLabel(entity, entityLabelOccurrences_));
+    let path = `${baseName}.csv`;
+    if (entries.some((e) => e.path.toLowerCase() === path.toLowerCase())) {
+      let suffix = 2;
+      while (entries.some((e) => e.path.toLowerCase() === `${baseName} (${suffix}).csv`.toLowerCase())) suffix += 1;
+      path = `${baseName} (${suffix}).csv`;
+    }
+    entries.push({
+      path,
+      content:
+        "﻿" +
+        entityToCsv(
+          entity,
+          recordsByEntity[entity.name],
+          allEntities,
+          recordIndexByEntity,
+          orderedFieldsFor(entity, columnOrders),
+          isHebrewText(project.description) ? "he" : "en",
+        ),
+    });
+  }
 
   const whatsappMessages = collectAllWhatsAppMessages(db, project.id);
   if (whatsappMessages.length > 0) {
@@ -568,7 +618,7 @@ export function generateBackupZipEntries(
 
   if (uploadsDir) {
     for (const entity of allEntities) {
-      addUploadedFileEntries(entries, uploadsDir, project.id, entity, recordsByEntity[entity.name]);
+      addUploadedFileEntries(entries, uploadsDir, project.id, entity, recordsByEntity[entity.name], entityLabelOccurrences_);
     }
   }
 
