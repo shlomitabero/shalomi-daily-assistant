@@ -51325,3 +51325,19 @@ After several rounds (2217-2224) of increasingly narrow codegen.ts-vs-live-app p
 Also checked this round and found nothing further: a deep read of `pipeline.ts` and `migrate.ts` (both already extremely heavily iterated), `displayField.ts` and the calendar-feed router, the collaborator-invite-acceptance flow from the invited user's side (no token-based accept step exists at all -- access grants immediately via email lookup, already covered by ~10 prior rounds), email case-sensitivity across every relevant auth/invite schema (all already lowercase-transformed), the `/projects/:id/clone` route's viewer-accessible duplicate (confirmed intentional, spec-only, no record data), and several adversarial free-text business-description inputs against the live heuristic spec engine (long/short/emoji/HTML-like/RTL-override text, all handled safely with no crash or injection).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2226: Templates Gallery, Change Email/Password flows, project-editor race, and Time Machine's confirm dialog -- all live-tested end to end, nothing found
+
+Live-drove four fresh surfaces against a locally-started dev server:
+
+**Templates Gallery full build flow:** clicked a template through to a fully built app with correct seed data and a clean network log. Chased a seemingly-real double-submission race (a scripted same-tick double `dispatchEvent` produced two real project-creation requests) but caught it as a methodology artifact by running the identical technique against `handleDescribe` -- code already fixed for exactly this reentrancy class in round 1369 -- which *also* produced two requests under the same artificial technique. Confirmed with Playwright's genuine `dblclick()` (real OS-level double-click through the actual input pipeline) that both the template button and the describe-form submit button correctly fire exactly one request each. A good example of catching a false positive with a control test before reporting it.
+
+**Change Email / Change Password, end to end including re-login:** both flows worked correctly live -- changed password, logged out, old password correctly rejected, new password correctly accepted; same for email. The underlying route handlers are already extremely heavily audited (10+ prior rounds).
+
+**Cross-field project-editor race:** started editing the project name, then immediately (without blurring) clicked into the description field -- both PATCH requests fired exactly once each, no lost edits.
+
+**Time Machine's restore confirmation:** turned out to be a native, synchronous `window.confirm()`, not a custom React dialog -- the browser's own main-thread blocking already rules out the double-click/dismiss-mid-restore concern this lead was framed around, so there was nothing further to test there.
+
+A fallback round-comment-density audit read ~10 additional low-density files (packages/db's index.ts/users.ts/loginCodes.ts/emailVerificationTokens.ts/collaborators.ts, apps/api's store.ts, apps/web's documentTitle.ts/LanguageSwitcher.tsx) -- all sound. A pattern-sweep for the exact round-2225 bug class (a sibling button missing a `disabled` guard) found one minor asymmetry in the home screen's "idea example" cards, but confirmed it's harmless -- those cards only fill the textarea client-side with no network effect, so the missing guard has no functional consequence.
+
+Live: https://forge-ai-m7p7.onrender.com
