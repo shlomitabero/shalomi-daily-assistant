@@ -51637,3 +51637,17 @@ Round 888 already recognized that bare "patient" is both the medical noun this e
 **Tests:** added a new test alongside round 888's own test, covering all 4 attributive-role-noun reproductions plus a regression check that real "patient visit"/"patient records"/"patient encounters" phrasings still match. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 380/380 (was 379), no build script for this package (tests only).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2248: closing the exact gap round 2247 itself flagged as open -- Patient's "patient" stacked via a comma before an abstract noun ("a patient, methodical approach")
+
+Round 2247 fixed Patient's "patient" adjective matching attributively before a person/role noun, but its own writeup explicitly flagged a narrower, structurally different sub-case as a known, deliberately-unfixed gap: both of round 2247's lookaheads require whitespace (`\s+`) immediately after "patient" before they can even attempt their exclusion match. When "patient" is instead followed directly by a comma -- stacked with a second adjective, describing an ABSTRACT noun rather than a person ("a patient, methodical approach to software consulting", "a patient, step-by-step process") -- there's no whitespace right after the word at all, so both lookaheads vacuously pass and the keyword matches anyway.
+
+**Confirmed via direct `HeuristicSpecProvider.generate()`/`matchEntities()` calls:** "Our business has a patient, methodical approach to software consulting projects for small businesses." matched `['Patient', 'Project']`, fabricating a medical-care entity (dateOfBirth/medical-notes fields) for a plain software-consulting-firm description with zero connection to healthcare.
+
+**The fix:** added a third lookahead for this specific comma-adjective-abstract-noun shape (`approach`/`process`/`method`/`strategy`/`way`), deliberately scoped to AT MOST one intervening word between the comma and the noun -- matching only the confirmed repro's own shape -- rather than an unbounded chain of stacked adjectives. A wider, unbounded bound (first tried and rejected during development) introduces a real false-negative risk: a genuine medical sentence that happens to mention one of these nouns several words after an unrelated comma, such as "A patient, admitted via the triage process, was transferred to the ward for observation.", got wrongly excluded under the wider bound. The tighter, one-word bound both reproduces the confirmed bug exactly and leaves that contrived-but-plausible medical sentence correctly matching, validated directly in Node before landing.
+
+**Not applicable:** no `codegen.ts`/`twin.ts` duplicate -- confined entirely to `packages/spec-engine`'s spec-generation-time heuristic provider.
+
+**Tests:** added a new test alongside round 888/2247's own tests, covering both comma-adjective reproductions plus a regression check that a genuine medical sentence with an unrelated comma near "patient" still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 381/381 (was 380), no build script for this package (tests only).
+
+Live: https://forge-ai-m7p7.onrender.com
