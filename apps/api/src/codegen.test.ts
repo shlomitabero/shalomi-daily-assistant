@@ -35726,6 +35726,35 @@ test("the exported app's @media print collapses html/body's own box so the rest 
 });
 
 /**
+ * Round 2233: ports the live preview's own round-2233 fix (styles.css) --
+ * the exported app's `.print-list-sheet th, .print-list-sheet td` rule
+ * sets `overflow-wrap: anywhere` but never sets `white-space`, so the
+ * generic `th, td { white-space: nowrap; }` rule earlier in this same
+ * generated stylesheet kept cascading through unopposed -- and
+ * `overflow-wrap` has no effect once line-wrapping is disabled by
+ * `white-space: nowrap`. The table's auto layout then sized a
+ * long-content column to its full unwrapped width, pushing the table
+ * past the printed page's edge -- confirmed live (real PDF render +
+ * pdftotext) that the excess text was genuinely absent from the printed
+ * PDF's content stream, not merely clipped off-screen. jsdom has no
+ * paint engine and can't detect this, so this reads the generated CSS's
+ * own source text, the same discipline the test just above uses.
+ */
+test("the exported app's print-list cells reset white-space to normal, so overflow-wrap actually has an effect instead of a long cell's text being cropped out of the printed PDF entirely", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const printListCell = stylesCss.match(/\.print-list-sheet th, \.print-list-sheet td \{[^}]*\}/)?.[0];
+  assert.ok(printListCell, "expected a .print-list-sheet th, .print-list-sheet td rule in the generated styles.css");
+  assert.match(printListCell!, /overflow-wrap:\s*anywhere/, "the exported app's .print-list-sheet td must allow a long unbreakable cell value to wrap");
+  assert.match(
+    printListCell!,
+    /white-space:\s*normal/,
+    "the exported app's .print-list-sheet td must reset white-space to normal (the generic th, td rule earlier in the generated stylesheet sets white-space: nowrap, which silently disables overflow-wrap and causes a long cell's text to be cropped out of the printed PDF entirely, not just visually clipped)",
+  );
+});
+
+/**
  * New in this round (1376): the exported app's `.entity-undo-toast` is
  * `display: flex` with the delete-undo message text and the "Undo" button
  * as direct flex children, and had no `flex-wrap`/`overflow-wrap` of its

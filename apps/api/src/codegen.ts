@@ -12294,7 +12294,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 .print-field dd { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .print-record-footer { margin-top: 24px; font-size: 12px; color: #666; }
 .print-list-sheet table { width: 100%; border-collapse: collapse; }
-.print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid #ccc; font-size: 13px; overflow-wrap: anywhere; }
+.print-list-sheet th, .print-list-sheet td { text-align: start; padding: 6px 10px; border-bottom: 1px solid #ccc; font-size: 13px; white-space: normal; overflow-wrap: anywhere; }
 .print-list-sheet th { font-weight: 600; color: #444; }
 .print-list-totals-row td { font-weight: 700; border-top: 2px solid #999; }
 .print-list-group-header-row td { background: #f1f1f1; font-weight: 600; }

@@ -4045,6 +4045,21 @@ button.sort-header:hover:not(:disabled) {
   padding: 6px 10px;
   border-bottom: 1px solid #ccc;
   font-size: 13px;
+  /* Round 2233: this rule's own `overflow-wrap: anywhere` never actually
+     did anything -- it never set `white-space`, so the generic `th, td`
+     rule earlier in this file (its own `white-space: nowrap`) kept
+     cascading through unopposed, and `overflow-wrap` has no effect once
+     line-wrapping is disabled by `white-space: nowrap`. The table's auto
+     layout then sized a long-content column to its full unwrapped
+     width, pushing the whole table past the printed page's edge -- and
+     unlike a plain visual clip, the excess text is genuinely absent from
+     the rendered PDF's content stream, not just off-screen. Confirmed
+     live: a Notes cell with a long Hebrew/English note (plus a URL and
+     an order number) printed truncated mid-word, with the rest of the
+     text missing entirely from the PDF (pdftotext), while the identical
+     content printed via "Print" (RecordPrintSheet, a flex layout with no
+     competing white-space rule) wrapped correctly. */
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 

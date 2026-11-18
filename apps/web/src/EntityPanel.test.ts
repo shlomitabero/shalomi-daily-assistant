@@ -10549,6 +10549,17 @@ test("the print sheet's CSS lets a long, unbreakable field value wrap instead of
   const printListCell = stylesCss.match(/\.print-list-sheet th,\s*\n\.print-list-sheet td \{[\s\S]*?\}/)?.[0];
   assert.ok(printListCell, "expected a .print-list-sheet th/td rule in styles.css");
   assert.match(printListCell!, /overflow-wrap:\s*anywhere/, ".print-list-sheet td must allow a long unbreakable cell value to wrap instead of forcing the table wider than the printed page");
+  // Round 2233: `overflow-wrap: anywhere` here never actually did anything
+  // on its own -- it has no effect once line-wrapping is disabled by
+  // `white-space: nowrap`, and this rule never set `white-space` at all,
+  // so the generic `th, td { white-space: nowrap; }` rule earlier in this
+  // file kept cascading through unopposed. Unlike .print-field dd just
+  // above (a flex layout with no competing white-space rule, so its own
+  // overflow-wrap already worked), a long Notes/description cell in
+  // "Print list" didn't just overflow visually -- confirmed live (real
+  // PDF render + pdftotext) that the excess text was genuinely absent
+  // from the printed PDF's content stream, not merely off-screen.
+  assert.match(printListCell!, /white-space:\s*normal/, ".print-list-sheet td must reset white-space to normal (the generic th, td rule earlier in this file sets white-space: nowrap, which silently disables overflow-wrap and causes a long cell's text to be cropped out of the printed PDF entirely, not just visually clipped)");
 });
 
 /**
