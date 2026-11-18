@@ -3333,34 +3333,56 @@ export function createProjectsRouter(
         res.json({ project });
         return;
       }
-      // Unlike /refine, this route only calls updateProjectSpec directly --
-      // it never runs the build pipeline, so it never migrates the SQL
-      // schema to match whatever new entities/fields the regenerated spec
-      // adds. That's fine before the first build (there's no schema yet to
-      // fall out of sync with), but doing this on an already-built project
-      // would silently desync project.spec from the real database: the spec
-      // would claim an entity exists that has no table, and the very next
-      // read/write against it throws an uncaught "no such table" SQL error
-      // -- confirmed empirically, not just reasoned about. Checked only
-      // here, after the no-op early-return above, so a harmless call with
-      // no actual answers/request still succeeds post-build; /refine is the
-      // route that correctly re-runs the pipeline for a built project.
-      if (project.status === "built") {
-        throw new HttpError(409, "This project is already built; use refine to make further changes", "ALREADY_BUILT");
-      }
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       // Round 474: unlike /build and /refine (which stream SSE and are out
       // of scope for this mechanism), this route returns a plain JSON
       // response, so it fits withIdempotency()'s {status, body} contract
       // exactly like the five routes converted in rounds 471-473. A retry
-      // landing after the activePipelines guard above already cleared
+      // landing after the activePipelines guard below already cleared
       // (the pipeline fully finished) would otherwise call generateSpec()
       // again -- a second real AI call -- and overwrite project.spec a
       // second time.
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/answers`, async () => {
+        // Round 2183: these two checks used to run BEFORE withIdempotency
+        // was ever called, instead of inside this callback -- but
+        // withIdempotency's own "done" branch (idempotency.ts) returns the
+        // cached response WITHOUT ever invoking the callback, so a check
+        // placed outside it still re-evaluates against CURRENT mutable
+        // state on every call, including a genuine idempotency-key
+        // replay. Two concretely reachable consequences: (1) a replay of
+        // an /answers call that already succeeded and cached a 200 could
+        // get a permanent 409 ALREADY_BUILT if the project was built in
+        // between (exactly the "response lost in transit after success"
+        // scenario this whole mechanism exists for -- see
+        // docs/wakeRetry-idempotency-design.md); (2) the same replay could
+        // get a transient 409 PIPELINE_IN_PROGRESS if an unrelated
+        // build/refine/answers call on this same project happened to be
+        // mid-flight at that exact moment, even though the replayed key's
+        // own work had already fully finished. Moving both checks inside
+        // the callback means a cached "done" replay never re-evaluates
+        // either of them, the same guarantee round 2098/2182 already give
+        // their own sibling routes.
+        //
+        // Unlike /refine, this route only calls updateProjectSpec
+        // directly -- it never runs the build pipeline, so it never
+        // migrates the SQL schema to match whatever new entities/fields
+        // the regenerated spec adds. That's fine before the first build
+        // (there's no schema yet to fall out of sync with), but doing
+        // this on an already-built project would silently desync
+        // project.spec from the real database: the spec would claim an
+        // entity exists that has no table, and the very next read/write
+        // against it throws an uncaught "no such table" SQL error --
+        // confirmed empirically, not just reasoned about. Checked only
+        // here, after the no-op early-return above (which has no side
+        // effect to replay), so a harmless call with no actual
+        // answers/request still succeeds post-build; /refine is the route
+        // that correctly re-runs the pipeline for a built project.
+        if (project.status === "built") {
+          throw new HttpError(409, "This project is already built; use refine to make further changes", "ALREADY_BUILT");
+        }
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         activePipelines.add(project.id);
         try {
           const combinedDescription = `${project.description}\n\n${sections.join("\n\n")}`;

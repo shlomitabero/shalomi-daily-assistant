@@ -7109,6 +7109,140 @@ test("POST /projects/:id/answers retried with the same idempotency key after the
 });
 
 /**
+ * Round 2183: the project.status/activePipelines checks just above the
+ * withIdempotency call used to run BEFORE it was ever called, instead of
+ * inside its callback -- withIdempotency's own "done" branch
+ * (idempotency.ts) returns the cached response WITHOUT ever invoking the
+ * callback, so a check placed outside it still re-evaluates against
+ * CURRENT mutable state on every call, including a genuine
+ * idempotency-key replay (exactly the "response lost in transit after
+ * success" scenario this mechanism exists for, per
+ * docs/wakeRetry-idempotency-design.md). A retry of an /answers call that
+ * had already succeeded and cached a 200 could get a permanent 409
+ * ALREADY_BUILT if the project was built in between, instead of replaying
+ * the cached success.
+ */
+test("POST /projects/:id/answers retried with the same idempotency key after the project was built in between replays the original response, not 409 ALREADY_BUILT", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "answers-idem-vs-build@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as {
+      project: { id: string; spec: { openQuestions: { question: string }[] } };
+    };
+    const question = project.spec.openQuestions[0];
+    assert.ok(question, "the heuristic provider should ask at least one open question here");
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "answers-vs-build-repro-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
+    });
+    assert.equal(firstRes.status, 200, "sanity check: the first attempt must genuinely succeed and get cached");
+    const first = await firstRes.json();
+
+    // The project is legitimately built in between, by this same user (a
+    // different tab, or simply moving on after giving up waiting) --
+    // simulating any gap before the client's own response for the call
+    // above was lost in transit.
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    // A genuine fetchWithWakeRetry replay with the SAME key must replay
+    // the cached success -- not re-evaluate project.status against the
+    // project's now-built current state.
+    const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
+    });
+    assert.equal(
+      replayRes.status,
+      200,
+      "a replay with the same idempotency key must replay the cached success, not 409 ALREADY_BUILT against the project's now-built state",
+    );
+    const replay = await replayRes.json();
+    assert.deepEqual(replay, first, "the replay must return the exact same cached response, not a fresh error");
+  });
+});
+
+/**
+ * Round 2183: the same fix as the test just above, for this route's other
+ * moved-inside-the-callback check -- a transient 409 PIPELINE_IN_PROGRESS
+ * instead of a permanent 409 ALREADY_BUILT. A replay whose own key's work
+ * had already fully finished could still get rejected if an unrelated
+ * build/refine/answers call on this same project happened to be mid-flight
+ * at that exact moment, even though nothing about the replayed key's own
+ * work was ever actually "in progress".
+ */
+test("POST /projects/:id/answers retried with the same idempotency key while an unrelated answers call is mid-flight replays the original response, not 409 PIPELINE_IN_PROGRESS", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "answers-idem-vs-pipeline@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as {
+        project: { id: string; spec: { openQuestions: { question: string }[] } };
+      };
+      const question = project.spec.openQuestions[0];
+      assert.ok(question, "the heuristic provider should ask at least one open question here");
+
+      const firstHeaders = { ...authHeaders(token), "x-idempotency-key": "answers-vs-pipeline-first-key" };
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: firstHeaders,
+        body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
+      });
+      assert.equal(firstRes.status, 200, "sanity check: the first attempt must genuinely succeed and get cached");
+      const first = await firstRes.json();
+
+      // An unrelated second /answers call on the same project, with its
+      // own distinct idempotency key, is held mid-generateSpec -- so
+      // activePipelines.has(project.id) is genuinely true while it's in
+      // flight, the same way two real concurrent requests would overlap.
+      gated.arm();
+      const secondHeaders = { ...authHeaders(token), "x-idempotency-key": "answers-vs-pipeline-second-key" };
+      const secondPromise = fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: secondHeaders,
+        body: JSON.stringify({ additionalRequest: "Also track invoices." }),
+      });
+      await gated.waitUntilStarted();
+
+      // A genuine fetchWithWakeRetry replay of the FIRST (already-finished)
+      // key must replay its own cached success -- not get rejected just
+      // because a completely unrelated call happens to be mid-flight.
+      const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: firstHeaders,
+        body: JSON.stringify({ answers: [{ question: question.question, answer: "Yes, use Stripe for all payments" }] }),
+      });
+      assert.equal(
+        replayRes.status,
+        200,
+        "a replay of an already-finished key must replay its own cached success, not 409 PIPELINE_IN_PROGRESS for an unrelated in-flight call",
+      );
+      const replay = await replayRes.json();
+      assert.deepEqual(replay, first, "the replay must return the exact same cached response, not a fresh error");
+
+      gated.release();
+      const secondRes = await secondPromise;
+      assert.equal(secondRes.status, 200, "sanity check: the unrelated second call must still complete normally once released");
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
  * Round 2134: round 1409's own fix capped each individual answer's length
  * but never the `answers` array's own length -- unlike idea/description/
  * instruction above it in this same file (plain strings, nothing else to
