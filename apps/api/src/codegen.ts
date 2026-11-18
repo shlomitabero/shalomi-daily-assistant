@@ -627,6 +627,25 @@ function getRowValue(row, fieldName) {
   return matchingKey === undefined ? undefined : row[matchingKey];
 }
 
+// Round 2191: mirrors getRowValue's own case-insensitive fallback just
+// above, but for the CALLER'S submitted request body instead of a stored
+// row -- and mirrors packages/db/src/repository.ts's own round-2190
+// resolveSubmittedKey fix for the identical gap in the live preview. A
+// field renamed only by letter case (e.g. "status" -> "Status") after a
+// restart, per this generated app's own README ("edit the ENTITIES array
+// ... then restart -- existing columns are kept"), is a documented no-op
+// -- but a browser tab still holding the OLD casing in its already-loaded
+// JS bundle submits a PATCH/POST body keyed by that old casing. Without
+// this fallback, the exact-case hasOwnProperty/req.body[f.name] lookup
+// below silently treated that as "field not submitted at all": PATCH kept
+// the stale stored value (a real edit lost under a 200 OK), and POST
+// stored null/empty (or threw "field is required" for a required field).
+function resolveSubmittedKey(data, fieldName) {
+  if (Object.prototype.hasOwnProperty.call(data, fieldName)) return fieldName;
+  const lowerFieldName = fieldName.toLowerCase();
+  return Object.keys(data).find((key) => key.toLowerCase() === lowerFieldName);
+}
+
 function rowToRecord(entity, row) {
   const record = { id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt ?? null };
   for (const field of entity.fields) {
@@ -692,7 +711,10 @@ for (const entity of ENTITIES) {
 
   app.post(base, (req, res) => {
     try {
-      const values = entity.fields.map((f) => coerce(f, req.body?.[f.name]));
+      const values = entity.fields.map((f) => {
+        const submittedKey = req.body ? resolveSubmittedKey(req.body, f.name) : undefined;
+        return coerce(f, submittedKey === undefined ? undefined : req.body[submittedKey]);
+      });
       const createdAt = new Date().toISOString();
       const placeholders = ["?", ...columns.map(() => "?")].join(", ");
       const stmt = db.prepare(\`INSERT INTO \${q(entity.name)} (createdAt, \${columns.map(q).join(", ")}) VALUES (\${placeholders})\`);
@@ -741,8 +763,9 @@ for (const entity of ENTITIES) {
       // an untouched field keeps its already-stored raw value as-is, the
       // same fix as the live Forge AI backend's own repository.ts.
       const values = entity.fields.map((f) => {
-        if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, f.name)) return getRowValue(existing, f.name);
-        const coerced = coerce(f, req.body[f.name]);
+        const submittedKey = req.body ? resolveSubmittedKey(req.body, f.name) : undefined;
+        if (submittedKey === undefined) return getRowValue(existing, f.name);
+        const coerced = coerce(f, req.body[submittedKey]);
         // Round 1091: mirrors repository.ts's own round-1037 guard, which
         // this generated server's PATCH route never got. The exported
         // app's SQL FOREIGN KEY constraint itself allows a row to

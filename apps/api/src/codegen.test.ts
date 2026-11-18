@@ -1791,6 +1791,127 @@ test("generated server.js survives a restart after a field is renamed only by le
   }
 });
 
+/**
+ * Round 2191: the test just above only ever reads/creates under the
+ * renamed field's NEW casing after the restart -- it never submits a
+ * write under the field's OLD, stale casing, which is exactly what a
+ * browser tab whose JS bundle was already loaded before the rename (and
+ * restart) still sends. The generated server's PATCH/POST routes did an
+ * exact-case `hasOwnProperty`/`req.body[f.name]` lookup against the
+ * submitted body, with no case-insensitive fallback (unlike getRowValue,
+ * a few lines above in the same file) -- mirroring the identical gap
+ * round 2190 fixed in the live preview's own repository.ts. A PATCH under
+ * the stale casing used to return 200 while silently keeping the field's
+ * OLD stored value; a POST under the stale casing used to store
+ * null/empty (or throw "field is required" for a required field).
+ */
+test("generated server.js still applies a write submitted under a field's STALE pre-rename casing after a restart, instead of silently dropping it", async () => {
+  const customerV1: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "email", label: "Email", type: "text", required: false }],
+  };
+  const customerV2: Entity = {
+    name: "Customer",
+    label: "Customers",
+    fields: [{ name: "Email", label: "Email", type: "text", required: false }],
+  };
+  const projectV1: Project = { ...project, spec: { ...project.spec, entities: [customerV1] } };
+  const projectV2: Project = { ...project, spec: { ...project.spec, entities: [customerV2] } };
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-caserename-stale-write-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+
+  const port = 34000 + Math.floor(Math.random() * 5000);
+
+  async function runServer(project: Project, fn: (port: number) => Promise<void>): Promise<void> {
+    const serverJs = generateExportFiles(project).find((f) => f.path === "server.js")!.content;
+    writeFileSync(path.join(dir, "server.js"), serverJs);
+    const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(port) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    try {
+      const deadline = Date.now() + 5000;
+      let lastErr: unknown;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) {
+          throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+        }
+        try {
+          const res = await fetch(`http://localhost:${port}/api/Customer`);
+          assert.equal(res.status, 200);
+          await fn(port);
+          return;
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    } finally {
+      await new Promise<void>((resolve) => {
+        child.once("exit", () => resolve());
+        child.kill();
+      });
+    }
+  }
+
+  let recordId: number;
+  try {
+    await runServer(projectV1, async (port) => {
+      const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "dana@example.com" }),
+      });
+      assert.equal(createRes.status, 201, "the first run's own write must succeed before the rename");
+      const { record } = (await createRes.json()) as { record: { id: number } };
+      recordId = record.id;
+    });
+
+    await runServer(projectV2, async (port) => {
+      // "Tab 1" (never saw the rename+restart): submits a PATCH still
+      // keyed by the OLD casing, exactly like a stale, already-loaded
+      // browser bundle would.
+      const patchRes = await fetch(`http://localhost:${port}/api/Customer/${recordId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "dana-updated@example.com" }),
+      });
+      assert.equal(patchRes.status, 200);
+      const patchBody = (await patchRes.json()) as { record: { Email: string } };
+      assert.equal(
+        patchBody.record.Email,
+        "dana-updated@example.com",
+        "a PATCH submitted under the field's stale pre-rename casing must still apply, not be silently discarded",
+      );
+
+      // Same gap on the CREATE side, under the stale casing.
+      const createRes = await fetch(`http://localhost:${port}/api/Customer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "yossi@example.com" }),
+      });
+      assert.equal(createRes.status, 201);
+      const createBody = (await createRes.json()) as { record: { Email: string } };
+      assert.equal(
+        createBody.record.Email,
+        "yossi@example.com",
+        "a POST submitted under the field's stale pre-rename casing must still store the submitted value, not null/empty",
+      );
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Regression test: the exported standalone app's own coerce() function
 // (a separate copy of packages/db/src/repository.ts's coerceValue, since
 // this app has no dependency on Forge AI at runtime) validated every
