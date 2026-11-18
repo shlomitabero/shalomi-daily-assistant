@@ -35796,6 +35796,23 @@ test("the exported app's Copy/Export CSV/Export JSON/Print list buttons are disa
 });
 
 /**
+ * Round 2235: round 2234 guarded Copy/Export CSV/Export JSON/Print list
+ * against writesInFlight, but missed a 5th, structurally identical
+ * sibling in the exact same toolbar: Export ICS, which reads from the
+ * same live records state via icsMonthRecords. Ports the live preview's
+ * own round-2235 fix to the exported standalone app's duplicate copy.
+ */
+test("the exported app's Export ICS button is disabled while writesInFlight is true, matching its sibling Copy/Export CSV/Export JSON/Print list buttons", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const icsMatch = entityViewJsx.match(
+    /onClick=\{handleExportIcs\} disabled=\{icsMonthRecords\.length === 0 \|\| icsExportStatus === "exporting" \|\| writesInFlight\}/,
+  );
+  assert.ok(icsMatch, "expected the exported app's Export ICS button's disabled attribute to also include writesInFlight");
+});
+
+/**
  * New in this round (1376): the exported app's `.entity-undo-toast` is
  * `display: flex` with the delete-undo message text and the "Undo" button
  * as direct flex children, and had no `flex-wrap`/`overflow-wrap` of its

@@ -9955,8 +9955,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
                 )}
               </div>
             )}
+            {/* Round 2235: mirrors the live preview's own round-2235 fix -- writesInFlight guards this button's four siblings (round 2234) since they all read straight from the live records state, and this one does too via icsMonthRecords. */}
             {viewMode === "calendar" && dateField && (
-              <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0 || icsExportStatus === "exporting"}>
+              <button type="button" className="ics-export-btn" onClick={handleExportIcs} disabled={icsMonthRecords.length === 0 || icsExportStatus === "exporting" || writesInFlight}>
                 {icsExportStatus === "exporting"
                   ? "Exporting…"
                   : icsExportStatus === "done"

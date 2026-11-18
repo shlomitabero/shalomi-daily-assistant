@@ -1432,6 +1432,26 @@ test("EntityPanel's Copy/Export CSV/Export JSON/Print list buttons are disabled 
 });
 
 /**
+ * Round 2235: round 2234 guarded Copy/Export CSV/Export JSON/Print list
+ * against writesInFlight because all four read straight from the live
+ * records state, but missed a 5th, structurally identical sibling in the
+ * exact same toolbar: Export ICS (the calendar view's .ics download),
+ * which reads from the same live records state via icsMonthRecords.
+ * Confirmed live with a real network race (a delayed bulk-update PATCH):
+ * clicking Export ICS while the PATCH was still in flight downloaded an
+ * .ics file whose DESCRIPTION held the pre-update field value, with the
+ * button not even disabled. jsdom can't exercise a real network race, so
+ * (consistent with this test file's own established convention) this
+ * checks the actual button JSX in the real source text directly.
+ */
+test("EntityPanel's Export ICS button is disabled while writesInFlight is true, matching its sibling Copy/Export CSV/Export JSON/Print list buttons", () => {
+  const icsMatch = entityPanelSrc.match(
+    /onClick=\{handleExportIcs\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{icsMonthRecords\.length === 0 \|\| icsExportStatus === "exporting" \|\| writesInFlight\}/,
+  );
+  assert.ok(icsMatch, "expected the Export ICS button's disabled attribute to also include writesInFlight");
+});
+
+/**
  * Round 1118: round 1117 only cross-gated the bulk-action bar's own three
  * buttons against each other -- every OTHER way to mutate a single record
  * (the table row's own Duplicate/Delete, the in-form Duplicate/Delete, a

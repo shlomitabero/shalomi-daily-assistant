@@ -6744,7 +6744,13 @@ export function EntityPanel({
                 type="button"
                 className="secondary ics-export-btn"
                 onClick={handleExportIcs}
-                disabled={icsMonthRecords.length === 0 || icsExportStatus === "exporting"}
+                // Round 2235: writesInFlight guards Copy/Export CSV/Export
+                // JSON/Print list (round 2234) since they all read straight
+                // from the live records state, which handleBulkUpdate
+                // doesn't refresh until its PATCHes resolve -- this button
+                // reads from the same stale state via icsMonthRecords but
+                // was missed in that round.
+                disabled={icsMonthRecords.length === 0 || icsExportStatus === "exporting" || writesInFlight}
               >
                 {/* Round 937: unlike its sibling Export CSV button right
                     next to it (which already says "Export N selected" when
