@@ -65,6 +65,20 @@ export function patchSettings(req, res) {
   if ('currency' in patch && (typeof patch.currency !== 'string' || !patch.currency.trim())) {
     return res.status(400).json({ error: 'מטבע חייב להיות מחרוזת לא ריקה' });
   }
+  // country was the one remaining field with no type check at all, same gap
+  // currency just above was already fixed for - Settings.jsx prints it
+  // directly as a JSX child (the "מדינה" input's own value prop), so an
+  // object or array stored as-is would crash that page's render just like
+  // an unchecked currency would have. null (unlike currency) is its own
+  // valid, meaningful "not set" state - Settings.jsx's own form already
+  // sends null instead of an empty string (`country: form.country || null`),
+  // and services/settings.js's DEFAULTS seeds it as null - same
+  // null-or-valid-value shape maxLoss above already uses.
+  if ('country' in patch && patch.country !== null) {
+    if (typeof patch.country !== 'string' || !patch.country.trim()) {
+      return res.status(400).json({ error: 'מדינה חייבת להיות ריקה או מחרוזת לא ריקה' });
+    }
+  }
   if ('maxLoss' in patch && patch.maxLoss !== null) {
     if (typeof patch.maxLoss !== 'number' || !Number.isFinite(patch.maxLoss) || patch.maxLoss < 0) {
       return res.status(400).json({ error: 'הפסד מרבי חייב להיות ריק (ללא הגבלה) או מספר לא שלילי' });

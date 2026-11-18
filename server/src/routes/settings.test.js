@@ -159,6 +159,44 @@ test('patchSettings accepts a real currency string', () => {
   assert.equal(res.body.settings.currency, 'USD');
 });
 
+test('patchSettings rejects an object country instead of storing it as an unrenderable setting', () => {
+  // Mirrors currency's own identical fix just above - country had no type
+  // check at all, and Settings.jsx prints it directly as a JSX child the
+  // same way.
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { country: {} } }, res);
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /מדינה חייבת להיות/);
+});
+
+test('patchSettings rejects an empty or whitespace-only country the same way', () => {
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { country: '   ' } }, res);
+  assert.equal(res.statusCode, 400);
+});
+
+test('patchSettings allows country to be explicitly cleared to null, unlike currency', () => {
+  // Unlike currency (which always needs a real value), null is country's
+  // own valid "not set" state - Settings.jsx's form sends it that way,
+  // and services/settings.js's DEFAULTS seeds it as null too.
+  __resetForTests();
+  patchSettings({ body: { country: 'IL' } }, makeRes());
+  const res = makeRes();
+  patchSettings({ body: { country: null } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.settings.country, null);
+});
+
+test('patchSettings accepts a real country string', () => {
+  __resetForTests();
+  const res = makeRes();
+  patchSettings({ body: { country: 'IL' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.settings.country, 'IL');
+});
+
 test('patchSettings rejects a non-boolean emergencyStop instead of storing it', () => {
   // mode/budget/maxLoss above all reject a malformed value - emergencyStop
   // (the one field meant for "use the moment something looks wrong") was
