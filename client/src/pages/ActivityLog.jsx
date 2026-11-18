@@ -98,7 +98,12 @@ export default function ActivityLog() {
                 itself. */}
             {a.type === 'sale_confirmed' && a.result?.startsWith('blocked') && (
               a.detail?.resolvedAt ? (
-                <p className="hint positive" style={{ margin: '4px 0 0' }}>✓ סומן כטופל</p>
+                // Same gap Approvals.jsx's own approvedAt/rejectedAt display
+                // already closed - the checkmark alone said THAT the owner
+                // dealt with this, with no way to tell WHEN, even though
+                // onResolve (above) has stamped detail.resolvedAt since the
+                // feature shipped.
+                <p className="hint positive" style={{ margin: '4px 0 0' }}>✓ סומן כטופל ב-{new Date(a.detail.resolvedAt).toLocaleString('he-IL')}</p>
               ) : (
                 <button className="btn btn-ghost" style={{ marginTop: 6 }} onClick={() => onResolve(a.id)} disabled={resolvingId === a.id}>
                   {resolvingId === a.id ? 'מסמן…' : 'סמן כטופל'}
