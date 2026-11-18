@@ -782,6 +782,18 @@ function parseFieldDate(raw: string): Date {
  */
 const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 /**
+ * Round 2236: mirrors entityFormatting.ts's/codegen.ts's identical fix --
+ * a plain substring check on "enddate" also matched any field merely
+ * ending in "-end" right before "Date" (`weekendDate`, `attendDate`,
+ * `trendDate`, `legendDate`), the same collision class round 1460 already
+ * fixed for "due" but never ported to this sibling check -- a false
+ * deadline field here pollutes Business Twin's own "N records overdue"
+ * narrative sentences. Same shape: lowercase "end" only counts as a real
+ * word start, while capitalized "End" (the camelCase word-boundary
+ * marker) always counts.
+ */
+const END_DATE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])end|End)[Dd]ate/;
+/**
  * Round 1947: mirrors entityFormatting.ts's/codegen.ts's identical fix --
  * the built-in WorkOrder entity's own scheduledDate (Scheduled/InProgress/
  * Completed/Cancelled status) is exactly the "should have happened by now"
@@ -812,7 +824,7 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 const DEADLINE_STATUS_VALUES = new Set(["scheduled", "planned"]);
 function isDeadlineFieldName(fieldName: string, fields: Entity["fields"] = []): boolean {
   const lower = fieldName.toLowerCase();
-  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate")) {
+  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || END_DATE_FIELD_NAME_PATTERN.test(fieldName)) {
     return true;
   }
   if (lower !== "date") return false;

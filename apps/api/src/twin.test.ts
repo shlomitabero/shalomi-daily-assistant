@@ -2532,6 +2532,44 @@ test("computeBusinessTwin flags the built-in Rental entity's own endDate as over
 });
 
 /**
+ * Round 2236: twin.ts's own isDeadlineFieldName had the same plain-
+ * substring collision round 1460 fixed for "due", just never ported to
+ * the sibling "enddate" check -- a bare .includes("enddate") also matched
+ * any field merely ending in "-end" right before "Date", such as an
+ * event/RSVP app's own weekendDate. Without the fix, the Business Twin
+ * would fabricate a false "overdue" insight for a field that has nothing
+ * to do with a deadline.
+ */
+test("computeBusinessTwin does not flag a past date field that merely ends in '-end' right before 'Date' without meaning a deadline", () => {
+  const eventProject: Project = {
+    ...project,
+    description: "A weekend event planner",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Guest",
+          label: "Guests",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "weekendDate", label: "Weekend date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, eventProject.id, eventProject.spec);
+  const guest = eventProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, eventProject.id, guest, { name: "Dana", weekendDate: "2026-01-01" });
+  insertRecord(db, eventProject.id, guest, { name: "Yossi", weekendDate: "2026-01-05" });
+
+  const twin = computeBusinessTwin(db, eventProject, today);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Weekend date")), `must not flag "weekendDate" as a deadline, got: ${JSON.stringify(twin.jumpableObservations)}`);
+});
+
+/**
  * Round 2079: mirrors entityFormatting.ts's/codegen.ts's identical fix --
  * a field named exactly "date" carries no deadline-ish word of its own at
  * all, so isDeadlineFieldName never recognized the built-in Appointment

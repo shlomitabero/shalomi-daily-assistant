@@ -5015,7 +5015,25 @@ test("isDeadlineFieldName matches the built-in WorkOrder entity's own scheduledD
 test("isDeadlineFieldName matches the built-in Rental entity's own endDate field", () => {
   assert.equal(isDeadlineFieldName("endDate"), true, "Rental's own field name");
   assert.equal(isDeadlineFieldName("EndDate"), true, "case-insensitive");
+  assert.equal(isDeadlineFieldName("someEndDate"), true, "a camelCase compound still ends in the capitalized word-boundary 'End'");
+  assert.equal(isDeadlineFieldName("rentalEndDate"), true);
   assert.equal(isDeadlineFieldName("startDate"), false, "only the end of a ranged record is a deadline, not the start");
+});
+
+/**
+ * Round 2236: a plain substring check on "enddate" also matched any field
+ * whose name merely ends in "-end" right before "Date" -- "weekendDate" (an
+ * event/RSVP app's own field), "attendDate"/"trendDate"/"legendDate" -- the
+ * exact same collision class round 1460 already fixed for "due", just never
+ * ported to this sibling check despite the surrounding round-1957 comment
+ * explicitly only having verified the built-in domain library, not
+ * arbitrary AI-generated field names.
+ */
+test("isDeadlineFieldName rejects field names that merely end in \"-end\" right before \"Date\" without meaning a deadline", () => {
+  assert.equal(isDeadlineFieldName("weekendDate"), false, "an event/RSVP app's own field, not a deadline");
+  assert.equal(isDeadlineFieldName("attendDate"), false);
+  assert.equal(isDeadlineFieldName("trendDate"), false);
+  assert.equal(isDeadlineFieldName("legendDate"), false);
 });
 
 /**

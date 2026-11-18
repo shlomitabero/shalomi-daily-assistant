@@ -406,6 +406,19 @@ const DUE_SOON_WINDOW_DAYS = 3;
  */
 const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 /**
+ * Round 2236: a plain substring check on "enddate" also matched any field
+ * whose name merely ends in "-end" right before "Date" -- "weekendDate",
+ * "attendDate", "trendDate", "legendDate" -- the exact same collision
+ * class round 1460 already hardened "due" against, just never ported to
+ * this sibling check. Mirrors DUE_FIELD_NAME_PATTERN's own shape: lowercase
+ * "end" only counts as a real word start (string start, or not preceded by
+ * a letter), while capitalized "End" (the camelCase word-boundary marker)
+ * always counts -- together this still matches "endDate"/"EndDate"/
+ * "someEndDate"/"rentalEndDate" but rejects "weekendDate"/"attendDate"/
+ * "trendDate"/"legendDate".
+ */
+const END_DATE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])end|End)[Dd]ate/;
+/**
  * Round 1947: the built-in WorkOrder entity's own `scheduledDate` (a job
  * scheduled to happen, with a Scheduled/InProgress/Completed/Cancelled
  * status) is exactly the "this should have happened by now and didn't"
@@ -450,7 +463,7 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
 const DEADLINE_STATUS_VALUES = new Set(["scheduled", "planned"]);
 export function isDeadlineFieldName(fieldName: string, fields: Field[] = []): boolean {
   const lower = fieldName.toLowerCase();
-  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || lower.includes("enddate")) {
+  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || END_DATE_FIELD_NAME_PATTERN.test(fieldName)) {
     return true;
   }
   if (lower !== "date") return false;
