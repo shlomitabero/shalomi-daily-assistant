@@ -306,6 +306,50 @@ test("a library-loan tracker's 'reader memberships' and a community garden's 'me
   );
 });
 
+/**
+ * Round 2250: round 2107's own fix (just above) correctly stopped bare
+ * "membership" from matching Subscription on its own, but the business/
+ * billing cue list it required to co-occur ANYWHERE in the description
+ * included six ordinary, extremely common English words/verbs with no
+ * inherent billing connection -- "plan(s)", "pay"/"payment"/"paying",
+ * "monthly", "club", and "price"/"pricing" -- reopening the exact bug
+ * class round 2107 was meant to close, just reached through an unrelated
+ * sentence elsewhere in the same description instead of through
+ * "membership" alone. Confirmed live before this fix: appending one
+ * ordinary, unrelated sentence containing one of these words to round
+ * 2107's own named library/garden counterexamples flipped them from the
+ * correct ['Item'] to ['Subscription'] alone.
+ */
+test("Subscription's 'membership' co-occurrence cue list doesn't spuriously trigger on an unrelated sentence elsewhere in the description using 'plan'/'pay'/'monthly'/'club'/'price', and real billing phrasings still match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const libraryPlan = await provider.generate(
+    "A library system for tracking book loans, due dates, and reader memberships so the librarian knows who has which book. We plan to add a vending machine too.",
+  );
+  assert.ok(!libraryPlan.entities.some((e) => e.name === "Subscription"), "an unrelated 'we plan to...' sentence must not spuriously match Subscription");
+
+  const gardenPay = await provider.generate(
+    "A community garden app tracking plot assignments, watering schedules, and member memberships for who has access to which plot. Members pay a small deposit for tools.",
+  );
+  assert.ok(!gardenPay.entities.some((e) => e.name === "Subscription"), "an unrelated 'members pay...' sentence must not spuriously match Subscription");
+
+  const libraryClub = await provider.generate(
+    "A library system for tracking book loans, due dates, and reader memberships so the librarian knows who has which book. Our book club meets every month to discuss novels.",
+  );
+  assert.ok(!libraryClub.entities.some((e) => e.name === "Subscription"), "an unrelated 'book club'/'every month' sentence must not spuriously match Subscription");
+
+  const gardenPrice = await provider.generate(
+    "A community garden app tracking plot assignments, watering schedules, and member memberships for who has access to which plot. We also track the price of replacement tools.",
+  );
+  assert.ok(!gardenPrice.entities.some((e) => e.name === "Subscription"), "an unrelated 'price of replacement tools' sentence must not spuriously match Subscription");
+
+  // The fix must not lose real recall: the still-specific business/
+  // billing cues (fees/dues/studio/gym/fitness/yoga/co-working) must
+  // still match normally.
+  const gymDues = await provider.generate("A gym membership app to track dues and payment status.");
+  assert.ok(gymDues.entities.some((e) => e.name === "Subscription"), "'membership' co-occurring with 'dues' must still get a Subscription entity");
+});
+
 test("recognizes 'trainers'/'מאמנים' as Employee staff, in both the English and Hebrew built-in 'Fitness studio' example descriptions", async () => {
   // Round 1720: the app's own home-screen built-in example (apps/web/src/
   // i18n/language.ts, home.examples.gym.text/home.examples.gym.text [he])

@@ -1721,7 +1721,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // those business/billing cues, in either order relative to
       // "membership(s)" itself, via two forward-only lookaheads (one from
       // each side) rather than a single bounded-distance lookaround.
-      /\bmemberships?\b(?=[\s\S]*\b(?:fees?|dues|plans?|pricing|price|monthly|pay(?:ment|ing)?|studio|gym|fitness|yoga|club|co-?working)\b)|\b(?:fees?|dues|plans?|pricing|price|monthly|pay(?:ment|ing)?|studio|gym|fitness|yoga|club|co-?working)\b(?=[\s\S]*\bmemberships?\b)/,
+      //
+      // Round 2250: round 2107's own cue list reopened the exact bug class
+      // it was meant to close. Since the lookahead's "anywhere in the
+      // whole description" reach was intentional (see above), the actual
+      // defect was six of the chosen cue words being ordinary, extremely
+      // common English vocabulary with zero inherent connection to
+      // billing -- "plan(s)" (the ordinary verb "we plan to..."), "pay"/
+      // "payment"/"paying" (equally ordinary), "monthly" (any recurring
+      // non-billing event), "club" (a book/garden/hobby club has no
+      // billing connection at all), and "price"/"pricing" (any inventory
+      // or product-pricing app). Confirmed live via the real
+      // matchEntities: adding one unrelated sentence like "We plan to add
+      // a vending machine too." or "Our book club meets every month to
+      // discuss novels." to round 2107's own named library/garden
+      // counterexamples flipped them from the correct ['Item'] to
+      // ['Subscription'] alone, exactly the catch-all-losing failure round
+      // 2107's own comment describes, just reached through a different,
+      // unrelated sentence elsewhere in the same description. Removed
+      // those six words, keeping only the cues round 2107's own actual
+      // named example ("fitness studio") and the still-specific business/
+      // billing nouns (fees/dues/studio/gym/fitness/yoga/co-working) that
+      // have no comparably common everyday use -- confirmed via several
+      // invented counterexamples that none of these remaining six is
+      // nearly as prone to appearing in unrelated prose.
+      /\bmemberships?\b(?=[\s\S]*\b(?:fees?|dues|studio|gym|fitness|yoga|co-?working)\b)|\b(?:fees?|dues|studio|gym|fitness|yoga|co-?working)\b(?=[\s\S]*\bmemberships?\b)/,
       // Bare "מנוי" (round 563) is a substring of the ordinary plural
       // "אומנויות"/"אמנויות" ("arts"/"crafts", as in "אומנויות לחימה" --
       // martial arts), so a plain arts/crafts-school description spuriously
