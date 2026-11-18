@@ -4886,14 +4886,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same read-project.spec-then-write-it-back shape /build, /refine,
-      // /answers, and checkpoint-restore are already guarded against (see
-      // their own comments) -- a slow /refine already in flight computes
-      // its nextSpec from the pre-rename spec and silently reverts this
-      // rename the moment it finishes writing, with no error to either side.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = RenameEntityLabelSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -4905,6 +4897,29 @@ export function createProjectsRouter(
         req.userId!,
         `PATCH /projects/${project.id}/entities/${req.params.entityName}/label`,
         async () => {
+          // Round 2188: this used to run BEFORE withIdempotency was ever
+          // called, instead of inside this callback -- but
+          // withIdempotency's own "done" branch (idempotency.ts) returns
+          // the cached response WITHOUT ever invoking the callback, so a
+          // check placed outside it still re-evaluates against CURRENT
+          // mutable state on every call, including a genuine idempotency-
+          // key replay: a replay of a call that already succeeded and
+          // cached its response could get a false 409 PIPELINE_IN_PROGRESS
+          // if an unrelated build/refine happened to start on this same
+          // project between the original call and the replay, even though
+          // the replayed key's own work had already fully finished.
+          // Moving it inside the callback means a cached "done" replay
+          // never re-evaluates it, the same guarantee rounds
+          // 2098/2101/2182/2183 already give their own sibling routes.
+          // Same read-project.spec-then-write-it-back shape /build,
+          // /refine, /answers, and checkpoint-restore are already guarded
+          // against (see their own comments) -- a slow /refine already in
+          // flight computes its nextSpec from the pre-rename spec and
+          // silently reverts this rename the moment it finishes writing,
+          // with no error to either side.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const entity = findEntity(project, req.params.entityName);
           const previousLabel = entity.label ?? entity.name;
           const nextSpec = {
@@ -4955,11 +4970,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as the entity-label route above, for the
-      // same reason -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = RenameFieldLabelSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -4971,6 +4981,12 @@ export function createProjectsRouter(
         req.userId!,
         `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/label`,
         async () => {
+          // Round 2188: moved inside the callback -- same activePipelines
+          // guard as the entity-label route above, moved for the same
+          // reason -- see its own doc comment.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const entity = findEntity(project, req.params.entityName);
           const field = findField(entity, req.params.fieldName);
           const previousLabel = field.label ?? field.name;
@@ -5021,12 +5037,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot change a field's required flag after the project has already been built", "FIELD_EDIT_AFTER_BUILD");
-      }
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = SetFieldRequiredSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -5038,6 +5048,22 @@ export function createProjectsRouter(
         req.userId!,
         `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/required`,
         async () => {
+          // Round 2188: both checks below used to run BEFORE
+          // withIdempotency was ever called -- see the entity-label
+          // route's own doc comment above for the general mechanism. The
+          // `status === "built"` direction specifically (reject only
+          // while NOT yet built) is the vulnerable one: a project's status
+          // only ever moves draft -> built, never back (there is no
+          // "unbuild"), so a replay landing after a concurrent /build
+          // completes in between would otherwise get a false
+          // FIELD_EDIT_AFTER_BUILD for a call that had already succeeded
+          // while the project was still unbuilt.
+          if (project.status === "built") {
+            throw new HttpError(409, "Cannot change a field's required flag after the project has already been built", "FIELD_EDIT_AFTER_BUILD");
+          }
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const entity = findEntity(project, req.params.entityName);
           const field = findField(entity, req.params.fieldName);
           const nextSpec = {
@@ -5101,12 +5127,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot change a field's type after the project has already been built", "FIELD_EDIT_AFTER_BUILD");
-      }
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = SetFieldTypeSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -5126,6 +5146,15 @@ export function createProjectsRouter(
         req.userId!,
         `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/type`,
         async () => {
+          // Round 2188: moved inside the callback -- see the field-
+          // required route's own doc comment above for why the
+          // `status === "built"` direction is the vulnerable one.
+          if (project.status === "built") {
+            throw new HttpError(409, "Cannot change a field's type after the project has already been built", "FIELD_EDIT_AFTER_BUILD");
+          }
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const entity = findEntity(project, req.params.entityName);
           const field = findField(entity, req.params.fieldName);
           const nextField: Field = {
@@ -5275,19 +5304,21 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as the entity/field-label routes above --
-      // this is another direct read-project.spec-then-write-it-back edit,
-      // the exact shape /build/refine/answers/restore are already guarded
-      // against.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddRoleSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/roles`, async () => {
+        // Round 2188: moved inside the callback -- see the entity-label
+        // route's own doc comment (above, earlier in this file) for why a
+        // guard placed before withIdempotency still re-evaluates against
+        // current state on a cached-replay. This is another direct
+        // read-project.spec-then-write-it-back edit, the exact shape
+        // /build/refine/answers/restore are already guarded against.
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         const nextSpec = { ...project.spec, roles: [...project.spec.roles, parsed.data.role] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
         // Round 1775: the same "who did this" trail round 1639 already gave
@@ -5316,16 +5347,17 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddAssumptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/assumptions`, async () => {
+        // Round 2188: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         const nextSpec = { ...project.spec, assumptions: [...project.spec.assumptions, parsed.data.assumption] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
         // Round 1776: see the roles routes' own doc comment (round 1775) above.
@@ -5360,16 +5392,17 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddPersonaSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/personas`, async () => {
+        // Round 2188: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         const nextSpec = { ...project.spec, personas: [...project.spec.personas, parsed.data.persona] };
         const updated = updateProjectSpec(db, project.id, nextSpec);
         // Round 1776: see the roles routes' own doc comment (round 1775) above.
@@ -5406,12 +5439,13 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles POST above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${project.id}/roles/${req.params.index}`, async () => {
+        // Round 2188: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
         assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
         if (project.spec.roles.length <= 1) {
@@ -5442,10 +5476,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles POST above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
@@ -5453,6 +5483,11 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/assumptions/${req.params.index}`,
         async () => {
+          // Round 2188: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
           assertIndexStillMatches(
             project.spec.assumptions,
@@ -5491,10 +5526,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles POST above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
@@ -5502,6 +5533,11 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/personas/${req.params.index}`,
         async () => {
+          // Round 2188: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
           assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
           const removedPersona = project.spec.personas[index];
@@ -5552,16 +5588,17 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles POST above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddRoleSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${project.id}/roles/${req.params.index}`, async () => {
+        // Round 2188: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         const index = parseListIndex(req.params.index, project.spec.roles, "ROLE_NOT_FOUND");
         assertIndexStillMatches(project.spec.roles, index, (req.body as { expect?: unknown })?.expect, "ROLE_STALE_INDEX");
         const previousRole = project.spec.roles[index];
@@ -5592,10 +5629,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles POST above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddAssumptionSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -5607,6 +5640,11 @@ export function createProjectsRouter(
         req.userId!,
         `PATCH /projects/${project.id}/assumptions/${req.params.index}`,
         async () => {
+          // Round 2188: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const index = parseListIndex(req.params.index, project.spec.assumptions, "ASSUMPTION_NOT_FOUND");
           assertIndexStillMatches(
             project.spec.assumptions,
@@ -5652,10 +5690,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      // Same activePipelines guard as /roles POST above -- see its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddPersonaSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -5667,6 +5701,11 @@ export function createProjectsRouter(
         req.userId!,
         `PATCH /projects/${project.id}/personas/${req.params.index}`,
         async () => {
+          // Round 2188: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const index = parseListIndex(req.params.index, project.spec.personas, "PERSONA_NOT_FOUND");
           assertIndexStillMatches(project.spec.personas, index, (req.body as { expect?: unknown })?.expect, "PERSONA_STALE_INDEX");
           const previousPersona = project.spec.personas[index];
@@ -5735,18 +5774,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot remove a screen after the project has already been built", "ENTITY_REMOVAL_AFTER_BUILD");
-      }
-      // Same activePipelines guard /build itself already has (see its own
-      // comment) -- an in-flight /build on this still-unbuilt project reads
-      // project.spec at its own start and only writes its result back once
-      // the whole pipeline finishes, so this removal would otherwise be
-      // silently reverted (or, worse, removing an entity the pipeline is
-      // mid-migration on) the moment that build completes.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
@@ -5754,6 +5781,24 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/entities/${req.params.entityName}`,
         async () => {
+          // Round 2188: both checks below used to run BEFORE
+          // withIdempotency was ever called -- see the field-required
+          // route's own doc comment (above, earlier in this file) for why
+          // the `status === "built"` direction is the vulnerable one, and
+          // the entity-label route's own doc comment for why
+          // activePipelines has the identical replay hazard.
+          if (project.status === "built") {
+            throw new HttpError(409, "Cannot remove a screen after the project has already been built", "ENTITY_REMOVAL_AFTER_BUILD");
+          }
+          // Same activePipelines guard /build itself already has (see its own
+          // comment) -- an in-flight /build on this still-unbuilt project reads
+          // project.spec at its own start and only writes its result back once
+          // the whole pipeline finishes, so this removal would otherwise be
+          // silently reverted (or, worse, removing an entity the pipeline is
+          // mid-migration on) the moment that build completes.
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           // Round 1186: resolved via the shared findEntity helper (round
           // 1162's own case-insensitive fallback), instead of this
           // route's own ad hoc exact-case checks against the raw URL
@@ -5849,20 +5894,20 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot add a screen after the project has already been built", "ENTITY_ADD_AFTER_BUILD");
-      }
-      // Same activePipelines guard as the entity-removal route above -- see
-      // its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const parsed = AddEntitySchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/entities`, async () => {
+        // Round 2188: both checks below moved inside the callback -- see
+        // the entity-removal route's own doc comment above.
+        if (project.status === "built") {
+          throw new HttpError(409, "Cannot add a screen after the project has already been built", "ENTITY_ADD_AFTER_BUILD");
+        }
+        if (activePipelines.has(project.id)) {
+          throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+        }
         const name = deriveEntityName(parsed.data.label, project.spec.entities.map((e) => e.name));
         const newEntity: Entity = {
           name,
@@ -5915,14 +5960,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot duplicate a screen after the project has already been built", "ENTITY_DUPLICATE_AFTER_BUILD");
-      }
-      // Same activePipelines guard as the entity-add route above -- see its
-      // own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
@@ -5930,6 +5967,14 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/entities/${req.params.entityName}/duplicate`,
         async () => {
+          // Round 2188: both checks below moved inside the callback -- see
+          // the entity-removal route's own doc comment above.
+          if (project.status === "built") {
+            throw new HttpError(409, "Cannot duplicate a screen after the project has already been built", "ENTITY_DUPLICATE_AFTER_BUILD");
+          }
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const entity = findEntity(project, req.params.entityName);
           const sourceLabel = entity.label ?? entity.name;
           const suffix = isHebrewText(sourceLabel) ? " (עותק)" : " (copy)";
@@ -6021,14 +6066,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot add a field after the project has already been built", "FIELD_ADD_AFTER_BUILD");
-      }
-      // Same activePipelines guard as the entity-removal route above -- see
-      // its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const entity = findEntity(project, req.params.entityName);
       const parsed = AddFieldSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -6058,6 +6095,14 @@ export function createProjectsRouter(
         req.userId!,
         `POST /projects/${project.id}/entities/${entity.name}/fields`,
         async () => {
+          // Round 2188: both checks below moved inside the callback -- see
+          // the entity-removal route's own doc comment above.
+          if (project.status === "built") {
+            throw new HttpError(409, "Cannot add a field after the project has already been built", "FIELD_ADD_AFTER_BUILD");
+          }
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           const name = deriveFieldName(parsed.data.label, entity.fields.map((f) => f.name));
           const newField: Field = {
             name,
@@ -6100,14 +6145,6 @@ export function createProjectsRouter(
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
       const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status === "built") {
-        throw new HttpError(409, "Cannot remove a field after the project has already been built", "FIELD_REMOVE_AFTER_BUILD");
-      }
-      // Same activePipelines guard as the entity-removal route above -- see
-      // its own comment.
-      if (activePipelines.has(project.id)) {
-        throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
-      }
       const entity = findEntity(project, req.params.entityName);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
@@ -6116,6 +6153,14 @@ export function createProjectsRouter(
         req.userId!,
         `DELETE /projects/${project.id}/entities/${entity.name}/fields/${req.params.fieldName}`,
         async () => {
+          // Round 2188: both checks below moved inside the callback -- see
+          // the entity-removal route's own doc comment above.
+          if (project.status === "built") {
+            throw new HttpError(409, "Cannot remove a field after the project has already been built", "FIELD_REMOVE_AFTER_BUILD");
+          }
+          if (activePipelines.has(project.id)) {
+            throw new HttpError(409, "A build or refine is already running for this project", "PIPELINE_IN_PROGRESS");
+          }
           // Round 1187: capture findField's resolved field and reuse its
           // real name below, instead of discarding it and falling back to
           // the raw, possibly differently-cased req.params.fieldName --

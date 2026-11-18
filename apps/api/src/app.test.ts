@@ -7243,6 +7243,175 @@ test("POST /projects/:id/answers retried with the same idempotency key while an 
 });
 
 /**
+ * Round 2188: the same "idempotency guard outside withIdempotency's own
+ * callback" bug class as the two /answers tests just above, found by a
+ * systematic sweep of every `activePipelines.has(project.id)` call site in
+ * routes/projects.ts -- 18 routes total had this exact gap (roles/
+ * assumptions/personas add/remove/rename, entity/field add/remove/
+ * duplicate/label, field required/type), not just /answers. This is the
+ * simplest shape: POST /projects/:id/roles has only the activePipelines
+ * guard, no project.status check at all. Uses the same gated-provider-via-
+ * /answers technique this file's own PIPELINE_IN_PROGRESS-rejection tests
+ * already use to open a real activePipelines window (neither /build nor
+ * /refine calls the AI/heuristic provider on a brand-new, still-unbuilt
+ * project the way /answers does, so /answers is this file's own established
+ * way to get a pausable await point while activePipelines is genuinely set).
+ */
+test("POST /projects/:id/roles retried with the same idempotency key while an unrelated /answers call is mid-flight replays the original response, not 409 PIPELINE_IN_PROGRESS", async () => {
+  const gated = createGatedProvider();
+  await withServer(
+    async (baseUrl) => {
+      const token = await signup(baseUrl, "roles-idem-vs-pipeline@example.com");
+      const createRes = await fetch(`${baseUrl}/api/projects`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ description: "A CRM with customers and deals." }),
+      });
+      const { project } = (await createRes.json()) as { project: { id: string } };
+
+      const headers = { ...authHeaders(token), "x-idempotency-key": "roles-vs-pipeline-key" };
+      const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ role: "Race Tester" }),
+      });
+      assert.equal(firstRes.status, 200, "sanity check: the first attempt must genuinely succeed and get cached");
+      const first = await firstRes.json();
+
+      gated.arm();
+      const answersPromise = fetch(`${baseUrl}/api/projects/${project.id}/answers`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ additionalRequest: "Also track invoices." }),
+      });
+      answersPromise.catch(() => {});
+      await gated.waitUntilStarted();
+
+      // A genuine fetchWithWakeRetry replay of the already-finished key
+      // must replay its own cached success -- not get rejected just
+      // because an unrelated call happens to be mid-flight.
+      const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/roles`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ role: "Race Tester" }),
+      });
+      let replay: unknown;
+      try {
+        assert.equal(
+          replayRes.status,
+          200,
+          "a replay with the same idempotency key must replay the cached success, not 409 PIPELINE_IN_PROGRESS for an unrelated in-flight call",
+        );
+        replay = await replayRes.json();
+      } finally {
+        gated.release();
+      }
+      assert.deepEqual(replay, first, "the replay must return the exact same cached response, not a fresh error");
+
+      const answersRes = await answersPromise;
+      assert.equal(answersRes.status, 200, "sanity check: the unrelated call must still complete normally once released");
+    },
+    { provider: gated.provider },
+  );
+});
+
+/**
+ * Round 2188: same bug class, the OTHER guard shape -- a route with BOTH a
+ * `project.status === "built"` check and an activePipelines check, both
+ * moved inside the callback together. Covers the status direction: a
+ * retried PATCH that already succeeded while the project was still unbuilt
+ * must not get a permanent FIELD_EDIT_AFTER_BUILD once the project is
+ * legitimately built in between, mirroring the /answers-vs-build test
+ * above exactly but for this different route/guard pair.
+ */
+test("PATCH .../fields/:fieldName/required retried with the same idempotency key after the project was built in between replays the original response, not 409 FIELD_EDIT_AFTER_BUILD", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-required-idem-vs-build@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } } };
+    const entity = project.spec.entities[0]!;
+    const field = entity.fields.find((f) => f.name !== "name") ?? entity.fields[0]!;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-required-vs-build-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/fields/${field.name}/required`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ required: true }),
+    });
+    assert.equal(firstRes.status, 200, "sanity check: the first attempt must genuinely succeed and get cached");
+    const first = await firstRes.json();
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/fields/${field.name}/required`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ required: true }),
+    });
+    assert.equal(
+      replayRes.status,
+      200,
+      "a replay with the same idempotency key must replay the cached success, not 409 FIELD_EDIT_AFTER_BUILD against the project's now-built state",
+    );
+    const replay = await replayRes.json();
+    assert.deepEqual(replay, first, "the replay must return the exact same cached response, not a fresh error");
+  });
+});
+
+/**
+ * Round 2188: same bug class on a DELETE route, where findEntity/findField
+ * are resolved OUTSIDE withIdempotency's callback (needed to build the
+ * idempotency route key itself, matching this file's own established
+ * convention for every sibling DELETE route) while the status/
+ * activePipelines guards now move inside it. Covers the status direction
+ * for a DELETE instead of a PATCH/POST, confirming the fix shape holds
+ * regardless of which parts of the handler stay outside the callback.
+ */
+test("DELETE .../entities/:entityName/fields/:fieldName retried with the same idempotency key after the project was built in between replays the original response, not 409 FIELD_REMOVE_AFTER_BUILD", async () => {
+  await withServer(async (baseUrl) => {
+    const token = await signup(baseUrl, "field-remove-idem-vs-build@example.com");
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ description: "A CRM with customers and deals." }),
+    });
+    const { project } = (await createRes.json()) as { project: { id: string; spec: { entities: { name: string; fields: { name: string }[] }[] } } };
+    const entity = project.spec.entities.find((e) => e.fields.length > 1)!;
+    const field = entity.fields.find((f) => f.name !== "name")!;
+
+    const headers = { ...authHeaders(token), "x-idempotency-key": "field-remove-vs-build-key" };
+    const firstRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/fields/${field.name}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(firstRes.status, 200, "sanity check: the first attempt must genuinely succeed and get cached");
+    const first = await firstRes.json();
+
+    const buildRes = await fetch(`${baseUrl}/api/projects/${project.id}/build`, { method: "POST", headers: authHeaders(token) });
+    assert.equal(buildRes.status, 200);
+    await collectSSE(buildRes);
+
+    const replayRes = await fetch(`${baseUrl}/api/projects/${project.id}/entities/${entity.name}/fields/${field.name}`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(
+      replayRes.status,
+      200,
+      "a replay with the same idempotency key must replay the cached success, not 409 FIELD_REMOVE_AFTER_BUILD against the project's now-built state",
+    );
+    const replay = await replayRes.json();
+    assert.deepEqual(replay, first, "the replay must return the exact same cached response, not a fresh error");
+  });
+});
+
+/**
  * Round 2134: round 1409's own fix capped each individual answer's length
  * but never the `answers` array's own length -- unlike idea/description/
  * instruction above it in this same file (plain strings, nothing else to
