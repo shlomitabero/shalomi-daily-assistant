@@ -1569,6 +1569,50 @@ test("an incoming message from a WhatsApp privacy-mode 'LID' sender is matched b
 });
 
 /**
+ * Round 2214: every Baileys message -- incoming included -- carries its
+ * own `key.id`, the same field handleMessageUpdates already reads off an
+ * OUTGOING message to correlate a later delivery-status event back to one
+ * row. WhatsApp's own server can redeliver a message with the identical
+ * key.id on reconnect when this app's ack didn't reach it before the
+ * socket dropped (a network blip, or the RESTART_REQUIRED/515 path
+ * handleConnectionUpdate already handles specially) -- before this fix,
+ * handleIncomingMessages never read key.id at all, so that redelivery was
+ * silently stored as a second, indistinguishable row for the same
+ * customer message. Confirms a redelivered message (identical key.id) is
+ * stored only once, while a genuinely different message (no id, or a
+ * different id) is still stored normally.
+ */
+test("a WhatsApp message redelivered with the same key.id after a reconnect is stored only once, not duplicated", async () => {
+  const { manager, createdSockets, db } = setupManager();
+  insertProject(db, project);
+  applyMigrations(db, project.id, project.spec);
+  markProjectBuilt(db, project.id);
+
+  await manager.connect(project.id);
+  createdSockets[0].emitConnectionUpdate({ connection: "open" });
+
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false, id: "3EB0ABCDEF" }, message: { conversation: "hello" } }],
+  });
+  // The exact same message, redelivered by WhatsApp's server after a reconnect.
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false, id: "3EB0ABCDEF" }, message: { conversation: "hello" } }],
+  });
+  // A genuinely different message right after, to confirm the dedup check isn't swallowing everything.
+  createdSockets[0].emitMessagesUpsert({
+    type: "notify",
+    messages: [{ key: { remoteJid: "972501234567@s.whatsapp.net", fromMe: false, id: "3EB0GHIJKL" }, message: { conversation: "second message" } }],
+  });
+
+  const { messages } = listWhatsAppMessages(db, project.id);
+  assert.equal(messages.length, 2, "the redelivered duplicate must not be stored again, but the genuinely different message must still be stored");
+  assert.equal(messages[0].body, "second message");
+  assert.equal(messages[1].body, "hello");
+});
+
+/**
  * Round 1730: round 1729 built the phone-match candidate list once per
  * `upsert.messages` batch instead of once per message, justified entirely
  * by "nothing can change mid-synchronous-batch." That's false for THIS

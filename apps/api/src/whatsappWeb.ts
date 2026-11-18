@@ -118,7 +118,7 @@ export interface BaileysConnectionUpdate {
 }
 
 export interface BaileysIncomingMessage {
-  key: { remoteJid?: string; remoteJidAlt?: string; fromMe?: boolean };
+  key: { remoteJid?: string; remoteJidAlt?: string; fromMe?: boolean; id?: string | null };
   message?: {
     conversation?: string;
     extendedTextMessage?: { text?: string };
@@ -1680,7 +1680,7 @@ export class WhatsAppWebManager {
     // done, keeps round 1729's "build it once" win while restoring the
     // invariant it actually depends on: no yield point between building
     // `candidates` and using it.
-    const resolved: { from: string; text: string }[] = [];
+    const resolved: { from: string; text: string; waMessageId: string | null }[] = [];
     for (const msg of upsert.messages) {
       if (msg.key.fromMe) continue;
       const remoteJid = msg.key.remoteJid;
@@ -1724,14 +1724,26 @@ export class WhatsAppWebManager {
           if (pn) resolvedJid = pn;
         }
       }
-      resolved.push({ from: resolvedJid.split("@")[0], text });
+      // Round 2214: Baileys assigns every message -- incoming included --
+      // its own `key.id`, the exact field `handleMessageUpdates` above
+      // already reads off an OUTGOING message's key to correlate a later
+      // delivery-status event back to one row (see WhatsAppSendResult's
+      // own doc comment). WhatsApp's server can and does redeliver a
+      // message with the identical key.id on reconnect when this app's ack
+      // doesn't reach it before the socket drops (a network blip, or the
+      // very RESTART_REQUIRED/515 path handleConnectionUpdate already
+      // handles specially) -- without capturing it here too, that
+      // redelivery was silently stored as a second, indistinguishable row
+      // for the same customer message, permanent duplicate noise in the
+      // one panel/export this feature exists to keep reliable.
+      resolved.push({ from: resolvedJid.split("@")[0], text, waMessageId: msg.key.id ?? null });
     }
 
     // Round 1729's optimization, now correctly placed: every await above
     // has already happened, so nothing from here on can race a concurrent
     // write to the records `candidates` was built from.
     const candidates = buildPhoneMatchCandidates(this.db, project);
-    for (const { from, text } of resolved) {
+    for (const { from, text, waMessageId } of resolved) {
       const match = findMatchingRecord(this.db, project, from, candidates);
       insertWhatsAppMessage(this.db, {
         projectId,
@@ -1743,6 +1755,7 @@ export class WhatsAppWebManager {
         matchedRecordId: match?.recordId ?? null,
         matchedLabel: match?.label ?? null,
         status: "received",
+        waMessageId,
       });
     }
   }

@@ -111,16 +111,22 @@ export interface WhatsAppMessage {
    */
   hadAttachment: boolean;
   /**
-   * The id Baileys assigned to this outgoing message (its `key.id`),
-   * captured at insert time from performSend's own `WhatsAppSendResult`
-   * -- null for an incoming message (direction: "in", which has no
-   * Baileys-assigned id this app ever sends), a failed send (nothing was
-   * actually sent to correlate), or a row inserted before this column
-   * existed. Lets a later `"messages.update"` delivery-status event
-   * (whatsappWeb.ts's handleMessageUpdates) find this exact row and flip
-   * it from "sent" to "failed" when WhatsApp's own server reports the
-   * send didn't really go through -- see markWhatsAppMessageDeliveryFailed
-   * below.
+   * The id Baileys assigned to this message (its `key.id`). For an
+   * outgoing message, captured at insert time from performSend's own
+   * `WhatsAppSendResult` -- lets a later `"messages.update"`
+   * delivery-status event (whatsappWeb.ts's handleMessageUpdates) find
+   * this exact row and flip it from "sent" to "failed" when WhatsApp's
+   * own server reports the send didn't really go through -- see
+   * markWhatsAppMessageDeliveryFailed below. For an incoming message,
+   * captured by handleIncomingMessages (round 2214 -- every Baileys
+   * message carries a key.id, incoming included; an earlier version of
+   * this comment wrongly assumed otherwise) and used by
+   * insertWhatsAppMessage's own dedup check below, since WhatsApp's
+   * server can redeliver the identical message (same key.id) on
+   * reconnect when this app's ack didn't reach it before the socket
+   * dropped. Null for a failed send (nothing was actually sent to
+   * correlate), a row inserted before this column existed, or an
+   * incoming message from a Baileys version/path that doesn't supply one.
    */
   waMessageId: string | null;
   createdAt: string;
@@ -245,6 +251,19 @@ export function insertWhatsAppMessage(
     waMessageId?: string | null;
   },
 ): WhatsAppMessage {
+  // Round 2214: WhatsApp's own server can redeliver the identical incoming
+  // message (same Baileys key.id) after a reconnect, when this app's ack
+  // didn't reach it before the socket dropped -- see waMessageId's own doc
+  // comment above. Scoped to direction "in" only: an outgoing send's
+  // waMessageId is captured well after this row already exists (from
+  // performSend's own result, via a separate call this function never
+  // makes twice for the same send), so there's nothing to dedupe there.
+  if (message.direction === "in" && message.waMessageId) {
+    const existing = db
+      .prepare(`SELECT * FROM whatsapp_messages WHERE projectId = ? AND direction = 'in' AND waMessageId = ?`)
+      .get(message.projectId, message.waMessageId) as Record<string, unknown> | undefined;
+    if (existing) return rowToMessage(existing);
+  }
   const id = randomUUID();
   const createdAt = new Date().toISOString();
   db.prepare(

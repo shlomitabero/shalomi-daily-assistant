@@ -129,6 +129,79 @@ test("insertWhatsAppMessage records a matched entity record when given one, and 
   assert.equal(unmatched.matchedLabel, null);
 });
 
+/**
+ * Round 2214: WhatsApp's own server can redeliver an incoming message with
+ * the identical Baileys key.id after a reconnect (see waMessageId's own
+ * doc comment above). insertWhatsAppMessage is the one place that can
+ * actually stop that redelivery from becoming a second, indistinguishable
+ * row, since whatsappWeb.ts's handleIncomingMessages has no other state to
+ * recognize a repeat across a process restart. Confirms the dedup is
+ * scoped tightly: direction "in" + same waMessageId is a no-op (returns
+ * the existing row, inserts nothing new), but direction "out" with the
+ * same waMessageId value is unaffected (an outgoing message's own id
+ * space is unrelated to an incoming one, and this path is never actually
+ * exercised the same way in practice -- performSend assigns waMessageId
+ * well after insert, from its own distinct call), and a null/missing
+ * waMessageId never dedupes against anything (two genuinely separate
+ * incoming messages that both lack an id, e.g. from an older Baileys
+ * version, must still both be stored).
+ */
+test("insertWhatsAppMessage does not insert a second row for an incoming message redelivered with the same waMessageId", () => {
+  const db = openDatabase(":memory:");
+  ensureWhatsAppMessagesTable(db);
+
+  const first = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972501234567",
+    toNumber: "15550001111",
+    body: "hello",
+    status: "received",
+    waMessageId: "3EB0ABCDEF",
+  });
+
+  const redelivered = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972501234567",
+    toNumber: "15550001111",
+    body: "hello",
+    status: "received",
+    waMessageId: "3EB0ABCDEF",
+  });
+  assert.equal(redelivered.id, first.id, "a redelivered message with the same waMessageId must return the existing row, not insert a new one");
+
+  const differentMessage = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "in",
+    fromNumber: "972501234567",
+    toNumber: "15550001111",
+    body: "a second, genuinely different message",
+    status: "received",
+    waMessageId: "3EB0GHIJKL",
+  });
+  assert.notEqual(differentMessage.id, first.id);
+
+  const outgoingSharingTheSameId = insertWhatsAppMessage(db, {
+    projectId: "proj1",
+    direction: "out",
+    fromNumber: "15550001111",
+    toNumber: "972501234567",
+    body: "an unrelated outgoing message",
+    status: "sent",
+    waMessageId: "3EB0ABCDEF",
+  });
+  assert.notEqual(outgoingSharingTheSameId.id, first.id, "direction scopes the dedup -- an outgoing message never collides with an incoming one's waMessageId");
+
+  const twoWithoutAnyId = [
+    insertWhatsAppMessage(db, { projectId: "proj1", direction: "in", fromNumber: "972500000000", toNumber: "15550001111", body: "no id A", status: "received" }),
+    insertWhatsAppMessage(db, { projectId: "proj1", direction: "in", fromNumber: "972500000000", toNumber: "15550001111", body: "no id B", status: "received" }),
+  ];
+  assert.notEqual(twoWithoutAnyId[0].id, twoWithoutAnyId[1].id, "two incoming messages that both lack a waMessageId must never be treated as duplicates of each other");
+
+  assert.equal(listWhatsAppMessages(db, "proj1").messages.length, 5);
+});
+
 test("listWhatsAppMessages scopes to the given project and respects the limit", () => {
   const db = openDatabase(":memory:");
   ensureWhatsAppMessagesTable(db);
