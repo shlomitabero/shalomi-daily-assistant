@@ -1331,6 +1331,21 @@ function entityToCsv(entity, records, recordIndexByEntity, orderedFields) {
   return [header, ...rows].join("\\r\\n");
 }
 
+// Round 2206: mirrors the live Forge AI backend's own backup.ts
+// sanitizeZipEntryName exactly -- see its own doc comment there for the
+// full rationale (a "/" in an entity's own display label would otherwise
+// create an unintended nested folder inside the downloaded archive,
+// breaking this feature's own "one flat CSV per entity" promise, and a
+// label that sanitizes to a bare "." or ".." could otherwise read as a
+// real path-traversal segment). Deliberately narrower than a full
+// ASCII-only sanitization: only the characters that are actually unsafe
+// in a zip/filesystem path are replaced, so a real Hebrew entity label
+// stays human-readable in the archive's own file listing.
+function sanitizeZipEntryName(name) {
+  const sanitized = name.replace(/[\\\\/:*?"<>|\\u0000-\\u001f]/g, "_");
+  return sanitized === "." || sanitized === ".." ? \`_\${sanitized}_\` : sanitized;
+}
+
 app.get("/api/backup", (req, res) => {
   const columnOrders = parseColumnOrdersQueryParam(req.query.columnOrders);
   const recordsByEntity = {};
@@ -1341,12 +1356,46 @@ app.get("/api/backup", (req, res) => {
     recordsByEntity[entity.name] = records;
     recordIndexByEntity[entity.name] = new Map(records.map((r) => [Number(r.id), r]));
   }
-  const zipEntries = ENTITIES.map((entity) => ({
-    path: \`\${entity.name}.csv\`,
-    content:
-      "\\uFEFF" +
-      entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
-  }));
+  // Round 2206: mirrors the live Forge AI backend's own round-2100 fix
+  // (backup.ts's generateBackupZipEntries) -- each CSV's own path used to
+  // be built from entity.name (the fixed, always-ASCII internal
+  // identifier), unlike every other export surface this same exported
+  // app already gets right: the single-entity CSV/JSON/ICS download
+  // buttons below (web/src/components/EntityView.jsx's own
+  // entityDisplayLabel), the live backend's own whole-project backup
+  // (round 2100), and this very server's own combined calendar feed just
+  // below (feedEntityDisplayLabel). A Hebrew-labeled "Customer" entity
+  // (label "לקוחות", name "Customer") exported and deployed showed
+  // "לקוחות.csv" from every one of those other surfaces, but "Customer.csv"
+  // -- the internal, user-invisible technical identifier -- from
+  // "Backup all data" alone. feedEntityLabelOccurrences/
+  // feedEntityDisplayLabel are this server template's own pre-existing
+  // copy of the identical pair (round 1280, for the calendar feed's own
+  // identical need), reused here rather than duplicated a third time.
+  // Unlike entity.name, a label has no uniqueness guarantee from
+  // ProductSpecSchema, so this loop carries the same case-insensitive
+  // numeric-suffix dedup backup.ts's own round-2100 fix added for the
+  // identical reason.
+  const backupLabelOccurrences = feedEntityLabelOccurrences(ENTITIES);
+  const zipEntries = [];
+  for (const entity of ENTITIES) {
+    const baseName = sanitizeZipEntryName(feedEntityDisplayLabel(entity, backupLabelOccurrences));
+    // Named entryPath, not path -- this route's own enclosing module
+    // already imports the real Node "path" module (used by the uploads
+    // static route elsewhere in this same generated server.js).
+    let entryPath = \`\${baseName}.csv\`;
+    if (zipEntries.some((e) => e.path.toLowerCase() === entryPath.toLowerCase())) {
+      let suffix = 2;
+      while (zipEntries.some((e) => e.path.toLowerCase() === \`\${baseName} (\${suffix}).csv\`.toLowerCase())) suffix += 1;
+      entryPath = \`\${baseName} (\${suffix}).csv\`;
+    }
+    zipEntries.push({
+      path: entryPath,
+      content:
+        "\\uFEFF" +
+        entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
+    });
+  }
   // Round 1604: mirrors routes/projects.ts's own round-1557 fix for the
   // identical live-app sibling route -- buildZip throws a plain Error
   // (message containing "Zip64") once one of its own writer limits is

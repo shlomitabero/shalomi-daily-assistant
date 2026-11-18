@@ -20714,7 +20714,13 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
     const extractDir = path.join(dir, "extracted");
     execFileSync("unzip", ["-o", zipPath, "-d", extractDir], { stdio: "pipe" });
 
-    const customerCsv = readFileSync(path.join(extractDir, "Customer.csv"), "utf8");
+    // Round 2206: this project's own Customer/Service entities are
+    // declared with real Hebrew labels ("לקוחות"/"שירותים") -- the ZIP
+    // entry for each entity's own CSV must be named after that label, not
+    // the internal ASCII "name", the same way every other export surface
+    // in this generated app already does (see renderServerJs's own
+    // round-2206 fix and doc comment).
+    const customerCsv = readFileSync(path.join(extractDir, "לקוחות.csv"), "utf8");
     assert.match(customerCsv, /^﻿/, "expected a UTF-8 BOM so Excel opens Hebrew text correctly");
     assert.match(customerCsv, /Dana Levi/);
     assert.match(customerCsv, /הצליח/, "expected the enum's translated label, not the raw stored value 'Won'");
@@ -20724,8 +20730,75 @@ test("the generated server.js's /api/backup endpoint returns a real ZIP with one
       "the formula-like name must be guarded with a leading single quote, not left as a live formula",
     );
 
-    const serviceCsv = readFileSync(path.join(extractDir, "Service.csv"), "utf8");
+    const serviceCsv = readFileSync(path.join(extractDir, "שירותים.csv"), "utf8");
     assert.match(serviceCsv, /Haircut/);
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2206: mirrors the live Forge AI backend's own identical round-2100
+ * test (backup.test.ts) -- an entity's own display label has no uniqueness
+ * guarantee from ProductSpecSchema (only its internal name does), so two
+ * entities relabeled to text that only collides once sanitizeZipEntryName
+ * strips path separators (e.g. "A/B" and "A:B", both -> "A_B") must still
+ * produce two distinct ZIP entries, not one silently overwriting the other.
+ */
+test("the generated server's /api/backup endpoint still produces two distinct ZIP entries for two entities whose labels only collide once sanitized", async () => {
+  const collidingLabelsProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { ...project.spec.entities[0], label: "A/B" },
+        { ...project.spec.entities[1], label: "A:B" },
+      ],
+    },
+  };
+  const files = generateExportFiles(collidingLabelsProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-label-collision-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 47000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const backupRes = await fetch(`http://localhost:${port}/api/backup`);
+    assert.equal(backupRes.status, 200);
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    const listing = execFileSync("unzip", ["-l", zipPath], { encoding: "utf8" });
+    assert.match(listing, /A_B\.csv/, "the first entity's label must sanitize to A_B.csv");
+    assert.match(listing, /A_B \(2\)\.csv/, "the second entity's own, differently-spelled label must not silently overwrite the first once both sanitize to the same base name");
   } finally {
     child.kill();
     rmSync(dir, { recursive: true, force: true });
@@ -20798,7 +20871,9 @@ test("the generated server's /api/backup endpoint honors a columnOrders query pa
     const extractDir = path.join(dir, "extracted");
     execFileSync("unzip", ["-o", zipPath, "-d", extractDir], { stdio: "pipe" });
 
-    const customerCsv = readFileSync(path.join(extractDir, "Customer.csv"), "utf8").replace(/^﻿/, "");
+    // Round 2206: named after the entity's real label ("לקוחות"), not its
+    // internal ASCII name -- see the preceding test's own identical note.
+    const customerCsv = readFileSync(path.join(extractDir, "לקוחות.csv"), "utf8").replace(/^﻿/, "");
     const [header, ...rows] = customerCsv.split("\r\n");
     assert.equal(header, "סטטוס,שם", "the CSV header must follow the columnOrders query param, not the entity's declared field order");
     assert.equal(rows[0], "הצליח,Dana Levi", "each row's own values must follow the exact same reordering as the header");
@@ -20917,6 +20992,16 @@ test("the exported server.js's own /api/backup route returns a clear 422 instead
     };
   }
 
+  // Round 2206: the route now also calls sanitizeZipEntryName (defined
+  // just above app.get("/api/backup", ...) in the real generated file,
+  // so outside this slice's own start point) and
+  // feedEntityLabelOccurrences/feedEntityDisplayLabel (the server
+  // template's own pre-existing pair, defined further down in the real
+  // file) -- all three are free variables from this extracted handler's
+  // own point of view and must be supplied the same way every other
+  // dependency already is. Trivial name-passthrough stubs are enough
+  // here: this test only exercises the Zip64 catch branch, never the
+  // real label-based naming (covered by the end-to-end backup tests).
   const buildHandler = (buildZipStub: (entries: unknown[]) => unknown) =>
     new Function(
       "ENTITIES",
@@ -20927,6 +21012,9 @@ test("the exported server.js's own /api/backup route returns a clear 422 instead
       "entityToCsv",
       "parseColumnOrdersQueryParam",
       "buildZip",
+      "sanitizeZipEntryName",
+      "feedEntityLabelOccurrences",
+      "feedEntityDisplayLabel",
       `const handler = ${handlerSrc}\nreturn handler;`,
     )(
       [{ name: "Thing" }],
@@ -20937,6 +21025,9 @@ test("the exported server.js's own /api/backup route returns a clear 422 instead
       () => "",
       () => ({}),
       buildZipStub,
+      (name: string) => name,
+      () => ({}),
+      (entity: { name: string }) => entity.name,
     ) as (req: unknown, res: ReturnType<typeof makeRes>) => void;
 
   const zip64Handler = buildHandler(() => {
