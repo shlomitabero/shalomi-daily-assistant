@@ -149,7 +149,18 @@ export default function Dashboard() {
       to: '/opportunities', cta: 'להזדמנויות',
     };
   } else if (pendingApprovals.length > 0 && settings.mode === 'approve') {
-    nextStep = { text: `${pendingApprovals.length} פעולות ממתינות לאישור שלך ולא יתבצעו בלעדיו.`, to: '/approvals', cta: 'לאישורים' };
+    // pendingApprovals only ever holds approvals.js's own status: 'approved'
+    // records (filtered that way right where `approvals` state is set,
+    // above) whose opportunity is still a draft - i.e. the owner ALREADY
+    // approved these; what's actually missing is the separate "פרסם מוצר"
+    // click on the opportunity's own card (OpportunityDetail.jsx's publish
+    // button stays gated on this same hasPublishApproval check). The
+    // previous wording here said "ממתינות לאישור שלך" (waiting for YOUR
+    // approval) - backwards from what's true, and inconsistent with the
+    // Approvals page's own "מאושר" badge on these exact same rows and with
+    // OpportunityDetail.jsx's own correct "הפרסום אושר — אפשר ללחוץ 'פרסם
+    // מוצר'" message for the identical state.
+    nextStep = { text: `${pendingApprovals.length} פעולות אושרו וממתינות שתבצע אותן בפועל (לחיצה על "פרסם מוצר" בכרטיס ההזדמנות).`, to: '/approvals', cta: 'לאישורים' };
   } else if (!settings.budgetConfigured) {
     // Publishing the one implemented revenue path costs $0 (no ad spend, no
     // COGS — see autonomousScan.js), so a missing budget never actually
@@ -307,7 +318,11 @@ export default function Dashboard() {
 
       <section className="section">
         <div className="section-header">
-          <h2>ממתין לאישור {approvalsUnreliable ? '' : `(${pendingApprovals.length})`}</h2>
+          {/* "ממתין לאישור" (waiting for approval) was backwards for what
+              this section actually lists - see nextStep's own comment above
+              for why: these are already-approved records, only waiting on
+              the owner's separate publish click, not on another approval. */}
+          <h2>אושר, ממתין לביצוע {approvalsUnreliable ? '' : `(${pendingApprovals.length})`}</h2>
           <Link className="link" to="/approvals">הכל ←</Link>
         </div>
         {/* Unlike "הזדמנויות פעילות" right above, this section showed only a
@@ -329,7 +344,7 @@ export default function Dashboard() {
         {approvalsUnreliable ? (
           <p className="form-error">לא ניתן לטעון אישורים כרגע — {sectionErrors.approvals || sectionErrors.opportunities}</p>
         ) : pendingApprovals.length === 0 ? (
-          <p className="hint">אין כרגע שום פעולה שממתינה לאישור שלך.</p>
+          <p className="hint">אין כרגע שום פעולה מאושרת שממתינה לביצוע בפועל.</p>
         ) : null}
         {!approvalsUnreliable && pendingApprovals.slice(0, 3).map((a) => {
           const opp = opportunities.find((o) => o.id === a.opportunityId);
