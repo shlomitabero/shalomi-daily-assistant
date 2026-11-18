@@ -2252,7 +2252,11 @@ test("App's openExistingProject routes a built project to the live preview and a
   assert.ok(handlerMatch, "expected to find openExistingProject in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(project: Project, currentUser: { id: string } | null) {
+  function run(
+    project: Project,
+    currentUser: { id: string } | null,
+    busyFlags: { busy: boolean; enhanceBusy: boolean; templateBusy: string | null } = { busy: false, enhanceBusy: false, templateBusy: null },
+  ) {
     const state: {
       project: Project | null;
       activeEntity: string | null;
@@ -2273,6 +2277,9 @@ test("App's openExistingProject routes a built project to the live preview and a
       myRole: "unset",
     };
     const fn = new Function(
+      "busy",
+      "enhanceBusy",
+      "templateBusy",
       "setProject",
       "setActiveEntity",
       "setSpecProvider",
@@ -2286,6 +2293,9 @@ test("App's openExistingProject routes a built project to the live preview and a
       "listCollaborators",
       `${code}\nreturn openExistingProject;`,
     )(
+      busyFlags.busy,
+      busyFlags.enhanceBusy,
+      busyFlags.templateBusy,
       (p: Project) => (state.project = p),
       (name: string | null) => (state.activeEntity = name),
       (v: string | null) => (state.specProvider = v),
@@ -2374,6 +2384,47 @@ test("App's openExistingProject routes a built project to the live preview and a
     noTimestampResult.markSeenCalls,
     [],
     "a shared project with no sharedAt (shouldn't happen for a real collaborator row, but must never crash) must not call markSharedProjectSeen",
+  );
+
+  /**
+   * Round 2238: handleDescribe/handleEnhanceAndBuild/handleUseTemplate each
+   * end by calling this exact function once their own createProject/
+   * enhanceIdea/createProjectFromTemplate request resolves, with no check
+   * that the user hasn't since navigated elsewhere -- and this is also the
+   * one function the "My Projects" list's own "Open" row button calls, with
+   * no guard at all before this round. Without this guard, opening a
+   * different, already-existing project while one of those three requests
+   * was still in flight navigated correctly at first, but once the
+   * abandoned request finally resolved, its own stale completion silently
+   * yanked the user back onto the brand-new project it had just created.
+   */
+  const busyResult = run(builtProject, owner, { busy: true, enhanceBusy: false, templateBusy: null });
+  assert.equal(busyResult.project, null, "must never navigate while busy (a project creation request) is in flight");
+  assert.equal(busyResult.view, null, "must leave view untouched while busy is true");
+
+  const enhanceBusyResult = run(builtProject, owner, { busy: false, enhanceBusy: true, templateBusy: null });
+  assert.equal(enhanceBusyResult.project, null, "must never navigate while enhanceBusy is true");
+  assert.equal(enhanceBusyResult.view, null, "must leave view untouched while enhanceBusy is true");
+
+  const templateBusyResult = run(builtProject, owner, { busy: false, enhanceBusy: false, templateBusy: "tpl-1" });
+  assert.equal(templateBusyResult.project, null, "must never navigate while templateBusy is set");
+  assert.equal(templateBusyResult.view, null, "must leave view untouched while templateBusy is set");
+});
+
+/**
+ * Round 2238: a correct guard inside openExistingProject alone doesn't
+ * disable the "My Projects" list's own "Open" row button -- a user could
+ * still click it, even if the click would then no-op, with no visual
+ * feedback that anything is wrong.
+ */
+test("App's 'My Projects' Open row button is disabled while busy, enhanceBusy, or templateBusy is set, matching openExistingProject's own guard", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const openBtnSrc = appSrc.match(/className="my-project-open"[\s\S]*?\n\s*>/)?.[0];
+  assert.ok(openBtnSrc, "expected to find the my-project-open button in App.tsx");
+  assert.match(
+    openBtnSrc!,
+    /disabled=\{busy \|\| enhanceBusy \|\| templateBusy !== null\}/,
+    "the Open button's disabled attribute must include busy/enhanceBusy/templateBusy",
   );
 });
 

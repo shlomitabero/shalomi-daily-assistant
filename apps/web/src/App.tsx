@@ -1864,7 +1864,28 @@ function AppContent() {
     };
   }, [project?.id, project?.status]);
 
+  /**
+   * Round 2238: the home screen renders the "My Projects" list and the
+   * idea-description/template-gallery creation form at the same time, and
+   * handleDescribe/handleEnhanceAndBuild/handleUseTemplate each end by
+   * calling this same function once their own createProject/enhanceIdea/
+   * createProjectFromTemplate request resolves -- unconditionally, with no
+   * check that the user hasn't since navigated elsewhere. Without this
+   * guard, starting one of those requests, then (while it's still in
+   * flight) clicking an existing project's own "Open" row button here
+   * navigated correctly at first, but once the abandoned request finally
+   * resolved its stale completion silently yanked the user back onto the
+   * brand-new project it had just created, discarding whatever they were
+   * doing on the existing project's screen with no warning or recovery.
+   * Confirmed live: opened "Restaurant Management" while a held
+   * createProject request for "Flower shop..." was in flight, watched the
+   * screen get silently replaced by the Flower shop project once that
+   * request resolved ~4s later. Gating here (rather than only on the
+   * button below) also protects handleDuplicateProject's own identical
+   * call to this function after cloneProject() resolves.
+   */
   function openExistingProject(p: Project) {
+    if (busy || enhanceBusy || templateBusy !== null) return;
     setProject(p);
     setActiveEntity(p.spec.entities[0]?.name ?? null);
     setSpecProvider(null);
@@ -2904,7 +2925,15 @@ function AppContent() {
                       >
                         {pinnedIds.has(p.id) ? "⭐" : "☆"}
                       </button>
-                      <button type="button" className="my-project-open" onClick={() => openExistingProject(p)}>
+                      <button
+                        type="button"
+                        className="my-project-open"
+                        onClick={() => openExistingProject(p)}
+                        // Round 2238: see openExistingProject's own round-2238
+                        // comment above for why a creation flow in flight
+                        // must block navigating to a different project here.
+                        disabled={busy || enhanceBusy || templateBusy !== null}
+                      >
                         <strong>{p.name}</strong>
                         {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
                         {p.ownerId !== user.id && isNewShare(seenShared, p.id, p.sharedAt) && (
