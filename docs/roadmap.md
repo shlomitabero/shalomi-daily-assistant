@@ -51549,3 +51549,17 @@ Round 880 excluded "navigation"/"hamburger"/"dropdown"/"drop-down"/"side"/"conte
 **Tests:** added a new test alongside round 880's own test, covering a UI cue after "burger", a UI cue before "burger", and a genuine burger-restaurant description with no UI cue at all (the exact case a blanket exclusion would have broken). Verified fail-before/pass-after via `git stash` -- failed with the exact predicted assertion message before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 376/376 (was 375).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2242: Volunteer's determiner guard still missed the identical everyday verb sense phrased with a bare noun -- "volunteer email addresses" instead of "volunteer their email address"
+
+Round 2108 (and rounds 2131/2150 after it) excluded "volunteer" + a determiner (a/an/our/their/his/her/its/my/your) + noun from matching the nonprofit Volunteer entity, to stop the everyday verb sense ("offer something unprompted") from being misread as the donate-your-time entity. That guard only covers a direct object introduced by a determiner -- the identical verb sense phrased with a bare plural/mass noun, with no determiner at all ("volunteer email addresses", "volunteer contact details", "volunteer feedback", "volunteer suggestions"), slipped past it entirely and still matched.
+
+**Confirmed via direct `HeuristicSpecProvider.generate()` calls:** "A generic signup form where users can optionally volunteer email addresses too." (and the contact-details/feedback/suggestions variants) each matched ONLY `['Volunteer']`, the identical catch-all-losing failure every prior round on this keyword already describes, while the control "...volunteer their email address too." correctly matched `['Item']`.
+
+**The fix:** extended the existing "information"-only bare-noun exclusion (round 2108's own second lookahead) to the handful of other common nouns people "volunteer" in this everyday sense -- info/details/feedback/suggestions/comments/addresses/numbers/contacts -- while deliberately leaving genuine nonprofit compound nouns ("volunteer hours", "volunteer shift", "volunteer coordinators") and the plain subject usage ("volunteers and their shifts") untouched, since none of those nouns are in this short, narrow list. Validated the final regex against 19 hand-checked cases (the 4 bug reproductions, the 3 prior rounds' determiner cases, and compound-noun/subject-usage controls) before writing it into the fix.
+
+**Not applicable:** no `codegen.ts`/`twin.ts` duplicate -- this keyword-matching logic is confined entirely to `packages/spec-engine`'s spec-generation-time heuristic provider, same as rounds 2240/2241's findings.
+
+**Tests:** added a new test alongside the existing round-2108/2131/2150 tests on this same keyword, covering all 4 bare-noun reproductions plus a regression check that the real nonprofit description still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test, to confirm it failed for the exact predicted reason before the fix) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 377/377 (was 376), no build script for this package (tests only).
+
+Live: https://forge-ai-m7p7.onrender.com
