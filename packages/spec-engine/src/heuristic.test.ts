@@ -1530,6 +1530,42 @@ test("Courier's font exclusion still holds when 'font' is mentioned only once, w
   assert.ok(!invoiceBuilder.entities.some((e) => e.name === "Courier"), "an invoice builder that names the font list before saying 'font' once must not get a spurious Courier entity");
 });
 
+/**
+ * Round 2243: Courier's bare "driver(s)" keyword collides with the
+ * extremely common tech sense -- a device/hardware driver -- with zero
+ * connection to a delivery driver, the same ordinary-word-vs-software-term
+ * collision this rule's own "courier" keyword already had fixed (round
+ * 2106) for font names. Confirmed live before this fix: each description
+ * below matched ONLY ['Courier'], fabricating a bogus delivery entity and
+ * losing the real IT-inventory domain entirely.
+ */
+test("Courier's 'driver(s)' keyword doesn't spuriously trigger on a device/hardware driver, but still matches a genuine delivery-driver description", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const deviceDrivers = await provider.generate(
+    "A dashboard to track device drivers and firmware versions for our company's hardware fleet.",
+  );
+  assert.ok(!deviceDrivers.entities.some((e) => e.name === "Courier"), "'device drivers' must not get a spurious Courier entity");
+
+  const printerDrivers = await provider.generate(
+    "An app to manage printer drivers, their versions, and which machines have them installed.",
+  );
+  assert.ok(!printerDrivers.entities.some((e) => e.name === "Courier"), "'printer drivers' must not get a spurious Courier entity");
+
+  const graphicsDrivers = await provider.generate(
+    "A tool for IT to keep an inventory of graphics card drivers across all office computers.",
+  );
+  assert.ok(!graphicsDrivers.entities.some((e) => e.name === "Courier"), "'graphics card drivers' must not get a spurious Courier entity");
+
+  const usbDrivers = await provider.generate("An IT helpdesk tool for tracking which workstations need USB drivers updated.");
+  assert.ok(!usbDrivers.entities.some((e) => e.name === "Courier"), "'USB drivers' must not get a spurious Courier entity");
+
+  // The fix must not lose real recall: a real delivery/courier description
+  // using bare "drivers" with no device/hardware noun before it must still match.
+  const delivery = await provider.generate("A courier app to track drivers delivering packages to customers.");
+  assert.ok(delivery.entities.some((e) => e.name === "Courier"), "a real delivery-driver description must still get a Courier entity");
+});
+
 test("recognizes real-estate, education, healthcare, and project-management descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

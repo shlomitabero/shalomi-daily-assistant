@@ -867,7 +867,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // courier/delivery description essentially never mentions the word
       // "font" anywhere in the same description.
       /(?<!\bfont\b[\s\S]*)\bcouriers?\b(?!\s+new\b)(?![\s\S]*?\bfont\b)/,
-      /\bdriver(s)?\b/, "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
+      // Round 2243: bare "driver(s)" collides with the extremely common
+      // tech sense -- a device/hardware driver (printer driver, graphics
+      // driver, USB driver, etc.) -- with zero connection to a delivery
+      // driver, the same ordinary-word-vs-software-term collision this
+      // very rule's own "courier" keyword already had fixed above (round
+      // 2106) for font names. Confirmed live via the real matchEntities:
+      // "A dashboard to track device drivers and firmware versions..."
+      // and "An app to manage printer drivers, their versions..." both
+      // matched ONLY ['Courier'], fabricating a bogus delivery entity
+      // (vehicleType/status fields) and losing the real IT-inventory
+      // domain entirely -- the identical catch-all-losing severity every
+      // other keyword-collision fix in this file describes. Excluded the
+      // specific device/hardware noun immediately before "driver(s)" --
+      // device/printer/graphics card/audio/network/display/usb/gpu/
+      // hardware/software/chipset/bluetooth/wifi/sound/video/webcam --
+      // the exact collocation this tech sense is always phrased with, so
+      // the real courier sense ("our delivery drivers", "assign drivers
+      // to routes") is untouched.
+      /\b(?<!(?:device|printer|graphics card|audio|network|display|usb|gpu|hardware|software|chipset|bluetooth|wifi|sound|video|webcam)\s)driver(s)?\b/,
+      "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
       // "delivery person" had no plural entry (round 584). Unlike this
       // file's other missing-plural fixes (576-583, all Hebrew ה→ות or
       // sofit-letter swaps, or an irregular Hebrew construct plural),
