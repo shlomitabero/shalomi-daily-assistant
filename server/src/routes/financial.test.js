@@ -94,6 +94,33 @@ test('addToWatchlist stores an honest disconnected entry when no market data key
   }
 });
 
+test('addToWatchlist logs which symbol was added, mirroring deleteWatchlistEntry\'s own removal log', async () => {
+  // Until now this was the one half of the add/remove pair with no success
+  // trace at all - deleteWatchlistEntry already logs remove_from_watchlist
+  // on every removal, but adding a symbol left nothing in the activity log
+  // unless the quote fetch itself happened to fail.
+  __resetForTests();
+  const original = process.env.MARKET_DATA_API_KEY;
+  delete process.env.MARKET_DATA_API_KEY;
+  try {
+    await addToWatchlist({ body: { symbol: 'AAPL' } }, makeRes());
+    const logged = db.actions_log.where((a) => a.type === 'add_to_watchlist')[0];
+    assert.equal(logged.result, 'success');
+    assert.equal(logged.detail.symbol, 'AAPL');
+  } finally {
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+  }
+});
+
+test('addToWatchlist does not log a success entry when the symbol is rejected or already tracked', async () => {
+  __resetForTests();
+  await addToWatchlist({ body: {} }, makeRes());
+  await addToWatchlist({ body: { symbol: 'A'.repeat(21) } }, makeRes());
+  db.financial_watchlist.insert({ id: 'wl_1', symbol: 'AAPL' });
+  await addToWatchlist({ body: { symbol: 'AAPL' } }, makeRes());
+  assert.equal(db.actions_log.where((a) => a.type === 'add_to_watchlist').length, 0);
+});
+
 test('addToWatchlist fetches and stores a real quote when market data is connected', async () => {
   __resetForTests();
   await withMarketDataKey(async () => {

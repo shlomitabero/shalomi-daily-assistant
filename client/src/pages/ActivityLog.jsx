@@ -166,6 +166,12 @@ export default function ActivityLog() {
             {a.type === 'remove_from_watchlist' && a.detail?.symbol && (
               <p className="hint log-reason">{a.detail.symbol}</p>
             )}
+            {/* addToWatchlist's own mirror of the above - without this the
+                row just said "הוספת סימבול למעקב - הצלחה" with no way to
+                tell which symbol was actually added. */}
+            {a.type === 'add_to_watchlist' && a.detail?.symbol && (
+              <p className="hint log-reason">{a.detail.symbol}</p>
+            )}
             {/* routes/settings.js now logs the exact before/after diff for
                 every settings save that actually changed something - without
                 this the row just said "עדכון הגדרות - הצלחה" with no way to

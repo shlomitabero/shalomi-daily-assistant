@@ -103,6 +103,11 @@ export async function addToWatchlist(req, res) {
       connected: isMarketDataConnected(),
       createdAt: new Date().toISOString(),
     });
+    // deleteWatchlistEntry (below) already logs its own mirror action on
+    // removal — adding a symbol was the one side of that pair with no trace
+    // at all on success (only a market_quote_fetch entry, and only on the
+    // narrower case where fetching its price also failed).
+    logAction({ type: 'add_to_watchlist', detail: { symbol: normalizedSymbol }, result: 'success' });
     res.status(201).json({ entry });
   } finally {
     symbolsBeingAdded.delete(normalizedSymbol);

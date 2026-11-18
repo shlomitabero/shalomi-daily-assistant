@@ -25,6 +25,7 @@ export const ACTION_TYPE_LABEL = {
   client_error: 'תקלה במסך',
   login_attempt: 'ניסיון התחברות',
   market_quote_fetch: 'שליפת מחיר שוק',
+  add_to_watchlist: 'הוספת סימבול למעקב',
   remove_from_watchlist: 'הסרת סימבול ממעקב',
   settings_updated: 'עדכון הגדרות',
   webhook_signature_failed: 'חתימת webhook לא תקינה',
