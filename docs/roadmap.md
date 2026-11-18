@@ -51147,3 +51147,17 @@ React StrictMode intentionally mounts, cleans up, and re-mounts every effect onc
 The other lead (a full read of `calendarFeed.ts`/`calendarIcs.ts`/`webhookIn.ts`) was also pursued this round and found nothing credible there -- both files are exceptionally densely hardened already (56 and 22 round-history comments respectively).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2212: mounted-ref one-way-latch grep sweep across the whole codebase -- the WhatsAppPanel pattern was a one-off, nothing else found
+
+Following round 2211's WhatsAppPanel fix, this round swept the entire codebase for the same "mounted ref that's a one-way latch" pattern before falling back to other techniques.
+
+**Operational note:** the first attempt at this round got stuck for over three hours on an unanswered tool-permission prompt in a fully unattended session, with no code change produced. Rather than wait indefinitely, a second attempt was launched with explicit guardrails (no global installs, no elevated permissions, abort and pivot to pure grep/Read if any tool call risks a permission prompt) -- it completed cleanly in under 4 minutes using only grep and file reads, no browser or dev server needed at all.
+
+**The sweep:** grepped `useRef(true)`/`useRef(false)`/`useRef<boolean>` and any "mounted"-named ref across every `apps/web/src/*.tsx`/`*.ts` file and `apps/api/src/codegen.ts`'s generated-app template. Confirmed `WhatsAppPanel.tsx`'s `mountedRef` is the ONLY ref anywhere in the codebase with genuine "is this component instance still alive" semantics -- and it already carries round 2211's fix. Every other `useRef(true/false)` hit traced to a write site in its own file is a structurally different kind of ref: two-way flags toggled both ways during normal interaction (`AutomationsPanel.tsx`'s `toFieldEligibleForUpgradeRef`, the six label/name-editor components' `cancelling` refs), or one-shot "do X once on next render" flags consumed and reset within a single component lifetime, unrelated to mount/unmount tracking (`EntityPanel.tsx`/`codegen.ts`'s `pendingCreateFocusRef`/`suppressCellBlurCommitRef`, which already have their own separate, correct StrictMode-era handling from round 2048/2208). None of `CollaboratorsPanel.tsx`, `AutomationsPanel.tsx`, `BusinessTwinPanel.tsx`, `GlobalSearchPanel.tsx`, or `HistoryPanel.tsx` declare any mount-tracking ref at all. The WhatsAppPanel bug was genuinely a one-off, not a recurring class.
+
+**Fallback:** full reads of three previously under-audited files by lowest round-comment density -- `BuildProgress.tsx` (777 lines, 8 round-comments), `AuthScreen.tsx` (629 lines, 13 round-comments), and `backup.ts` (648 lines, 16 round-comments, its ZIP-path sanitization/collision logic traced end-to-end against ~10 historical fix rounds) -- plus a partial read (~1700 of 2414 lines) of `automations.ts`'s trigger-matching, SSRF webhook-URL blocklist, and scheduled-rule-firing logic. No bug found in any of them; all four are internally consistent and correctly handle the edge cases their own comment history already addresses.
+
+A concrete next lead was identified but not pursued this round: `automations.ts` lines ~1616-2262 (fireRule's collaborator-notification logic and the auto-disable-on-repeated-failure mechanics) is the one chunk of that file not yet read this routine.
+
+Live: https://forge-ai-m7p7.onrender.com
