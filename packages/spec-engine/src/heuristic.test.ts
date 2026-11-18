@@ -1435,6 +1435,36 @@ test("Event's 'conference' keyword doesn't spuriously trigger on 'video conferen
 });
 
 /**
+ * Round 2244: round 870's own two exclusions ("video " before, " call(s)"
+ * after) missed an equally common third phrase in the same shape --
+ * "conference room(s)", the ordinary term for office meeting-room
+ * infrastructure in a room-booking/scheduling app, with zero connection to
+ * planning a wedding or trade show. Confirmed live before this fix: "A
+ * booking system for conference rooms in our office building" matched
+ * ['Appointment', 'Event'], and "An app to reserve conference rooms for
+ * meetings" matched ONLY ['Event'] -- the generated app ended up entirely
+ * about wedding/trade-show planning fields (venue/capacity/status) for
+ * what should have been a plain room reservation tool.
+ */
+test("Event's 'conference' keyword doesn't spuriously trigger on 'conference room(s)' either, but still matches a genuine conference-planning description", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const roomBooking = await provider.generate("A booking system for conference rooms in our office building.");
+  assert.ok(!roomBooking.entities.some((e) => e.name === "Event"), "'conference rooms' must not spuriously match Event");
+
+  const roomReservation = await provider.generate("An app to reserve conference rooms for meetings.");
+  assert.ok(!roomReservation.entities.some((e) => e.name === "Event"), "'conference rooms' must not spuriously match Event");
+
+  const roomScheduling = await provider.generate("Manage room scheduling for office conference rooms.");
+  assert.ok(!roomScheduling.entities.some((e) => e.name === "Event"), "'conference rooms' must not spuriously match Event");
+
+  // The fix must not lose real recall: a standalone conference-organizing
+  // description, with no "room" nearby, must still match.
+  const realConference = await provider.generate("An app to help organize a yearly conference, including attendee registration.");
+  assert.ok(realConference.entities.some((e) => e.name === "Event"), "a standalone 'conference' must still match Event");
+});
+
+/**
  * Regression test for the same bug class round 279 fixed for Order's
  * "order" keyword, found by this round's Explore survey re-checking the
  * REST of domainEntities.ts's keyword lists via real execution (not just

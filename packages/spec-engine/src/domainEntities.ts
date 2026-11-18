@@ -1409,7 +1409,20 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // combination) is enough to exclude a match, while a bare
       // standalone "conference" (e.g. "organize a conference every year")
       // still matches.
-      /(?<!\bvideo\s)\bconference(s)?\b(?!\s*calls?\b)/,
+      //
+      // Round 2244: the same two exclusions missed an equally common third
+      // phrase in this shape -- "conference room(s)", the ordinary term for
+      // office meeting-room infrastructure in a room-booking/scheduling
+      // app, with zero connection to planning a wedding or trade show.
+      // Confirmed live: "A booking system for conference rooms in our
+      // office building" matched ['Appointment', 'Event'], and "An app to
+      // reserve conference rooms for meetings" matched ONLY ['Event'] --
+      // the generated app ended up entirely about wedding/trade-show
+      // planning fields (venue/capacity/Planned-Confirmed-Completed) for
+      // what should have been a plain room reservation. Added "room(s)"
+      // immediately after "conference" as a third, independent exclusion,
+      // mirroring the existing "call(s)" one exactly.
+      /(?<!\bvideo\s)\bconference(s)?\b(?!\s*(?:calls?|rooms?)\b)/,
       "wedding", "weddings", "trade show",
       "אירוע", "אירועים",
       // Bare "כנס" (round 562) is a substring of common כ.נ.ס
