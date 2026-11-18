@@ -51111,3 +51111,21 @@ Following round 2208's success with live interactive Playwright testing (a React
 **Conclusion:** nothing credible found after a genuine, multi-pronged attempt. All five areas examined already carry extensive round-numbered fix history in their own source comments, consistent with round 2207's earlier observation that heavily-iterated areas tend to already be solid. Round 2208's live-testing technique remains promising in principle but didn't turn up anything new this time outside its original (delete/undo) target -- board/kanban drag-and-drop in particular remains genuinely unexercised by any automated technique so far in this sandbox and is worth real coverage if headed-browser tooling ever becomes available.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2210: live interactive survey of Automations UI, CSV round-trip, Business Twin, and collaborator/viewer enforcement -- nothing credible found
+
+Continuing round 2208/2209's live-interactive-testing technique against four more areas not yet covered that way.
+
+**Setup:** real stack running locally (API + Vite dev server against a fresh SQLite db), driven by a real headless Chromium via Playwright, watching console/pageerror/network throughout, with a second real account created to test the viewer role.
+
+**Automations Panel UI** (85 round-comments in its own source -- heavily audited already, but never live-UI-tested before): created a webhook rule, confirmed single POST on create (no duplicate), confirmed the schedule-trigger's day-checkbox validation actually disables/enables the Create button live (not just in source), confirmed the Entity picker is genuinely `disabled` in the live DOM while editing an existing rule. No duplicate requests, no console errors.
+
+**CSV import/export round-trip** (never live-tested before): exported and re-imported the same CSV for two different entities (one with a relation display-label column and an enum column); both came back as "0 new, N updated" with exactly the expected number of PATCH requests and no stray POSTs. Also diffed `entityFormatting.ts`'s CSV helpers against their `codegen.ts` counterparts line-by-line (the technique that worked in rounds 2205/2206) -- every past fix (rounds 2072/2118/2119/1925/1993) is faithfully ported, no new parity gap.
+
+**Business Twin, live for the first time** (round 2209 only code-read it): dashboard counts/distributions/aggregates all correct; clicking a distribution bar correctly jumped to the right entity tab AND applied the matching filter, confirming the `onJumpToEntity`/`createDateFilter` wiring works end-to-end live, not just in isolation. Read `twinReport.ts` in full -- the one file in this area with zero round-comments -- and confirmed its observation ordering and double-print guard both match the live panel exactly. The twin GET firing twice per load is the same harmless React 18 StrictMode dev-only double-effect-invocation on an idempotent GET already seen elsewhere (round 2209), not specific to this feature.
+
+**Collaborator invite + viewer-role enforcement** (never live-tested before): invited a second real account as a read-only viewer, logged in as that account in a separate browser context, and confirmed every mutating UI control (add/edit/delete/duplicate/import/webhook-copy, automation edit/delete/test, WhatsApp connect) was correctly absent or disabled. As a defense-in-depth check, issued a raw authenticated fetch directly from the viewer's own browser context bypassing the UI entirely -- the server correctly rejected it with 403, confirming the restriction is enforced server-side and not merely hidden in the UI.
+
+**Conclusion:** a legitimate "nothing found" round after a genuinely thorough, multi-area live-testing attempt -- no duplicate requests, console errors, incorrect post-action state, or persistence bugs anywhere, and zero server-log errors for the whole session. Two leads noted for future rounds rather than pursued here: WhatsApp's actual QR/session-connect flow was only skimmed (its post-scan steps need a real phone to complete, but the pre-connection UI states could be probed further), and a full line-by-line read of a large, low-round-count file (e.g. calendarFeed.ts/calendarIcs.ts, or webhookIn.ts) hasn't been done recently.
+
+Live: https://forge-ai-m7p7.onrender.com
