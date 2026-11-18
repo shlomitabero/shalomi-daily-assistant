@@ -447,6 +447,35 @@ export function diffAndMigrate(
         // differs from the removed one only by letter case" below, which
         // exists specifically to keep this guard firing even when the
         // collision is pure letter-case.
+        //
+        // Rounds 626/635/1031(ish) each re-proposed a lenient fallback here
+        // under a different name and were rejected for the same root cause:
+        // no stable entity ID exists anywhere in this system (ProductSpec
+        // entities are identified by name alone), so a genuine rename and an
+        // unrelated remove-then-readd that happens to collide in casing are
+        // STRUCTURALLY indistinguishable from the spec data alone -- any
+        // heuristic built from that data is guessing, not detecting.
+        //
+        // Round 2192 re-proposed "require at least one shared field name
+        // (case-insensitively) between the old and new entity" as that
+        // heuristic, specifically to keep failing the Order2(note)/order2
+        // (price) test below (zero shared fields) while passing a genuine
+        // rename. Rejected on the same ground: nearly every entity in this
+        // app's own domain library AND every entity a user adds by hand
+        // (POST /projects/:id/entities always seeds a fresh entity with a
+        // field literally named "name") shares that one field with almost
+        // any other entity -- so this heuristic is defeated by the ordinary
+        // case of two genuinely UNRELATED entities (e.g. a deleted "Product"
+        // and an unrelated, newly-added "product" with different other
+        // fields) that both happen to have a "name" field, which would then
+        // be wrongly treated as a safe rename and have their real row data
+        // silently merged. It only looks sound because the one existing
+        // test below was deliberately built with zero field overlap -- it
+        // was never evidence that overlap-based detection generalizes.
+        // Future rounds: this guard cannot be loosened without a genuinely
+        // new entity-identity mechanism (e.g. a stable id ProductSpec
+        // entities carry across refines, which does not exist today) --
+        // not another heuristic derived from the spec's own name/field data.
         throw new ValidationError(
           `Entity "${entity.name}" sanitizes to the same database table as entity "${collidingName}", which existed earlier in this project's history -- refusing to silently merge their data. Choose a name that differs in its ASCII letters/digits, not just punctuation or non-ASCII characters.`,
         );
