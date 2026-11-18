@@ -2196,6 +2196,45 @@ test("'volunteer some additional contact information' (more than one word before
   assert.ok(!signupForm.entities.some((e) => e.name === "Volunteer"), "'volunteer some additional contact information' must never match Volunteer");
 });
 
+/**
+ * Round 2242: round 2108's determiner-guard (a/an/our/their/his/her/its/
+ * my/your) only catches a direct object introduced by a determiner. The
+ * identical everyday verb sense phrased with a bare plural/mass noun --
+ * "volunteer email addresses", "volunteer contact details", "volunteer
+ * feedback", "volunteer suggestions" -- has no determiner at all, so it
+ * slipped past that guard entirely. Confirmed live before this fix: each
+ * description below matched ONLY ['Volunteer'], the identical catch-all-
+ * losing failure every prior round on this keyword already describes.
+ */
+test("'volunteer email addresses'/'volunteer contact details'/'volunteer feedback'/'volunteer suggestions' (bare noun, no determiner) never match the Volunteer entity either", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const signupForm = await provider.generate(
+    "A generic signup form where users can optionally volunteer email addresses too.",
+  );
+  assert.ok(!signupForm.entities.some((e) => e.name === "Volunteer"), "'volunteer email addresses' must never match Volunteer");
+
+  const contactForm = await provider.generate(
+    "A generic signup form where users can optionally volunteer contact details for follow-up.",
+  );
+  assert.ok(!contactForm.entities.some((e) => e.name === "Volunteer"), "'volunteer contact details' must never match Volunteer");
+
+  const survey = await provider.generate(
+    "A survey app. Respondents answer the required questions and can optionally volunteer suggestions for improvement.",
+  );
+  assert.ok(!survey.entities.some((e) => e.name === "Volunteer"), "'volunteer suggestions' must never match Volunteer");
+
+  const onboarding = await provider.generate(
+    "An onboarding wizard where new users can optionally volunteer feedback about the setup process.",
+  );
+  assert.ok(!onboarding.entities.some((e) => e.name === "Volunteer"), "'volunteer feedback' must never match Volunteer");
+
+  // The fix must not lose real recall: genuine nonprofit compound nouns
+  // for this same keyword must still match normally.
+  const nonprofit = await provider.generate("An app to manage our volunteers and their shifts.");
+  assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"), "a real nonprofit-volunteer description must still get a Volunteer entity");
+});
+
 test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
   const provider = new HeuristicSpecProvider();
   const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");

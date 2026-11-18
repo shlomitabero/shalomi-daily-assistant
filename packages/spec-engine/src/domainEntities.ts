@@ -2361,8 +2361,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // above describes. Widened to an unbounded `(?:\S+\s+)*` repetition --
     // any number of words before "information" now still excludes the
     // match, the same unbounded remedy round 2149 applied.
+    //
+    // Round 2242: round 2108's determiner-guard only covers a direct
+    // object introduced by a/an/our/their/his/her/its/my/your -- the same
+    // everyday verb sense phrased with a bare plural/mass noun (no
+    // determiner at all), as in "volunteer email addresses", "volunteer
+    // contact details", "volunteer feedback", "volunteer suggestions",
+    // slips past that guard entirely and still matches. Confirmed live:
+    // "...can optionally volunteer email addresses too." (and the
+    // contact-details/feedback/suggestions variants) each matched ONLY
+    // ['Volunteer'], the identical catch-all-losing failure every prior
+    // round on this keyword already describes. Extended the
+    // "information"-style exclusion (which already covers a bare noun
+    // with no determiner) to the handful of other common nouns people
+    // "volunteer" in this everyday sense -- info/details/feedback/
+    // suggestions/comments/addresses/numbers/contacts -- while leaving
+    // genuine nonprofit compound nouns ("volunteer hours", "volunteer
+    // shift", "volunteer coordinators") and the plain subject usage
+    // ("volunteers and their shifts") unaffected, since none of those are
+    // in this short, deliberately narrow list.
     keywords: [
-      /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+)*information\b)/,
+      /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/,
       "volunteer management", "volunteer shift",
       "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
     ],
