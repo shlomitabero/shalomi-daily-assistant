@@ -11982,6 +11982,7 @@ function renderStylesCss(): string {
   --text: #241f19;
   --muted: #6b5f50;
   --accent: #bf5626;
+  --accent-deep: #b84e1e;
   --accent-contrast: #ffffff;
   --accent-soft: #fbe4d4;
   --border: #e6ddcc;
@@ -12013,6 +12014,7 @@ function renderStylesCss(): string {
     --text: #f3ede2;
     --muted: #a89d8c;
     --accent: #ef7d43;
+    --accent-deep: #f79761;
     --accent-contrast: #1c1108;
     --accent-soft: #3a2618;
     --border: #3a3225;
@@ -12041,6 +12043,7 @@ function renderStylesCss(): string {
   --text: #f3ede2;
   --muted: #a89d8c;
   --accent: #ef7d43;
+  --accent-deep: #f79761;
   --accent-contrast: #1c1108;
   --accent-soft: #3a2618;
   --border: #3a3225;

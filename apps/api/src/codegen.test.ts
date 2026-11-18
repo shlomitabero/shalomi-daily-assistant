@@ -37319,3 +37319,45 @@ test("the exported app's styles.css light-theme --accent/--success/--warning tex
     assert.ok(ratio >= 4.5, `${label} contrast must be at least 4.5:1 (WCAG AA, normal text) -- got ${ratio.toFixed(2)}:1`);
   }
 });
+
+/**
+ * Round 2217: four separate rules in the generated styles.css --
+ * .file-cell-name, .search-match, .sort-priority, and
+ * .column-resize-handle:focus-visible -- reference `var(--accent-deep)`,
+ * but renderStylesCss never actually defined that custom property in any
+ * of its three theme blocks (the default :root, the
+ * prefers-color-scheme:dark override, or :root[data-theme="dark"]) --
+ * confirmed by reading the generated output directly and by rendering the
+ * real CSS in a live browser: an undefined custom property with no
+ * fallback makes the whole declaration invalid, so `color` silently fell
+ * back to its inherited value and the focus-visible outline on
+ * .column-resize-handle (a real, keyboard-focusable ARIA slider on every
+ * table column header) disappeared entirely -- a genuine WCAG 2.4.7
+ * (Focus Visible) failure in every exported app, not just a missed
+ * highlight color. The live preview's own styles.css has always defined
+ * --accent-deep (light #b84e1e, dark #f79761) right alongside --accent;
+ * codegen.ts's generated palette was evidently ported from it without
+ * ever porting this one token.
+ */
+test("the exported app's generated styles.css defines --accent-deep in all three theme blocks, not just the four rules that reference it", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const lightRoot = stylesCss.match(/:root \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(lightRoot, "expected a :root {...} block defining the light theme's variables");
+  assert.match(lightRoot!, /--accent-deep:\s*#b84e1e;/, "the default :root block must define --accent-deep, matching the live preview's own light-theme value");
+
+  const darkMediaBlock = stylesCss.match(/@media \(prefers-color-scheme: dark\) \{[\s\S]*?\n  \}\n\}/)?.[0];
+  assert.ok(darkMediaBlock, "expected a prefers-color-scheme: dark override block");
+  assert.match(darkMediaBlock!, /--accent-deep:\s*#f79761;/, "the prefers-color-scheme: dark override must also define --accent-deep, matching the live preview's own dark-theme value");
+
+  const darkAttrBlock = stylesCss.match(/:root\[data-theme="dark"\] \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(darkAttrBlock, "expected a :root[data-theme=\"dark\"] block");
+  assert.match(darkAttrBlock!, /--accent-deep:\s*#f79761;/, "the :root[data-theme=\"dark\"] block must also define --accent-deep, matching the live preview's own dark-theme value");
+
+  // Every rule that actually references var(--accent-deep) is still correct and unchanged -- this fix only needed the token defined, not these rules touched.
+  assert.match(stylesCss, /\.file-cell-name \{[^}]*color: var\(--accent-deep\)/);
+  assert.match(stylesCss, /\.search-match \{[^}]*color: var\(--accent-deep\)/);
+  assert.match(stylesCss, /\.sort-priority \{[^}]*color: var\(--accent-deep\)/);
+  assert.match(stylesCss, /\.column-resize-handle:focus-visible \{[^}]*outline: 2px solid var\(--accent-deep\)/);
+});
