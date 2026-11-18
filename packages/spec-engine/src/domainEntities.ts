@@ -1241,9 +1241,29 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // blanket "a/an patient" exclusion, which would wrongly kill the real
     // medical noun-adjunct phrasings ("a patient visit", "a patient
     // encounter") this entity must still match.
+    //
+    // Round 2248: round 2247's own fix only handles "patient" immediately
+    // followed by whitespace -- both of its lookaheads need `\s+` right
+    // after the word to even attempt matching. When "patient" is instead
+    // stacked with a second adjective via a comma, directly before an
+    // ABSTRACT noun rather than a person ("a patient, methodical approach
+    // to software consulting", "a patient, step-by-step process"), there's
+    // no whitespace immediately after "patient" at all, so both existing
+    // lookaheads vacuously pass and the keyword matches anyway. Confirmed
+    // live: "Our business has a patient, methodical approach to software
+    // consulting projects..." matched ['Patient', 'Project'], fabricating a
+    // medical entity for a plain consulting-firm description. Added a
+    // third lookahead for this specific comma-adjective-abstract-noun
+    // shape, deliberately scoped to AT MOST one intervening word between
+    // the comma and the noun (matching only the confirmed repro's own
+    // shape) rather than an unbounded chain, since a wider bound risks
+    // wrongly excluding a genuine medical sentence that happens to mention
+    // one of these nouns several words after an unrelated comma (e.g. "a
+    // patient, admitted via the triage process, was transferred" --
+    // confirmed this one still matches correctly with the tighter bound).
     keywords: [
       /\bpatients\b/,
-      /(?<!\b(?:be|being|been|stay|staying|remain|remaining|very|so|quite|extremely|incredibly|too)\s)\bpatient\b(?!\s+with\b)(?!\s+(?:\S+\s+){0,3}(?:tutor|teacher|coach|instructor|mentor|driver|employee|manager|rep|staff|team)\b)/,
+      /(?<!\b(?:be|being|been|stay|staying|remain|remaining|very|so|quite|extremely|incredibly|too)\s)\bpatient\b(?!\s+with\b)(?!\s+(?:\S+\s+){0,3}(?:tutor|teacher|coach|instructor|mentor|driver|employee|manager|rep|staff|team)\b)(?!,\s*\S+\s+(?:approach|process|method|strategy|way)\b)/,
       "outpatient", "clinic patient", "מטופל", "מטופלת", "מטופלים",
     ],
     labelHe: "מטופלים",

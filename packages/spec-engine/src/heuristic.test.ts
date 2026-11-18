@@ -2798,6 +2798,35 @@ test("Patient's 'patient' keyword doesn't spuriously match the adjective's attri
 });
 
 /**
+ * Round 2248: round 2247's own fix only handles "patient" immediately
+ * followed by whitespace. When it's instead stacked with a second
+ * adjective via a comma, directly before an ABSTRACT noun rather than a
+ * person ("a patient, methodical approach to software consulting"), the
+ * existing lookaheads structurally can't even attempt to match (no
+ * whitespace right after "patient"), so the keyword matched anyway.
+ * Confirmed live before this fix: "Our business has a patient, methodical
+ * approach to software consulting projects..." matched ['Patient',
+ * 'Project'], fabricating a medical entity for a plain consulting-firm
+ * description.
+ */
+test("Patient's 'patient' keyword doesn't spuriously match the adjective stacked via a comma before an abstract noun ('a patient, methodical approach'), and real medical phrasings with a comma still match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const patientApproach = await provider.generate("Our business has a patient, methodical approach to software consulting projects for small businesses.");
+  assert.ok(!patientApproach.entities.some((e) => e.name === "Patient"), "'a patient, methodical approach' (the adjective) must not spuriously match Patient");
+
+  const patientProcess = await provider.generate("We offer a patient, step-by-step process for onboarding new clients.");
+  assert.ok(!patientProcess.entities.some((e) => e.name === "Patient"), "'a patient, step-by-step process' (the adjective) must not spuriously match Patient");
+
+  // The fix must not lose real recall: a genuine medical sentence that
+  // happens to use a comma near "patient" for an unrelated reason, with
+  // more than one word between the comma and any of the excluded nouns,
+  // must still match.
+  const realPatientComma = await provider.generate("A patient, admitted via the triage process, was transferred to the ward for observation.");
+  assert.ok(realPatientComma.entities.some((e) => e.name === "Patient"), "a real medical sentence with an unrelated comma near 'patient' must still get a Patient entity");
+});
+
+/**
  * Regression test for a real bug found in round 889: the exact same
  * grammatical-polysemy shape round 888 fixed for Patient's "patient", but
  * on Customer's bare "client"/"קליינט" keywords. Both are correctly-
