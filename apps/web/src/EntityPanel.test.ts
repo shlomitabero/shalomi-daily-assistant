@@ -1617,7 +1617,23 @@ test("EntityPanel's handleSubmit is a no-op while writesInFlight is true", async
   const handlerMatch = entityPanelSrc.match(/async function handleSubmit\(e: React\.FormEvent\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleSubmit in EntityPanel.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
-  const fn = new Function("writesInFlight", `${code}\nreturn handleSubmit;`)(true) as (e: unknown) => Promise<void>;
+  const fn = new Function("writesInFlight", "pendingFileUploadCount", `${code}\nreturn handleSubmit;`)(true, 0) as (e: unknown) => Promise<void>;
+  const fakeEvent = { preventDefault: () => {} };
+  await fn(fakeEvent); // resolves cleanly only if the guard fires; a removed guard throws ReferenceError on setError
+});
+
+/**
+ * Round 2196: the other half of the same guard -- see pendingFileUploadCount's
+ * own declaration and handleSubmit's identical check. writesInFlight is
+ * explicitly false here, so this only passes if pendingFileUploadCount
+ * alone is what's stopping handleSubmit, not writesInFlight short-
+ * circuiting the `||` before pendingFileUploadCount is ever evaluated.
+ */
+test("EntityPanel's handleSubmit is a no-op while a file field's own upload is still pending, even when writesInFlight is false", async () => {
+  const handlerMatch = entityPanelSrc.match(/async function handleSubmit\(e: React\.FormEvent\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleSubmit in EntityPanel.tsx");
+  const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+  const fn = new Function("writesInFlight", "pendingFileUploadCount", `${code}\nreturn handleSubmit;`)(false, 1) as (e: unknown) => Promise<void>;
   const fakeEvent = { preventDefault: () => {} };
   await fn(fakeEvent); // resolves cleanly only if the guard fires; a removed guard throws ReferenceError on setError
 });
@@ -1626,10 +1642,17 @@ test("EntityPanel's handleSubmit is a no-op while writesInFlight is true", async
  * Round 1264: the positive half -- the form's own Save button must be
  * disabled while writesInFlight is true, the same wiring its sibling
  * Duplicate/Delete buttons in this exact <form> already had.
+ *
+ * Round 2196: extended to also require pendingFileUploadCount > 0 --
+ * see that state's own declaration and handleSubmit's identical guard --
+ * so Save stays disabled for as long as any file field's own upload is
+ * still pending too, not just a bulk/import/duplicate/move write.
  */
-test("EntityPanel's in-form Save button is disabled while writesInFlight is true", () => {
-  const saveButtonMatch = entityPanelSrc.match(/<button type="submit" disabled=\{writesInFlight\}>\s*\n\s*\{editingId != null \? t\("entity\.save"\) : t\("entity\.add"\)\}\s*\n\s*<\/button>/);
-  assert.ok(saveButtonMatch, "expected the in-form Save button to be disabled={writesInFlight}");
+test("EntityPanel's in-form Save button is disabled while writesInFlight is true, or while a file field's own upload is still pending", () => {
+  const saveButtonMatch = entityPanelSrc.match(
+    /<button type="submit" disabled=\{writesInFlight \|\| pendingFileUploadCount > 0\}>\s*\n\s*\{editingId != null \? t\("entity\.save"\) : t\("entity\.add"\)\}\s*\n\s*<\/button>/,
+  );
+  assert.ok(saveButtonMatch, "expected the in-form Save button to be disabled={writesInFlight || pendingFileUploadCount > 0}");
 });
 
 /**
@@ -23272,13 +23295,22 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
  * already went out) was wiped with no cleanup at all, leaking it on
  * disk forever.
  */
-test("EntityPanel's edit form deletes a file upload from disk if it resolves after Save was clicked but before the save itself completes, instead of leaking it", async () => {
+/**
+ * Round 2196: this exact scenario used to be the documented, deliberately
+ * left-open data-loss half of round 2193's own race (its own test asserted
+ * the save "must still have gone out with the OLD file" as a known,
+ * unaddressed gap). Now that Save is blocked for as long as any file
+ * field's own upload is still pending (see EntityPanel's own
+ * pendingFileUploadCount), that silent old-value save can no longer
+ * happen at all -- Save simply doesn't fire until the upload settles, so
+ * the eventual save always carries the file the user actually picked.
+ */
+test("EntityPanel's Save is blocked while a file field's upload is still pending, so the eventual save carries the newly-picked file instead of silently going out with the old one", async () => {
   await withJsdom(async () => {
     const originalDescriptor = { url: "/api/uploads/proj1/Applicant/old.pdf", name: "old.pdf", size: 9, mimeType: "application/pdf" };
     const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(originalDescriptor) }];
-    const deleteCalls: string[] = [];
     let resolveUpload: ((response: Response) => void) | null = null;
-    let resolvePatch: ((response: Response) => void) | null = null;
+    let patchCalls = 0;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? "GET";
@@ -23287,26 +23319,18 @@ test("EntityPanel's edit form deletes a file upload from disk if it resolves aft
       }
       if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
         // Deliberately held open until released below -- simulates Save
-        // being clicked before this upload's own network round-trip has
+        // being attempted before this upload's own network round-trip has
         // resolved.
         return new Promise<Response>((resolve) => {
           resolveUpload = resolve;
         });
       }
       if (method === "PATCH" && input === "/api/projects/proj1/entities/Applicant/1") {
-        // Also held open, so the test controls exactly when the upload's
-        // own onChange runs (and writes into `form`) relative to when
-        // handleSubmit's own post-await reset runs.
-        return new Promise<Response>((resolve) => {
-          resolvePatch = resolve;
-          const body = JSON.parse(init!.body as string) as Record<string, unknown>;
-          const existing = store.find((r) => r.id === 1)!;
-          Object.assign(existing, body);
-        });
-      }
-      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
-        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
-        return new Response(null, { status: 204 });
+        patchCalls += 1;
+        const body = JSON.parse(init!.body as string) as Record<string, unknown>;
+        const existing = store.find((r) => r.id === 1)!;
+        Object.assign(existing, body);
+        return new Response(JSON.stringify({ record: existing }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return new Response(null, { status: 404 });
     }) as typeof fetch;
@@ -23329,19 +23353,19 @@ test("EntityPanel's edit form deletes a file upload from disk if it resolves aft
       // The upload is now in flight; the field still shows the ORIGINAL
       // file, since the upload hasn't resolved to write a new value yet.
       assert.equal(form.querySelector(".file-field-current a")?.textContent, "old.pdf");
+      assert.equal((form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled, true, "Save must be disabled while this field's own upload is still pending");
 
-      // Save, clicked while the upload above is still pending -- nothing
-      // in this UI blocks it.
+      // Attempting to save anyway (e.g. via Enter in a text field, which
+      // fires the form's real submit event directly, bypassing the
+      // button's own disabled attribute) must still be a no-op.
       await act(async () => {
         fireEvent.submit(form);
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      assert.ok(resolvePatch, "the PATCH request must have been issued by now");
-      assert.equal(deleteCalls.length, 0, "the PATCH is still held open -- nothing to clean up yet");
+      assert.equal(patchCalls, 0, "handleSubmit's own guard must block the save outright, not just disable the button -- no PATCH may be issued while the upload is pending");
 
-      // NOW let the upload resolve -- its own onChange writes the new
-      // descriptor into `form`, strictly BEFORE the PATCH (and therefore
-      // handleSubmit's own reset) resolves.
+      // Now let the upload resolve -- its own onChange writes the new
+      // descriptor into `form`, and Save becomes available again.
       await act(async () => {
         resolveUpload!(
           new Response(
@@ -23351,27 +23375,19 @@ test("EntityPanel's edit form deletes a file upload from disk if it resolves aft
         );
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      assert.equal(deleteCalls.length, 0, "no cleanup yet -- the save itself hasn't completed, so handleSubmit's own reset hasn't run");
+      assert.equal((form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled, false, "Save must become available again once the upload has resolved");
+      assert.equal(form.querySelector(".file-field-current a")?.textContent, "replacement.pdf");
 
-      // Finally let the PATCH resolve -- handleSubmit's success-path reset
-      // runs now, with the upload's new value already sitting in `form`
-      // but never sent (changedOnly was snapshotted before the upload
-      // resolved) and never going to be referenced by anything again.
       await act(async () => {
-        resolvePatch!(new Response(JSON.stringify({ record: store.find((r) => r.id === 1) }), { status: 200, headers: { "content-type": "application/json" } }));
+        fireEvent.submit(form);
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
 
-      await waitForCondition(() => deleteCalls.length === 1);
-      assert.equal(
-        deleteCalls[0],
-        "/api/uploads/proj1/Applicant/replacement.pdf",
-        "the upload that resolved too late to be saved must be deleted from disk, not leaked forever",
-      );
+      assert.equal(patchCalls, 1, "the save must go through exactly once the upload is no longer pending");
       assert.equal(
         JSON.parse((store.find((r) => r.id === 1) as { resume: string }).resume).url,
-        "/api/uploads/proj1/Applicant/old.pdf",
-        "the save itself must still have gone out with the OLD file -- this race's data-loss half is a separate, known, unavoidable-without-blocking-Save concern this fix does not address",
+        "/api/uploads/proj1/Applicant/replacement.pdf",
+        "the save must carry the file the user actually picked, not the old one",
       );
     } finally {
       globalThis.fetch = originalFetch;

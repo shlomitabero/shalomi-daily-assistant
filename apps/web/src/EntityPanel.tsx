@@ -1399,6 +1399,7 @@ function FieldInput({
   formInstanceKeyRef,
   invalid,
   errorId,
+  onUploadStateChange,
 }: {
   field: Field;
   value: unknown;
@@ -1449,6 +1450,19 @@ function FieldInput({
    * pass these. */
   projectId?: string;
   entityName?: string;
+  /**
+   * Round 2196: see this component's own "file" branch doc comment on
+   * writesInFlight -- handleSubmit computes what to send SYNCHRONOUSLY
+   * from `form` at click time, before its own `await`, so nothing ever
+   * stopped Save from firing while this exact upload is still in flight.
+   * Called with +1 the instant a real upload starts and -1 once it
+   * settles (success, error, or either superseded-cleanup path below),
+   * so EntityPanel can block Save for as long as any file field's upload
+   * is still pending. Only the plain add/edit form's own call site passes
+   * this, for the same reason it's the only one that passes projectId/
+   * entityName above.
+   */
+  onUploadStateChange?: (delta: 1 | -1) => void;
   /** Round 1002: null while the plain add/edit form is in "create" mode
    * (see EntityPanel's own editingId state), a real record id once it's
    * editing an existing record. The "file" branch below only deletes a
@@ -1820,6 +1834,12 @@ function FieldInput({
             // still-in-flight earlier one for it, regardless of resolve
             // order.
             const pickToken = ++latestFilePickRef.current;
+            // Round 2196: see onUploadStateChange's own doc comment above --
+            // must be paired with a -1 on every exit from this try/finally
+            // below (success, either superseded-cleanup return, or error),
+            // not just the happy path, or Save would stay blocked forever
+            // after a failed or superseded upload.
+            onUploadStateChange?.(1);
             try {
               const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
               if (formInstanceKeyRef && formInstanceKeyRef.current !== pickedAtInstance) {
@@ -1858,6 +1878,8 @@ function FieldInput({
               onChange(JSON.stringify(uploaded));
             } catch (err) {
               setFileUploadError(err instanceof Error ? err.message : String(err));
+            } finally {
+              onUploadStateChange?.(-1);
             }
           }}
         />
@@ -2213,6 +2235,27 @@ export function EntityPanel({
   // with no separate wiring needed at any of those call sites. Round 2061
   // folded movingId in for the same reason -- see its own declaration.
   const writesInFlight = bulkActionBusy || importBusy || submitBusy || duplicatingId !== null || movingId !== null;
+  /**
+   * Round 2196: deliberately NOT folded into writesInFlight above -- that
+   * flag's own existing call sites (Duplicate/Delete buttons, bulk
+   * actions, inline-cell-edit start, CSV/JSON import inputs) have nothing
+   * to do with a file field's own upload still being in flight, and
+   * widening writesInFlight here would disable all of those too for no
+   * reason tied to this bug. This only ever gates Save (see handleSubmit
+   * and its own button below): a file field's `onChange` (FieldInput's
+   * "file" branch) uploads asynchronously and only writes its result into
+   * `form` once that network round-trip resolves, but handleSubmit builds
+   * what it sends to the server SYNCHRONOUSLY from `form` as it stands at
+   * click time, before its own `await` -- so picking a replacement file
+   * and clicking Save before that upload resolves silently saved the
+   * field's OLD value, with the newly-picked file never reaching the
+   * saved record and no indication to the user that it didn't take. Only
+   * the plain add/edit form's own FieldInput call site wires
+   * onUploadStateChange, for the same reason it's the only one that
+   * passes projectId/entityName (every other call site already excludes
+   * "file" fields entirely).
+   */
+  const [pendingFileUploadCount, setPendingFileUploadCount] = useState(0);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [showImportErrors, setShowImportErrors] = useState(false);
@@ -4135,7 +4178,14 @@ export function EntityPanel({
     // against a bulk batch or an import still in flight. Its sibling
     // Duplicate/Delete buttons, in this exact same <form>, already guard
     // against it.
-    if (writesInFlight) return;
+    //
+    // Round 2196: see pendingFileUploadCount's own declaration -- a file
+    // field's upload resolving AFTER this fires but before this form's
+    // own reset runs would otherwise still have its result silently
+    // dropped (the save already went out with the old value), so Save
+    // must not even start while one is pending, not just while a bulk/
+    // import/duplicate/move write is.
+    if (writesInFlight || pendingFileUploadCount > 0) return;
     setError(null);
     setInvalidFieldName(null);
     // Checked client-side (with noValidate on the <form>) rather than
@@ -6294,6 +6344,7 @@ export function EntityPanel({
               editingId={editingId}
               originalValue={editingOriginalRef.current?.[field.name]}
               formInstanceKeyRef={formInstanceKeyRef}
+              onUploadStateChange={(delta) => setPendingFileUploadCount((n) => n + delta)}
               // Round 1499: see this component's own invalidFieldName doc
               // comment above -- gives the one field that actually failed
               // validation real aria-invalid/aria-describedby semantics
@@ -6306,7 +6357,7 @@ export function EntityPanel({
           </label>
         ))}
         <div className="form-actions">
-          <button type="submit" disabled={writesInFlight}>
+          <button type="submit" disabled={writesInFlight || pendingFileUploadCount > 0}>
             {editingId != null ? t("entity.save") : t("entity.add")}
           </button>
           {editingId != null && (
