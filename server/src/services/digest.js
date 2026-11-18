@@ -70,15 +70,14 @@ export function generateDailyDigest(now = new Date()) {
     .filter((o) => o.status !== 'published' && o.status !== 'rejected' && !o.productDraft?.demo)
     .map((o) => ({ ...o, netProfitMid: computeNetProfit({ revenueEstimate: o.revenueEstimate, costs: o.costs }).netProfit?.mid ?? null }));
   const ranked = rankOpportunities(openOpportunities);
-  // netProfitMid > 0, not just != null - ranking.js's risk/quality/capital/
-  // speed factors are all positive multipliers, so for a losing opportunity
-  // (netProfitMid < 0) a WORSE risk/quality/speed profile actually makes the
-  // score less negative, not more. If every current draft happens to be a
-  // net loss (a real possibility whenever costs exceed a low revenue
-  // estimate), ranked[0] would then be the single worst one by every other
-  // measure - and recommending it anyway as "the next action" would be
-  // actively misleading, directly against this app's one promise: never
-  // recommend losing money.
+  // netProfitMid > 0, not just != null - ranking.js's scoreOpportunity now
+  // ranks losing opportunities correctly among themselves (the least-bad
+  // loss first, never the worst), but a loss is still a loss: this app's
+  // one promise is never to recommend losing money, regardless of how good
+  // that loss's own risk/quality/speed profile is. If every current draft
+  // happens to be a net loss (a real possibility whenever costs exceed a
+  // low revenue estimate), ranked[0] would otherwise surface as this
+  // cycle's recommended next step even though acting on it loses money.
   const topOpportunity = ranked[0]?.netProfitMid > 0 ? ranked[0] : null;
 
   // "approve" mode never auto-publishes, even once the owner has approved

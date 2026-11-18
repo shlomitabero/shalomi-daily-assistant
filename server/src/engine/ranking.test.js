@@ -76,3 +76,27 @@ test('a loss-making opportunity ranks below a profitable one', () => {
   const ranked = rankOpportunities([loss, profit]);
   assert.equal(ranked[0].id, 'profit');
 });
+
+// Multiplying a loss by the same (0, 1] factor used to discount a profit
+// would pull it CLOSER to zero instead of further from it - the single
+// worst draft by every other measure (high risk, unknown quality, huge
+// capital, slow) could then outrank the single best one (low risk,
+// verified, cheap, fast) for an identical loss amount, purely from that
+// sign artifact. Dividing instead of multiplying for a loss fixes this.
+test('among two equally-sized losses, the one with a worse risk/quality/capital/speed profile scores worse, not better', () => {
+  const cleanLoss = { netProfitMid: -100, capitalRequired: 0, timeToCashDays: 0, riskLevel: 'low', dataQuality: 'verified' };
+  const messyLoss = { netProfitMid: -100, capitalRequired: 5000, timeToCashDays: 365, riskLevel: 'high', dataQuality: 'unknown' };
+  assert.ok(scoreOpportunity(cleanLoss) > scoreOpportunity(messyLoss));
+});
+
+test('rankOpportunities puts the least-bad loss first when every option loses money, never the worst', () => {
+  const worstLoss = { id: 'worst', netProfitMid: -100, capitalRequired: 5000, timeToCashDays: 365, riskLevel: 'high', dataQuality: 'unknown' };
+  const leastBadLoss = { id: 'best', netProfitMid: -100, capitalRequired: 0, timeToCashDays: 0, riskLevel: 'low', dataQuality: 'verified' };
+  const ranked = rankOpportunities([worstLoss, leastBadLoss]);
+  assert.equal(ranked[0].id, 'best');
+});
+
+test('a loss scores exactly 0 when netProfitMid itself is 0, regardless of risk/quality profile (no division-by-zero artifact)', () => {
+  assert.equal(scoreOpportunity({ netProfitMid: 0, capitalRequired: 0, timeToCashDays: 0, riskLevel: 'low', dataQuality: 'verified' }), 0);
+  assert.equal(scoreOpportunity({ netProfitMid: 0, capitalRequired: 5000, timeToCashDays: 365, riskLevel: 'high', dataQuality: 'unknown' }), 0);
+});
