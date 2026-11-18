@@ -4686,6 +4686,17 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
           }
         }
       } else {
+        // Round 2231: mirrors the live preview's own entityFormatting.ts
+        // buildImportRecords fix -- the one field type this function
+        // didn't validate client-side, so an overlong text/longtext cell
+        // silently reached the server's own coerceValue-equivalent above
+        // (same 5000/20000 limits), which rejected it with no row number
+        // attached, surfacing one unhelpful error for the whole import.
+        const maxLength = field.type === "longtext" ? 20000 : 5000;
+        if (raw.length > maxLength) {
+          rowError = \`Row \${rowIndex + 1}: "\${field.label || field.name}" is \${raw.length} characters, over the \${maxLength}-character limit.\`;
+          break;
+        }
         record[field.name] = raw;
       }
     }
@@ -4967,6 +4978,12 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
       } else {
         if (typeof raw !== "string") {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't valid text for field "\${field.label || field.name}".\`;
+          break;
+        }
+        // Round 2231: see buildImportRecords's own round-2231 comment above.
+        const maxLength = field.type === "longtext" ? 20000 : 5000;
+        if (raw.length > maxLength) {
+          rowError = \`Row \${rowIndex + 1}: "\${field.label || field.name}" is \${raw.length} characters, over the \${maxLength}-character limit.\`;
           break;
         }
         record[field.name] = raw;

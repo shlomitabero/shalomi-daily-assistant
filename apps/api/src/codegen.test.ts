@@ -17940,6 +17940,85 @@ test("the exported EntityView's CSV import rejects a date field value that isn't
 });
 
 /**
+ * Round 2231: ports the live preview's own round-2231 fix
+ * (entityFormatting.ts's buildImportRecords/buildImportRecordsFromJson) --
+ * this generated client-side import never validated a text/longtext
+ * field's length at all, the one field type this function's own
+ * number/enum/date checks (see the test above) don't cover, so an
+ * overlong cell silently reached the generated server's own coerce()
+ * (this same file's round 64 fix, same 5000/20000 limits), which rejected
+ * it with no row number attached. Executes the actual generated
+ * buildImportRecords function (extracted from real codegen output).
+ */
+test("the exported EntityView's own generated buildImportRecords rejects an overlong text/longtext cell with a row-numbered message, instead of silently passing it through to the server", () => {
+  const textProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Customer",
+          label: "Customer",
+          fields: [
+            { name: "notes", label: "Notes", type: "text" },
+            { name: "bio", label: "Bio", type: "longtext" },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(textProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function csvFieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function csvFieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = textProject.spec.entities[0].fields;
+  const overlongText = "a".repeat(5001);
+  const overlongLongtext = "a".repeat(20001);
+  const rows = [
+    ["Notes", "Bio"],
+    ["short", "short"],
+    [overlongText, "short"],
+    ["short", overlongLongtext],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [{ notes: "short", bio: "short" }]);
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /Row 2: "Notes" is 5001 characters, over the 5000-character limit\./);
+  assert.match(errors[1], /Row 3: "Bio" is 20001 characters, over the 20000-character limit\./);
+});
+
+test("the exported EntityView's own generated buildImportRecordsFromJson rejects an overlong text/longtext value with a row-numbered message, the same check buildImportRecords (CSV) has", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "notes", label: "Notes", type: "text", required: false }];
+  const result = buildImportRecordsFromJson(fields, [{ notes: "a".repeat(5001) }], {});
+  assert.deepEqual(result.records, []);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /Row 1: "Notes" is 5001 characters, over the 5000-character limit\./);
+});
+
+/**
  * Round 2139: ports the live preview's own round-2138 fix
  * (entityFormatting.ts's buildImportRecords/buildImportRecordsFromJson) --
  * the inbound-webhook route has tolerated an ISO-8601 timestamp (e.g.

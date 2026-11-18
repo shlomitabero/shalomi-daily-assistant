@@ -2509,6 +2509,61 @@ test("buildImportRecords matches columns by header label or field name, case-ins
   assert.deepEqual(result.records, [{ name: "Dana", amount: 150 }]);
 });
 
+/**
+ * Round 2231: buildImportRecords's generic text/longtext fallback branch
+ * was the one field type this function didn't validate client-side at
+ * all -- every other type (relation/date/number/enum/boolean/required)
+ * already produces a specific, row-numbered "Row N: ..." message on its
+ * own failure here, but an overlong text/longtext cell instead reached
+ * the server, got a specific ValidationError there ("Field X must be N
+ * characters or fewer" -- see packages/db/src/repository.ts's own
+ * coerceValue), and then lost that message entirely to resolveErrorMessage's
+ * by-design code-based genericization (apps/web/src/api.ts) plus
+ * EntityPanel.tsx's writeImportedRecords never attaching a row number to a
+ * server-rejection message either -- surfacing only one fixed, useless
+ * sentence for the whole import, with no way to tell which row/field
+ * caused it. Mirrors every sibling field-type check's own row-numbered
+ * message style and the same 5000/20000 limits EntityPanel.tsx's manual
+ * form already enforces via maxLength.
+ */
+test("buildImportRecords rejects an overlong text/longtext cell with a specific, row-numbered message instead of silently passing it through to the server", () => {
+  const fields: Field[] = [
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "bio", label: "Bio", type: "longtext", required: false },
+  ];
+  const overlongText = "a".repeat(5001);
+  const overlongLongtext = "a".repeat(20001);
+  const rows = [
+    ["notes", "bio"],
+    ["short", "short"],
+    [overlongText, "short"],
+    ["short", overlongLongtext],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ notes: "short", bio: "short" }]);
+  assert.deepEqual(result.errors, [
+    `Row 2: "Notes" is 5001 characters, over the 5000-character limit.`,
+    `Row 3: "Bio" is 20001 characters, over the 20000-character limit.`,
+  ]);
+
+  const atLimitRows = [
+    ["notes", "bio"],
+    ["a".repeat(5000), "a".repeat(20000)],
+  ];
+  const atLimitResult = buildImportRecords(fields, atLimitRows);
+  assert.deepEqual(atLimitResult.errors, [], "exactly at the limit must still import cleanly, matching the server's own > (not >=) check");
+});
+
+test("buildImportRecordsFromJson rejects an overlong text/longtext value with a specific, row-numbered message, the same check buildImportRecords (CSV) has", () => {
+  const fields: Field[] = [
+    { name: "notes", label: "Notes", type: "text", required: false },
+    { name: "bio", label: "Bio", type: "longtext", required: false },
+  ];
+  const result = buildImportRecordsFromJson(fields, [{ notes: "a".repeat(5001), bio: "short" }]);
+  assert.deepEqual(result.records, []);
+  assert.deepEqual(result.errors, [`Row 1: "Notes" is 5001 characters, over the 5000-character limit.`]);
+});
+
 test("buildImportRecords coerces booleans, numbers, and enum labels back to their stored values", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },

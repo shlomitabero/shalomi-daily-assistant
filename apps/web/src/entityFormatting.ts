@@ -2237,6 +2237,29 @@ const BOOLEAN_TRUE_VALUES = ["true", "1", "yes", "כן"];
 const BOOLEAN_FALSE_VALUES = ["false", "0", "no", "לא"];
 
 /**
+ * Round 2231: mirrors packages/db/src/repository.ts's own
+ * TEXT_FIELD_VALUE_MAX_LENGTH/LONGTEXT_FIELD_VALUE_MAX_LENGTH -- the
+ * server's real, authoritative limit (apps/web can't import from
+ * packages/db, so this duplicates the literal the same way EntityPanel.tsx's
+ * manual-entry form already does via its own `maxLength={5000}`/
+ * `maxLength={20000}` props). Without a client-side check here, an
+ * overlong text/longtext cell was the one CSV/JSON-import validation this
+ * function didn't duplicate -- every other field type (relation/date/
+ * number/enum/boolean/required) already produces a specific, row-numbered
+ * "Row N: ..." message on failure (see this file's own round 1151/1177/
+ * 1630/1084 comments above), while an overlong text/longtext cell instead
+ * reached the server, got a specific "Field X must be N characters or
+ * fewer" ValidationError there, and then lost that message entirely to
+ * resolveErrorMessage's by-design code-based genericization (api.ts) and
+ * EntityPanel.tsx's writeImportedRecords (which also never attaches a row
+ * number to a server-rejection message) -- surfacing only the one fixed,
+ * useless sentence "the submitted data isn't valid" for a whole CSV
+ * import, with no way to tell which row or field caused it.
+ */
+const TEXT_FIELD_VALUE_MAX_LENGTH = 5000;
+const LONGTEXT_FIELD_VALUE_MAX_LENGTH = 20000;
+
+/**
  * Round 1630: a CSV cell for a number field that fails a strict `Number()`
  * parse is retried once with currency symbols/thousands-separators/
  * whitespace stripped before the row is rejected -- the exact leniency
@@ -2660,6 +2683,11 @@ export function buildImportRecords(
           }
         }
       } else {
+        const maxLength = field.type === "longtext" ? LONGTEXT_FIELD_VALUE_MAX_LENGTH : TEXT_FIELD_VALUE_MAX_LENGTH;
+        if (raw.length > maxLength) {
+          rowError = `Row ${rowIndex + 1}: "${field.label ?? field.name}" is ${raw.length} characters, over the ${maxLength}-character limit.`;
+          break;
+        }
         record[field.name] = raw;
       }
     }
@@ -2962,6 +2990,11 @@ export function buildImportRecordsFromJson(
       } else {
         if (typeof raw !== "string") {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't valid text for field "${field.label ?? field.name}".`;
+          break;
+        }
+        const maxLength = field.type === "longtext" ? LONGTEXT_FIELD_VALUE_MAX_LENGTH : TEXT_FIELD_VALUE_MAX_LENGTH;
+        if (raw.length > maxLength) {
+          rowError = `Row ${rowIndex + 1}: "${field.label ?? field.name}" is ${raw.length} characters, over the ${maxLength}-character limit.`;
           break;
         }
         record[field.name] = raw;
