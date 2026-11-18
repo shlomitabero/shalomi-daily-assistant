@@ -4221,6 +4221,21 @@ export function EntityPanel({
         saveResult = await createRecord(projectId, entity.name, form);
       }
       if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+        // Round 2193: a file field's own upload can still be in flight when
+        // Save is clicked (nothing blocks submission while one is pending),
+        // so it can resolve and write its descriptor into `form` via the
+        // file input's own onChange AFTER the data above was already sent
+        // but BEFORE this reset runs -- the save itself used the pre-upload
+        // snapshot (silently missing the new file), and without this call
+        // the now-abandoned upload was wiped by the reset below with no
+        // cleanup at all, unlike every other place this form's state gets
+        // reset (startEdit, Cancel, Escape, the in-form Delete button, ...),
+        // which all call this first. formValueRef.current (not the `form`
+        // closure variable, stale since this function started) is used for
+        // the same reason the unmount-flush effect above already does --
+        // it reflects whatever the file input's own onChange most recently
+        // committed, even after a render this closure never saw.
+        discardAbandonedFileUploads(formValueRef.current);
         setForm(emptyForm(entity));
         setEditingId(null);
         editingOriginalRef.current = null;
@@ -4270,6 +4285,9 @@ export function EntityPanel({
       // fixed, just one level up.
       if ((error.code === "NOT_FOUND" || error.code === "ENTITY_NOT_FOUND") && editingId != null) {
         if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
+          // Round 2193: same reason as the success path above -- see its
+          // own doc comment.
+          discardAbandonedFileUploads(formValueRef.current);
           setForm(emptyForm(entity));
           setEditingId(null);
           editingOriginalRef.current = null;

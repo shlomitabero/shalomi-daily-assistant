@@ -23255,6 +23255,131 @@ test("EntityPanel's edit form deletes an abandoned file replacement from disk wh
 });
 
 /**
+ * Round 2193: nothing blocks clicking Save while a file field's own
+ * upload is still in flight (writesInFlight tracks bulk/import/submit/
+ * duplicate/move busy states, but never a pending upload) -- so
+ * handleSubmit's synchronous pre-await snapshot of `form`/`changedOnly`
+ * is taken before the upload resolves and writes its descriptor into
+ * `form` via the file input's own onChange. The save itself genuinely
+ * (and unavoidably) goes out without the new file; this test is about
+ * the SEPARATE bug that was layered on top of that unavoidable race:
+ * handleSubmit's own success-path reset (`setForm(emptyForm(entity))`)
+ * never called `discardAbandonedFileUploads`, unlike every other place
+ * in this file that resets this same form's state (startEdit, Cancel,
+ * Escape, the in-form Delete button, the unmount-flush effect, ...) --
+ * so the now-abandoned upload (never referenced by the saved record,
+ * and never going to be, since the save that would have referenced it
+ * already went out) was wiped with no cleanup at all, leaking it on
+ * disk forever.
+ */
+test("EntityPanel's edit form deletes a file upload from disk if it resolves after Save was clicked but before the save itself completes, instead of leaking it", async () => {
+  await withJsdom(async () => {
+    const originalDescriptor = { url: "/api/uploads/proj1/Applicant/old.pdf", name: "old.pdf", size: 9, mimeType: "application/pdf" };
+    const store: EntityRecord[] = [{ id: 1, name: "Dana", resume: JSON.stringify(originalDescriptor) }];
+    const deleteCalls: string[] = [];
+    let resolveUpload: ((response: Response) => void) | null = null;
+    let resolvePatch: ((response: Response) => void) | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        // Deliberately held open until released below -- simulates Save
+        // being clicked before this upload's own network round-trip has
+        // resolved.
+        return new Promise<Response>((resolve) => {
+          resolveUpload = resolve;
+        });
+      }
+      if (method === "PATCH" && input === "/api/projects/proj1/entities/Applicant/1") {
+        // Also held open, so the test controls exactly when the upload's
+        // own onChange runs (and writes into `form`) relative to when
+        // handleSubmit's own post-await reset runs.
+        return new Promise<Response>((resolve) => {
+          resolvePatch = resolve;
+          const body = JSON.parse(init!.body as string) as Record<string, unknown>;
+          const existing = store.find((r) => r.id === 1)!;
+          Object.assign(existing, body);
+        });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push((JSON.parse(init!.body as string) as { url: string }).url);
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      fireEvent.click(document.querySelector(".row-actions button") as HTMLButtonElement);
+      await waitForCondition(() => (document.querySelector(".record-form input[type=\"text\"]") as HTMLInputElement)?.value === "Dana");
+
+      const form = document.querySelector(".record-form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+      const replacementFile = new File(["two"], "replacement.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [replacementFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      // The upload is now in flight; the field still shows the ORIGINAL
+      // file, since the upload hasn't resolved to write a new value yet.
+      assert.equal(form.querySelector(".file-field-current a")?.textContent, "old.pdf");
+
+      // Save, clicked while the upload above is still pending -- nothing
+      // in this UI blocks it.
+      await act(async () => {
+        fireEvent.submit(form);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.ok(resolvePatch, "the PATCH request must have been issued by now");
+      assert.equal(deleteCalls.length, 0, "the PATCH is still held open -- nothing to clean up yet");
+
+      // NOW let the upload resolve -- its own onChange writes the new
+      // descriptor into `form`, strictly BEFORE the PATCH (and therefore
+      // handleSubmit's own reset) resolves.
+      await act(async () => {
+        resolveUpload!(
+          new Response(
+            JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/replacement.pdf", name: "replacement.pdf", size: 9, mimeType: "application/pdf" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      assert.equal(deleteCalls.length, 0, "no cleanup yet -- the save itself hasn't completed, so handleSubmit's own reset hasn't run");
+
+      // Finally let the PATCH resolve -- handleSubmit's success-path reset
+      // runs now, with the upload's new value already sitting in `form`
+      // but never sent (changedOnly was snapshotted before the upload
+      // resolved) and never going to be referenced by anything again.
+      await act(async () => {
+        resolvePatch!(new Response(JSON.stringify({ record: store.find((r) => r.id === 1) }), { status: 200, headers: { "content-type": "application/json" } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(
+        deleteCalls[0],
+        "/api/uploads/proj1/Applicant/replacement.pdf",
+        "the upload that resolved too late to be saved must be deleted from disk, not leaked forever",
+      );
+      assert.equal(
+        JSON.parse((store.find((r) => r.id === 1) as { resume: string }).resume).url,
+        "/api/uploads/proj1/Applicant/old.pdf",
+        "the save itself must still have gone out with the OLD file -- this race's data-loss half is a separate, known, unavoidable-without-blocking-Save concern this fix does not address",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 688: a real bug found by the survey -- every other field type's
  * own FieldInput control validates before ever reaching the network
  * (required, a number's own native constraint), but "file" always fired
