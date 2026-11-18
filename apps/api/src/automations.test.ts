@@ -4722,6 +4722,85 @@ test("fireScheduledRule's webhook action for one destination URL does not wait b
 });
 
 /**
+ * Round 2186: webhookSendQueue used to be keyed by the bare webhookUrl
+ * alone, with no project dimension -- see its own doc comment in
+ * automations.ts for the full bug. Two wholly unrelated projects (two
+ * separate in-memory databases, two separate owners) that each happen to
+ * point a webhook rule at the IDENTICAL destination URL (a shared
+ * integration endpoint, e.g. the same org-wide Slack incoming-webhook or
+ * Zapier catch hook used by more than one of this server's tenants) must
+ * stay fully independent -- a slow send for one project's rule must never
+ * hold up a completely unrelated project's send to that same URL, the
+ * same guarantee the test above already proves for two DIFFERENT URLs
+ * within a single project.
+ */
+test("fireScheduledRule's webhook action for one PROJECT does not wait behind a slow in-flight send from an unrelated project, even to the identical destination URL", async () => {
+  const projectA = setupProject();
+  const dbB = openDatabase(":memory:");
+  ensureProjectsTable(dbB);
+  ensureAutomationRulesTable(dbB);
+  ensureWhatsAppConnectionsTable(dbB);
+  ensureWhatsAppMessagesTable(dbB);
+  const insertedB = insertProject(dbB, {
+    id: "proj2",
+    ownerId: "owner2",
+    name: "Orders B",
+    description: "An unrelated tenant's order-tracking app",
+    spec: projectSpec,
+  });
+  applyMigrations(dbB, insertedB.id, insertedB.spec);
+  markProjectBuilt(dbB, insertedB.id);
+  const projectB = { ...insertedB, status: "built" as const };
+
+  const sharedUrl = "https://hooks.example.com/shared-tenant-endpoint";
+  const slowRule = insertAutomationRule(projectA.db, {
+    projectId: projectA.project.id,
+    entityName: "Order",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "webhook",
+    webhookUrl: sharedUrl,
+    toMode: "static",
+    messageTemplate: "slow-tenant-A",
+  });
+  const fastRule = insertAutomationRule(dbB, {
+    projectId: projectB.id,
+    entityName: "Order",
+    trigger: "schedule",
+    scheduleTimeUtc: "09:00",
+    actionType: "webhook",
+    webhookUrl: sharedUrl,
+    toMode: "static",
+    messageTemplate: "fast-tenant-B",
+  });
+
+  const order: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    const message = JSON.parse((init!.body as string)).message;
+    if (message === "slow-tenant-A") {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    order.push(message);
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await Promise.all([
+      fireScheduledRule(projectA.db, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, projectA.project, slowRule),
+      fireScheduledRule(dbB, {} as WhatsAppWebManager, UNUSED_EMAIL_SENDER, projectB, fastRule),
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.deepEqual(
+    order,
+    ["fast-tenant-B", "slow-tenant-A"],
+    "project B's send to the shared URL must complete first, never waiting behind project A's unrelated slow send to that same URL",
+  );
+});
+
+/**
  * A failed send (the destination returning a non-2xx) must not jam the
  * queue for that URL -- the next queued send to the SAME URL still goes
  * out, mirroring whatsappWeb.ts's own identical "a failed send doesn't

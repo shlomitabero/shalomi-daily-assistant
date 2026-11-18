@@ -934,10 +934,25 @@ export function isAllowedWebhookUrl(raw: string): boolean {
  * bulk-update, same reasoning as the other two action types' own doc
  * comments), with zero spacing between any of the resulting POSTs. Unlike
  * Resend's single shared API key, each webhook rule can point at a wholly
- * different destination -- keyed per webhookUrl (a `Map`, like WhatsApp's
- * own per-project map), so only sends to the SAME destination are
- * serialized against each other; two rules posting to different URLs stay
- * fully independent, same as WhatsApp's own per-project independence.
+ * different destination -- keyed per webhookUrl, so only sends to the
+ * SAME destination are serialized against each other; two rules posting
+ * to different URLs stay fully independent.
+ *
+ * Round 2186: the key used to be the bare webhookUrl with no project
+ * dimension at all -- this comment's own prior wording claimed that was
+ * "like WhatsApp's own per-project map", but it never was: WhatsApp's
+ * sendQueue is keyed by projectId, so two different projects' WhatsApp
+ * sends are always independent, while this queue let two UNRELATED
+ * projects that each happen to point a webhook rule at the identical
+ * destination URL (a shared integration endpoint, e.g. the same Zapier
+ * "catch hook" or an org-wide Slack incoming-webhook URL used by several
+ * of this server's tenants) serialize against each other -- a slow or
+ * hanging destination for tenant A's send would hold tenant B's
+ * completely unrelated send queued behind it for up to
+ * WEBHOOK_REQUEST_TIMEOUT_MS, a cross-tenant noisy-neighbor delay with no
+ * project-isolation guarantee at all. Keying by `${projectId}:${url}`
+ * below makes two different projects' sends to the same URL fully
+ * independent, matching what the doc comment always claimed.
  */
 const webhookSendQueue = new Map<string, Promise<void>>();
 const WEBHOOK_SEND_SPACING_MS = 600;
@@ -1000,9 +1015,14 @@ class WebhookTimeoutError extends Error {
  * call, mirrors exactly where email.ts's own performSend creates its
  * (only once dequeued) and makes the 10s budget measure actual
  * destination latency regardless of how deep the queue is.
+ *
+ * Round 2186: takes `projectId` and keys the queue by `${projectId}:${url}`
+ * instead of the bare `url` -- see webhookSendQueue's own doc comment
+ * above for why a project dimension belongs in the key.
  */
-function queuedWebhookFetch(url: string, init: RequestInit): Promise<Response> {
-  const previousInQueue = webhookSendQueue.get(url) ?? Promise.resolve();
+function queuedWebhookFetch(projectId: string, url: string, init: RequestInit): Promise<Response> {
+  const queueKey = `${projectId}:${url}`;
+  const previousInQueue = webhookSendQueue.get(queueKey) ?? Promise.resolve();
   const queuedFetch = previousInQueue.then(async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), WEBHOOK_REQUEST_TIMEOUT_MS);
@@ -1021,9 +1041,9 @@ function queuedWebhookFetch(url: string, init: RequestInit): Promise<Response> {
     () => delay(WEBHOOK_SEND_SPACING_MS),
     () => delay(WEBHOOK_SEND_SPACING_MS),
   );
-  webhookSendQueue.set(url, nextInQueue);
+  webhookSendQueue.set(queueKey, nextInQueue);
   void nextInQueue.finally(() => {
-    if (webhookSendQueue.get(url) === nextInQueue) webhookSendQueue.delete(url);
+    if (webhookSendQueue.get(queueKey) === nextInQueue) webhookSendQueue.delete(queueKey);
   });
   return queuedFetch;
 }
@@ -1190,7 +1210,7 @@ async function fireWebhookAction(
       headers.authorization = `Bearer ${rule.webhookSecret}`;
       headers["x-forge-signature"] = `sha256=${createHmac("sha256", rule.webhookSecret).update(bodyString).digest("hex")}`;
     }
-    const res = await queuedWebhookFetch(rule.webhookUrl, {
+    const res = await queuedWebhookFetch(project.id, rule.webhookUrl, {
       method: "POST",
       headers,
       body: bodyString,
