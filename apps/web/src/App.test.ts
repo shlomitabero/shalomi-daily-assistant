@@ -4226,18 +4226,21 @@ test("App's handleAccountDeleted purges client-side preferences for every owned 
  * passing, matching this routine's own "module-load crash is a strong
  * confirmation" convention.
  */
-test("App's handleLogout resets local UI state, including the live idea description and recent project searches, without clearing either's own persisted per-user storage, but refuses to run at all while refineRunning or busy is true", async () => {
+test("App's handleLogout resets local UI state, including the live idea description and recent project searches, without clearing either's own persisted per-user storage, but refuses to run at all while refineRunning, busy, enhanceBusy, or templateBusy is set", async () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const handlerMatch = appSrc.match(/ {2}async function handleLogout\(\) \{[\s\S]*?\n {2}\}\n/);
   assert.ok(handlerMatch, "expected to find handleLogout in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { refineRunning: boolean; busy: boolean }) {
+  function run(opts: { refineRunning: boolean; busy: boolean; enhanceBusy: boolean; templateBusy: string | null }) {
     const state: {
       logoutCalled: boolean;
       user: unknown;
       project: unknown;
       buildWarning: unknown;
+      busy: unknown;
+      enhanceBusy: unknown;
+      templateBusy: unknown;
       view: string | null;
       description: unknown;
       error: unknown;
@@ -4253,6 +4256,9 @@ test("App's handleLogout resets local UI state, including the live idea descript
       user: { id: "user1" },
       project: { id: "p1" },
       buildWarning: "untouched",
+      busy: opts.busy,
+      enhanceBusy: opts.enhanceBusy,
+      templateBusy: opts.templateBusy,
       view: "preview",
       description: "untouched",
       error: "untouched",
@@ -4269,10 +4275,15 @@ test("App's handleLogout resets local UI state, including the live idea descript
       "user",
       "refineRunning",
       "busy",
+      "enhanceBusy",
+      "templateBusy",
       "logout",
       "setUser",
       "setProject",
       "setBuildWarning",
+      "setBusy",
+      "setEnhanceBusy",
+      "setTemplateBusy",
       "setView",
       "setDescription",
       "setError",
@@ -4288,12 +4299,17 @@ test("App's handleLogout resets local UI state, including the live idea descript
       { id: "user1" },
       opts.refineRunning,
       opts.busy,
+      opts.enhanceBusy,
+      opts.templateBusy,
       async () => {
         state.logoutCalled = true;
       },
       (v: unknown) => (state.user = v),
       (v: unknown) => (state.project = v),
       (v: unknown) => (state.buildWarning = v),
+      (v: unknown) => (state.busy = v),
+      (v: unknown) => (state.enhanceBusy = v),
+      (v: unknown) => (state.templateBusy = v),
       (v: string) => (state.view = v),
       (v: unknown) => (state.description = v),
       (v: unknown) => (state.error = v),
@@ -4309,13 +4325,16 @@ test("App's handleLogout resets local UI state, including the live idea descript
     return { fn, state };
   }
 
-  const { fn, state } = run({ refineRunning: false, busy: false });
+  const { fn, state } = run({ refineRunning: false, busy: false, enhanceBusy: false, templateBusy: null });
   await fn();
 
   assert.equal(state.logoutCalled, true, "must call the API's own logout() to revoke the session server-side");
   assert.equal(state.user, null, "must clear the signed-in user");
   assert.equal(state.project, null, "must clear the open project");
   assert.equal(state.buildWarning, null, "must clear any stale build-warning banner");
+  assert.equal(state.busy, false, "round 2237: must reset busy so it can't leak into the next signed-in user's session on this same tab");
+  assert.equal(state.enhanceBusy, false, "round 2237: must reset enhanceBusy for the same reason");
+  assert.equal(state.templateBusy, null, "round 2237: must reset templateBusy for the same reason");
   assert.equal(state.view, "home", "must reset view to home");
   assert.equal(state.description, "", "must clear the LIVE idea description so it doesn't leak into a next session on this same tab");
   assert.equal(state.error, null, "must clear any stale error banner");
@@ -4335,17 +4354,67 @@ test("App's handleLogout resets local UI state, including the live idea descript
    * fixes already prevent for their own exits, except there's no account
    * left signed in afterward to see what happened.
    */
-  const { fn: fnRefining, state: stateRefining } = run({ refineRunning: true, busy: false });
+  const { fn: fnRefining, state: stateRefining } = run({ refineRunning: true, busy: false, enhanceBusy: false, templateBusy: null });
   await fnRefining();
   assert.equal(stateRefining.logoutCalled, false, "must never call the real logout() API while refineRunning is true");
   assert.deepEqual(stateRefining.user, { id: "user1" }, "must leave the signed-in user untouched while refineRunning is true");
   assert.equal(stateRefining.view, "preview", "must leave view untouched while refineRunning is true");
 
-  const { fn: fnBuilding, state: stateBuilding } = run({ refineRunning: false, busy: true });
+  const { fn: fnBuilding, state: stateBuilding } = run({ refineRunning: false, busy: true, enhanceBusy: false, templateBusy: null });
   await fnBuilding();
   assert.equal(stateBuilding.logoutCalled, false, "must never call the real logout() API while busy (build in-flight) is true");
   assert.deepEqual(stateBuilding.user, { id: "user1" }, "must leave the signed-in user untouched while busy is true");
   assert.equal(stateBuilding.view, "preview", "must leave view untouched while busy is true");
+
+  /**
+   * Round 2237: round 2159's own guard above never checked enhanceBusy/
+   * templateBusy, the other two members of the round-1131 busy-flag trio
+   * handleDescribe/handleEnhanceAndBuild/handleUseTemplate already
+   * cross-gate against each other. Without this, logging out mid-"Enhance
+   * & build with AI" (enhanceBusy) or mid-"Use this template" (templateBusy)
+   * let a different user sign in on the same tab before that stale promise
+   * resolved, letting its setProject/setView("spec")/createProject calls
+   * hijack the new user's session into the first user's abandoned idea.
+   */
+  const { fn: fnEnhancing, state: stateEnhancing } = run({ refineRunning: false, busy: false, enhanceBusy: true, templateBusy: null });
+  await fnEnhancing();
+  assert.equal(stateEnhancing.logoutCalled, false, "must never call the real logout() API while enhanceBusy is true");
+  assert.deepEqual(stateEnhancing.user, { id: "user1" }, "must leave the signed-in user untouched while enhanceBusy is true");
+  assert.equal(stateEnhancing.view, "preview", "must leave view untouched while enhanceBusy is true");
+
+  const { fn: fnTemplating, state: stateTemplating } = run({ refineRunning: false, busy: false, enhanceBusy: false, templateBusy: "tpl-1" });
+  await fnTemplating();
+  assert.equal(stateTemplating.logoutCalled, false, "must never call the real logout() API while templateBusy is set");
+  assert.deepEqual(stateTemplating.user, { id: "user1" }, "must leave the signed-in user untouched while templateBusy is set");
+  assert.equal(stateTemplating.view, "preview", "must leave view untouched while templateBusy is set");
+});
+
+/**
+ * Round 2237: handleLogout's own guard above now also checks
+ * enhanceBusy/templateBusy, but the topbar's own "Log out"/"Delete
+ * account" buttons must independently carry the identical disabled
+ * condition in their own JSX -- a correct guard inside the handler alone
+ * doesn't disable the button, so a user could still click it, even if the
+ * click would then no-op.
+ */
+test("App's topbar Log out and Delete account buttons are disabled while enhanceBusy or templateBusy is set, matching handleLogout's own guard", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const logoutBtnSrc = appSrc.match(/onClick=\{handleLogout\}[\s\S]*?>/)?.[0];
+  assert.ok(logoutBtnSrc, "expected to find the Log out button in App.tsx");
+  assert.match(
+    logoutBtnSrc!,
+    /disabled=\{refineRunning \|\| busy \|\| enhanceBusy \|\| templateBusy !== null\}/,
+    "the Log out button's disabled attribute must also include enhanceBusy/templateBusy",
+  );
+
+  const deleteAccountBtnSrc = appSrc.match(/onClick=\{\(\) => setShowDeleteAccount\(true\)\}[\s\S]*?>/)?.[0];
+  assert.ok(deleteAccountBtnSrc, "expected to find the Delete account button in App.tsx");
+  assert.match(
+    deleteAccountBtnSrc!,
+    /disabled=\{refineRunning \|\| busy \|\| enhanceBusy \|\| templateBusy !== null\}/,
+    "the Delete account button's disabled attribute must also include enhanceBusy/templateBusy",
+  );
 });
 
 /**

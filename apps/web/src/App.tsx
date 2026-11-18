@@ -2476,11 +2476,29 @@ function AppContent() {
     // await abandons that work exactly the same way the brand-logo click
     // did before round 2157 -- the next login starts a fresh render with no
     // way back into the refine/build that was still running underneath.
-    if (!user || refineRunning || busy) return;
+    //
+    // Round 2237: round 2159's own guard only checked refineRunning/busy,
+    // missing enhanceBusy/templateBusy -- the other two siblings
+    // handleDescribe/handleEnhanceAndBuild/handleUseTemplate already
+    // cross-gate against each other since round 1131. Without this, a user
+    // could log out mid-"Enhance & build with AI" or mid-"Use this
+    // template", a DIFFERENT user could sign in on the same tab before that
+    // request resolved, and the stale promise's setProject/setView("spec")
+    // calls -- plus createProject's own network call, which fires using
+    // whatever auth token is live when the promise finally resolves -- would
+    // hijack the new user's session into the first user's abandoned idea,
+    // actually creating a real project row under the second user's account.
+    // Also resets enhanceBusy/templateBusy/busy below so no stale busy
+    // state (e.g. a "Writing the perfect prompt…" spinner that was never
+    // theirs) can leak into whatever user signs in next in the same tab.
+    if (!user || refineRunning || busy || enhanceBusy || templateBusy !== null) return;
     await logout();
     setUser(null);
     setProject(null);
     setBuildWarning(null);
+    setBusy(false);
+    setEnhanceBusy(false);
+    setTemplateBusy(null);
     setView("home");
     // Without these, the browser tab stays mounted (no page reload happens
     // on logout) and the next project built in the same session -- by the
@@ -2690,14 +2708,21 @@ function AppContent() {
                     ? t("topbar.logoutOtherDevices.busy")
                     : t("topbar.logoutOtherDevices")}
             </button>
-            <button type="button" className="secondary" onClick={handleLogout} disabled={refineRunning || busy}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleLogout}
+              // Round 2237: see handleLogout's own round-2237 comment above
+              // for why enhanceBusy/templateBusy must be checked here too.
+              disabled={refineRunning || busy || enhanceBusy || templateBusy !== null}
+            >
               {t("topbar.logout")}
             </button>
             <button
               type="button"
               className="danger"
               onClick={() => setShowDeleteAccount(true)}
-              disabled={refineRunning || busy}
+              disabled={refineRunning || busy || enhanceBusy || templateBusy !== null}
             >
               {t("topbar.deleteAccount")}
             </button>
