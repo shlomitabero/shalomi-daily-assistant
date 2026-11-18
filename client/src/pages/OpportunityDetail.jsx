@@ -76,6 +76,20 @@ export default function OpportunityDetail() {
       refresh();
     } catch (err) {
       setError(err.data?.error || err.message);
+      // patchOpportunity's own 409 for this route means one specific thing:
+      // a real sale set costs.paymentProcessing server-side while this page
+      // was open (the field was still null/editable when the form loaded),
+      // and this save's stale resend conflicts with it. The error message
+      // itself already tells the owner to "רענן את העמוד כדי לראות את הערך
+      // הנוכחי" (refresh the page to see the current value) - this does
+      // exactly that automatically, so the now-locked field and its real
+      // value show up immediately instead of requiring a manual reload (or
+      // the owner retrying the identical save and hitting the same 409
+      // again). Every other error this form can get (priceUSD/revenueEstimate/
+      // costs validation) is the owner's OWN input to see and fix, not a
+      // server-side fact that changed - refreshing on those would instead
+      // silently erase what they just typed.
+      if (err.status === 409) refresh();
     } finally {
       setBusy(false);
     }
