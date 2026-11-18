@@ -654,6 +654,87 @@ test("mergeRefinedSpec does NOT fold Order's own customerName field into Purchas
 });
 
 /**
+ * Round 2198: the Order/PurchaseOrder fold above (and resolvableEntityKeys's
+ * own round-2009 skip, a few lines up in index.ts) only ever decided whether
+ * a relation field's relationTo is resolvable in principle via its alias
+ * key -- it never rewrote the field's own literal relationTo to the name of
+ * whichever entity actually survives the merge. A candidate that both
+ * regenerates the generic "Order" entity (which correctly folds away into
+ * the existing "PurchaseOrder") and introduces an unrelated new relation
+ * field written against that same generic literal name used to keep the
+ * field with its stale relationTo ("Order") even though no entity by that
+ * name exists anywhere in the merged spec -- a permanently dead, always-
+ * empty relation picker downstream, confirmed against the real engine
+ * before this fix.
+ */
+test("mergeRefinedSpec rewrites a kept relation field's relationTo from a folded-away generic alias name to the entity that actually survives the merge", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "Supplier", label: "Supplier", fields: [{ name: "name", type: "text", required: true }] },
+      { name: "PurchaseOrder", label: "Purchase Order", fields: [{ name: "status", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Order", label: "Order", fields: [{ name: "totalAmount", type: "number", required: false }] },
+      {
+        name: "Supplier",
+        label: "Supplier",
+        fields: [{ name: "lastOrder", type: "relation", relationTo: "Order", required: false }],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["Supplier", "PurchaseOrder"],
+    "Order must still fold away into PurchaseOrder, not survive as its own entity",
+  );
+  const supplier = merged.entities.find((e) => e.name === "Supplier")!;
+  const lastOrderField = supplier.fields.find((f) => f.name === "lastOrder");
+  assert.ok(lastOrderField, "the genuinely new lastOrder field must still be added to Supplier");
+  assert.equal(
+    lastOrderField!.relationTo,
+    "PurchaseOrder",
+    "lastOrder's relationTo must be rewritten to PurchaseOrder -- the entity that actually survives -- not left dangling on the generic name (Order) that folded away",
+  );
+});
+
+/**
+ * Round 2198: the same rewrite must also reach a relation field carried on
+ * a brand-new candidate entity (the `!existingEntity` branch in index.ts,
+ * which gets no relationTo validation of any kind) -- not just a field
+ * merged onto an already-existing one.
+ */
+test("mergeRefinedSpec rewrites a folded-away relationTo on a field belonging to a brand-new entity too", () => {
+  const current = baseSpec({
+    entities: [{ name: "PurchaseOrder", label: "Purchase Order", fields: [{ name: "status", type: "text", required: false }] }],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Order", label: "Order", fields: [{ name: "totalAmount", type: "number", required: false }] },
+      {
+        name: "Invoice",
+        label: "Invoice",
+        fields: [{ name: "order", type: "relation", relationTo: "Order", required: false }],
+      },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["PurchaseOrder", "Invoice"],
+    "Invoice must be added as a genuinely new entity, and Order must still fold away into PurchaseOrder",
+  );
+  const invoice = merged.entities.find((e) => e.name === "Invoice")!;
+  assert.equal(
+    invoice.fields.find((f) => f.name === "order")!.relationTo,
+    "PurchaseOrder",
+    "a relation field on a brand-new entity must also be rewritten off the folded-away generic name",
+  );
+});
+
+/**
  * Round 2161: the Order/PurchaseOrder alias fold above only makes sense in
  * ONE direction -- candidate regenerates the GENERIC name "Order" (what
  * domainEntities.ts's own keyword rule always emits), current already has

@@ -368,6 +368,55 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
       fieldNameSet.add(candidateField.name.toLowerCase());
     }
   }
+  // Round 2198: resolvableEntityKeys above only proves a relationTo is
+  // resolvable IN PRINCIPLE via entityMergeKey -- it never rewrites the
+  // field's own literal relationTo to the name of whichever entity
+  // actually ends up carrying that merge key in mergedEntities. A field
+  // kept above (merged onto an existing entity, or carried verbatim on a
+  // brand-new one just added via the `!existingEntity` branch, which gets
+  // no relationTo validation of any kind) can still read exactly like
+  // "Order" even though the merge's whole point was folding that generic
+  // name AWAY into the curated, specific one that survives (e.g.
+  // "PurchaseOrder") -- so the field permanently pointed at a name that no
+  // longer exists anywhere in the merged spec. Confirmed live: a refine
+  // candidate that both regenerates the generic entity (reliably true on
+  // every refine of an aliased template, per round 2152/2177/2180's own
+  // combinedDescription re-matching) AND introduces an unrelated new field
+  // with `relationTo` written against that same generic name leaves that
+  // field dangling -- `migrate.ts`'s resolveRelationTarget only matches
+  // literal (case-insensitive) entity names, has no idea about this
+  // file's own alias groups, and silently omits any FK hazard whenever the
+  // field happens to be optional (the realistic shape for an LLM-proposed
+  // addition) -- exactly the "permanently dead, always-empty relation
+  // picker" failure mode round 2009's own comment above exists to
+  // prevent, just reached through a gap that fix didn't anticipate.
+  //
+  // Run once, after mergedEntities has its final, definitive set of
+  // surviving entity names (new entities included), so this never depends
+  // on candidate.entities' own array order -- a relationTo can reference
+  // an entity appearing later in that array than the field referencing
+  // it, which an incremental, in-loop rewrite above could not resolve.
+  // `entityByExactName` is fully populated by now (both current's own
+  // entities and every genuinely-new candidate entity added above), so an
+  // exact-name match there always wins over the merge-key fallback below --
+  // this is what keeps round 2161's own documented coexistence case (an
+  // unrelated current "Order" and a genuinely new candidate "PurchaseOrder"
+  // both surviving as separate entities) correct: any field honestly
+  // referencing either one by its own real literal name is left untouched,
+  // never forced onto the other merely because they share an alias key.
+  const survivingNameByMergeKey = new Map<string, string>();
+  for (const entity of mergedEntities) {
+    const key = entityMergeKey(entity.name);
+    if (!survivingNameByMergeKey.has(key)) survivingNameByMergeKey.set(key, entity.name);
+  }
+  for (const entity of mergedEntities) {
+    for (const field of entity.fields) {
+      if (field.type !== "relation" || !field.relationTo) continue;
+      if (entityByExactName.has(field.relationTo.toLowerCase())) continue;
+      const resolved = survivingNameByMergeKey.get(entityMergeKey(field.relationTo));
+      if (resolved) field.relationTo = resolved;
+    }
+  }
   const roleSet = new Set(current.roles.map((role) => role.toLowerCase()));
   const mergedRoles = [...current.roles];
   for (const candidateRole of candidate.roles) {
