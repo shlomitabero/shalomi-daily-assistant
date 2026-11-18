@@ -51563,3 +51563,17 @@ Round 2108 (and rounds 2131/2150 after it) excluded "volunteer" + a determiner (
 **Tests:** added a new test alongside the existing round-2108/2131/2150 tests on this same keyword, covering all 4 bare-noun reproductions plus a regression check that the real nonprofit description still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test, to confirm it failed for the exact predicted reason before the fix) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 377/377 (was 376), no build script for this package (tests only).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2243: Courier's bare "driver(s)" keyword collides with the device/hardware-driver tech sense, the same font-name collision round 2106 already fixed for this rule's "courier" keyword
+
+The Courier (delivery person) entity's keyword list has used bare `/\bdriver(s)?\b/`, with no exclusion at all for the extremely common everyday tech sense of the same word -- a device/printer/graphics/USB driver has nothing to do with a delivery driver, the identical ordinary-word-vs-software-term collision this very rule's sibling "courier" keyword already had fixed (round 2106) for monospace font names.
+
+**Confirmed via direct `HeuristicSpecProvider.generate()` calls:** "A dashboard to track device drivers and firmware versions for our company's hardware fleet." and "An app to manage printer drivers, their versions, and which machines have them installed." each matched ONLY `['Courier']`, fabricating a bogus delivery entity (vehicleType/status enum fields) and losing the real IT-asset/firmware-inventory domain entirely. A third case ("...inventory of graphics card drivers...") matched `['Product', 'Courier']`, keeping the spurious Courier alongside the one correct entity.
+
+**The fix:** excluded the specific device/hardware noun immediately before "driver(s)" -- device/printer/graphics card/audio/network/display/usb/gpu/hardware/software/chipset/bluetooth/wifi/sound/video/webcam -- the exact collocation this tech sense is always phrased with, mirroring the immediate-lookbehind style already used elsewhere in this file (e.g. the "service listing(s)" exclusion), rather than a document-wide rule, since the disambiguating noun always sits directly before "driver(s)" in practice. Deliberately left the generic word "card" out of the list (too ambiguous on its own -- credit/business/SD cards), using the two-word "graphics card" phrase instead. Validated the final regex against 12 hand-checked cases (4 bug reproductions plus device/printer/graphics/audio/usb/gpu variants, and 6 genuine delivery-driver controls) before writing it into the fix.
+
+**Not applicable:** no `codegen.ts`/`twin.ts` duplicate -- this keyword-matching logic is confined entirely to `packages/spec-engine`'s spec-generation-time heuristic provider, same as rounds 2240/2241/2242's findings.
+
+**Tests:** added a new test alongside the existing round-2106/2149 Courier-font tests, covering device/printer/graphics-card/USB driver phrasings plus a regression check that a genuine delivery-driver description still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 378/378 (was 377), no build script for this package (tests only).
+
+Live: https://forge-ai-m7p7.onrender.com
