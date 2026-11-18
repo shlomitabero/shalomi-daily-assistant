@@ -1505,6 +1505,12 @@ function FieldInput({
 }) {
   const { t, lang } = useTranslation();
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
+  // Round 2187: see the "file" branch's own onChange doc comment below --
+  // guards against a SECOND pick for this same field superseding the
+  // first one before either upload resolves. Persists across re-renders
+  // of this same FieldInput instance (same field, same form session),
+  // unlike the plain local variables each onChange closure captures.
+  const latestFilePickRef = useRef(0);
   // A relation field with more than a handful of related records (e.g. a
   // CRM's Deal.customer pointing at 150 Customer rows) had no way to
   // narrow the plain <select> below -- a browser's own type-ahead inside
@@ -1796,6 +1802,24 @@ function FieldInput({
             // belongs to, captured before the real await below -- see this
             // component's own formInstanceKeyRef doc comment above.
             const pickedAtInstance = formInstanceKeyRef?.current;
+            // Round 2187: snapshot this pick's own sequence number -- see
+            // latestFilePickRef's own doc comment above. A second pick for
+            // THIS SAME field, made before this upload resolves (e.g. the
+            // user re-opens the picker because they chose the wrong file,
+            // or just double-clicks), used to race this one: both closures
+            // captured the identical pre-pick `currentFile`/
+            // `currentFileIsDisposable` snapshot below, so whichever
+            // upload's network response simply happened to land LAST won
+            // -- silently overriding the user's actual last choice purely
+            // by response timing, while the other upload's file was never
+            // referenced by the form NOR ever deleted (a permanent
+            // orphaned file on disk, since each closure only ever
+            // considered its own stale `currentFile` for cleanup).
+            // Incrementing here, synchronously before the await, makes
+            // each new pick for this field immediately supersede any
+            // still-in-flight earlier one for it, regardless of resolve
+            // order.
+            const pickToken = ++latestFilePickRef.current;
             try {
               const uploaded = await uploadRecordFile(projectId, entityName, field.name, chosen);
               if (formInstanceKeyRef && formInstanceKeyRef.current !== pickedAtInstance) {
@@ -1807,6 +1831,18 @@ function FieldInput({
                 // `setForm`/`field.name`, neither of which changes between
                 // records for the same entity). Clean up this file
                 // directly instead -- nothing else will ever reference it.
+                void deleteUploadedRecordFile(projectId, entityName, field.name, uploaded.url).catch(() => {});
+                return;
+              }
+              if (latestFilePickRef.current !== pickToken) {
+                // Superseded by a newer pick for this exact field while
+                // this upload was still in flight -- the newer pick's own
+                // onChange call (whichever order the two network
+                // responses actually land in) owns applying the field's
+                // final value and cleaning up whatever file it replaces.
+                // This losing upload's own file was never applied to the
+                // form, so it must clean up after itself here or it leaks
+                // on disk forever.
                 void deleteUploadedRecordFile(projectId, entityName, field.name, uploaded.url).catch(() => {});
                 return;
               }

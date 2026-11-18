@@ -21991,6 +21991,110 @@ test("EntityPanel's create form deletes a superseded file upload from disk when 
 });
 
 /**
+ * Round 2187: a real bug found by the survey -- picking a SECOND file for
+ * the SAME field before the FIRST pick's own upload resolves used to race
+ * it: both onChange closures captured the identical pre-pick
+ * `currentFile`/`currentFileIsDisposable` snapshot, so whichever upload's
+ * network response simply happened to land LAST won -- silently
+ * overriding the user's actual last choice purely by response timing --
+ * while the other upload's file was never referenced by the form NOR ever
+ * deleted (a permanent orphaned file on disk). Simulates exactly that:
+ * picks "first.pdf", then (before its own upload resolves) picks
+ * "second.pdf" instead, whose own upload resolves immediately. Confirms
+ * the field shows "second.pdf" -- the user's real last choice -- the
+ * moment it resolves, and that the stale "first.pdf" upload, once it
+ * finally resolves afterward, cleans up its own now-orphaned file instead
+ * of silently overwriting the field back to it.
+ */
+test("EntityPanel's file field keeps the LATER of two picks for the same field as its value regardless of which upload's network response resolves first, and cleans up the loser instead of leaking it", async () => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [];
+    const deleteCalls: Array<{ url: string }> = [];
+    let resolveFirstUpload: ((response: Response) => void) | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Applicant") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "POST" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        const picked = (init!.body as FormData).get("file") as File;
+        if (picked.name === "first.pdf") {
+          // Deliberately never resolves until the test resolves it itself
+          // below, AFTER the second pick's own upload has already won --
+          // simulates the earlier pick's response simply taking longer.
+          return new Promise<Response>((resolve) => {
+            resolveFirstUpload = resolve;
+          });
+        }
+        return new Response(
+          JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/second.pdf", name: "second.pdf", size: 9, mimeType: "application/pdf" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Applicant/fields/resume/upload") {
+        deleteCalls.push({ url: (JSON.parse(init!.body as string) as { url: string }).url });
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      renderEntityPanel({ entity: APPLICANT_ENTITY, allEntities: [APPLICANT_ENTITY] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 0);
+
+      const form = document.querySelector("form") as HTMLFormElement;
+      const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+
+      const firstFile = new File(["one"], "first.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [firstFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      // The first pick's own upload is now in flight and will not resolve
+      // until resolveFirstUpload is called below -- the field shows
+      // nothing yet.
+      assert.equal(form.querySelector(".file-field-current"), null, "the first pick's upload hasn't resolved yet");
+
+      const secondFile = new File(["two"], "second.pdf", { type: "application/pdf" });
+      await act(async () => {
+        Object.defineProperty(fileInput, "files", { value: [secondFile], configurable: true });
+        fireEvent.change(fileInput);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => form.querySelector(".file-field-current a")?.textContent === "second.pdf");
+      assert.equal(deleteCalls.length, 0, "nothing to delete yet -- this is the field's very first value, and the stale first pick hasn't resolved yet");
+
+      // Now let the STALE first pick's upload finally resolve, AFTER the
+      // newer (second) pick has already won.
+      await act(async () => {
+        resolveFirstUpload!(
+          new Response(
+            JSON.stringify({ file: { url: "/api/uploads/proj1/Applicant/first.pdf", name: "first.pdf", size: 9, mimeType: "application/pdf" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitForCondition(() => deleteCalls.length === 1);
+      assert.equal(
+        deleteCalls[0]!.url,
+        "/api/uploads/proj1/Applicant/first.pdf",
+        "the stale, superseded upload must clean up its own now-orphaned file instead of leaking it on disk",
+      );
+      assert.equal(
+        form.querySelector(".file-field-current a")?.textContent,
+        "second.pdf",
+        "the LATER pick must remain the field's value even though the EARLIER pick's upload resolved after it -- the field must never flip back to a stale pick purely by response timing",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1002: the fix is deliberately scoped to the create form only --
  * once a record is persisted, its file field's value is the record's REAL
  * data, already owned by deleteReplacedFieldFields (round 685) once the
