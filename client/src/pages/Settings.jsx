@@ -54,6 +54,19 @@ export default function Settings() {
   }
 
   async function onToggleStop() {
+    // Only the "turn off" direction is gated - activating the stop must stay
+    // one instant, frictionless click (ActivityLog.jsx's own onResolve and
+    // OpportunityDetail.jsx's reject already confirm before a consequential,
+    // hard-to-undo action; resuming every real action this app can take,
+    // after the owner deliberately stopped them all, is at least as
+    // consequential as either, yet was the one such action with zero
+    // confirmation at all - a single accidental click on this same button
+    // the owner just used to stop everything would immediately resume it).
+    if (settings.emergencyStop && !window.confirm(
+      'לכבות את עצירת החירום? המערכת תחזור לפעול לפי מצב הפעולה שנבחר, כולל פעולות אמיתיות אם המצב מאפשר זאת. בצע רק אם הבעיה שבגללה הפעלת את העצירה נפתרה.'
+    )) {
+      return;
+    }
     setError('');
     setBusy(true);
     try {
