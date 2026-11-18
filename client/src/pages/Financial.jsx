@@ -167,7 +167,19 @@ export default function Financial() {
         {watchlist.map((w) => (
           <div key={w.id}>
             <div className="source-row">
-              <span className={`dot ${w.connected ? 'dot-on' : 'dot-off'}`} />
+              {/* w.connected is frozen at whatever it was the last time this
+                  entry was actually fetched (add or refresh) - refreshWatchlistEntry's
+                  own comment already covers the forward case (never connected,
+                  key configured later) needing a manual refresh to catch up, but
+                  said nothing about the reverse: if MARKET_DATA_API_KEY is later
+                  removed, every previously-connected entry's dot stayed green
+                  forever, directly contradicting this same page's own top
+                  banner and "רענן מחיר"/"רענן הכל" buttons right next to it,
+                  which both already read the live `connected` state instead.
+                  ANDing with it here means a lost connection shows up
+                  immediately and consistently everywhere on this page, not
+                  just in the two places that already happened to check it. */}
+              <span className={`dot ${w.connected && connected ? 'dot-on' : 'dot-off'}`} />
               <span>{w.symbol}</span>
               {/* Every other money figure in this app goes through
                   formatMoney's fixed 2-decimal formatting - this was the one
