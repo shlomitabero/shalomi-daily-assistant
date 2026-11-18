@@ -15,9 +15,35 @@ export default function Financial() {
   const [addBusy, setAddBusy] = useState(false);
   const [tradeBusy, setTradeBusy] = useState(false);
 
+  // Two independent .then/.catch pairs raced each other into the same
+  // setError - if both calls failed (a transient blip hitting the whole
+  // page, not just one endpoint), whichever one happened to settle LAST
+  // silently overwrote the other's message, so the owner only ever saw
+  // one of the two real failures. Worse, neither success branch ever
+  // cleared a previous error, so a stale "load failed" message from an
+  // earlier refresh() (this function's own first call, on mount, runs with
+  // no preceding setError('') - every other caller in this file already
+  // clears it themselves first) could keep showing indefinitely even after
+  // the data it was about had since loaded fine. Promise.allSettled (same
+  // fix already shipped for Approvals.jsx/Dashboard.jsx's own equivalent
+  // refresh()) fixes both: every real failure is kept and shown together,
+  // and a refresh where everything succeeded always clears to no error.
   function refresh() {
-    api.getFinancialWatchlist().then((r) => { setWatchlist(r.watchlist); setConnected(r.connected); }).catch((err) => setError(err.data?.error || err.message));
-    api.getPaperTrades().then((r) => setTrades(r.trades)).catch((err) => setError(err.data?.error || err.message));
+    Promise.allSettled([api.getFinancialWatchlist(), api.getPaperTrades()]).then(([wRes, tRes]) => {
+      const errors = [];
+      if (wRes.status === 'fulfilled') {
+        setWatchlist(wRes.value.watchlist);
+        setConnected(wRes.value.connected);
+      } else {
+        errors.push(wRes.reason?.data?.error || wRes.reason?.message);
+      }
+      if (tRes.status === 'fulfilled') {
+        setTrades(tRes.value.trades);
+      } else {
+        errors.push(tRes.reason?.data?.error || tRes.reason?.message);
+      }
+      setError(errors.join('; '));
+    });
   }
   useEffect(refresh, []);
 
