@@ -93,6 +93,45 @@ test('createOneTimePrice creates a real product then a real price and returns bo
   }
 });
 
+test('createOneTimePrice calls the real, non-sandbox Paddle API when PADDLE_ENV is not set to sandbox', async () => {
+  // Every other test in this file deliberately sets PADDLE_ENV: 'sandbox' to
+  // test safely without ever touching a real Paddle account - as a side
+  // effect, paddleApiBase()'s OTHER branch (the real https://api.paddle.com
+  // host, which is what every actual production sale uses once the owner's
+  // product really goes live) had never once been exercised anywhere in this
+  // entire test suite. A typo or regression in that literal URL would have
+  // passed every existing test here while silently breaking every real sale.
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    if (url.endsWith('/products')) {
+      return new Response(JSON.stringify({ data: { id: 'pro_123' } }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ data: { id: 'pri_456' } }), { status: 201, headers: { 'content-type': 'application/json' } });
+  };
+  // Same reason as the test above: PADDLE_ENV is read fresh by paddleApiBase()
+  // on each of the two sequential awaited fetch calls, so it's set/restored
+  // manually around the whole awaited call rather than via withEnv.
+  const originalEnv = process.env.PADDLE_ENV;
+  const originalKey = process.env.PADDLE_API_KEY;
+  delete process.env.PADDLE_ENV;
+  process.env.PADDLE_API_KEY = 'key';
+  try {
+    const result = await createOneTimePrice({ name: 'test', amountCents: 900, currencyCode: 'USD' });
+    assert.deepEqual(result, { productId: 'pro_123', priceId: 'pri_456' });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, 'https://api.paddle.com/products');
+    assert.equal(calls[1].url, 'https://api.paddle.com/prices');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalEnv === undefined) delete process.env.PADDLE_ENV;
+    else process.env.PADDLE_ENV = originalEnv;
+    if (originalKey === undefined) delete process.env.PADDLE_API_KEY;
+    else process.env.PADDLE_API_KEY = originalKey;
+  }
+});
+
 test('createOneTimePrice throws a clear error instead of a crash when Paddle rejects the product creation', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response('vendor account not approved', { status: 403 });
