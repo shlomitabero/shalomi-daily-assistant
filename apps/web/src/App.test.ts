@@ -2255,7 +2255,14 @@ test("App's openExistingProject routes a built project to the live preview and a
   function run(
     project: Project,
     currentUser: { id: string } | null,
-    busyFlags: { busy: boolean; enhanceBusy: boolean; templateBusy: string | null } = { busy: false, enhanceBusy: false, templateBusy: null },
+    busyFlags: {
+      busy: boolean;
+      enhanceBusy: boolean;
+      templateBusy: string | null;
+      cloningId?: string | null;
+      deletingId?: string | null;
+      bulkDeleteBusy?: boolean;
+    } = { busy: false, enhanceBusy: false, templateBusy: null },
   ) {
     const state: {
       project: Project | null;
@@ -2280,6 +2287,9 @@ test("App's openExistingProject routes a built project to the live preview and a
       "busy",
       "enhanceBusy",
       "templateBusy",
+      "cloningId",
+      "deletingId",
+      "bulkDeleteBusy",
       "setProject",
       "setActiveEntity",
       "setSpecProvider",
@@ -2296,6 +2306,9 @@ test("App's openExistingProject routes a built project to the live preview and a
       busyFlags.busy,
       busyFlags.enhanceBusy,
       busyFlags.templateBusy,
+      busyFlags.cloningId ?? null,
+      busyFlags.deletingId ?? null,
+      busyFlags.bulkDeleteBusy ?? false,
       (p: Project) => (state.project = p),
       (name: string | null) => (state.activeEntity = name),
       (v: string | null) => (state.specProvider = v),
@@ -2409,6 +2422,30 @@ test("App's openExistingProject routes a built project to the live preview and a
   const templateBusyResult = run(builtProject, owner, { busy: false, enhanceBusy: false, templateBusy: "tpl-1" });
   assert.equal(templateBusyResult.project, null, "must never navigate while templateBusy is set");
   assert.equal(templateBusyResult.view, null, "must leave view untouched while templateBusy is set");
+
+  /**
+   * Round 2245: round 2238's own guard above protects against the
+   * create-flow trio's stale completions, but never checked cloningId/
+   * deletingId/bulkDeleteBusy -- so opening a different, already-existing
+   * project via the "Open" button while a Duplicate was still in flight on
+   * some other project was never blocked here, and that duplicate's own
+   * delayed completion (handleDuplicateProject's own call to this exact
+   * function once cloneProject() resolves) then silently yanked the user
+   * off whatever project they'd since navigated to -- the identical
+   * failure mode round 2238 fixed for Build/Enhance/Template, just
+   * reached from the Duplicate path instead.
+   */
+  const cloningResult = run(builtProject, owner, { busy: false, enhanceBusy: false, templateBusy: null, cloningId: "some-other-project-id" });
+  assert.equal(cloningResult.project, null, "must never navigate while a Duplicate (cloningId) is in flight");
+  assert.equal(cloningResult.view, null, "must leave view untouched while cloningId is set");
+
+  const deletingResult = run(builtProject, owner, { busy: false, enhanceBusy: false, templateBusy: null, deletingId: "some-other-project-id" });
+  assert.equal(deletingResult.project, null, "must never navigate while a Delete (deletingId) is in flight");
+  assert.equal(deletingResult.view, null, "must leave view untouched while deletingId is set");
+
+  const bulkDeleteResult = run(builtProject, owner, { busy: false, enhanceBusy: false, templateBusy: null, bulkDeleteBusy: true });
+  assert.equal(bulkDeleteResult.project, null, "must never navigate while a bulk delete (bulkDeleteBusy) is in flight");
+  assert.equal(bulkDeleteResult.view, null, "must leave view untouched while bulkDeleteBusy is true");
 });
 
 /**
@@ -2416,15 +2453,22 @@ test("App's openExistingProject routes a built project to the live preview and a
  * disable the "My Projects" list's own "Open" row button -- a user could
  * still click it, even if the click would then no-op, with no visual
  * feedback that anything is wrong.
+ *
+ * Round 2245: extended to cloningId/deletingId/bulkDeleteBusy too, matching
+ * openExistingProject's own widened guard (see its round-2245 comment) --
+ * otherwise the button looked clickable while a Duplicate/Delete/bulk
+ * delete was in flight on another project, even though the click would
+ * then no-op (or, worse, get silently overridden by that other
+ * operation's own delayed completion).
  */
-test("App's 'My Projects' Open row button is disabled while busy, enhanceBusy, or templateBusy is set, matching openExistingProject's own guard", () => {
+test("App's 'My Projects' Open row button is disabled while busy, enhanceBusy, templateBusy, cloningId, deletingId, or bulkDeleteBusy is set, matching openExistingProject's own guard", () => {
   const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const openBtnSrc = appSrc.match(/className="my-project-open"[\s\S]*?\n\s*>/)?.[0];
   assert.ok(openBtnSrc, "expected to find the my-project-open button in App.tsx");
   assert.match(
     openBtnSrc!,
-    /disabled=\{busy \|\| enhanceBusy \|\| templateBusy !== null\}/,
-    "the Open button's disabled attribute must include busy/enhanceBusy/templateBusy",
+    /disabled=\{busy \|\| enhanceBusy \|\| templateBusy !== null \|\| cloningId !== null \|\| deletingId !== null \|\| bulkDeleteBusy\}/,
+    "the Open button's disabled attribute must include busy/enhanceBusy/templateBusy/cloningId/deletingId/bulkDeleteBusy",
   );
 });
 

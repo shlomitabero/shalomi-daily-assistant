@@ -1883,9 +1883,24 @@ function AppContent() {
    * request resolved ~4s later. Gating here (rather than only on the
    * button below) also protects handleDuplicateProject's own identical
    * call to this function after cloneProject() resolves.
+   *
+   * Round 2245: that round-2238 comment above claimed this guard already
+   * protects handleDuplicateProject's own call to this function -- true
+   * only for the create-flow trio, never for cloningId itself. Opening a
+   * DIFFERENT project (via the Open button below) while a Duplicate was
+   * still in flight on some other project was never blocked here either,
+   * so the duplicate's own delayed completion then silently yanked the
+   * user off whatever project they'd since navigated to, same failure
+   * mode as round 2238, just reached from the Duplicate path instead of
+   * Build/Enhance/Template. deletingId/bulkDeleteBusy don't currently
+   * call this function themselves, but are included too for the same
+   * reason round 2238 already gated templateBusy here even though it's a
+   * sibling of busy/enhanceBusy, not a direct caller of this function on
+   * its own completion -- any in-flight mutation of the project list is a
+   * reason to hold off navigating elsewhere.
    */
   function openExistingProject(p: Project) {
-    if (busy || enhanceBusy || templateBusy !== null) return;
+    if (busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy) return;
     setProject(p);
     setActiveEntity(p.spec.entities[0]?.name ?? null);
     setSpecProvider(null);
@@ -2929,10 +2944,11 @@ function AppContent() {
                         type="button"
                         className="my-project-open"
                         onClick={() => openExistingProject(p)}
-                        // Round 2238: see openExistingProject's own round-2238
-                        // comment above for why a creation flow in flight
-                        // must block navigating to a different project here.
-                        disabled={busy || enhanceBusy || templateBusy !== null}
+                        // Round 2238/2245: see openExistingProject's own
+                        // comments above for why a creation flow, or a
+                        // duplicate/delete in flight, must block navigating
+                        // to a different project here.
+                        disabled={busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy}
                       >
                         <strong>{p.name}</strong>
                         {p.ownerId !== user.id && <span className="chip">{t("home.myProjects.shared")}</span>}
