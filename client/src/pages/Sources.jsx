@@ -53,6 +53,23 @@ export default function Sources() {
                 <span className="source-name" style={{ fontWeight: 700 }}>{s.name}</span>
               </div>
               <p className="hint">{s.description}</p>
+              {/* routes/sources.js's rescanSources carefully stamps
+                  lastScannedAt only for a source that's actually connected
+                  (distinct from lastCheckedAt in the section below, which
+                  every source - connected or not - gets touched on every
+                  single page load) - but nothing here ever showed it, so all
+                  that care produced a fact the owner could never actually
+                  see. "אימות ידני" rather than "סריקה" deliberately avoids
+                  implying this is the autonomous AI-scan loop that actually
+                  searches for new opportunities (Opportunities.jsx's own
+                  "סריקה אוטונומית" card already shows that, from a
+                  completely separate signal, actions_log's own
+                  'autonomous_scan' entries) - this field only ever reflects
+                  a deliberate owner click on "בדוק שוב" below, landing on a
+                  moment this source happened to be connected. */}
+              <p className="hint" style={{ margin: '4px 0 0' }}>
+                {s.lastScannedAt ? `אימות ידני אחרון (לחיצה על "בדוק שוב"): ${new Date(s.lastScannedAt).toLocaleString('he-IL')}` : 'עדיין לא אומת ידנית'}
+              </p>
             </div>
           ))}
         </section>
