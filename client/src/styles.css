@@ -157,7 +157,16 @@ input, select, textarea {
   background: var(--bg-card); border: 1px solid var(--negative); color: var(--negative);
   font-weight: 700; font-size: 15px; cursor: pointer;
 }
-.kill-switch.active { background: var(--negative); color: white; }
+/* White text here (the previous value) gave a 2.78:1 contrast ratio
+   against this solid --negative background - well below WCAG AA's 4.5:1
+   minimum for normal text, on the single most safety-critical control in
+   this app (the emergency-stop toggle, meant to be readable at a glance
+   "the moment something looks wrong" - Settings.jsx's own hint text).
+   --bg (near-black) gives 6.9:1, the same dark-on-bright-background
+   pattern .btn-primary already uses for --accent's own solid background,
+   just reusing this theme's existing darkest color instead of a new one
+   tuned only for --accent's different hue. */
+.kill-switch.active { background: var(--negative); color: var(--bg); }
 
 /* Public product page */
 .public-page { max-width: 560px; margin: 0 auto; padding: 40px 20px; text-align: center; }
