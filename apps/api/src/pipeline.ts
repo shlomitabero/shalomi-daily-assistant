@@ -20,7 +20,7 @@ import {
   type ForgeDatabase,
   type MigrationChange,
 } from "@forge/db";
-import { detectLikelyEntityRenames, detectLikelyFieldRenames, requestSpecFix } from "@forge/spec-engine";
+import { detectLikelyEntityRenames, detectLikelyFieldRenames, isHebrewText, requestSpecFix } from "@forge/spec-engine";
 import { deleteUploadedFile } from "./uploadPaths.js";
 
 const RESERVED_SQL_WORDS = new Set([
@@ -896,7 +896,18 @@ export async function* runBuildPipeline(
     yield { agent: "Debug", status: "running", message: "Analyzing what went wrong and looking for a fix…" };
     let fixedSpec: ProductSpec;
     try {
-      fixedSpec = await requestSpecFix(nextSpec, dbError, { apiKey, model: process.env.ANTHROPIC_MODEL });
+      // Round 2205: mirrors routes/projects.ts's own /refine and /answers
+      // handlers, which already pass isHebrewText(project.description) as
+      // AnthropicSpecProvider.generate's own isHebrewOverride -- pins the
+      // Debug Agent's own new labels/enumLabels to the project's real,
+      // established language the same way, instead of leaving them to
+      // the model's own guess (see RequestSpecFixOptions.isHebrewOverride's
+      // own doc comment in debug.ts for the full failure mode this closes).
+      fixedSpec = await requestSpecFix(nextSpec, dbError, {
+        apiKey,
+        model: process.env.ANTHROPIC_MODEL,
+        isHebrewOverride: isHebrewText(project.description),
+      });
       // requestSpecFix is itself a fresh AI call with no more knowledge of
       // a user's customized labels than generateSpec had -- carries them
       // forward again here, same as the initial nextSpec just above.

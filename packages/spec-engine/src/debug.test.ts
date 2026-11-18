@@ -222,6 +222,42 @@ test("requestSpecFix times out instead of hanging forever when the network call 
  * replaces it with the same deterministic Dashboard-plus-List+Form-pair
  * shape anthropic.ts's own round-1031 test confirms for its sibling.
  */
+/**
+ * Round 2205: mirrors anthropic.ts's own identical AnthropicSpecProvider.
+ * generate round-708 test (isHebrewOverride) -- this function is a second,
+ * independent AI call with the same freedom to add brand-new entities/
+ * fields (see this file's own round-1113 doc comment), but had no way at
+ * all to pin the language of any new label/description/enumLabels it
+ * introduces: SYSTEM_PROMPT's own "match the spec's existing labels" rule
+ * has nothing to anchor on for a project's very first failed /build,
+ * where no entity/field has a non-ASCII label yet, and the error message
+ * itself is always plain English SQLite text. Confirms isHebrewOverride
+ * appends an explicit directive, and that omitting it sends the exact
+ * same request as before this round.
+ */
+test("requestSpecFix appends an explicit language directive to the request when isHebrewOverride is given, and sends the request unchanged when it's omitted", async () => {
+  let capturedContent: string | undefined;
+  const fakeFetch = (async (_url: string, init?: RequestInit) => {
+    capturedContent = (JSON.parse(init!.body as string) as { messages: { content: string }[] }).messages[0].content;
+    return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(brokenSpec) }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  await requestSpecFix(brokenSpec, "duplicate column name: name", { apiKey: "test-key", fetchImpl: fakeFetch, isHebrewOverride: false });
+  assert.match(capturedContent!, /Write every.*in English/i, "isHebrewOverride: false must pin English explicitly");
+  assert.match(capturedContent!, /^\{"spec":/, "the original spec+error JSON must still lead the message");
+  assert.match(capturedContent!, /"label".*"description".*"enumLabels"/, "the directive must name label, entity description, and enumLabels together");
+
+  await requestSpecFix(brokenSpec, "duplicate column name: name", { apiKey: "test-key", fetchImpl: fakeFetch, isHebrewOverride: true });
+  assert.match(capturedContent!, /Write every.*in Hebrew/i, "isHebrewOverride: true must pin Hebrew explicitly");
+
+  await requestSpecFix(brokenSpec, "duplicate column name: name", { apiKey: "test-key", fetchImpl: fakeFetch });
+  assert.equal(
+    capturedContent,
+    JSON.stringify({ spec: brokenSpec, error: "duplicate column name: name" }),
+    "omitting isHebrewOverride must send the exact same request as before this round, with no directive appended",
+  );
+});
+
 test("requestSpecFix normalizes screens to the Dashboard-plus-List+Form-pair-per-entity convention, discarding whatever arbitrary shape the model itself returned", async () => {
   const fixedSpecWithWrongScreens = {
     ...brokenSpec,

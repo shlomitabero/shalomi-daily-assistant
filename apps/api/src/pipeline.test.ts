@@ -121,6 +121,52 @@ test("Debug Agent recovers from a real migration failure when ANTHROPIC_API_KEY 
   }
 });
 
+/**
+ * Round 2205: requestSpecFix (the Debug Agent's own repair AI call,
+ * reached via this exact diffAndMigrate-throws branch) is a second,
+ * independent AI call just as free to add brand-new entities/fields as
+ * generateSpec is, but until this round had no way to pin the language of
+ * any new label/description/enumLabels it introduces -- unlike /refine
+ * and /answers (routes/projects.ts), which already pass
+ * isHebrewText(project.description) into AnthropicSpecProvider.generate's
+ * own isHebrewOverride. Confirms runBuildPipeline now passes that same
+ * override into requestSpecFix, derived from the real project's own
+ * description, for both a Hebrew and an English project.
+ */
+test("runBuildPipeline passes isHebrewText(project.description) through to requestSpecFix's own isHebrewOverride", async () => {
+  const db = openDatabase(":memory:");
+  ensureProjectsTable(db);
+  ensureCheckpointsTable(db);
+  const hebrewProject = insertProject(db, {
+    id: "proj1",
+    ownerId: "user1",
+    name: "test",
+    description: "ניהול לקוחות למספרה",
+    spec: fixedSpec,
+  });
+
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  let capturedContent: string | undefined;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    capturedContent = (JSON.parse(init!.body as string) as { messages: { content: string }[] }).messages[0].content;
+    return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixedSpec) }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  try {
+    await collect(runBuildPipeline(db, hebrewProject, { nextSpec: brokenSpec, changeLabel: "Initial build" }));
+    assert.match(capturedContent!, /Write every.*in Hebrew/i, "a Hebrew-described project must pin Hebrew for any new label/description/enumLabels the fix introduces");
+
+    const englishProject = insertProject(db, { id: "proj2", ownerId: "user1", name: "test", description: "manage customers for a salon", spec: fixedSpec });
+    await collect(runBuildPipeline(db, englishProject, { nextSpec: brokenSpec, changeLabel: "Initial build" }));
+    assert.match(capturedContent!, /Write every.*in English/i, "an English-described project must pin English the same way");
+  } finally {
+    process.env.ANTHROPIC_API_KEY = originalKey;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Debug Agent honestly reports it can't help when no ANTHROPIC_API_KEY is configured", async () => {
   const db = openDatabase(":memory:");
   ensureProjectsTable(db);

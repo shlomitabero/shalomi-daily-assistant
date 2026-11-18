@@ -12,13 +12,38 @@ You will be given a JSON object with two fields: "spec" (a ProductSpec that fail
 Return ONLY a corrected ProductSpec JSON object — the exact same shape as "spec" — that fixes
 whatever caused the error, changing as little as possible. Do not add prose, do not wrap it in
 markdown fences. Every entity/field "name" must stay a plain ASCII identifier (these become real
-SQL table/column names). Output raw JSON only.`;
+SQL table/column names). You are free to add, rename, or remove entities and fields while fixing
+the error. Any entity/field "label", entity "description", and (for every "enum" field) its
+"enumLabels" — an object mapping EVERY one of that field's enumValues to a translated display
+string — must be written in the SAME language and script as "spec"'s own existing labels and
+descriptions (e.g. if the spec you were given already has Hebrew labels, any new or changed label,
+description, or enumLabels entry must be Hebrew too). "enumValues" themselves, like every
+entity/field "name", MUST stay plain ASCII identifiers regardless of language. Output raw JSON
+only.`;
 
 export interface RequestSpecFixOptions {
   apiKey: string;
   model?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * Round 2205: mirrors AnthropicSpecProvider.generate's own identical
+   * isHebrewOverride parameter (anthropic.ts) -- this function is a second,
+   * independent AI call with the same freedom to add brand-new entities/
+   * fields the Debug Agent's own round-1113 doc comment already describes.
+   * SYSTEM_PROMPT's own "match the spec's existing labels" rule above has
+   * nothing to anchor on for a project's very first failed /build, where
+   * no entity/field has a non-ASCII label yet at all -- the exact
+   * "inferring from mixed/absent text is unreliable" gap
+   * AnthropicSpecProvider.generate's own languageDirective exists to close
+   * for the primary generation path. Passing pipeline.ts's own
+   * isHebrewText(project.description) here pins the same explicit,
+   * unambiguous language the main generator and every /refine call
+   * already get, instead of leaving the Debug Agent's new content to
+   * possibly follow the error message's own language (always plain
+   * English/SQLite text) or guess from nothing at all.
+   */
+  isHebrewOverride?: boolean;
 }
 
 /**
@@ -118,6 +143,16 @@ export async function requestSpecFix(
   options: RequestSpecFixOptions,
 ): Promise<ProductSpec> {
   const fetchImpl = options.fetchImpl ?? fetch;
+  // Mirrors AnthropicSpecProvider.generate's own identical languageDirective
+  // (anthropic.ts) -- see RequestSpecFixOptions.isHebrewOverride's own doc
+  // comment above for why SYSTEM_PROMPT's "match the spec's existing
+  // labels" rule alone isn't enough.
+  const languageDirective =
+    options.isHebrewOverride === undefined
+      ? ""
+      : options.isHebrewOverride
+        ? "\n\n[Write every new or changed \"label\", entity \"description\", and \"enumLabels\" entry in Hebrew, regardless of what language the error message above is written in.]"
+        : "\n\n[Write every new or changed \"label\", entity \"description\", and \"enumLabels\" entry in English, regardless of what language the error message above is written in.]";
   const response = await fetchAnthropic(
     fetchImpl,
     ANTHROPIC_API_URL,
@@ -132,7 +167,7 @@ export async function requestSpecFix(
         model: options.model ?? "claude-sonnet-5",
         max_tokens: 4096,
         system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: JSON.stringify({ spec, error: errorMessage }) }],
+        messages: [{ role: "user", content: `${JSON.stringify({ spec, error: errorMessage })}${languageDirective}` }],
       }),
     },
     options.timeoutMs,
