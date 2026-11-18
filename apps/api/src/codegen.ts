@@ -646,6 +646,26 @@ function resolveSubmittedKey(data, fieldName) {
   return Object.keys(data).find((key) => key.toLowerCase() === lowerFieldName);
 }
 
+// Round 2202: mirrors the live Forge AI backend's own routes/projects.ts
+// computeIgnoredFields, which this generated server never got. The POST/
+// PATCH routes below (via resolveSubmittedKey just above) only ever walk
+// entity.fields looking up each KNOWN field's own submitted value -- a
+// submitted key that matches no current field at all is simply never
+// read, with nothing in the response to say so. This generated app's own
+// README ("Extending it") documents editing a field's name (or removing
+// it) in the ENTITIES array and restarting as a supported workflow; a
+// browser tab still holding the PREVIOUS JS bundle (with a form field for
+// the now-renamed/removed field) that submits a Save/inline-edit/bulk-
+// update/CSV-import afterward has that field's value silently and
+// permanently dropped, with the PATCH/POST still returning a plain 200/
+// 201 success. Case-insensitive for the identical reason
+// resolveSubmittedKey is: a cosmetic recase alone is already handled by
+// that fallback and must not be flagged here as "no longer exists".
+function computeIgnoredFields(entity, data) {
+  const fieldNamesLower = new Set(entity.fields.map((f) => f.name.toLowerCase()));
+  return Object.keys(data).filter((key) => !fieldNamesLower.has(key.toLowerCase()));
+}
+
 function rowToRecord(entity, row) {
   const record = { id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt ?? null };
   for (const field of entity.fields) {
@@ -757,7 +777,9 @@ for (const entity of ENTITIES) {
         throw new Error(\`Field "\${selfRefField.name}" can't reference the record's own id\`);
       }
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(result.lastInsertRowid);
-      res.status(201).json({ record: rowToRecord(entity, row) });
+      const ignoredFields = computeIgnoredFields(entity, req.body ?? {});
+      const record = rowToRecord(entity, row);
+      res.status(201).json(ignoredFields.length > 0 ? { record, ignoredFields } : { record });
     } catch (err) {
       // PRAGMA foreign_keys (above) throws this exact message when a
       // relation field's value references a record that doesn't exist --
@@ -833,7 +855,9 @@ for (const entity of ENTITIES) {
       const updatedAt = new Date().toISOString();
       db.prepare(\`UPDATE \${q(entity.name)} SET \${columns.map((c) => \`\${q(c)} = ?\`).join(", ")}, updatedAt = ? WHERE id = ?\`).run(...values, updatedAt, req.params.id);
       const row = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
-      res.json({ record: rowToRecord(entity, row) });
+      const ignoredFields = computeIgnoredFields(entity, req.body ?? {});
+      const record = rowToRecord(entity, row);
+      res.json(ignoredFields.length > 0 ? { record, ignoredFields } : { record });
     } catch (err) {
       // Same FK-constraint translation as the POST route above, for the
       // identical reason -- an edit's relation field can just as easily
@@ -6000,6 +6024,20 @@ function staleEnumValue(field, value) {
   return !field.enumValues.includes(String(value));
 }
 
+// Round 2202: shared by every mutation path below (handleSubmit,
+// handleDuplicate/handleBulkDuplicate, handleBulkUpdate, handleMoveFields,
+// commitInlineEdit, the CSV/JSON importers) that now reads a PATCH/POST
+// response's own \`ignoredFields\` (the generated server's new
+// computeIgnoredFields, mirroring the live Forge AI backend's own
+// routes/projects.ts) -- see the server's own doc comment above for the
+// exact "submitted a field this entity no longer has" scenario this
+// warns about, instead of the save silently reporting a clean success.
+function ignoredFieldsMessage(ignoredFields) {
+  return ignoredFields.length === 1
+    ? \`Your change to "\${ignoredFields[0]}" was not saved -- that field no longer exists on this entity. Everything else was saved.\`
+    : \`Your changes to \${ignoredFields.join(", ")} were not saved -- those fields no longer exist on this entity. Everything else was saved.\`;
+}
+
 // autoFocus/onBlur/onKeyDown are only ever set by the entity table's own
 // inline cell editor (see EntityView's editingCell state) -- the plain
 // add/edit form below the table never passes these, so a field there
@@ -8073,6 +8111,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     const formInstanceAtSubmitTime = formInstanceKeyRef.current;
     setSubmitBusy(true);
     try {
+      let saveResult;
       if (editingId != null) {
         // \`form\` holds a value for EVERY field, including every one the
         // user never touched -- startEdit below just snapshots the whole
@@ -8094,9 +8133,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             changedOnly[f.name] = form[f.name];
           }
         }
-        await updateRecord(entity.name, editingId, changedOnly);
+        saveResult = await updateRecord(entity.name, editingId, changedOnly);
       } else {
-        await createRecord(entity.name, form);
+        saveResult = await createRecord(entity.name, form);
       }
       if (formInstanceKeyRef.current === formInstanceAtSubmitTime) {
         setForm(emptyForm(entity));
@@ -8105,6 +8144,9 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         bumpFormInstanceKey();
       }
       await refresh();
+      // Round 2202: see ignoredFieldsMessage's own doc comment above.
+      const ignoredFields = saveResult?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) setError(ignoredFieldsMessage(ignoredFields));
     } catch (err) {
       // Round 1864: see the live Forge AI preview's EntityPanel.tsx
       // handleSubmit's own identical doc comment -- another tab can
@@ -8315,8 +8357,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       // the underlying file" operation to call instead. Mirrors the live
       // preview's own fix.
       for (const f of entity.fields) copy[f.name] = f.type === "file" ? null : record[f.name];
-      await createRecord(entity.name, copy);
+      const result = await createRecord(entity.name, copy);
       await refresh();
+      // Round 2202: see ignoredFieldsMessage's own doc comment above --
+      // unlike an edit, where the dropped field is merely discarded, here
+      // the missing data gets baked silently into a brand-new permanent
+      // record with no edit left to retry.
+      const ignoredFields = result?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) setError(ignoredFieldsMessage(ignoredFields));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -8438,7 +8486,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         }),
       );
       const failedIds = ids.filter((_, i) => results[i].status === "rejected");
-      setSelectedIds(new Set(failedIds));
+      // Round 2202: see ignoredFieldsMessage's own doc comment above --
+      // unlike handleBulkUpdate below, where a dropped field is merely
+      // discarded, here the missing data gets baked silently into
+      // brand-new permanent records with nothing left to retry.
+      const ignoredIds = ids.filter((_, i) => results[i].status === "fulfilled" && (results[i].value?.ignoredFields?.length ?? 0) > 0);
+      setSelectedIds(new Set([...failedIds, ...ignoredIds]));
       if (failedIds.length > 0) {
         const firstFailure = results.find((r) => r.status === "rejected");
         setError(
@@ -8446,6 +8499,12 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             ? firstFailure.reason.message
             : \`\${failedIds.length} of \${ids.length} records could not be duplicated.\`,
         );
+      } else if (ignoredIds.length > 0) {
+        const ignoredFieldNames = new Set();
+        for (const r of results) {
+          if (r.status === "fulfilled") for (const f of r.value?.ignoredFields ?? []) ignoredFieldNames.add(f);
+        }
+        setError(ignoredFieldsMessage([...ignoredFieldNames]));
       }
       await refresh();
     } finally {
@@ -8517,7 +8576,15 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         }),
       );
       const failedIds = ids.filter((id, i) => results[i].status === "rejected" && !notFoundIds.has(id));
-      setSelectedIds(new Set(failedIds));
+      // Round 2202: see ignoredFieldsMessage's own doc comment above --
+      // a checkpoint-restore-equivalent (this app's own ENTITIES edit +
+      // restart) removing bulkEditField between picking it and this PATCH
+      // reaching the server still gets a 200, with the dropped field
+      // flagged via ignoredFields -- bulkEditField is the one field every
+      // PATCH in this batch shares, so a single warning naming it covers
+      // every ignored id.
+      const ignoredIds = ids.filter((id, i) => results[i].status === "fulfilled" && (results[i].value?.ignoredFields?.length ?? 0) > 0);
+      setSelectedIds(new Set([...failedIds, ...ignoredIds]));
       if (failedIds.length > 0) {
         const firstFailure = results.find((r, i) => r.status === "rejected" && !notFoundIds.has(ids[i]));
         setError(
@@ -8525,6 +8592,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
             ? firstFailure.reason.message
             : \`\${failedIds.length} of \${ids.length} records could not be updated.\`,
         );
+      } else if (ignoredIds.length > 0) {
+        setError(ignoredFieldsMessage([bulkEditField]));
       }
       await refresh();
     } finally {
@@ -8568,8 +8637,19 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setError(null);
     setMovingId(id);
     try {
-      await updateRecord(entity.name, id, fields);
+      const result = await updateRecord(entity.name, id, fields);
       await refresh();
+      // Round 2202: see ignoredFieldsMessage's own doc comment above --
+      // this PATCH's return value used to be discarded entirely, so a
+      // concurrent field removal (this app's own ENTITIES edit +
+      // restart) hitting the very field being dragged/changed (typically
+      // the board's own status/group-by field) silently did nothing,
+      // with the card just snapping back to its old column.
+      const ignoredFields = result?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        setError(ignoredFieldsMessage(ignoredFields));
+        setMoveErrorId(id);
+      }
     } catch (err) {
       // Round 1873: mirrors handleSubmit's own round-1864 fix (and the
       // live Forge AI preview's EntityPanel.tsx identical doc comment) --
@@ -8651,8 +8731,18 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     suppressCellBlurCommitRef.current = true;
     setEditingCell(null);
     try {
-      await updateRecord(entity.name, recordId, { [field]: value });
+      const saveResult = await updateRecord(entity.name, recordId, { [field]: value });
       await refresh();
+      // Round 2202: see ignoredFieldsMessage's own doc comment above --
+      // this PATCH's return value used to be discarded entirely, so a
+      // concurrent removal of the exact field being edited (this app's
+      // own ENTITIES edit + restart) silently dropped the typed edit
+      // with a plain success and the stale field left rendering.
+      const ignoredFields = saveResult?.ignoredFields ?? [];
+      if (ignoredFields.length > 0) {
+        setError(ignoredFieldsMessage(ignoredFields));
+        setMoveErrorId(recordId);
+      }
     } catch (err) {
       // Round 1873: mirrors handleSubmit's own round-1864 fix -- another
       // tab/collaborator can fully delete this record between the
@@ -9153,14 +9243,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       // not found in Order") straight into the import errors list, exactly
       // the failure mode handleBulkUpdate's own fix describes.
       const serverErrors = results.filter((r) => r.status === "rejected" && r.reason.code !== "NOT_FOUND").map((r) => r.reason.message);
+      // Round 2202: mirrors handleBulkUpdate's own ignoredFields handling
+      // above -- a concurrent field removal (this app's own ENTITIES edit
+      // + restart) between this file being parsed and a row's own PATCH/
+      // POST reaching the server used to be silently discarded here:
+      // every fulfilled result was only ever checked for created-vs-
+      // updated, never for its own ignoredFields, so an import whose rows
+      // had a field silently dropped still reported a clean "N records
+      // imported successfully." Folded into the generic importErrors
+      // list (not importWarnings, whose own show/hide button text is
+      // hardcoded to "possible duplicate(s)" and would be actively
+      // misleading here).
+      const ignoredFieldErrors = [];
       let createdCount = 0;
       let updatedCount = 0;
       results.forEach((r, i) => {
         if (r.status !== "fulfilled") return;
         if (parsedRecords[i].id != null) updatedCount += 1;
         else createdCount += 1;
+        const ignoredFields = r.value?.ignoredFields ?? [];
+        if (ignoredFields.length > 0) ignoredFieldErrors.push(ignoredFieldsMessage(ignoredFields));
       });
-      const allErrors = [...parseErrors, ...serverErrors];
+      const allErrors = [...parseErrors, ...serverErrors, ...ignoredFieldErrors];
       setImportErrors(allErrors);
       setImportMessage(formatImportSummary(createdCount, updatedCount, allErrors.length));
       await refresh();
@@ -9232,14 +9336,28 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       // not found in Order") straight into the import errors list, exactly
       // the failure mode handleBulkUpdate's own fix describes.
       const serverErrors = results.filter((r) => r.status === "rejected" && r.reason.code !== "NOT_FOUND").map((r) => r.reason.message);
+      // Round 2202: mirrors handleBulkUpdate's own ignoredFields handling
+      // above -- a concurrent field removal (this app's own ENTITIES edit
+      // + restart) between this file being parsed and a row's own PATCH/
+      // POST reaching the server used to be silently discarded here:
+      // every fulfilled result was only ever checked for created-vs-
+      // updated, never for its own ignoredFields, so an import whose rows
+      // had a field silently dropped still reported a clean "N records
+      // imported successfully." Folded into the generic importErrors
+      // list (not importWarnings, whose own show/hide button text is
+      // hardcoded to "possible duplicate(s)" and would be actively
+      // misleading here).
+      const ignoredFieldErrors = [];
       let createdCount = 0;
       let updatedCount = 0;
       results.forEach((r, i) => {
         if (r.status !== "fulfilled") return;
         if (parsedRecords[i].id != null) updatedCount += 1;
         else createdCount += 1;
+        const ignoredFields = r.value?.ignoredFields ?? [];
+        if (ignoredFields.length > 0) ignoredFieldErrors.push(ignoredFieldsMessage(ignoredFields));
       });
-      const allErrors = [...parseErrors, ...serverErrors];
+      const allErrors = [...parseErrors, ...serverErrors, ...ignoredFieldErrors];
       setImportErrors(allErrors);
       setImportMessage(formatImportSummary(createdCount, updatedCount, allErrors.length));
       await refresh();

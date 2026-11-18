@@ -3940,6 +3940,101 @@ test("generated server.js's PATCH/:id and DELETE/:id 404s set code: \"NOT_FOUND\
 });
 
 /**
+ * Round 2202: the generated POST/PATCH routes build their own `values`
+ * array by walking entity.fields and resolving each KNOWN field's own
+ * submitted value (resolveSubmittedKey) -- a submitted key that matches
+ * no current field at all was simply never read, with nothing in the
+ * response to say so, unlike the live Forge AI backend's own
+ * routes/projects.ts (computeIgnoredFields), which already flags exactly
+ * this case. This app's own README ("Extending it") documents renaming or
+ * removing a field in the ENTITIES array and restarting as a supported
+ * workflow -- a browser tab still holding the PREVIOUS JS bundle (with a
+ * form field for the now-gone field) that saves afterward had that field's
+ * edit silently and permanently dropped, with a plain 200/201 success and
+ * zero warning anywhere. Confirmed directly against a real spawned
+ * server.js, not a mock.
+ */
+test("generated server.js's POST/PATCH routes report ignoredFields for a submitted key that matches no current field, instead of silently dropping it", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-ignoredfields-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const postRes = await fetch(`http://localhost:${port}/api/Customer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana", status: "New", oldFieldThatWasRemoved: "stale value" }),
+    });
+    assert.equal(postRes.status, 201);
+    const postBody = (await postRes.json()) as { record: EntityRecord; ignoredFields?: string[] };
+    assert.deepEqual(
+      postBody.ignoredFields,
+      ["oldFieldThatWasRemoved"],
+      "POST must flag a submitted key matching no current field, the way the live Forge AI backend's own create route already does",
+    );
+
+    const patchRes = await fetch(`http://localhost:${port}/api/Customer/${postBody.record.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Dana Levi", oldFieldThatWasRemoved: "stale value" }),
+    });
+    assert.equal(patchRes.status, 200);
+    const patchBody = (await patchRes.json()) as { record: EntityRecord; ignoredFields?: string[] };
+    assert.deepEqual(
+      patchBody.ignoredFields,
+      ["oldFieldThatWasRemoved"],
+      "PATCH must flag the identical case for an edit, not just a create",
+    );
+    assert.equal(patchBody.record.name, "Dana Levi", "every other field on the same request must still apply normally");
+
+    // A cosmetic recase alone (resolveSubmittedKey's own fallback) must
+    // NOT be flagged as "no longer exists" -- mirrors the live backend's
+    // own computeIgnoredFields case-insensitive comparison.
+    const recaseRes = await fetch(`http://localhost:${port}/api/Customer/${postBody.record.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ Name: "Dana Cohen" }),
+    });
+    assert.equal(recaseRes.status, 200);
+    const recaseBody = (await recaseRes.json()) as { record: EntityRecord; ignoredFields?: string[] };
+    assert.equal(recaseBody.ignoredFields, undefined, "a cosmetic case-only recase of an existing field's own name must not be reported as ignored");
+    assert.equal(recaseBody.record.name, "Dana Cohen", "resolveSubmittedKey's own case-insensitive fallback must still apply the value");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1182: same port, for this file's generated CALENDAR FEED route
  * (/api/calendar/:entityName.ics) -- `feedRelationDisplayLabel`'s own
  * `targetEntity` lookup, and the ANTECEDENT that decides whether this
