@@ -2938,7 +2938,16 @@ function AppContent() {
                 saveIdeaDraft(user.id, e.target.value);
               }}
             />
-            <button type="submit" disabled={busy || enhanceBusy || templateBusy !== null}>
+            {/* Round 2225: the sibling "Enhance & build with AI" button just
+                below already disables on an empty/whitespace-only textarea
+                -- this one never did, despite handleDescribe's own
+                `if (!description.trim()) return;` guard silently no-oping
+                with zero feedback (no setError, no focus shift, nothing).
+                A new user who submits with an empty box sees this, the
+                page's most prominent CTA, do nothing at all, right next to
+                its own greyed-out sibling demonstrating the correct
+                affordance for the identical condition. */}
+            <button type="submit" disabled={busy || enhanceBusy || templateBusy !== null || !description.trim()}>
               {busy ? t("home.submit.busy") : t("home.submit")}
             </button>
             <button

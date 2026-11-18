@@ -6280,6 +6280,35 @@ test("the home screen's decorative 3D hero cube is marked aria-hidden, keeping i
 });
 
 /**
+ * Round 2225: the home screen's "Let's get started" submit button never
+ * disabled on an empty/whitespace-only textarea -- unlike its own sibling
+ * "Enhance & build with AI" button right below it, which already does
+ * (and unlike handleDescribe's own `if (!description.trim()) return;`
+ * early-return, which silently no-oped with zero feedback: no setError,
+ * no focus shift, nothing). A new user who submits an empty box clicked
+ * the page's most prominent, visibly-enabled CTA and saw absolutely
+ * nothing happen, right next to its own greyed-out sibling demonstrating
+ * the correct affordance for the identical condition.
+ */
+test("the home screen's 'Let's get started' submit button disables on an empty/whitespace-only description, matching its own sibling 'Enhance & build with AI' button", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const formBlock = appSrc.match(/<form onSubmit=\{handleDescribe\}>[\s\S]*?<\/form>/);
+  assert.ok(formBlock, "expected the home screen's describe-and-build <form>");
+
+  const submitButton = formBlock![0].match(/<button type="submit" disabled=\{[^}]*\}>/)?.[0];
+  assert.ok(submitButton, "expected the primary submit button inside this form");
+  assert.match(
+    submitButton!,
+    /disabled=\{[^}]*!description\.trim\(\)[^}]*\}/,
+    "the submit button must disable on an empty/whitespace-only description, the same way its sibling AI button already does",
+  );
+
+  const aiButton = formBlock![0].match(/className="button-ai"[\s\S]*?disabled=\{[^}]*\}/)?.[0];
+  assert.ok(aiButton, "expected the sibling 'Enhance & build with AI' button inside this same form");
+  assert.match(aiButton!, /!description\.trim\(\)/, "the sibling AI button's own disabled condition must still include this check");
+});
+
+/**
  * New in this round: the same "decorative, keep it out of the
  * accessibility tree" discipline the hero cube above already gets --
  * applied here to two emoji icons that sit directly beside a real text
