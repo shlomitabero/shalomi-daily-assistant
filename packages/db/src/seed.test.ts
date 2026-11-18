@@ -1381,13 +1381,45 @@ test("a custom 'text' field with no dedicated seed pool uses the entity's and fi
   assert.ok(!/[A-Za-z]/.test(record.notes as string), `"text" field's seeded value "${record.notes}" must not contain any raw ASCII entity/field name`);
   assert.equal(record.bio, "ביוגרפיה לדוגמה עבור לקוחות מספר 1.");
 
-  // An English-labeled (or unlabeled) app's "text" fallback is unaffected --
-  // entity.name/field.name already ARE the label in that case, so this
-  // fix is a no-op for every existing non-Hebrew app.
+  // An UNLABELED English field is unaffected -- entity.name/field.name
+  // already ARE the label when neither has one, so this is a no-op for
+  // that specific shape. (Round 2229 found the broader claim this comment
+  // used to make -- "a no-op for every non-Hebrew app" -- was false: see
+  // the dedicated test below for a labeled English field.)
   const customerEn: Entity = {
     name: "Customer",
     fields: [{ name: "notes", type: "text", required: false }],
   };
   const [recordEn] = generateSeedRecords(customerEn, 1);
   assert.equal(recordEn.notes, "Customer notes 1");
+});
+
+/**
+ * Round 2229's finding: round 2228's fix above only reached the Hebrew
+ * ternary arm of textSeedValueFor's two generic fallback branches (and of
+ * seedValueFor's own pre-existing "longtext" case, which round 2228 never
+ * touched) -- each one's ENGLISH arm still read the raw fieldName/
+ * field.name parameter instead of the label-preferring fieldLabel local.
+ * field.label is for a human-facing display name distinct from the
+ * internal, plain-ASCII field.name in ANY language, not just Hebrew (its
+ * own doc comment says so) -- a field named "favColor" with label
+ * "Favorite Color" is just as real an English app as a Hebrew-labeled one,
+ * e.g. via the Field Label Editor, or any AI-generated spec with technical
+ * field names and separate friendly labels.
+ */
+test("a custom 'text'/'description'/'longtext' field with an English label distinct from its name uses that label, not its raw ASCII name", () => {
+  const gadget: Entity = {
+    name: "CustomThing",
+    label: "Gadget",
+    fields: [
+      { name: "description", label: "Summary Notes", type: "text", required: false },
+      { name: "favColor", label: "Favorite Color", type: "text", required: false },
+      { name: "bio", label: "Life Story", type: "longtext", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(gadget, 1);
+
+  assert.equal(record.description, "Gadget Summary Notes 1");
+  assert.equal(record.favColor, "Gadget Favorite Color 1");
+  assert.equal(record.bio, "Sample Life Story for Gadget #1.");
 });

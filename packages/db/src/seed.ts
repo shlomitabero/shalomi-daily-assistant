@@ -402,9 +402,17 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       // required relations, is left exactly as unaddressed as before.
       return field.required ? 1 : null;
     case "longtext":
+      // Round 2229: entityName already preferred entity.label in both
+      // branches here, but the English branch still read the raw
+      // field.name instead of fieldLabel (field.label ?? field.name) --
+      // a field can have a human-facing label distinct from its internal
+      // name in ANY language, not just Hebrew (that's what field.label is
+      // for -- see its own doc comment), so an English app with e.g. a
+      // "bio" field labeled "Life Story" seeded "Sample bio for ..."
+      // instead of "Sample Life Story for ...".
       return isHebrew
         ? `${fieldLabel} לדוגמה עבור ${entityName} מספר ${index + 1}.`
-        : `Sample ${field.name} for ${entityName} #${index + 1}.`;
+        : `Sample ${fieldLabel} for ${entityName} #${index + 1}.`;
     case "file":
       // There's no real uploaded file to point a seeded record at, unlike
       // every other type here which can synthesize a plausible-looking
@@ -627,7 +635,12 @@ function textSeedValueFor(
       // AI-generated spec's plain-ASCII "name", never its translated
       // "label") -- otherwise a Hebrew-labeled app's placeholder here came
       // out as mixed-language garbage like "Customer - description 1".
-      return isHebrew ? `${entityLabel} - ${fieldLabel} ${index + 1}` : `${entityLabel} ${fieldName} ${index + 1}`;
+      // Round 2229: that fix only reached the Hebrew branch -- the English
+      // branch still read the raw fieldName param instead of fieldLabel,
+      // the same gap longtext's own English branch had (see its own
+      // round-2229 comment). A field's label can differ from its name in
+      // English too, so this isn't Hebrew-specific.
+      return isHebrew ? `${entityLabel} - ${fieldLabel} ${index + 1}` : `${entityLabel} ${fieldLabel} ${index + 1}`;
     case "name":
       // "name" means different things for different entity shapes -- a
       // person for people-shaped entities, a thing for catalog-shaped
@@ -686,7 +699,9 @@ function textSeedValueFor(
       // branch never did, leaving a Hebrew-labeled app's custom "text"
       // fields the one placeholder still half-English next to its own
       // fully-Hebrew "longtext" sibling (which already got this right).
-      return isHebrew ? `${entityLabel} - ${fieldLabel} ${index + 1}` : `${entityLabel} ${fieldName} ${index + 1}`;
+      // Round 2229: that fix only reached the Hebrew branch -- same gap as
+      // the "description" case just above, same fix.
+      return isHebrew ? `${entityLabel} - ${fieldLabel} ${index + 1}` : `${entityLabel} ${fieldLabel} ${index + 1}`;
   }
 }
 
