@@ -419,6 +419,20 @@ const DUE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])due|Due)(?![a-z])/;
  */
 const END_DATE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])end|End)[Dd]ate/;
 /**
+ * Round 2239: a plain substring check on "scheduled" also matched any
+ * field merely containing it as a prefix-attached form -- "rescheduledDate",
+ * "unscheduledDate", "overscheduledDate" -- the same collision class
+ * rounds 1460 (due) and 2236 (enddate) already fixed for the other two
+ * checks in this exact `if` condition, just never ported to this third
+ * one. Mirrors DUE_FIELD_NAME_PATTERN's/END_DATE_FIELD_NAME_PATTERN's own
+ * shape: lowercase "scheduled" only counts as a real word start (string
+ * start, or not preceded by a letter), while capitalized "Scheduled" (the
+ * camelCase word-boundary marker) always counts -- still matches
+ * "scheduledDate"/"ScheduledDate"/"someScheduledDate" but rejects
+ * "rescheduledDate"/"unscheduledDate"/"overscheduledDate".
+ */
+const SCHEDULED_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])scheduled|Scheduled)/;
+/**
  * Round 1947: the built-in WorkOrder entity's own `scheduledDate` (a job
  * scheduled to happen, with a Scheduled/InProgress/Completed/Cancelled
  * status) is exactly the "this should have happened by now and didn't"
@@ -463,7 +477,12 @@ const END_DATE_FIELD_NAME_PATTERN = /(?:(?<![a-zA-Z])end|End)[Dd]ate/;
 const DEADLINE_STATUS_VALUES = new Set(["scheduled", "planned"]);
 export function isDeadlineFieldName(fieldName: string, fields: Field[] = []): boolean {
   const lower = fieldName.toLowerCase();
-  if (DUE_FIELD_NAME_PATTERN.test(fieldName) || lower.includes("deadline") || lower.includes("scheduled") || END_DATE_FIELD_NAME_PATTERN.test(fieldName)) {
+  if (
+    DUE_FIELD_NAME_PATTERN.test(fieldName) ||
+    lower.includes("deadline") ||
+    SCHEDULED_FIELD_NAME_PATTERN.test(fieldName) ||
+    END_DATE_FIELD_NAME_PATTERN.test(fieldName)
+  ) {
     return true;
   }
   if (lower !== "date") return false;

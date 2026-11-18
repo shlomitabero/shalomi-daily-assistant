@@ -2570,6 +2570,44 @@ test("computeBusinessTwin does not flag a past date field that merely ends in '-
 });
 
 /**
+ * Round 2239: twin.ts's own isDeadlineFieldName had the same plain-
+ * substring collision rounds 1460 (due) and 2236 (enddate) already fixed,
+ * just never ported to the sibling "scheduled" check -- a bare
+ * .includes("scheduled") also matched any field merely containing it as
+ * a prefix-attached form, such as a booking app's own rescheduledDate.
+ * Without the fix, the Business Twin would fabricate a false "overdue"
+ * insight for a field that records a historical fact, not a deadline.
+ */
+test("computeBusinessTwin does not flag a past date field that merely contains 'scheduled' as a substring without meaning a deadline", () => {
+  const bookingProject: Project = {
+    ...project,
+    description: "A salon booking tracker",
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Appointment",
+          label: "Appointments",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "rescheduledDate", label: "Rescheduled date", type: "date", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, bookingProject.id, bookingProject.spec);
+  const appointment = bookingProject.spec.entities[0];
+  const today = new Date(2026, 0, 15);
+  insertRecord(db, bookingProject.id, appointment, { name: "Dana", rescheduledDate: "2026-01-01" });
+  insertRecord(db, bookingProject.id, appointment, { name: "Yossi", rescheduledDate: "2026-01-05" });
+
+  const twin = computeBusinessTwin(db, bookingProject, today);
+  assert.ok(!twin.jumpableObservations.some((o) => o.text.includes("Rescheduled date")), `must not flag "rescheduledDate" as a deadline, got: ${JSON.stringify(twin.jumpableObservations)}`);
+});
+
+/**
  * Round 2079: mirrors entityFormatting.ts's/codegen.ts's identical fix --
  * a field named exactly "date" carries no deadline-ish word of its own at
  * all, so isDeadlineFieldName never recognized the built-in Appointment

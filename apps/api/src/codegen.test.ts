@@ -6155,11 +6155,17 @@ test("the exported EntityView's isDeadlineFieldName rejects field names that mer
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   const endDatePatternSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
-  assert.ok(patternSrc && endDatePatternSrc, "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN in generated output");
+  const scheduledPatternSrc = entityViewJsx.match(/const SCHEDULED_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(
+    patternSrc && endDatePatternSrc && scheduledPatternSrc,
+    "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN/SCHEDULED_FIELD_NAME_PATTERN in generated output",
+  );
   const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
-  const isDeadlineFieldName = new Function(`${patternSrc}\n${endDatePatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+  const isDeadlineFieldName = new Function(
+    `${patternSrc}\n${endDatePatternSrc}\n${scheduledPatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`,
+  )() as (fieldName: string) => boolean;
 
   assert.equal(isDeadlineFieldName("dueDate"), true, "the built-in Invoice/Task entities' own field name must still match");
   assert.equal(isDeadlineFieldName("deadline"), true);
@@ -6181,14 +6187,51 @@ test("the exported EntityView's isDeadlineFieldName matches the built-in WorkOrd
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   const endDatePatternSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
-  assert.ok(patternSrc && endDatePatternSrc, "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN in generated output");
+  const scheduledPatternSrc = entityViewJsx.match(/const SCHEDULED_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(
+    patternSrc && endDatePatternSrc && scheduledPatternSrc,
+    "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN/SCHEDULED_FIELD_NAME_PATTERN in generated output",
+  );
   const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
-  const isDeadlineFieldName = new Function(`${patternSrc}\n${endDatePatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+  const isDeadlineFieldName = new Function(
+    `${patternSrc}\n${endDatePatternSrc}\n${scheduledPatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`,
+  )() as (fieldName: string) => boolean;
 
   assert.equal(isDeadlineFieldName("scheduledDate"), true, "WorkOrder's own field name");
   assert.equal(isDeadlineFieldName("ScheduledDate"), true, "case-insensitive");
+});
+
+/**
+ * Round 2239: mirrors the live preview's own identical fix -- a plain
+ * substring check on "scheduled" also matched any field merely containing
+ * it as a prefix-attached form (rescheduledDate, unscheduledDate,
+ * overscheduledDate), the same collision class rounds 1460 (due) and 2236
+ * (enddate) already fixed for the other two checks in this exact
+ * condition, just never ported to this third one. Confirms the exported
+ * app's own copy of the function got the identical fix.
+ */
+test("the exported EntityView's isDeadlineFieldName rejects field names that merely contain 'scheduled' as a substring without meaning a deadline", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  const endDatePatternSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  const scheduledPatternSrc = entityViewJsx.match(/const SCHEDULED_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(
+    patternSrc && endDatePatternSrc && scheduledPatternSrc,
+    "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN/SCHEDULED_FIELD_NAME_PATTERN in generated output",
+  );
+  const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
+
+  const isDeadlineFieldName = new Function(
+    `${patternSrc}\n${endDatePatternSrc}\n${scheduledPatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`,
+  )() as (fieldName: string) => boolean;
+
+  assert.equal(isDeadlineFieldName("rescheduledDate"), false, "records when something was rescheduled, a historical fact, not a future obligation");
+  assert.equal(isDeadlineFieldName("unscheduledDate"), false);
+  assert.equal(isDeadlineFieldName("overscheduledDate"), false);
+  assert.equal(isDeadlineFieldName("scheduledDate"), true, "must still match the real WorkOrder field name");
 });
 
 /**
@@ -6202,11 +6245,17 @@ test("the exported EntityView's isDeadlineFieldName matches the built-in Rental 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   const endDatePatternSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
-  assert.ok(patternSrc && endDatePatternSrc, "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN in generated output");
+  const scheduledPatternSrc = entityViewJsx.match(/const SCHEDULED_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(
+    patternSrc && endDatePatternSrc && scheduledPatternSrc,
+    "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN/SCHEDULED_FIELD_NAME_PATTERN in generated output",
+  );
   const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
-  const isDeadlineFieldName = new Function(`${patternSrc}\n${endDatePatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+  const isDeadlineFieldName = new Function(
+    `${patternSrc}\n${endDatePatternSrc}\n${scheduledPatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`,
+  )() as (fieldName: string) => boolean;
 
   assert.equal(isDeadlineFieldName("endDate"), true, "Rental's own field name");
   assert.equal(isDeadlineFieldName("EndDate"), true, "case-insensitive");
@@ -6227,10 +6276,14 @@ test("the exported EntityView's isDeadlineFieldName rejects field names that mer
   assert.ok(duePatternSrc, "expected to find DUE_FIELD_NAME_PATTERN in generated output");
   const endDatePatternSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   assert.ok(endDatePatternSrc, "expected to find END_DATE_FIELD_NAME_PATTERN in generated output");
+  const scheduledPatternSrc = entityViewJsx.match(/const SCHEDULED_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  assert.ok(scheduledPatternSrc, "expected to find SCHEDULED_FIELD_NAME_PATTERN in generated output");
   const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
-  const isDeadlineFieldName = new Function(`${duePatternSrc}\n${endDatePatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (fieldName: string) => boolean;
+  const isDeadlineFieldName = new Function(
+    `${duePatternSrc}\n${endDatePatternSrc}\n${scheduledPatternSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`,
+  )() as (fieldName: string) => boolean;
 
   assert.equal(isDeadlineFieldName("weekendDate"), false, "an event/RSVP app's own field, not a deadline");
   assert.equal(isDeadlineFieldName("attendDate"), false);
@@ -6253,12 +6306,18 @@ test("the exported EntityView's isDeadlineFieldName treats a bare 'date' field a
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const patternSrc = entityViewJsx.match(/const DUE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   const endDatePatternSrc = entityViewJsx.match(/const END_DATE_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
+  const scheduledPatternSrc = entityViewJsx.match(/const SCHEDULED_FIELD_NAME_PATTERN = [^;]+;/)?.[0];
   const statusValuesSrc = entityViewJsx.match(/const DEADLINE_STATUS_VALUES = [^;]+;/)?.[0];
-  assert.ok(patternSrc && endDatePatternSrc && statusValuesSrc, "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN/DEADLINE_STATUS_VALUES in generated output");
+  assert.ok(
+    patternSrc && endDatePatternSrc && scheduledPatternSrc && statusValuesSrc,
+    "expected to find DUE_FIELD_NAME_PATTERN/END_DATE_FIELD_NAME_PATTERN/SCHEDULED_FIELD_NAME_PATTERN/DEADLINE_STATUS_VALUES in generated output",
+  );
   const fnSrc = entityViewJsx.match(/function isDeadlineFieldName\(fieldName, fields\) \{[\s\S]*?\n\}\n/)?.[0];
   assert.ok(fnSrc, "expected to find isDeadlineFieldName in generated output");
 
-  const isDeadlineFieldName = new Function(`${patternSrc}\n${endDatePatternSrc}\n${statusValuesSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`)() as (
+  const isDeadlineFieldName = new Function(
+    `${patternSrc}\n${endDatePatternSrc}\n${scheduledPatternSrc}\n${statusValuesSrc}\n${fnSrc}\nreturn isDeadlineFieldName;`,
+  )() as (
     fieldName: string,
     fields?: { name: string; type: string; enumValues?: string[] }[],
   ) => boolean;

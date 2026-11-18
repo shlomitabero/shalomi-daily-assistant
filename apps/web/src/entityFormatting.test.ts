@@ -5003,6 +5003,21 @@ test("isDeadlineFieldName rejects field names that merely contain \"due\" as a s
 test("isDeadlineFieldName matches the built-in WorkOrder entity's own scheduledDate field", () => {
   assert.equal(isDeadlineFieldName("scheduledDate"), true, "WorkOrder's own field name");
   assert.equal(isDeadlineFieldName("ScheduledDate"), true, "case-insensitive");
+  assert.equal(isDeadlineFieldName("someScheduledDate"), true, "a camelCase compound still has the capitalized word-boundary 'Scheduled'");
+});
+
+/**
+ * Round 2239: a plain substring check on "scheduled" also matched any
+ * field name merely containing it as a prefix-attached form --
+ * "rescheduledDate", "unscheduledDate", "overscheduledDate" -- the exact
+ * same collision class rounds 1460 (due) and 2236 (enddate) already fixed
+ * for the other two checks in this exact `if` condition, just never
+ * ported to this third one.
+ */
+test("isDeadlineFieldName rejects field names that merely contain \"scheduled\" as a substring without meaning a deadline", () => {
+  assert.equal(isDeadlineFieldName("rescheduledDate"), false, "records when something was rescheduled, a historical fact, not a future obligation");
+  assert.equal(isDeadlineFieldName("unscheduledDate"), false);
+  assert.equal(isDeadlineFieldName("overscheduledDate"), false);
 });
 
 /**
