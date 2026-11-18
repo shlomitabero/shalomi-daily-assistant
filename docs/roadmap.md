@@ -51285,3 +51285,17 @@ Conclusion: the RTL directional-glyph bug class appears genuinely exhausted in c
 Leads for future rounds: Kanban/board view logic beyond drag-and-drop (column collapse-state persistence, move-via-dropdown edge cases); whether the exported app's file-upload field type (if any) needs the live app's round 2187/2193/2196 upload-race fixes; and a fresh line-by-line diff of EntityPanel.tsx's bulk-duplicate/bulk-update handlers against codegen.ts's equivalents for field-level discrepancies beyond error codes.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2223: file-upload parity, Kanban board logic beyond drag-and-drop, and bulk-duplicate/bulk-update field-level parity -- all three leads thoroughly audited, nothing found
+
+Pursued all three leads round 2222 suggested:
+
+**File-upload field parity (moot by design):** confirmed the exported app's generated server only ever serves already-uploaded files baked in at export time -- there is no POST/multipart upload route anywhere in codegen.ts's generated server, explicitly documented in several of its own comments ("the exported app has no upload endpoint of its own"). Since there's no upload capability at all, the live app's round 2187/2193/2196 upload-race fixes have nothing to port.
+
+**Kanban board logic beyond drag-and-drop:** compared column collapse-state persistence, move-via-dropdown, handleMove/handleMoveFields/handleCardDrop, the synthetic "(other)" column's add/drop gating, and numeric column totals/phone-field exclusion between codegen.ts and EntityPanel.tsx line-by-line. All functionally equivalent. The collapse-store's key shape differs (4 segments live vs 2 generated) but correctly reflects the exported app's documented no-auth/no-collaborator architecture, not a gap. One asymmetry was chased down in detail -- `startCreateForColumn`/`startCreateForDate` reset `editingOriginalRef.current` and call `discardAbandonedFileUploads()` in the live app but not in codegen.ts -- and ruled out as genuinely inert: every read site of that ref in the generated code is gated behind `editingId != null`, which these same functions already null out first, so the stale ref is provably never read (and the discard call is itself moot per the file-upload finding above).
+
+**Bulk-duplicate/bulk-update field-level parity:** compared `handleDuplicate`/`handleBulkDuplicate`/`handleBulkUpdate` line-by-line across both files -- field-copy logic (file fields nulled, everything else copied verbatim), validation order, partial-failure reporting shape, and bulk-edit-value display/confirm-dialog wording are all identical. The only differences found (the already-known `ENTITY_NOT_FOUND` exclusion, structurally impossible in the exported app's static per-entity-route architecture, and i18n wording) are already-accepted, intentional divergences.
+
+Net assessment: codegen.ts's board/bulk/file-field logic mirrors EntityPanel.tsx with extraordinary precision, down to provably-inert dead-state resets with zero behavioral effect. All three leads are now considered exhausted.
+
+Live: https://forge-ai-m7p7.onrender.com
