@@ -4344,6 +4344,41 @@ test("Student's 'pupil' keyword doesn't spuriously match the eye-anatomy sense o
 });
 
 /**
+ * Round 2249: round 561's own exclusion list only covered 4 of the many
+ * ordinary ways "pupil" is used in its eye-anatomy sense (dilation/size/
+ * reaction/response) -- an equally common vocabulary of eye-care terms
+ * (contraction/movement/diameter/color) was never added. Confirmed live
+ * before this fix: each description below matched ONLY ['Student'],
+ * fabricating a bogus school entity for a vision-science/ophthalmology
+ * app with zero connection to education, the identical catch-all-losing
+ * severity round 561's own comment describes.
+ */
+test("Student's 'pupil' keyword doesn't spuriously match further everyday eye-anatomy phrasings (contraction/movement/diameter/color), and real school phrasings still match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const contraction = await provider.generate(
+    "A mobile app for photographers to study how pupil contraction changes under different lighting conditions.",
+  );
+  assert.ok(!contraction.entities.some((e) => e.name === "Student"), "'pupil contraction' alone must not spuriously match Student");
+
+  const movement = await provider.generate("An app that tracks pupil movement during eye exams for an ophthalmology clinic.");
+  assert.ok(!movement.entities.some((e) => e.name === "Student"), "'pupil movement' alone must not spuriously match Student");
+
+  const diameter = await provider.generate(
+    "A research tool for measuring pupil diameter changes in response to light stimuli in a vision science lab.",
+  );
+  assert.ok(!diameter.entities.some((e) => e.name === "Student"), "'pupil diameter' alone must not spuriously match Student");
+
+  const color = await provider.generate("An app to log pupil color changes after cataract surgery for an eye clinic.");
+  assert.ok(!color.entities.some((e) => e.name === "Student"), "'pupil color' alone must not spuriously match Student");
+
+  // The fix must not lose real recall: the real school term, with none of
+  // these eye-anatomy words nearby, must still match.
+  const realPupil = await provider.generate("An app for a school to track each pupil's attendance and homework.");
+  assert.ok(realPupil.entities.some((e) => e.name === "Student"), "a real school 'pupil' description must still get a Student entity");
+});
+
+/**
  * Regression test for round 562's finding: Event's bare Hebrew keyword
  * "כנס" ("conference") is a substring of common conjugations of the
  * כ.נ.ס root ("to enter"/"to log in") -- "להיכנס" (to log in), "נכנס"

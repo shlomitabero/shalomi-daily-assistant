@@ -1065,9 +1065,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // so an eye-care description mentioning pupil size/dilation/reaction
     // has nothing to do with a school. Excludes only those specific known
     // eye-anatomy idioms via lookbehind/lookahead, same style as garage.
+    //
+    // Round 2249: round 561's own exclusion list only covered 4 of the
+    // many ordinary ways "pupil" is used in its eye-anatomy sense --
+    // dilation/size/reaction/response. Confirmed live via the real
+    // matchEntities: "A mobile app for photographers to study how pupil
+    // contraction changes..." (ONLY ['Student']), "An app that tracks
+    // pupil movement during eye exams for an ophthalmology clinic."
+    // (ONLY ['Student']), "...measuring pupil diameter changes..."
+    // (ONLY ['Student']), and "An app to log pupil color changes after
+    // cataract surgery for an eye clinic." (ONLY ['Student']) -- each
+    // fabricating a bogus school entity for a vision-science/ophthalmology
+    // app with zero connection to education, the real domain entirely
+    // lost. Widened the exclusion list with the same 4 reproductions'
+    // own immediate-following words (contraction/movement/diameter/
+    // color), plus "constriction" (the direct opposite of "dilation",
+    // already excluded) for symmetry -- the real school phrasing ("each
+    // pupil's attendance", "all the pupils' attendance") has none of
+    // these words anywhere near "pupil", confirmed unaffected.
     keywords: [
       "student",
-      /\b(?<!dilated\s)pupils?\b(?!\s+(?:dilation|size|reaction|response))/,
+      /\b(?<!dilated\s)pupils?\b(?!\s+(?:dilation|size|reaction|response|contraction|constriction|movement|diameter|color))/,
       "learner",
       // Round 1769: a daycare/preschool/childcare business (an extremely
       // common small-business category in both languages) had no keyword
