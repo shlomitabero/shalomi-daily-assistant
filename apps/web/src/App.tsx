@@ -2142,7 +2142,20 @@ function AppContent() {
     // swept across EntityPanel/AutomationsPanel/WhatsAppPanel/
     // CollaboratorsPanel/the shared useAddableSpecItem hook/
     // ChangeEmailPanel/ChangePasswordPanel, just never checked here.
-    if (busy || enhanceBusy || templateBusy !== null) return;
+    // Round 2246: round 2245 widened openExistingProject/the Open button's
+    // own guard with cloningId/deletingId/bulkDeleteBusy, to stop a
+    // different-project navigation from proceeding while a Duplicate/
+    // Delete/bulk-delete on the home screen's own "My Projects" list was
+    // still in flight -- but never checked the reverse direction. A brand
+    // new creation flow (this handler, or its two siblings below) starting
+    // anyway while one of those three was in flight still raced the exact
+    // same shared project/view state: the creation could resolve first and
+    // successfully navigate the user onto what they just built, only for
+    // the Duplicate/Delete/bulk-delete's own later completion to silently
+    // clobber it right back out -- same failure class as round 2238/2245,
+    // just a brand-new creation losing to a stale My-Projects-list
+    // completion, instead of the other way around.
+    if (busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy) return;
     setBusy(true);
     setError(null);
     try {
@@ -2174,7 +2187,8 @@ function AppContent() {
     // Round 1131: see handleUseTemplate's own identical doc comment.
     // Round 1369: see handleDescribe's own identical doc comment -- this
     // guard never checked enhanceBusy itself either.
-    if (busy || enhanceBusy || templateBusy !== null) return;
+    // Round 2246: see handleDescribe's own identical round-2246 doc comment.
+    if (busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy) return;
     setEnhanceBusy(true);
     setError(null);
     try {
@@ -2228,7 +2242,8 @@ function AppContent() {
   async function handleUseTemplate(templateId: string) {
     // Round 1369: see handleDescribe's own identical doc comment -- this
     // guard never checked templateBusy itself either.
-    if (busy || enhanceBusy || templateBusy !== null) return;
+    // Round 2246: see handleDescribe's own identical round-2246 doc comment.
+    if (busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy) return;
     setTemplateBusy(templateId);
     setError(null);
     try {
@@ -3017,13 +3032,16 @@ function AppContent() {
                 page's most prominent CTA, do nothing at all, right next to
                 its own greyed-out sibling demonstrating the correct
                 affordance for the identical condition. */}
-            <button type="submit" disabled={busy || enhanceBusy || templateBusy !== null || !description.trim()}>
+            {/* Round 2246: see handleDescribe's own round-2246 doc comment
+                for why cloningId/deletingId/bulkDeleteBusy must block this
+                button too, not just busy/enhanceBusy/templateBusy. */}
+            <button type="submit" disabled={busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy || !description.trim()}>
               {busy ? t("home.submit.busy") : t("home.submit")}
             </button>
             <button
               type="button"
               className="button-ai"
-              disabled={busy || enhanceBusy || templateBusy !== null || !description.trim()}
+              disabled={busy || enhanceBusy || templateBusy !== null || cloningId !== null || deletingId !== null || bulkDeleteBusy || !description.trim()}
               onClick={handleEnhanceAndBuild}
             >
               {enhanceBusy ? t("home.enhance.busy") : t("home.enhance")}
@@ -3069,9 +3087,12 @@ function AppContent() {
                         {t("home.templates.includes")}: {(lang === "en" ? template.entityNamesEn : template.entityNames).join(", ")}
                       </p>
                     )}
+                    {/* Round 2246: see handleDescribe's own round-2246 doc
+                        comment for why cloningId/deletingId/bulkDeleteBusy
+                        must block this button too. */}
                     <button
                       type="button"
-                      disabled={templateBusy !== null || busy || enhanceBusy}
+                      disabled={templateBusy !== null || busy || enhanceBusy || cloningId !== null || deletingId !== null || bulkDeleteBusy}
                       onClick={() => handleUseTemplate(template.id)}
                     >
                       {templateBusy === template.id ? t("home.templates.use.busy") : t("home.templates.use")}

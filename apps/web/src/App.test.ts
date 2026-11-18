@@ -764,6 +764,9 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       "busy",
       "enhanceBusy",
       "templateBusy",
+      "cloningId",
+      "deletingId",
+      "bulkDeleteBusy",
       "setEnhanceBusy",
       "setError",
       "enhanceIdea",
@@ -782,6 +785,9 @@ test("App's handleEnhanceAndBuild captures enhanceIdea's own providerName into e
       opts.busy ?? false,
       false,
       opts.templateBusy ?? null,
+      null,
+      null,
+      false,
       (v: boolean) => (state.enhanceBusy = v),
       (v: string | null) => (state.error = v),
       opts.enhanceIdeaFn,
@@ -836,7 +842,7 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
   assert.ok(handlerMatch, "expected to find handleEnhanceAndBuild in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null }) {
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null; cloningId?: string | null; deletingId?: string | null; bulkDeleteBusy?: boolean }) {
     const state = { enhanceIdeaCalled: false, createProjectCalled: false, enhanceBusySet: "untouched" as unknown };
     const fn = new Function(
       "description",
@@ -844,6 +850,9 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
       "busy",
       "enhanceBusy",
       "templateBusy",
+      "cloningId",
+      "deletingId",
+      "bulkDeleteBusy",
       "setEnhanceBusy",
       "setError",
       "enhanceIdea",
@@ -862,6 +871,9 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
       opts.busy ?? false,
       opts.enhanceBusy ?? false,
       opts.templateBusy ?? null,
+      opts.cloningId ?? null,
+      opts.deletingId ?? null,
+      opts.bulkDeleteBusy ?? false,
       (v: boolean) => (state.enhanceBusySet = v),
       () => {},
       async () => {
@@ -902,6 +914,27 @@ test("App's handleEnhanceAndBuild refuses to run while the Build submit button o
   await fnWhileEnhanceBusy();
   assert.equal(stateWhileEnhanceBusy.enhanceIdeaCalled, false, "must never call enhanceIdea while this very handler's own enhanceBusy is already true");
   assert.equal(stateWhileEnhanceBusy.createProjectCalled, false, "must never call createProject either");
+
+  /**
+   * Round 2246: round 2245 widened openExistingProject/the Open button's
+   * own guard with cloningId/deletingId/bulkDeleteBusy, but never checked
+   * the reverse direction -- a brand new creation flow starting anyway
+   * while a Duplicate/Delete/bulk-delete was still in flight on the home
+   * screen's "My Projects" list raced the exact same shared project/view
+   * state, the same failure class as round 2238/2245.
+   */
+  const { fn: fnWhileCloning, state: stateWhileCloning } = run({ cloningId: "project-a" });
+  await fnWhileCloning();
+  assert.equal(stateWhileCloning.enhanceIdeaCalled, false, "must never call enhanceIdea while a Duplicate (cloningId) is already in flight");
+  assert.equal(stateWhileCloning.createProjectCalled, false, "must never call createProject either");
+
+  const { fn: fnWhileDeleting, state: stateWhileDeleting } = run({ deletingId: "project-a" });
+  await fnWhileDeleting();
+  assert.equal(stateWhileDeleting.enhanceIdeaCalled, false, "must never call enhanceIdea while a Delete (deletingId) is already in flight");
+
+  const { fn: fnWhileBulkDelete, state: stateWhileBulkDelete } = run({ bulkDeleteBusy: true });
+  await fnWhileBulkDelete();
+  assert.equal(stateWhileBulkDelete.enhanceIdeaCalled, false, "must never call enhanceIdea while a bulk delete (bulkDeleteBusy) is already in flight");
 });
 
 /**
@@ -916,13 +949,16 @@ test("App's handleDescribe refuses to run while Enhance & Build or a template ca
   assert.ok(handlerMatch, "expected to find handleDescribe in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null }) {
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null; cloningId?: string | null; deletingId?: string | null; bulkDeleteBusy?: boolean }) {
     const state = { createProjectCalled: false, busySet: "untouched" as unknown, viewSet: "untouched" as unknown, preventDefaultCalled: false };
     const fn = new Function(
       "description",
       "busy",
       "enhanceBusy",
       "templateBusy",
+      "cloningId",
+      "deletingId",
+      "bulkDeleteBusy",
       "setBusy",
       "setError",
       "createProject",
@@ -937,6 +973,9 @@ test("App's handleDescribe refuses to run while Enhance & Build or a template ca
       opts.busy ?? false,
       opts.enhanceBusy ?? false,
       opts.templateBusy ?? null,
+      opts.cloningId ?? null,
+      opts.deletingId ?? null,
+      opts.bulkDeleteBusy ?? false,
       (v: boolean) => (state.busySet = v),
       () => {},
       async () => {
@@ -971,6 +1010,26 @@ test("App's handleDescribe refuses to run while Enhance & Build or a template ca
   await fnWhileBuildBusy(fakeEvent);
   assert.equal(stateWhileBuildBusy.createProjectCalled, false, "must never call createProject while this very handler's own busy is already true");
 
+  /**
+   * Round 2246: round 2245 widened openExistingProject/the Open button's
+   * own guard with cloningId/deletingId/bulkDeleteBusy, but never checked
+   * the reverse direction -- a brand new creation flow starting anyway
+   * while a Duplicate/Delete/bulk-delete was still in flight on the home
+   * screen's "My Projects" list raced the exact same shared project/view
+   * state, the same failure class as round 2238/2245.
+   */
+  const { fn: fnWhileCloning, state: stateWhileCloning } = run({ cloningId: "project-a" });
+  await fnWhileCloning(fakeEvent);
+  assert.equal(stateWhileCloning.createProjectCalled, false, "must never call createProject while a Duplicate (cloningId) is already in flight");
+
+  const { fn: fnWhileDeleting, state: stateWhileDeleting } = run({ deletingId: "project-a" });
+  await fnWhileDeleting(fakeEvent);
+  assert.equal(stateWhileDeleting.createProjectCalled, false, "must never call createProject while a Delete (deletingId) is already in flight");
+
+  const { fn: fnWhileBulkDelete, state: stateWhileBulkDelete } = run({ bulkDeleteBusy: true });
+  await fnWhileBulkDelete(fakeEvent);
+  assert.equal(stateWhileBulkDelete.createProjectCalled, false, "must never call createProject while a bulk delete (bulkDeleteBusy) is already in flight");
+
   const { fn: fnNormally, state: stateNormally } = run({});
   await fnNormally(fakeEvent);
   assert.equal(stateNormally.createProjectCalled, true, "must still run normally when neither sibling flag is busy");
@@ -992,12 +1051,15 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
   assert.ok(handlerMatch, "expected to find handleUseTemplate in App.tsx");
   const { code } = transformSync(handlerMatch![0], { loader: "ts" });
 
-  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null }) {
+  function run(opts: { busy?: boolean; enhanceBusy?: boolean; templateBusy?: string | null; cloningId?: string | null; deletingId?: string | null; bulkDeleteBusy?: boolean }) {
     const state = { createProjectFromTemplateCalled: false, templateBusySet: "untouched" as unknown, viewSet: "untouched" as unknown };
     const fn = new Function(
       "busy",
       "enhanceBusy",
       "templateBusy",
+      "cloningId",
+      "deletingId",
+      "bulkDeleteBusy",
       "setTemplateBusy",
       "setError",
       "createProjectFromTemplate",
@@ -1012,6 +1074,9 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
       opts.busy ?? false,
       opts.enhanceBusy ?? false,
       opts.templateBusy ?? null,
+      opts.cloningId ?? null,
+      opts.deletingId ?? null,
+      opts.bulkDeleteBusy ?? false,
       (v: string | null) => (state.templateBusySet = v),
       () => {},
       async () => {
@@ -1045,10 +1110,66 @@ test("App's handleUseTemplate refuses to run while the Build submit button or En
   await fnWhileTemplateBusy("template-1");
   assert.equal(stateWhileTemplateBusy.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while this very handler's own templateBusy is already set");
 
+  /**
+   * Round 2246: round 2245 widened openExistingProject/the Open button's
+   * own guard with cloningId/deletingId/bulkDeleteBusy, but never checked
+   * the reverse direction -- a brand new creation flow starting anyway
+   * while a Duplicate/Delete/bulk-delete was still in flight on the home
+   * screen's "My Projects" list raced the exact same shared project/view
+   * state, the same failure class as round 2238/2245.
+   */
+  const { fn: fnWhileCloning, state: stateWhileCloning } = run({ cloningId: "project-a" });
+  await fnWhileCloning("template-1");
+  assert.equal(stateWhileCloning.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while a Duplicate (cloningId) is already in flight");
+
+  const { fn: fnWhileDeleting, state: stateWhileDeleting } = run({ deletingId: "project-a" });
+  await fnWhileDeleting("template-1");
+  assert.equal(stateWhileDeleting.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while a Delete (deletingId) is already in flight");
+
+  const { fn: fnWhileBulkDelete, state: stateWhileBulkDelete } = run({ bulkDeleteBusy: true });
+  await fnWhileBulkDelete("template-1");
+  assert.equal(stateWhileBulkDelete.createProjectFromTemplateCalled, false, "must never call createProjectFromTemplate while a bulk delete (bulkDeleteBusy) is already in flight");
+
   const { fn: fnNormally, state: stateNormally } = run({});
   await fnNormally("template-1");
   assert.equal(stateNormally.createProjectFromTemplateCalled, true, "must still run normally when neither sibling flag is busy");
   assert.equal(stateNormally.viewSet, "spec", "must still navigate to the spec screen on success");
+});
+
+/**
+ * Round 2246: a correct guard inside handleDescribe/handleEnhanceAndBuild/
+ * handleUseTemplate alone doesn't disable their own buttons -- a user
+ * could still click Build/Enhance & Build/a template card while a
+ * Duplicate/Delete/bulk-delete was in flight, even though the click would
+ * then no-op, with no visual feedback that anything is wrong. Mirrors the
+ * identical round-2238/2245 fix already applied to the Open row button.
+ */
+test("App's Build submit button, Enhance & Build button, and template cards' 'Use this template' buttons are disabled while cloningId, deletingId, or bulkDeleteBusy is set, matching their own handlers' widened guards", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  const buildBtnSrc = appSrc.match(/<button type="submit" disabled=\{[^}]*\}>/)?.[0];
+  assert.ok(buildBtnSrc, "expected to find the plain Build submit button in App.tsx");
+  assert.match(
+    buildBtnSrc!,
+    /disabled=\{busy \|\| enhanceBusy \|\| templateBusy !== null \|\| cloningId !== null \|\| deletingId !== null \|\| bulkDeleteBusy \|\| !description\.trim\(\)\}/,
+    "the Build submit button's disabled attribute must include cloningId/deletingId/bulkDeleteBusy",
+  );
+
+  const enhanceBtnSrc = appSrc.match(/className="button-ai"[\s\S]*?\n\s*>/)?.[0];
+  assert.ok(enhanceBtnSrc, "expected to find the Enhance & Build button in App.tsx");
+  assert.match(
+    enhanceBtnSrc!,
+    /disabled=\{busy \|\| enhanceBusy \|\| templateBusy !== null \|\| cloningId !== null \|\| deletingId !== null \|\| bulkDeleteBusy \|\| !description\.trim\(\)\}/,
+    "the Enhance & Build button's disabled attribute must include cloningId/deletingId/bulkDeleteBusy",
+  );
+
+  const templateBtnSrc = appSrc.match(/disabled=\{templateBusy !== null[^}]*\}\s*\n\s*onClick=\{\(\) => handleUseTemplate\(template\.id\)\}/)?.[0];
+  assert.ok(templateBtnSrc, "expected to find a template card's 'Use this template' button in App.tsx");
+  assert.match(
+    templateBtnSrc!,
+    /disabled=\{templateBusy !== null \|\| busy \|\| enhanceBusy \|\| cloningId !== null \|\| deletingId !== null \|\| bulkDeleteBusy\}/,
+    "the 'Use this template' button's disabled attribute must include cloningId/deletingId/bulkDeleteBusy",
+  );
 });
 
 /**
