@@ -51533,3 +51533,19 @@ Live: https://forge-ai-m7p7.onrender.com
 **Tests:** added a new test mirroring round 2129's own "business/event/podcast/stock-market/recruiter" test's style and structure, covering two independent "service listing(s)" phrasings plus a regression check that genuine real-estate "listings" descriptions still match `Property`. Verified fail-before/pass-after via `git stash` -- failed with the exact predicted assertion message before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 375/375 (was 373), no build script for this package (tests only).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2241: "burger menu" (a real synonym for the hamburger-icon UI menu) still spuriously matched MenuItem -- but unlike its siblings, needed a document-wide fix instead of a blanket exclusion
+
+Round 880 excluded "navigation"/"hamburger"/"dropdown"/"drop-down"/"side"/"context"/"settings" immediately before "menu" to stop MenuItem (the restaurant entity) from spuriously matching ordinary software-UI phrasings. "Burger menu" -- a real, if less common, alternate name for the same hamburger-icon UI control -- was never added, so "a mobile app with a burger menu that links to profile and settings pages" matched only `['MenuItem', 'Task']` via the real `matchEntities`, the bogus restaurant entity crowding out the correct app description.
+
+**Why this one needed a different fix shape than round 880's:** every word in round 880's own exclusion list is unambiguously non-food -- "navigation"/"hamburger"/"dropdown" have no restaurant sense at all, so excluding them outright is always safe. "Burger" is different: it's a literal food word with a completely ordinary restaurant sense of its own ("a diner app to manage its burger menu, prices, and categories" is a perfectly normal description that must still match MenuItem). Simply adding "burger" to the same blanket lookbehind list, as first proposed, would have traded one false positive for a worse one -- silently breaking every genuine burger-restaurant app description instead.
+
+**The fix:** applied the exact document-wide bidirectional disambiguation technique rounds 1828/2110 already established for the identically-shaped "property"/"נכס" (real estate vs. general-finance asset) ambiguity: "burger menu" is excluded from matching MenuItem only when an unambiguous software-UI cue word (navigation/icon/sidebar/profile/settings/tap/click/link) co-occurs anywhere in the text -- before or after "burger" -- and still matches the ordinary restaurant idiom whenever no such cue is present.
+
+**Confirmed live and via direct `matchEntities` calls:** the bogus `MenuItem` injection reproduced exactly as described (`['MenuItem', 'Task']` for the burger-menu-as-UI description, vs. correctly `['Task']` alone for the control "hamburger menu" phrasing, which round 880 already excludes). Verified the new regex against 8 hand-checked cases during development (UI cue after/before "burger", a restaurant description, a diner description with no explicit "restaurant" word, the existing hamburger/dropdown controls, and a cue-free "pizza menu" sanity check) before writing it into the fix.
+
+**Not applicable:** no `codegen.ts`/`twin.ts` duplicate -- this keyword-matching logic is confined entirely to `packages/spec-engine`'s spec-generation-time heuristic provider, same as round 2240's finding.
+
+**Tests:** added a new test alongside round 880's own test, covering a UI cue after "burger", a UI cue before "burger", and a genuine burger-restaurant description with no UI cue at all (the exact case a blanket exclusion would have broken). Verified fail-before/pass-after via `git stash` -- failed with the exact predicted assertion message before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 376/376 (was 375).
+
+Live: https://forge-ai-m7p7.onrender.com
