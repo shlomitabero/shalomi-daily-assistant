@@ -642,6 +642,32 @@ test('patchOpportunity logs an opportunity_updated entry with the exact before/a
   assert.equal('riskLevel' in logged[0].detail.changed, false);
 });
 
+test('patchOpportunity logs null as the "from" value when a field starts out genuinely unset, not the literal word undefined', () => {
+  // insertOpportunity's own default (and a freshly-drafted real
+  // opportunity - services/opportunities.js never fills in a guess)
+  // leaves revenueEstimate null until the owner sets one for the first
+  // time. `opportunity[field] ?? null` must turn that into a clean,
+  // JSON-safe null in the diff rather than leaving it undefined (which
+  // JSON.stringify would drop from the logged entry entirely).
+  __resetForTests();
+  const opp = insertOpportunity({ revenueEstimate: null });
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: { low: 1, mid: 2, high: 3 } } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'opportunity_updated')[0];
+  assert.deepEqual(logged.detail.changed.revenueEstimate, { from: null, to: { low: 1, mid: 2, high: 3 } });
+});
+
+test('patchOpportunity logs null as the "to" value when the owner explicitly clears a previously-set revenueEstimate', () => {
+  // The mirror of the "from" case above - clearing a real estimate back
+  // to null (the owner deciding the old numbers no longer apply) is just
+  // as real a change as setting one for the first time, and must show up
+  // the same way rather than being silently dropped from the diff.
+  __resetForTests();
+  const opp = insertOpportunity({ revenueEstimate: { low: 1, mid: 2, high: 3 } });
+  patchOpportunity({ params: { id: opp.id }, body: { revenueEstimate: null } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'opportunity_updated')[0];
+  assert.deepEqual(logged.detail.changed.revenueEstimate, { from: { low: 1, mid: 2, high: 3 }, to: null });
+});
+
 test('patchOpportunity does not log anything when the patch is empty or changes nothing', () => {
   __resetForTests();
   const opp = insertOpportunity({ priceUSD: 9 });
