@@ -9973,7 +9973,10 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="copy-records-btn"
               onClick={handleCopy}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || copyStatus === "copying"}
+              // Round 2234: mirrors the live preview's own round-2234 fix
+              // -- see handlePrintList's own disabled attribute below for
+              // the full explanation shared by all four of these buttons.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || copyStatus === "copying" || writesInFlight}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -9991,7 +9994,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="csv-export-btn"
               onClick={handleExportCsv}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || csvExportStatus === "exporting"}
+              // Round 2234: see the Copy button's own comment just above.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || csvExportStatus === "exporting" || writesInFlight}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -10007,7 +10011,8 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="json-export-btn"
               onClick={handleExportJson}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || jsonExportStatus === "exporting"}
+              // Round 2234: see the Copy button's own comment above.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || jsonExportStatus === "exporting" || writesInFlight}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -10023,7 +10028,14 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
               type="button"
               className="print-list-btn"
               onClick={handlePrintList}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || printListStatus === "preparing"}
+              // Round 2234: confirmed live (real rendered PDF) that
+              // clicking Print/Copy/Export mid-bulk-update (handleBulkUpdate's
+              // own PATCHes still pending) copied/exported/printed the
+              // pre-update field values, since these all read straight
+              // from the live records state and handleBulkUpdate
+              // doesn't refresh it until its batch resolves. Ports the
+              // live preview's own round-2234 fix to all four buttons.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || printListStatus === "preparing" || writesInFlight}
             >
               {printListStatus === "preparing"
                 ? "Preparing…"

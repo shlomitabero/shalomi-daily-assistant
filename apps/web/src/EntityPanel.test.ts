@@ -1391,6 +1391,47 @@ test("EntityPanel's handleBulkDelete is a no-op while bulkActionBusy is true, an
 });
 
 /**
+ * Round 2234's finding: Copy/Export CSV/Export JSON/Print list all read
+ * straight from the live `records` component state (via
+ * selectedOrAllRecords), but -- unlike Apply/Duplicate selected/Delete
+ * selected just above, which all correctly carry `disabled={writesInFlight}`
+ * -- none of these four guarded against a concurrent handleBulkUpdate
+ * batch still being in flight. handleBulkUpdate doesn't update `records`
+ * until its own `await Promise.allSettled(...)` of every selected
+ * record's PATCH resolves and `refresh()` runs afterward, so clicking any
+ * of these four mid-bulk-edit copied/exported/printed the pre-update
+ * field values, with no staleness indication anywhere in the output.
+ * Confirmed live with a real rendered PDF (page.pdf() + pdftotext): a
+ * bulk "Status -> Lost" edit still in flight, printed list showed the
+ * old "Won" value, while a fresh reload after the PATCHes actually
+ * landed server-side confirmed the edit itself had genuinely succeeded.
+ * jsdom can't render a real PDF, so (consistent with this test file's
+ * own established convention) this checks the actual button JSX in the
+ * real source text directly.
+ */
+test("EntityPanel's Copy/Export CSV/Export JSON/Print list buttons are disabled while writesInFlight is true, matching their sibling bulk-action buttons", () => {
+  const copyMatch = entityPanelSrc.match(
+    /onClick=\{handleCopy\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| copyStatus === "copying" \|\| writesInFlight\}/,
+  );
+  assert.ok(copyMatch, "expected the Copy button's disabled attribute to also include writesInFlight");
+
+  const csvMatch = entityPanelSrc.match(
+    /onClick=\{handleExportCsv\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| csvExportStatus === "exporting" \|\| writesInFlight\}/,
+  );
+  assert.ok(csvMatch, "expected the Export CSV button's disabled attribute to also include writesInFlight");
+
+  const jsonMatch = entityPanelSrc.match(
+    /onClick=\{handleExportJson\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| jsonExportStatus === "exporting" \|\| writesInFlight\}/,
+  );
+  assert.ok(jsonMatch, "expected the Export JSON button's disabled attribute to also include writesInFlight");
+
+  const printMatch = entityPanelSrc.match(
+    /onClick=\{handlePrintList\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| printListStatus === "preparing" \|\| writesInFlight\}/,
+  );
+  assert.ok(printMatch, "expected the Print list button's disabled attribute to also include writesInFlight");
+});
+
+/**
  * Round 1118: round 1117 only cross-gated the bulk-action bar's own three
  * buttons against each other -- every OTHER way to mutate a single record
  * (the table row's own Duplicate/Delete, the in-form Duplicate/Delete, a

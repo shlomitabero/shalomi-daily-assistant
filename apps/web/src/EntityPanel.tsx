@@ -6784,7 +6784,15 @@ export function EntityPanel({
               type="button"
               className="secondary copy-records-btn"
               onClick={handleCopy}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || copyStatus === "copying"}
+              // Round 2234: writesInFlight guards Apply/Duplicate selected/
+              // Delete selected two dozen lines below, but was missing here
+              // and on Export CSV/Export JSON/Print list -- all four read
+              // straight from the live `records` state via
+              // selectedOrAllRecords, which handleBulkUpdate doesn't
+              // refresh until its PATCHes resolve, so clicking any of
+              // these mid-bulk-edit copied/exported/printed the
+              // pre-update field values with no staleness indication.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || copyStatus === "copying" || writesInFlight}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -6802,7 +6810,8 @@ export function EntityPanel({
               type="button"
               className="secondary csv-export-btn"
               onClick={handleExportCsv}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || csvExportStatus === "exporting"}
+              // Round 2234: see the Copy button's own comment just above.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || csvExportStatus === "exporting" || writesInFlight}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -6818,7 +6827,8 @@ export function EntityPanel({
               type="button"
               className="secondary json-export-btn"
               onClick={handleExportJson}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || jsonExportStatus === "exporting"}
+              // Round 2234: see the Copy button's own comment above.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || jsonExportStatus === "exporting" || writesInFlight}
               aria-live="polite"
               aria-atomic="true"
             >
@@ -6902,7 +6912,14 @@ export function EntityPanel({
               type="button"
               className="secondary"
               onClick={handlePrintList}
-              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || printListStatus === "preparing"}
+              // Round 2234: confirmed live with a real rendered PDF --
+              // clicking Print mid-bulk-update (handleBulkUpdate's own
+              // PATCHes still pending) printed the pre-update field
+              // values, with the printed footer still confidently stating
+              // the record count/timestamp and no staleness indication.
+              // See the Copy button's own comment above for the full
+              // explanation shared by all four of these buttons.
+              disabled={(selectedIds.size === 0 && effectivelyVisibleRecords.length === 0) || printListStatus === "preparing" || writesInFlight}
             >
               {printListStatus === "preparing"
                 ? t("entity.printList.busy")

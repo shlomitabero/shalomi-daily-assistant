@@ -15599,10 +15599,11 @@ test("the exported EntityView's Export CSV routes through selectedOrAllRecords, 
   assert.ok(exportBtnSrc, "expected to find the csv-export-btn button in generated output");
   // Round 2014: also disabled while a busy export fetch is genuinely in
   // flight -- see this button's own busy/done-status test for the full
-  // reasoning.
+  // reasoning. Round 2234: and while writesInFlight (a bulk/import/submit
+  // write elsewhere in the app) -- see the writesInFlight test below.
   assert.match(
     exportBtnSrc!,
-    /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| csvExportStatus === "exporting"\}/,
+    /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| csvExportStatus === "exporting" \|\| writesInFlight\}/,
   );
   assert.match(exportBtnSrc!, /selectedIds\.size > 0/, "the button label must reflect a real selection count");
 });
@@ -15725,8 +15726,9 @@ test("the exported EntityView renders a real Copy button that writes the selecti
   const copyBtnSrc = entityViewJsx.match(/<button\s+type="button"\s+className="copy-records-btn"[\s\S]*?<\/button>/)?.[0];
   assert.ok(copyBtnSrc, "expected to find the copy-records-btn button in generated output");
   // Round 2015: disabled now also covers the in-flight "copying" state --
-  // see handleCopy's own round-2015 doc comment just above.
-  assert.match(copyBtnSrc!, /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| copyStatus === "copying"\}/);
+  // see handleCopy's own round-2015 doc comment just above. Round 2234:
+  // also covers writesInFlight -- see the writesInFlight test below.
+  assert.match(copyBtnSrc!, /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| copyStatus === "copying" \|\| writesInFlight\}/);
   assert.match(copyBtnSrc!, /copyStatus === "copying"/);
   assert.match(copyBtnSrc!, /copyStatus === "copied"/);
   assert.match(copyBtnSrc!, /copyStatus === "failed"/);
@@ -15810,10 +15812,11 @@ test("the exported EntityView's Export JSON button routes through selectedOrAllR
   assert.ok(exportJsonBtnSrc, "expected to find the json-export-btn button in generated output");
   // Round 2014: also disabled while a busy export fetch is genuinely in
   // flight -- see this button's own busy/done-status test for the full
-  // reasoning.
+  // reasoning. Round 2234: also covers writesInFlight -- see the
+  // writesInFlight test below.
   assert.match(
     exportJsonBtnSrc!,
-    /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| jsonExportStatus === "exporting"\}/,
+    /disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| jsonExportStatus === "exporting" \|\| writesInFlight\}/,
   );
   assert.match(exportJsonBtnSrc!, /as JSON/, "the selected-count label must say 'as JSON' so it reads distinctly from the CSV button's own 'N selected' text");
 
@@ -35752,6 +35755,44 @@ test("the exported app's print-list cells reset white-space to normal, so overfl
     /white-space:\s*normal/,
     "the exported app's .print-list-sheet td must reset white-space to normal (the generic th, td rule earlier in the generated stylesheet sets white-space: nowrap, which silently disables overflow-wrap and causes a long cell's text to be cropped out of the printed PDF entirely, not just visually clipped)",
   );
+});
+
+/**
+ * Round 2234: ports the live preview's own round-2234 fix
+ * (EntityPanel.tsx) -- Copy/Export CSV/Export JSON/Print list all read
+ * straight from the live `records` state via selectedOrAllRecords, but
+ * (unlike Apply/Duplicate selected/Delete selected, which already carry
+ * `disabled={writesInFlight}`) none of these four guarded against a
+ * concurrent handleBulkUpdate batch still being in flight. Confirmed live
+ * against the live preview's own real repro (a real rendered PDF showing
+ * stale field values printed mid-bulk-edit, verified with pdftotext)
+ * before porting the identical fix here. jsdom can't render a PDF, so
+ * (consistent with this test file's own established convention for
+ * visual bugs) this checks the actual generated button JSX directly.
+ */
+test("the exported app's Copy/Export CSV/Export JSON/Print list buttons are disabled while writesInFlight is true, matching their sibling bulk-action buttons", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const copyMatch = entityViewJsx.match(
+    /onClick=\{handleCopy\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| copyStatus === "copying" \|\| writesInFlight\}/,
+  );
+  assert.ok(copyMatch, "expected the exported app's Copy button's disabled attribute to also include writesInFlight");
+
+  const csvMatch = entityViewJsx.match(
+    /onClick=\{handleExportCsv\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| csvExportStatus === "exporting" \|\| writesInFlight\}/,
+  );
+  assert.ok(csvMatch, "expected the exported app's Export CSV button's disabled attribute to also include writesInFlight");
+
+  const jsonMatch = entityViewJsx.match(
+    /onClick=\{handleExportJson\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| jsonExportStatus === "exporting" \|\| writesInFlight\}/,
+  );
+  assert.ok(jsonMatch, "expected the exported app's Export JSON button's disabled attribute to also include writesInFlight");
+
+  const printMatch = entityViewJsx.match(
+    /onClick=\{handlePrintList\}\s*\n(?:[^\n]*\n)*?\s*disabled=\{\(selectedIds\.size === 0 && effectivelyVisibleRecords\.length === 0\) \|\| printListStatus === "preparing" \|\| writesInFlight\}/,
+  );
+  assert.ok(printMatch, "expected the exported app's Print list button's disabled attribute to also include writesInFlight");
 });
 
 /**
