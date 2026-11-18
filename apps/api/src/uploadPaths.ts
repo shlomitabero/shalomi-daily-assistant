@@ -160,7 +160,28 @@ export function collectUploadedFileZipEntries(db: ForgeDatabase, uploadsDir: str
         } catch {
           continue;
         }
-        entries.push({ path: `uploads/${project.id}/${entity.name}/${target.slice(target.lastIndexOf(path.sep) + 1)}`, content });
+        // Round 2203: resolveUploadedFilePath's own round-1270 sibling
+        // fallback (triggered by a case-only entity rename, a documented
+        // no-op at the db layer per migrate.ts -- the upload directory and
+        // the record's own stored `url` keep whatever casing was true at
+        // upload time forever) can return a path whose own directory
+        // segment is a DIFFERENT case than entity.name's CURRENT casing.
+        // Re-substituting entity.name here (as this used to do) wrote the
+        // real bytes into the ZIP under the wrong-cased path -- one that
+        // doesn't match the record's own stored `url`
+        // (routes/projects.ts's upload route writes that once, at upload
+        // time, under the OLD casing, and never rewrites it on a later
+        // rename) that EntityView.jsx's <a href>/<img src> actually
+        // renders. Taking the directory segment from `target` itself
+        // (the real, possibly-old-cased directory resolveUploadedFilePath
+        // actually found) keeps this ZIP path and the stored `url` in
+        // exact agreement, so the generated server's own case-sensitive
+        // express.static route (Linux/Render, this project's own
+        // deployment target) actually serves it -- reopening exactly the
+        // dead-link failure round 2200 fixed, just for any project that
+        // combines a case-only entity rename with an uploaded file.
+        const actualEntityDir = path.basename(path.dirname(target));
+        entries.push({ path: `uploads/${project.id}/${actualEntityDir}/${path.basename(target)}`, content });
       }
     }
   }

@@ -125,3 +125,65 @@ test("collectUploadedFileZipEntries skips entities with no file fields and recor
     rmSync(uploadsDir, { recursive: true, force: true });
   }
 });
+
+/**
+ * Round 2203: a case-only entity rename is a true no-op at the db layer
+ * (migrate.ts) -- the upload directory on disk, and the stored
+ * descriptor's own `url` (routes/projects.ts's upload route writes this
+ * once, at upload time, under whatever casing was then canonical), both
+ * keep the OLD casing forever. resolveUploadedFilePath's own round-1270
+ * sibling fallback finds the real bytes under that old-cased directory --
+ * but this function used to re-substitute the entity's CURRENT name into
+ * the ZIP entry's own path, producing a path that didn't match the
+ * record's own stored `url` at all. The generated server's own
+ * express.static route is case-sensitive (Linux/Render), so the
+ * generated EntityView.jsx's <a href={url}> (which renders the literal
+ * stored url, never the current entity name) 404ed even though the real
+ * bytes WERE bundled into the ZIP, just under the wrong path.
+ */
+test("collectUploadedFileZipEntries bundles the file at the record's own OLD-cased directory after a case-only entity rename, not the entity's current casing", () => {
+  const renamedProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          fields: [
+            { name: "name", label: "Name", type: "text", required: true },
+            { name: "resume", label: "Resume", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const db = createTestDb(renamedProject);
+  const applicant = renamedProject.spec.entities[0];
+  const uploadsDir = mkdtempSync(path.join(tmpdir(), "forge-export-upload-test-"));
+  try {
+    const filename = `${randomUUID()}.pdf`;
+    // The file was uploaded back when this entity was still named
+    // "applicant" (lowercase) -- the directory on disk, and the stored
+    // url below, both reflect that OLD casing. The entity has since been
+    // case-renamed to "Applicant" (the spec above), with nothing on disk
+    // ever touched, matching migrate.ts's own documented no-op.
+    mkdirSync(path.join(uploadsDir, renamedProject.id, "applicant"), { recursive: true });
+    const realBytes = Buffer.from("%PDF-fake-resume-bytes");
+    writeFileSync(path.join(uploadsDir, renamedProject.id, "applicant", filename), realBytes);
+    insertRecord(db, renamedProject.id, applicant, {
+      name: "Dana Levi",
+      resume: JSON.stringify({ url: `/api/uploads/${renamedProject.id}/applicant/${filename}`, name: "dana-resume.pdf", size: realBytes.length, mimeType: "application/pdf" }),
+    });
+
+    const entries = collectUploadedFileZipEntries(db, uploadsDir, renamedProject);
+    assert.equal(entries.length, 1);
+    assert.equal(
+      entries[0].path,
+      `uploads/${renamedProject.id}/applicant/${filename}`,
+      "the ZIP entry's own path must match the record's own stored url exactly (old casing) -- not the entity's current casing, which the generated client's <a href> never looks at",
+    );
+    assert.deepEqual(entries[0].content, realBytes);
+  } finally {
+    rmSync(uploadsDir, { recursive: true, force: true });
+  }
+});
