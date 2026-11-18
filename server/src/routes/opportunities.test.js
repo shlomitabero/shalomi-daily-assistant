@@ -624,6 +624,54 @@ test('patchOpportunity merges a valid patch without dropping untouched fields', 
   assert.equal(res.body.opportunity.riskLevel, 'low');
 });
 
+test('patchOpportunity logs an opportunity_updated entry with the exact before/after diff', () => {
+  // revenueEstimate/costs/riskLevel/dataQuality/priceUSD are the numbers
+  // feasibility.js's whole net-profit math is built on, yet editing any of
+  // them left zero trace anywhere, unlike every other deliberate owner
+  // action this app already logs (settings_updated, remove_from_watchlist).
+  __resetForTests();
+  const opp = insertOpportunity({ riskLevel: 'low', priceUSD: 9 });
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 29, riskLevel: 'low' } }, makeRes());
+  const logged = db.actions_log.where((a) => a.type === 'opportunity_updated');
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].result, 'success');
+  assert.equal(logged[0].detail.opportunityId, opp.id);
+  assert.deepEqual(logged[0].detail.changed.priceUSD, { from: 9, to: 29 });
+  // riskLevel was resent unchanged (OpportunityDetail.jsx's form always
+  // resends every field together) - it must not appear in the diff.
+  assert.equal('riskLevel' in logged[0].detail.changed, false);
+});
+
+test('patchOpportunity does not log anything when the patch is empty or changes nothing', () => {
+  __resetForTests();
+  const opp = insertOpportunity({ priceUSD: 9 });
+  patchOpportunity({ params: { id: opp.id }, body: {} }, makeRes());
+  patchOpportunity({ params: { id: opp.id }, body: { priceUSD: 9 } }, makeRes());
+  assert.equal(db.actions_log.where((a) => a.type === 'opportunity_updated').length, 0);
+});
+
+test('patchOpportunity treats a changed revenueEstimate/costs object as a real change, not just reference equality', () => {
+  // patch always resends the full object (a controlled form) - a naive
+  // `!==` comparison would see a new object on every save and log a false
+  // "change" even when every nested value is identical.
+  __resetForTests();
+  const opp = insertOpportunity({ revenueEstimate: { low: 10, mid: 20, high: 30 }, costs: { aiUsage: 1 } });
+  const resUnchanged = makeRes();
+  patchOpportunity(
+    { params: { id: opp.id }, body: { revenueEstimate: { low: 10, mid: 20, high: 30 }, costs: { aiUsage: 1 } } },
+    resUnchanged
+  );
+  assert.equal(db.actions_log.where((a) => a.type === 'opportunity_updated').length, 0);
+
+  patchOpportunity(
+    { params: { id: opp.id }, body: { revenueEstimate: { low: 10, mid: 20, high: 30 }, costs: { aiUsage: 5 } } },
+    makeRes()
+  );
+  const logged = db.actions_log.where((a) => a.type === 'opportunity_updated')[0];
+  assert.deepEqual(logged.detail.changed.costs, { from: { aiUsage: 1 }, to: { aiUsage: 5 } });
+  assert.equal('revenueEstimate' in logged.detail.changed, false);
+});
+
 test('rejectOpportunity 404s for an id that does not exist', () => {
   __resetForTests();
   const res = makeRes();

@@ -285,7 +285,27 @@ export function patchOpportunity(req, res) {
     }
   }
 
+  // Every other deliberate owner edit in this app already leaves a trace
+  // (settings_updated for the global settings form, remove_from_watchlist/
+  // add_to_watchlist for the watchlist) - this card's own edit form
+  // (revenueEstimate/costs/riskLevel/dataQuality/priceUSD, the numbers
+  // feasibility.js's whole net-profit math is built on) was the one left
+  // with none at all. JSON.stringify compares revenueEstimate/costs as
+  // whole objects, not just reference equality - a changed nested value
+  // (e.g. costs.aiUsage) must count as a real change even though patch
+  // itself always resends the full object (OpportunityDetail.jsx's form is
+  // controlled, not a per-field PATCH).
+  const changed = {};
+  for (const field of EDITABLE_FIELDS) {
+    if (field in patch && JSON.stringify(opportunity[field] ?? null) !== JSON.stringify(patch[field] ?? null)) {
+      changed[field] = { from: opportunity[field] ?? null, to: patch[field] ?? null };
+    }
+  }
+
   const updated = db.opportunities.update(req.params.id, patch);
+  if (Object.keys(changed).length > 0) {
+    logAction({ type: 'opportunity_updated', detail: { opportunityId: opportunity.id, changed }, result: 'success' });
+  }
   res.json({ opportunity: withFeasibility(updated) });
 }
 

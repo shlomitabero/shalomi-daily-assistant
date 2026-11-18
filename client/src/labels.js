@@ -29,6 +29,7 @@ export const ACTION_TYPE_LABEL = {
   remove_from_watchlist: 'הסרת סימבול ממעקב',
   settings_updated: 'עדכון הגדרות',
   webhook_signature_failed: 'חתימת webhook לא תקינה',
+  opportunity_updated: 'עדכון פרטי הזדמנות',
 };
 
 export function actionTypeLabel(type) {
@@ -57,6 +58,16 @@ const RISK_LEVEL_LABEL = { low: 'נמוכה', medium: 'בינונית', high: '�
 
 export function riskLevelLabel(level) {
   return RISK_LEVEL_LABEL[level] ?? level;
+}
+
+// dataQuality ('unknown'/'estimated'/'verified') already had a Hebrew
+// <select> in OpportunityDetail's edit form (unchanged by this commit) -
+// opportunityChangeSummary below is the first place to need the same
+// translation outside that form.
+const DATA_QUALITY_LABEL = { unknown: 'לא ידוע', estimated: 'הערכה', verified: 'מאומת' };
+
+export function dataQualityLabel(quality) {
+  return DATA_QUALITY_LABEL[quality] ?? quality;
 }
 
 // Paper-trade side ('long'/'short') already had a Hebrew <select> on the
@@ -284,6 +295,47 @@ function formatSettingsValue(field, value) {
 export function settingsChangeSummary(changed) {
   return Object.entries(changed)
     .map(([field, { from, to }]) => `${SETTINGS_FIELD_LABEL[field] ?? field}: ${formatSettingsValue(field, from)} ← ${formatSettingsValue(field, to)}`)
+    .join('; ');
+}
+
+// routes/opportunities.js's patchOpportunity now logs the exact before/after
+// diff for every field the owner actually changed on a card's edit form -
+// the same gap settingsChangeSummary above already closed for the global
+// settings form, just for revenueEstimate/costs/riskLevel/dataQuality/
+// priceUSD, the numbers feasibility.js's whole net-profit math is built on.
+const OPPORTUNITY_FIELD_LABEL = {
+  revenueEstimate: 'הערכת הכנסה',
+  costs: 'עלויות',
+  riskLevel: 'רמת סיכון',
+  dataQuality: 'איכות נתונים',
+  priceUSD: 'מחיר',
+};
+
+function formatRevenueEstimate(value) {
+  if (value == null) return 'ללא';
+  const part = (v) => (v == null ? '?' : formatMoney(v, 0));
+  return `${part(value.low)}–${part(value.high)} (בינוני: ${part(value.mid)})`;
+}
+
+function formatCosts(value) {
+  if (value == null || Object.keys(value).length === 0) return 'ללא';
+  return Object.entries(value)
+    .map(([key, v]) => `${MISSING_COST_LABEL[key] ?? key}: ${v == null ? 'לא ידוע' : formatMoney(v)}`)
+    .join(', ');
+}
+
+function formatOpportunityValue(field, value) {
+  if (field === 'revenueEstimate') return formatRevenueEstimate(value);
+  if (field === 'costs') return formatCosts(value);
+  if (field === 'riskLevel') return riskLevelLabel(value);
+  if (field === 'dataQuality') return dataQualityLabel(value);
+  if (field === 'priceUSD') return value == null ? 'ללא' : formatMoney(value);
+  return value === null ? 'ללא' : String(value);
+}
+
+export function opportunityChangeSummary(changed) {
+  return Object.entries(changed)
+    .map(([field, { from, to }]) => `${OPPORTUNITY_FIELD_LABEL[field] ?? field}: ${formatOpportunityValue(field, from)} ← ${formatOpportunityValue(field, to)}`)
     .join('; ');
 }
 

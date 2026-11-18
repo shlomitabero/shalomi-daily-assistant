@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel, autonomousScanSummary, saleConfirmedSummary, settingsChangeSummary } from '../labels.js';
+import { actionTypeLabel, resultLabel, reasonLabel, formatMoney, sideLabel, autonomousScanSummary, saleConfirmedSummary, settingsChangeSummary, opportunityChangeSummary } from '../labels.js';
 
 export default function ActivityLog() {
   const [actions, setActions] = useState([]);
@@ -180,6 +180,14 @@ export default function ActivityLog() {
                 everything immediately). */}
             {a.type === 'settings_updated' && a.detail?.changed && (
               <p className="hint log-reason">{settingsChangeSummary(a.detail.changed)}</p>
+            )}
+            {/* routes/opportunities.js's patchOpportunity now logs the exact
+                before/after diff for every edit-form save that actually
+                changed something - same gap as settings_updated above,
+                just for a single opportunity's own revenueEstimate/costs/
+                riskLevel/dataQuality/priceUSD. */}
+            {a.type === 'opportunity_updated' && a.detail?.changed && (
+              <p className="hint log-reason">{opportunityChangeSummary(a.detail.changed)}</p>
             )}
             {a.detail?.reason && <p className="hint log-reason">{reasonLabel(a.detail.reason)}</p>}
             <span className="log-time">{new Date(a.createdAt).toLocaleString('he-IL')}</span>

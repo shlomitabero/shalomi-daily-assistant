@@ -5,6 +5,7 @@ import {
   opportunityStatusLabel, sourceLabel, missingFieldLabel, reasonLabel,
   autonomousScanSummary, saleConfirmedSummary, refreshAllFailuresSummary,
   latestSourceCheckTimestamp, pendingPublishApprovals, settingsChangeSummary,
+  opportunityChangeSummary, dataQualityLabel,
 } from './labels.js';
 
 // This is the client's one module with zero React/DOM dependency - pure
@@ -343,4 +344,41 @@ test('settingsChangeSummary falls back to the raw value for an unrecognized mode
 test('settingsChangeSummary falls back to the raw field name for a field this mapping does not know about yet', () => {
   const summary = settingsChangeSummary({ preferredCategories: { from: null, to: 'tech' } });
   assert.equal(summary, 'preferredCategories: ללא ← tech');
+});
+
+test('dataQualityLabel translates a known value and falls back to the raw code for an unknown one', () => {
+  assert.equal(dataQualityLabel('estimated'), 'הערכה');
+  assert.equal(dataQualityLabel('some_future_value'), 'some_future_value');
+});
+
+test('opportunityChangeSummary formats a priceUSD change using formatMoney', () => {
+  const summary = opportunityChangeSummary({ priceUSD: { from: 9, to: 29 } });
+  assert.equal(summary, 'מחיר: $9.00 ← $29.00');
+});
+
+test('opportunityChangeSummary translates riskLevel and dataQuality instead of showing the raw English code', () => {
+  assert.equal(opportunityChangeSummary({ riskLevel: { from: 'low', to: 'high' } }), 'רמת סיכון: נמוכה ← גבוהה');
+  assert.equal(opportunityChangeSummary({ dataQuality: { from: 'unknown', to: 'verified' } }), 'איכות נתונים: לא ידוע ← מאומת');
+});
+
+test('opportunityChangeSummary formats a revenueEstimate change as a readable range, including a null going to a real estimate', () => {
+  const summary = opportunityChangeSummary({
+    revenueEstimate: { from: null, to: { low: 100, mid: 200, high: 300 } },
+  });
+  assert.equal(summary, 'הערכת הכנסה: ללא ← $100–$300 (בינוני: $200)');
+});
+
+test('opportunityChangeSummary formats a costs change, labeling known cost keys and falling back for unknown ones', () => {
+  const summary = opportunityChangeSummary({
+    costs: { from: { aiUsage: 1 }, to: { aiUsage: 2, paymentProcessing: null, shipping: 5 } },
+  });
+  assert.equal(summary, 'עלויות: עלות AI: $1.00 ← עלות AI: $2.00, עמלת סליקה: לא ידוע, shipping: $5.00');
+});
+
+test('opportunityChangeSummary joins multiple changed fields from the same save', () => {
+  const summary = opportunityChangeSummary({
+    priceUSD: { from: 9, to: 29 },
+    riskLevel: { from: 'low', to: 'medium' },
+  });
+  assert.equal(summary, 'מחיר: $9.00 ← $29.00; רמת סיכון: נמוכה ← בינונית');
 });
