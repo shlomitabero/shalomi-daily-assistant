@@ -51203,3 +51203,13 @@ Live: https://forge-ai-m7p7.onrender.com
 **For a future round considering this:** the two concrete signals a future fix could combine are (1) detecting an explicit "entity called/named X" phrase in the instruction and comparing X against the added entity's actual name, and (2) detecting an explicit field list in the instruction (e.g. "with a X field and a Y field") and comparing it against the added entity's actual fields -- either mismatching should surface the existing disclaimer. Repro: build any project, then refine with "Add a new entity called Supplier with a name field and a contactEmail field" (heuristic engine, i.e. with no ANTHROPIC_API_KEY configured) -- confirmed to add a wrongly-named, wrongly-fielded "Vendor" entity with zero warning.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2216: three more live refine-instruction scenarios, plus a code-reading pass -- everything found was already known, fixed, or deliberately deferred
+
+Continuing round 2215's live-refine-testing technique against scenarios not yet tried: a field-level edit ("Make the Phone field required on Customer"), a relation-change instruction, and a role/permission instruction ("Add a new role called Manager who can edit everything"). All three correctly triggered the heuristic engine's existing honest disclaimer (or, for the role case, correctly matched a real `ROLE_RULES` keyword and added the role for real) -- traced each outcome back to `fieldLevelChangeUnderstood`'s own deliberate, documented design (round 2064) and `matchRoles`' own intentional Admin-injection behavior (round 1942), confirming these are the same already-known architectural family as round 2215's finding, not new bugs.
+
+A code-reading pass over the least-audited remaining live files (`promptEnhancer.ts`, `debug.ts`, `passwordResetTokens.ts`/`routes/auth.ts`) found nothing; `eliteAgent.ts` is confirmed dead code with no live caller, so not worth auditing further.
+
+One lead initially looked like a genuine new finding -- `/refine`'s own lack of idempotency-key protection against a dropped SSE connection after a successful run causing a retried, duplicate Anthropic charge and a duplicate Time Machine checkpoint -- but turned out to already be fully documented as a deliberately-deferred, design-complete-since-round-482 item (`docs/wakeRetry-idempotency-design.md`'s own "residual gap" section, also referenced in this roadmap). Not a new finding, but flagged again here as a real, still-open item worth an explicit future decision rather than continued silent deferral.
+
+Live: https://forge-ai-m7p7.onrender.com
