@@ -3,6 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- This is a mobile-first app (README) with a consistently dark theme
+         (styles.css's own --bg, #0b0f1a) - without this, a mobile browser's
+         own chrome around the page (the status bar area on iOS Safari, the
+         address bar/toolbar on Android Chrome) defaults to white, a jarring
+         bright strip around an otherwise all-dark UI on the one surface
+         (phone screen) this app is actually designed for first. Kept as a
+         plain, static value rather than following styles.css's own
+         prefers-color-scheme media query - this app has no light theme at
+         all (body always sets --bg regardless of the OS setting), so there
+         is no second value to switch to. -->
+    <meta name="theme-color" content="#0b0f1a" />
     <title>PROFIT AI</title>
     <!-- With no favicon file in this project, a browser still requests
          /favicon.ico automatically on every single page load - that request
