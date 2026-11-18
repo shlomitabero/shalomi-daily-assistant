@@ -51577,3 +51577,17 @@ The Courier (delivery person) entity's keyword list has used bare `/\bdriver(s)?
 **Tests:** added a new test alongside the existing round-2106/2149 Courier-font tests, covering device/printer/graphics-card/USB driver phrasings plus a regression check that a genuine delivery-driver description still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 378/378 (was 377), no build script for this package (tests only).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2244: Event's "conference" keyword missed a third ordinary phrase in the exact shape round 870 already fixed twice -- "conference room(s)"
+
+Round 870 excluded "video conference(s)" and "conference call(s)" from Event's bare "conference" keyword, each confirmed to spuriously fabricate a wedding/trade-show Event entity on a video-meeting or sales-call app description. A third, equally common phrase in the identical shape -- "conference room(s)", the ordinary term for office meeting-room infrastructure in a room-booking/scheduling app -- was never added, despite having nothing to do with planning a wedding or trade show either.
+
+**Confirmed via direct `HeuristicSpecProvider.generate()` calls:** "A booking system for conference rooms in our office building." matched `['Appointment', 'Event']`, and "An app to reserve conference rooms for meetings." matched ONLY `['Event']` -- the generated app ended up entirely about wedding/trade-show planning fields (venue/capacity/Planned-Confirmed-Completed) for what should have been a plain room reservation tool, the exact same catch-all-losing severity round 870's own fix describes.
+
+**The fix:** added "room(s)" as a third, independent exclusion immediately after "conference", mirroring the existing "call(s)" one exactly (either "video " before, or " call(s)"/" room(s)" after, is enough on its own to exclude a match; a bare standalone "conference" with none of the three nearby still matches normally).
+
+**Not applicable:** no `codegen.ts`/`twin.ts` duplicate -- this keyword-matching logic is confined entirely to `packages/spec-engine`'s spec-generation-time heuristic provider, same as rounds 2240-2243's findings.
+
+**Tests:** added a new test alongside the existing round-870 test on this same keyword, covering three independent "conference room(s)" phrasings plus a regression check that a standalone conference-organizing description still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 379/379 (was 378), no build script for this package (tests only).
+
+Live: https://forge-ai-m7p7.onrender.com
