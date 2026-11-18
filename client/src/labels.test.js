@@ -382,3 +382,33 @@ test('opportunityChangeSummary joins multiple changed fields from the same save'
   });
   assert.equal(summary, 'מחיר: $9.00 ← $29.00; רמת סיכון: נמוכה ← בינונית');
 });
+
+test('opportunityChangeSummary shows null priceUSD as "ללא", not a blank or the literal word null', () => {
+  const summary = opportunityChangeSummary({ priceUSD: { from: null, to: 29 } });
+  assert.equal(summary, 'מחיר: ללא ← $29.00');
+});
+
+test('opportunityChangeSummary shows a partial revenueEstimate (one field still null) with "?" for the missing one', () => {
+  const summary = opportunityChangeSummary({
+    revenueEstimate: { from: null, to: { low: 100, mid: null, high: 300 } },
+  });
+  assert.equal(summary, 'הערכת הכנסה: ללא ← $100–$300 (בינוני: ?)');
+});
+
+test('opportunityChangeSummary shows costs as "ללא" when cleared to null or to an empty object', () => {
+  assert.equal(
+    opportunityChangeSummary({ costs: { from: { aiUsage: 1 }, to: null } }),
+    'עלויות: עלות AI: $1.00 ← ללא'
+  );
+  assert.equal(
+    opportunityChangeSummary({ costs: { from: { aiUsage: 1 }, to: {} } }),
+    'עלויות: עלות AI: $1.00 ← ללא'
+  );
+});
+
+test('opportunityChangeSummary falls back to the raw field name and raw value for a field this mapping does not know about yet', () => {
+  assert.equal(
+    opportunityChangeSummary({ someFutureField: { from: null, to: 'x' } }),
+    'someFutureField: ללא ← x'
+  );
+});
