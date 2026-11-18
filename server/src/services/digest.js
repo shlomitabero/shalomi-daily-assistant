@@ -193,7 +193,13 @@ function israelHour(now) {
 // it here is always safe.
 export function catchUpDailyDigestIfMissed(now = new Date()) {
   if (israelHour(now) < 7) return null; // too early - the normal 7am cron tick will handle it
-  const today = todayKey();
+  // Both of these used to read the real wall-clock time instead of `now` -
+  // a no-op today (server.js's own call below always passes no argument,
+  // so `now` already IS the real time there), but it silently broke this
+  // function's own contract: pass it a specific past `now` (e.g. to back-
+  // fill a day the process was down for entirely) and it would still check
+  // for, and generate, TODAY's real digest instead of that day's.
+  const today = todayKey(now);
   if (db.digests.where((d) => d.date === today).length > 0) return null; // already generated today
-  return generateDailyDigest();
+  return generateDailyDigest(now);
 }

@@ -435,13 +435,28 @@ test('catchUpDailyDigestIfMissed generates today\'s digest when called after 7am
   assert.equal(db.digests.all().length, 1);
 });
 
+test('catchUpDailyDigestIfMissed backfills the digest dated to the given now, not the real current date', () => {
+  // `now` used to be threaded through only for the israelHour() gate check
+  // above - the actual date check and generateDailyDigest() call both read
+  // the real wall-clock date instead, so a catch-up meant to back-fill a
+  // specific missed day would silently generate (or wrongly conclude one
+  // already exists for) today's real date instead of that day's.
+  __resetForTests();
+  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T07:00:00Z'));
+  assert.equal(result.date, '2026-01-01');
+});
+
 test('catchUpDailyDigestIfMissed does nothing when today\'s digest already exists, even after 7am Israel time', () => {
   // Must never silently overwrite a digest the owner already generated
   // today (via the normal cron tick or their own manual "generate now"
   // click) just because the server happened to restart again later.
+  // Both calls share the same `now` - the point being tested is that an
+  // existing digest for THAT day blocks the catch-up, not that an
+  // unrelated real-wall-clock-dated digest coincidentally blocks it.
   __resetForTests();
-  const first = generateDailyDigest();
-  const result = catchUpDailyDigestIfMissed(new Date('2026-01-01T08:00:00Z'));
+  const now = new Date('2026-01-01T08:00:00Z');
+  const first = generateDailyDigest(now);
+  const result = catchUpDailyDigestIfMissed(now);
   assert.equal(result, null);
   assert.equal(db.digests.all().length, 1);
   assert.equal(db.digests.get(first.id).generatedAt, first.generatedAt);
