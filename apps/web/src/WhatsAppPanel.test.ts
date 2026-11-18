@@ -319,6 +319,92 @@ test("WhatsAppPanel's handleConnect still starts polling normally while the pane
 });
 
 /**
+ * Round 2211: mountedRef's own useRef(true) initializer only covers the
+ * very first mount -- the round-1005 unmount-cleanup effect just above
+ * (which this test extracts directly from the real source, not a
+ * reimplementation) is the only place in this file that ever writes to
+ * mountedRef.current, and it only ever sets it false. Without also setting
+ * it true on mount, mountedRef is a one-way latch, unlike startPolling/
+ * startConnectedPolling's own per-call `cancelled` closures (which can be
+ * armed again any number of times). React StrictMode's dev-only extra
+ * mount/cleanup/mount cycle on initial mount fires this cleanup once while
+ * the component is still genuinely mounted, so without the fix
+ * mountedRef.current stays false forever afterward -- and the two tests
+ * just above already confirm handleConnect's own `if (mountedRef.current)
+ * startPolling()` guard is working exactly as designed, which is precisely
+ * what makes this latch bug user-visible: Connect still looks like it
+ * works (the request goes out, status flips to "connecting"), but the
+ * guarded startPolling() call silently never runs, leaving the panel stuck
+ * on "Connecting..." forever with no error and no recovery short of
+ * closing and reopening the panel.
+ */
+test("WhatsAppPanel's mountedRef is reset to true on every mount, not just the first -- so Connect still starts polling after a StrictMode-style extra mount/cleanup/mount cycle", async () => {
+  const effectMatch = whatsAppPanelSrc.match(
+    / {2}useEffect\(\(\) => \{\n {4}mountedRef\.current = true;\n {4}return \(\) => \{\n {6}mountedRef\.current = false;[\s\S]*?\n {2}\}, \[projectId\]\);\n/,
+  );
+  assert.ok(effectMatch, "expected to find the round-1005/2211 unmount-cleanup effect in WhatsAppPanel.tsx");
+  const effectSource = effectMatch![0].replace(/^ {2}useEffect\(/, "").replace(/, \[projectId\]\);\n$/, "");
+  const { code: effectCode } = transformSync(effectSource, { loader: "ts" });
+
+  const handlerMatch = whatsAppPanelSrc.match(/ {2}async function handleConnect\(\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleConnect in WhatsAppPanel.tsx");
+  const { code: handleConnectCode } = transformSync(handlerMatch![0], { loader: "ts" });
+
+  const mountedRef: { current: boolean } = { current: true };
+  let startPollingCalls = 0;
+
+  const effectFn = new Function(
+    "mountedRef",
+    "testAttachmentRef",
+    "projectId",
+    "deleteWhatsAppAttachment",
+    `return ${effectCode}`,
+  )(mountedRef, { current: null }, "proj1", async () => {}) as () => () => void;
+
+  // Simulate React StrictMode's dev-only extra mount/cleanup/mount cycle on
+  // initial mount: mount, clean up, mount again -- the component is never
+  // actually unmounted from the user's point of view.
+  const firstCleanup = effectFn();
+  firstCleanup();
+  effectFn();
+
+  assert.equal(
+    mountedRef.current,
+    true,
+    "mountedRef must be true again after the extra StrictMode mount, since the component is genuinely still mounted",
+  );
+
+  const handleConnect = new Function(
+    "mountedRef",
+    "setConnecting",
+    "setLoadError",
+    "connectWhatsApp",
+    "setStatus",
+    "startPolling",
+    "projectId",
+    `${handleConnectCode}\nreturn handleConnect;`,
+  )(
+    mountedRef,
+    () => {},
+    () => {},
+    async () => ({ status: "connecting" }),
+    () => {},
+    () => {
+      startPollingCalls += 1;
+    },
+    "proj1",
+  ) as () => Promise<void>;
+
+  await handleConnect();
+
+  assert.equal(
+    startPollingCalls,
+    1,
+    "Connect must still start polling after the panel has been through a StrictMode-style extra mount cycle, not leave it stuck on 'Connecting...' forever",
+  );
+});
+
+/**
  * Regression test: unlike startConnectedPolling (which already guards
  * against this via cancelInFlightConnectedCheckRef), startPolling's own
  * getWhatsAppStatus call had no protection against a call already in

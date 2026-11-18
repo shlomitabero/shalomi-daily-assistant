@@ -666,8 +666,20 @@ export function WhatsAppPanel({
    * clicking Send or Remove -- left that upload sitting on disk forever,
    * the same orphaned-upload shape round 979 already fixed for every OTHER
    * way of abandoning a chosen attachment, just not this one.
+   *
+   * Round 2211: mountedRef's own useRef(true) initializer only covers the
+   * very first mount -- without setting it back to true here too, it's a
+   * one-way latch, not a real "is this instance still mounted" flag. React
+   * StrictMode's dev-only extra mount/cleanup/mount cycle on initial mount
+   * fires this cleanup once with the component still genuinely mounted,
+   * latching mountedRef.current false forever and silently skipping every
+   * later "if (mountedRef.current) ..." continuation (handleConnect's own
+   * startPolling call among them) -- the panel looked like it connected but
+   * stayed stuck on "Connecting..." forever with no error and no recovery
+   * short of closing and reopening it.
    */
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (testAttachmentRef.current) {
