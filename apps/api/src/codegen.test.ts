@@ -4685,6 +4685,130 @@ test("the exported EntityView's commitPendingDelete treats a NOT_FOUND entry as 
 });
 
 /**
+ * Round 2208: mirrors the live Forge AI preview's own identical
+ * EntityPanel.test.ts round-2208 regression test. handleDelete/
+ * handleBulkDelete's own deferred setTimeout used to call
+ * commitPendingDelete (the real DELETE fetch) from directly inside the
+ * function passed to setPendingDelete -- a setState UPDATER. This
+ * generated app's own web/main.jsx wraps the root in <StrictMode>, and
+ * its own package.json pins react-dom@^19.3.0: confirmed via a standalone
+ * React 19 + StrictMode repro (outside this test suite, which runs the
+ * generated source directly against this repo's own React 18) that
+ * React 19 genuinely double-invokes an updater function passed to a state
+ * setter even when that setState call is made from a plain setTimeout
+ * callback outside any render/effect. Both invocations saw the identical
+ * base state (nothing commits between them), so the `current?.timeoutId
+ * !== timeoutId` guard passed both times and the real DELETE fired twice
+ * for one click in the real exported, deployed app (confirmed live: a
+ * second request ~10ms later, 404, or -- with another record's relation
+ * still pointing at the deleted one -- a doubled 409 plus a React
+ * "two children with the same key" warning).
+ *
+ * This test's setPendingDelete mock reproduces that exact double-
+ * invocation against the real generated source: a FUNCTION argument is
+ * invoked twice against the same base state before committing only the
+ * second result (mirroring StrictMode's own "call it twice to check
+ * purity, discard one" behavior -- any side effect inside fires both
+ * times regardless of which result commits), while a plain VALUE argument
+ * is applied once, with no function for StrictMode to re-invoke. So this
+ * fails against the pre-fix shape (the callback's own
+ * setPendingDelete(current => ...) updater gets invoked twice, both
+ * seeing the same base state, both calling commitPendingDelete) and
+ * passes against the fix (commitPendingDelete is called directly, once,
+ * off pendingDeleteRef -- never as a setState updater argument -- and the
+ * trailing setPendingDelete(null) is a plain value with nothing to
+ * double-invoke).
+ */
+test("the exported EntityView's handleDelete and handleBulkDelete commit the real delete only once, even under a StrictMode-style double-invoked setPendingDelete updater", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  for (const [name, signature, invoke] of [
+    ["handleDelete", /function handleDelete\(id\) \{[\s\S]*?\n {2}\}\n/, (fn: (...a: unknown[]) => unknown) => fn(1)],
+    ["handleBulkDelete", /async function handleBulkDelete\(\) \{[\s\S]*?\n {2}\}\n/, (fn: (...a: unknown[]) => unknown) => fn()],
+  ] as const) {
+    const handlerSrc = entityViewJsx.match(signature)?.[0];
+    assert.ok(handlerSrc, `expected to find ${name} in generated EntityView.jsx`);
+
+    let commitCount = 0;
+    let capturedCallback: (() => void) | null = null;
+    // Mocks React's own setState semantics closely enough to matter here
+    // -- see EntityPanel.test.ts's own identical mock for the full
+    // rationale.
+    let pendingDeleteState: unknown = null;
+    const pendingDeleteRefObj: { current: { timeoutId: number } | null } = { current: null };
+    const setPendingDelete = (valueOrUpdater: unknown) => {
+      if (typeof valueOrUpdater === "function") {
+        const updater = valueOrUpdater as (c: unknown) => unknown;
+        updater(pendingDeleteState); // StrictMode's first, discarded invocation
+        pendingDeleteState = updater(pendingDeleteState); // the second, committed one
+      } else {
+        pendingDeleteState = valueOrUpdater;
+      }
+      pendingDeleteRefObj.current = pendingDeleteState as { timeoutId: number } | null;
+    };
+
+    const fn = new Function(
+      "writesInFlight",
+      "records",
+      "selectedIds",
+      "recordDisplayLabel",
+      "entity",
+      "window",
+      "pendingDeleteRef",
+      "commitPendingDelete",
+      "editingId",
+      "setForm",
+      "emptyForm",
+      "setEditingId",
+      "editingOriginalRef",
+      "bumpFormInstanceKey",
+      "setError",
+      "setRecords",
+      "setSelectedIds",
+      "setPendingDelete",
+      "setTimeout",
+      "clearTimeout",
+      "UNDO_WINDOW_MS",
+      `${handlerSrc}\nreturn ${name};`,
+    )(
+      false, // writesInFlight
+      [{ id: 1, createdAt: "x", name: "Acme Corp" }],
+      new Set([1]),
+      () => "Acme Corp", // recordDisplayLabel
+      { name: "Customer", fields: [] },
+      { confirm: () => true },
+      pendingDeleteRefObj,
+      () => {
+        commitCount += 1;
+      },
+      null, // editingId
+      () => {},
+      () => ({}), // emptyForm
+      () => {},
+      { current: null },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      setPendingDelete,
+      (cb: () => void) => {
+        capturedCallback = cb;
+        return 123;
+      },
+      () => {},
+      5000,
+    ) as (...args: unknown[]) => unknown;
+
+    await invoke(fn);
+    assert.ok(capturedCallback, `expected ${name} to schedule a deferred commit via setTimeout`);
+    assert.ok(pendingDeleteRefObj.current, `expected ${name} to have set a pending delete`);
+
+    capturedCallback!();
+    assert.equal(commitCount, 1, `${name}'s own deferred commit must fire exactly once, even when any setPendingDelete(updater) call it makes gets StrictMode-double-invoked`);
+  }
+});
+
+/**
  * Round 1529: parity port of round 1527's live-backend fix, which never
  * made it into this generated server.js -- deferred by round 1527's own
  * roadmap note, closed here. The exported app's own delete-undo-window
@@ -17392,7 +17516,13 @@ test("the exported EntityView renders a real Undo toast after a single-record de
   // window at all despite the toast being shown. The identity check now
   // compares timeoutId (unique per call) rather than id, so it works
   // uniformly for both the single-record and batch shapes.
-  assert.match(entityViewJsx, /const timeoutId = setTimeout\(\(\) => \{\s*setPendingDelete\(\(current\) => \{\s*if \(current\?\.timeoutId !== timeoutId\) return current;\s*commitPendingDelete\(current\);\s*return null;\s*\}\);\s*\}, UNDO_WINDOW_MS\);/);
+  // Round 2208: commitPendingDelete/setPendingDelete(null) now read
+  // pendingDeleteRef.current directly rather than going through a
+  // setPendingDelete(current => ...) updater -- see this file's own
+  // round-2208 regression test for why (React 19's StrictMode double-
+  // invokes an updater passed to a state setter, even from this exact
+  // setTimeout, firing the real DELETE twice for one click).
+  assert.match(entityViewJsx, /const timeoutId = setTimeout\(\(\) => \{\s*if \(pendingDeleteRef\.current\?\.timeoutId !== timeoutId\) return;\s*commitPendingDelete\(pendingDeleteRef\.current\);\s*setPendingDelete\(null\);\s*\}, UNDO_WINDOW_MS\);/);
   assert.match(entityViewJsx, /setPendingDelete\(\{ entries: \[\{ id, record, index \}\], message: `Deleted "\$\{label\}"\. `, timeoutId \}\);/);
 
   const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;

@@ -8342,12 +8342,30 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       return next;
     });
 
+    // Round 2208: commitPendingDelete (the real DELETE fetch) used to be
+    // called from inside this setTimeout's own setPendingDelete(current =>
+    // ...) UPDATER function. React's StrictMode intentionally invokes an
+    // updater function passed to a state setter TWICE in development, to
+    // help find impure updaters -- this generated app's own web/main.jsx
+    // wraps the root in <StrictMode>, and its package.json pins
+    // react-dom@^19.3.0, where that double-invocation genuinely reaches a
+    // setState call made from a plain setTimeout callback outside any
+    // render/effect (confirmed empirically: the live Forge AI preview's
+    // own React 18 does NOT double-invoke here, but React 19 does).
+    // Both invocations saw the identical pendingDeleteRef.current (nothing
+    // commits between them), so the "current?.timeoutId !== timeoutId"
+    // guard passed both times and the real DELETE fired twice for one
+    // click -- confirmed live: a second request ~10ms later, 404 (or,
+    // with another record's relation still pointing at the deleted one,
+    // a doubled 409 plus a React "two children with the same key"
+    // warning). Reading pendingDeleteRef.current directly (already kept
+    // in sync by this component's own effect just above) and calling
+    // setPendingDelete(null) as a plain value, rather than a function,
+    // moves the real side effect out of anything StrictMode re-invokes.
     const timeoutId = setTimeout(() => {
-      setPendingDelete((current) => {
-        if (current?.timeoutId !== timeoutId) return current;
-        commitPendingDelete(current);
-        return null;
-      });
+      if (pendingDeleteRef.current?.timeoutId !== timeoutId) return;
+      commitPendingDelete(pendingDeleteRef.current);
+      setPendingDelete(null);
     }, UNDO_WINDOW_MS);
 
     setPendingDelete({ entries: [{ id, record, index }], message: \`Deleted "\${label}". \`, timeoutId });
@@ -8477,12 +8495,16 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     setRecords((prev) => prev.filter((r) => !idSet.has(r.id)));
     setSelectedIds(new Set());
 
+    // Round 2208: see handleDelete's own identical fix and doc comment
+    // above -- the real commitPendingDelete call must not live inside a
+    // setPendingDelete(current => ...) updater function, since React 19's
+    // StrictMode double-invokes that function even when setPendingDelete
+    // is called from this setTimeout, firing the real bulk DELETE batch
+    // twice for one click.
     const timeoutId = setTimeout(() => {
-      setPendingDelete((current) => {
-        if (current?.timeoutId !== timeoutId) return current;
-        commitPendingDelete(current);
-        return null;
-      });
+      if (pendingDeleteRef.current?.timeoutId !== timeoutId) return;
+      commitPendingDelete(pendingDeleteRef.current);
+      setPendingDelete(null);
     }, UNDO_WINDOW_MS);
 
     setPendingDelete({ entries, message: \`Deleted \${entries.length} \${entries.length === 1 ? "record" : "records"}. \`, timeoutId });

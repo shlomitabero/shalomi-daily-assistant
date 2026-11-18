@@ -4639,12 +4639,28 @@ export function EntityPanel({
       return next;
     });
 
+    // Round 2208: mirrors codegen.ts's own identical fix -- commitPendingDelete
+    // (the real DELETE fetch) used to be called from inside this setTimeout's
+    // own setPendingDelete(current => ...) UPDATER function. React's
+    // StrictMode intentionally invokes an updater function passed to a
+    // state setter TWICE in development to help find impure updaters, and
+    // confirmed empirically this genuinely reaches a setState call made
+    // from a plain setTimeout callback outside any render/effect under
+    // React 19 (the exported app's own pinned version) -- this live
+    // preview currently pins React 18, which does NOT reach it here, but
+    // the unsafe pattern itself is identical and would silently regress
+    // on a future React upgrade. Both StrictMode invocations would see the
+    // identical pendingDeleteRef.current (nothing commits between them),
+    // so the `current?.timeoutId !== timeoutId` guard would pass both
+    // times and fire the real DELETE twice for one click. Reading
+    // pendingDeleteRef.current directly (already kept in sync by this
+    // component's own effect above) and calling setPendingDelete(null) as
+    // a plain value, not a function, moves the real side effect out of
+    // anything StrictMode re-invokes.
     const timeoutId = setTimeout(() => {
-      setPendingDelete((current) => {
-        if (current?.timeoutId !== timeoutId) return current;
-        void commitPendingDelete(current);
-        return null;
-      });
+      if (pendingDeleteRef.current?.timeoutId !== timeoutId) return;
+      void commitPendingDelete(pendingDeleteRef.current);
+      setPendingDelete(null);
     }, UNDO_WINDOW_MS);
 
     setPendingDelete({ entries: [{ id, record, index }], message: t("entity.delete.undoToast", { label }), timeoutId });
@@ -4941,12 +4957,12 @@ export function EntityPanel({
     setRecords((prev) => prev.filter((r) => !idSet.has(r.id as number)));
     setSelectedIds(new Set());
 
+    // Round 2208: see handleDelete's own identical fix and doc comment
+    // above.
     const timeoutId = setTimeout(() => {
-      setPendingDelete((current) => {
-        if (current?.timeoutId !== timeoutId) return current;
-        void commitPendingDelete(current);
-        return null;
-      });
+      if (pendingDeleteRef.current?.timeoutId !== timeoutId) return;
+      void commitPendingDelete(pendingDeleteRef.current);
+      setPendingDelete(null);
     }, UNDO_WINDOW_MS);
 
     setPendingDelete({

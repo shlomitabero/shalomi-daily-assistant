@@ -1424,6 +1424,140 @@ test("EntityPanel's handleDelete, handleDuplicate, and handleMoveFields are each
 });
 
 /**
+ * Round 2208: the deferred commit inside handleDelete/handleBulkDelete's
+ * own setTimeout used to call commitPendingDelete (the real DELETE fetch)
+ * from directly inside the function passed to setPendingDelete -- a
+ * setState UPDATER. React's StrictMode intentionally invokes an updater
+ * function passed to a state setter TWICE in development to help find
+ * impure updaters, and this was confirmed empirically (a standalone
+ * React 19 + StrictMode repro, outside this test suite since this
+ * project's own test harness pins React 18) to genuinely double-invoke a
+ * setState call made from a plain setTimeout callback outside any render/
+ * effect -- exactly this shape. Both invocations saw the identical base
+ * state (nothing commits between them), so the `current?.timeoutId !==
+ * timeoutId` guard passed both times and the real DELETE fired twice for
+ * one click. codegen.ts's own generated app pins react-dom@^19.3.0 (this
+ * live preview currently pins React 18, which doesn't reach the bug, but
+ * the unsafe pattern was identical and would silently regress on a
+ * future upgrade).
+ *
+ * This test's setPendingDelete mock reproduces that exact double-
+ * invocation against the actual extracted source: a FUNCTION argument is
+ * invoked twice against the same base state before committing only the
+ * second result (mirroring StrictMode's own "call it twice to check
+ * purity, discard one" behavior -- any side effect inside fires both
+ * times regardless of which result commits), while a plain VALUE argument
+ * is applied once, with no function for StrictMode to re-invoke. The real
+ * handleDelete/handleBulkDelete setTimeout callback itself still only
+ * runs once (timers aren't re-invoked); it's the setPendingDelete call
+ * inside it that matters. So this fails against the pre-fix shape (the
+ * callback's own setPendingDelete(current => ...) updater gets invoked
+ * twice, both seeing the same base state, both calling
+ * commitPendingDelete) and passes against the fix (commitPendingDelete is
+ * called directly, once, off pendingDeleteRef -- never as a setState
+ * updater argument -- and the trailing setPendingDelete(null) is a plain
+ * value with nothing to double-invoke).
+ */
+test("EntityPanel's handleDelete and handleBulkDelete commit the real delete only once, even under a StrictMode-style double-invoked setPendingDelete updater", async () => {
+  for (const [name, signature, invoke] of [
+    ["handleDelete", /function handleDelete\(id: number\): boolean \{[\s\S]*?\n {2}\}\n/, (fn: (...a: unknown[]) => unknown) => fn(1)],
+    ["handleBulkDelete", /async function handleBulkDelete\(\) \{[\s\S]*?\n {2}\}\n/, (fn: (...a: unknown[]) => unknown) => fn()],
+  ] as const) {
+    const handlerMatch = entityPanelSrc.match(signature);
+    assert.ok(handlerMatch, `expected to find ${name} in EntityPanel.tsx`);
+    const { code } = transformSync(handlerMatch![0], { loader: "ts" });
+
+    let commitCount = 0;
+    const capturedCallbackRef: { current: (() => void) | null } = { current: null };
+    // Mocks React's own setState semantics closely enough to matter here:
+    // a function argument is an UPDATER, applied against whatever was
+    // last stored, exactly like the real reducer the pre-fix code relied
+    // on (and exploited the double-invocation of); a plain value just
+    // replaces it. Also stands in for this component's own separate
+    // `useEffect(() => { pendingDeleteRef.current = pendingDelete }, ...)`
+    // sync, applied synchronously here since this isolated harness has no
+    // real render/commit cycle to defer it to.
+    let pendingDeleteState: unknown = null;
+    const pendingDeleteRefObj: { current: { timeoutId: number } | null } = { current: null };
+    const setPendingDelete = (valueOrUpdater: unknown) => {
+      if (typeof valueOrUpdater === "function") {
+        const updater = valueOrUpdater as (c: unknown) => unknown;
+        updater(pendingDeleteState); // StrictMode's first, discarded invocation
+        pendingDeleteState = updater(pendingDeleteState); // the second, committed one
+      } else {
+        pendingDeleteState = valueOrUpdater;
+      }
+      pendingDeleteRefObj.current = pendingDeleteState as { timeoutId: number } | null;
+    };
+
+    const fn = new Function(
+      "writesInFlight",
+      "records",
+      "selectedIds",
+      "recordDisplayLabel",
+      "entity",
+      "lang",
+      "window",
+      "t",
+      "pendingDeleteRef",
+      "commitPendingDelete",
+      "editingId",
+      "discardAbandonedFileUploads",
+      "setForm",
+      "emptyForm",
+      "setEditingId",
+      "editingOriginalRef",
+      "bumpFormInstanceKey",
+      "setError",
+      "setRecords",
+      "setSelectedIds",
+      "setPendingDelete",
+      "setTimeout",
+      "clearTimeout",
+      "UNDO_WINDOW_MS",
+      `${code}\nreturn ${name};`,
+    )(
+      false, // writesInFlight
+      [{ id: 1, createdAt: "x", name: "Acme Corp" }],
+      new Set([1]),
+      () => "Acme Corp", // recordDisplayLabel
+      { name: "Customer", fields: [] },
+      "en",
+      { confirm: () => true },
+      (key: string) => key, // t
+      pendingDeleteRefObj,
+      () => {
+        commitCount += 1;
+      },
+      null, // editingId
+      () => {},
+      () => {},
+      () => ({}), // emptyForm
+      () => {},
+      { current: null },
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      setPendingDelete,
+      (cb: () => void) => {
+        capturedCallbackRef.current = cb;
+        return 123;
+      },
+      () => {},
+      5000,
+    ) as (...args: unknown[]) => unknown;
+
+    await invoke(fn);
+    assert.ok(capturedCallbackRef.current, `expected ${name} to schedule a deferred commit via setTimeout`);
+    assert.ok(pendingDeleteRefObj.current, `expected ${name} to have set a pending delete`);
+
+    capturedCallbackRef.current!();
+    assert.equal(commitCount, 1, `${name}'s own deferred commit must fire exactly once, even when any setPendingDelete(updater) call it makes gets StrictMode-double-invoked`);
+  }
+});
+
+/**
  * Round 1118: the JSX side of the same fix -- every per-record affordance
  * that writes to a record (not just the bulk-action bar's own three
  * buttons) must visually disable itself while bulkActionBusy is true, the
