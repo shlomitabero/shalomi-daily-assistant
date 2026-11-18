@@ -2195,6 +2195,81 @@ test("HistoryPanel's checkpoint label is a real click-to-rename control wired in
 });
 
 /**
+ * Round 2195: CheckpointLabelEditor's own rename `<input>` used to set
+ * data-escape-handled-locally unconditionally the instant editing started,
+ * so useDialogFocusTrap's own Escape listener on this enclosing dialog
+ * (see its closest()-based check) always bailed out while the rename input
+ * was focused -- even with a pristine, just-opened, untouched draft, which
+ * left nothing for a local Escape to usefully cancel. That forced a
+ * redundant second Escape press just to close the dialog, unlike every
+ * sibling click-to-edit field in this app (CollaboratorsPanel's own invite
+ * form, round 1062, is the canonical fix this one now mirrors): a real
+ * unsaved draft still cancels locally on the first Escape, but a pristine
+ * one now falls through and closes the dialog on the first press too.
+ */
+test("HistoryPanel's checkpoint rename editor lets a single Escape close the whole dialog when the draft is pristine, and only cancels locally while a real rename draft is unsaved", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const cp1 = makeCheckpoint("cp1", "Initial build");
+    globalThis.fetch = (async (input: string) => {
+      if (input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [cp1] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    let closeCalls = 0;
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec: cp1.spec,
+              onRestored: () => {},
+              onClose: () => {
+                closeCalls += 1;
+              },
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 1);
+      assert.ok(document.querySelector('[role="dialog"]'), "sanity check: a real dialog wired to the real onClose must be open");
+
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const input = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+
+      // Type a real, unsaved draft first -- Escape here must only cancel
+      // the rename locally, exactly like the existing isolated unit test,
+      // and must never also close the dialog out from under it.
+      fireEvent.change(input, { target: { value: "before the pricing overhaul" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      assert.equal(closeCalls, 0, "Escape cancelling an in-progress rename draft must never also close the whole dialog");
+      assert.equal((document.querySelector(".checkpoint-label") as HTMLElement)?.textContent?.includes("Initial build"), true, "the cancelled rename must leave the original label in place");
+      assert.ok(document.querySelector('[role="dialog"]'), "the dialog itself must still be in the DOM after that Escape");
+
+      // Re-open the editor fresh -- its draft starts pristine again.
+      fireEvent.click(document.querySelector(".checkpoint-label") as HTMLElement);
+      await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") !== null);
+      const reopenedInput = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+
+      fireEvent.keyDown(reopenedInput, { key: "Escape" });
+      assert.equal(closeCalls, 1, "Escape on an already-pristine rename draft must close the dialog normally instead of needing a second press");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 1890: renameCheckpoint (db layer) throws a generic NotFoundError
  * (code "NOT_FOUND") once another tab/collaborator has already deleted
  * this exact checkpoint -- a rename against a gone checkpoint can never

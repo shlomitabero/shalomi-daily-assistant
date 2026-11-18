@@ -408,7 +408,13 @@ test("onBusyChange fires true the instant the editor opens (not just once a real
       assert.deepEqual(busyLog, [true], "opening the editor, before any save is attempted, must already report busy=true");
 
       // Escape cancels without ever having saved -- must clear busy.
+      // Round 2195: Escape only cancels locally while there's an actual
+      // unsaved draft (see CheckpointLabelEditor.tsx's own hasUnsavedDraft
+      // gating) -- a pristine draft's Escape now falls through to the
+      // enclosing dialog instead, so this must type something first to
+      // keep testing the cancel-via-Escape path this assertion is about.
       const input1 = document.querySelector(".checkpoint-label-edit input") as HTMLInputElement;
+      fireEvent.change(input1, { target: { value: "A Draft Nobody Saved" } });
       fireEvent.keyDown(input1, { key: "Escape" });
       await waitForCondition(() => document.querySelector(".checkpoint-label-edit input") === null);
       assert.deepEqual(busyLog, [true, false], "Escape/cancel must clear busy even though no save ever ran");

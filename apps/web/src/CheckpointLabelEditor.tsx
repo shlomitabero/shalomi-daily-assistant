@@ -91,11 +91,13 @@ export function CheckpointLabelEditor({
   const [error, setError] = useState<string | null>(null);
   const cancelling = useRef(false);
 
+  const hasUnsavedDraft = draft.trim() !== "" && draft.trim() !== checkpoint.label;
+
   // Round 1552: mirrors ProjectDescriptionEditor.tsx's own round-1477 fix --
   // a tab close/refresh/navigation while a typed-but-unsubmitted rename is
   // sitting in this draft silently discards it with no warning, the exact
   // gap that round already closed for the sibling description editor.
-  useBeforeUnloadWarning(editing && draft.trim() !== "" && draft.trim() !== checkpoint.label);
+  useBeforeUnloadWarning(editing && hasUnsavedDraft);
 
   function startEditing() {
     // Round 1120: see this component's own `disabled` prop doc comment --
@@ -210,11 +212,24 @@ export function CheckpointLabelEditor({
           autoFocus
           disabled={busy}
           maxLength={200}
-          data-escape-handled-locally
+          // Round 2195: this marker used to be set unconditionally, the
+          // one straggler never ported to the convention every sibling
+          // dialog's own click-to-edit field already follows (see
+          // CollaboratorsPanel.tsx's own invite form, round 1062, for the
+          // canonical shape) -- useDialogFocusTrap's own Escape listener
+          // on the enclosing History dialog bails out the instant it
+          // finds ANY element carrying this attribute, regardless of
+          // value, so a pristine (just-opened, untouched) rename always
+          // swallowed the dialog's first Escape and needed a redundant
+          // second press to actually close it. Gating on hasUnsavedDraft
+          // means Escape closes the dialog normally once there's nothing
+          // left to lose, and still only cancels the in-progress edit
+          // (not the whole dialog) while a real, unsaved rename is typed.
+          data-escape-handled-locally={hasUnsavedDraft ? "" : undefined}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}
           onKeyDown={(e) => {
-            if (e.key === "Escape") cancelEditing();
+            if (e.key === "Escape" && hasUnsavedDraft) cancelEditing();
           }}
         />
       </form>
