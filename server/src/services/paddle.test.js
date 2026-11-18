@@ -217,3 +217,31 @@ test('createOneTimePrice times out instead of hanging forever when Paddle never 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('createOneTimePrice times out instead of hanging forever when Paddle responds but the body stalls mid-read', async () => {
+  // The timeout above only ever covered the wait for fetch() itself to
+  // resolve - but fetch() resolves once response HEADERS arrive, not once
+  // the body has actually been read. Paddle answering promptly and then
+  // stalling or drip-feeding the body left res.json() (inside
+  // parsePaddleJson) with zero timeout protection at all, reproducing the
+  // exact "owner's publish click pending indefinitely" failure mode the
+  // timeout above exists to prevent - just one stage later.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { signal } = {}) => ({
+    ok: true,
+    status: 201,
+    json: () => new Promise((resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }),
+  });
+  try {
+    await withEnv({ PADDLE_API_KEY: 'key', PADDLE_ENV: 'sandbox' }, () =>
+      assert.rejects(
+        () => createOneTimePrice({ name: 'test', amountCents: 900, timeoutMs: 5 }),
+        /לא קיבלה מענה בזמן/
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

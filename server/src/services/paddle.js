@@ -14,12 +14,24 @@ const FETCH_TIMEOUT_MS = 10_000;
 // connection) would leave the owner's "פרסם מוצר" click pending
 // indefinitely — in the one path that actually moves toward real money,
 // that's worse than a clear error.
-async function fetchWithTimeout(url, options, timeoutMs = FETCH_TIMEOUT_MS) {
+//
+// onResponse reads the body (res.text()/res.json(), via parsePaddleJson)
+// while the SAME timeout is still running, not after it's already been
+// cleared - fetch() itself only resolves once response HEADERS arrive, not
+// once the body has actually been read, so a Paddle response that starts
+// promptly but then stalls or drip-feeds its body used to have zero
+// timeout protection at that stage, reproducing the exact "owner's publish
+// click pending indefinitely" failure mode this comment already warns
+// about, just one stage later. Keeping the timer alive across both fetch()
+// and onResponse(), clearing it only once in the shared finally below,
+// means the same abort signal still fires and cancels a stall during body
+// reading too.
+async function fetchWithTimeout(url, options, onResponse, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let res;
   try {
-    res = await fetch(url, { ...options, signal: controller.signal });
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return await onResponse(res);
   } catch (err) {
     // Reaches the owner verbatim via routes/opportunities.js's publish
     // route (`הפרסום נכשל: ${err.message}`) on "פרסם מוצר" - the one
@@ -32,13 +44,14 @@ async function fetchWithTimeout(url, options, timeoutMs = FETCH_TIMEOUT_MS) {
     // is never to disguise a real failure as something else. A timeout
     // has no such "real" message to preserve, so it's safe - and more
     // honest - to give it a clean Hebrew one instead of this file's own
-    // English wording.
+    // English wording. onResponse's own !res.ok / non-JSON errors are
+    // plain Errors (name 'Error', never 'AbortError'), so they fall
+    // through to the rethrow below unchanged either way.
     if (err.name === 'AbortError') throw new Error('הבקשה ל-Paddle לא קיבלה מענה בזמן');
     throw err;
   } finally {
     clearTimeout(timeout);
   }
-  return res;
 }
 
 // All three must be set, not just the two that let a checkout open.
@@ -61,18 +74,21 @@ export function paddleClientConfig() {
 }
 
 export async function createOneTimePrice({ name, amountCents, currencyCode = 'USD', timeoutMs = FETCH_TIMEOUT_MS }) {
-  const productRes = await fetchWithTimeout(`${paddleApiBase()}/products`, {
+  // The lead-in text in each !res.ok branch below is this file's own
+  // wording, translated; Paddle's own response body stays as-is (real
+  // third-party diagnostic content, not ours to translate — same
+  // reasoning as the network-failure case in fetchWithTimeout above).
+  const productJson = await fetchWithTimeout(`${paddleApiBase()}/products`, {
     method: 'POST',
     headers: paddleHeaders(),
     body: JSON.stringify({ name, tax_category: 'standard' }),
+  }, async (res) => {
+    if (!res.ok) throw new Error(`יצירת מוצר ב-Paddle נכשלה: ${await res.text()}`);
+    return parsePaddleJson(res, 'מוצר');
   }, timeoutMs);
-  // The lead-in text is this file's own wording, translated; Paddle's own
-  // response body stays as-is (real third-party diagnostic content, not
-  // ours to translate — same reasoning as the network-failure case above).
-  if (!productRes.ok) throw new Error(`יצירת מוצר ב-Paddle נכשלה: ${await productRes.text()}`);
-  const { data: product } = await parsePaddleJson(productRes, 'מוצר');
+  const product = productJson.data;
 
-  const priceRes = await fetchWithTimeout(`${paddleApiBase()}/prices`, {
+  const priceJson = await fetchWithTimeout(`${paddleApiBase()}/prices`, {
     method: 'POST',
     headers: paddleHeaders(),
     body: JSON.stringify({
@@ -80,9 +96,12 @@ export async function createOneTimePrice({ name, amountCents, currencyCode = 'US
       description: name,
       unit_price: { amount: String(amountCents), currency_code: currencyCode },
     }),
+  }, async (res) => {
+    if (!res.ok) throw new Error(`יצירת מחיר ב-Paddle נכשלה: ${await res.text()}`);
+    return parsePaddleJson(res, 'מחיר');
   }, timeoutMs);
-  if (!priceRes.ok) throw new Error(`יצירת מחיר ב-Paddle נכשלה: ${await priceRes.text()}`);
-  const { data: price } = await parsePaddleJson(priceRes, 'מחיר');
+  const price = priceJson.data;
+
   return { productId: product.id, priceId: price.id };
 }
 
@@ -99,6 +118,12 @@ async function parsePaddleJson(res, labelHebrew) {
   try {
     return await res.json();
   } catch (err) {
+    // A stall during body reading throws the same AbortError res.json()
+    // would throw for any other reason - mislabeling it as "not valid
+    // JSON" here would hide the real cause (a timeout) from
+    // fetchWithTimeout's own catch, which is what actually turns it into
+    // the correct, clean "לא קיבלה מענה בזמן" message.
+    if (err.name === 'AbortError') throw err;
     console.error(`createOneTimePrice: Paddle returned a non-JSON response for the ${labelHebrew} call`, err);
     throw new Error(`Paddle החזיר תגובה שאינה JSON תקין בעת יצירת ${labelHebrew}`);
   }

@@ -16,39 +16,53 @@ const FETCH_TIMEOUT_MS = 10_000;
 export async function fetchQuote(symbol, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let res;
+  // The timeout used to be cleared as soon as fetch() itself resolved -
+  // but fetch() only resolves once the response HEADERS arrive, not once
+  // the body has actually been read. A provider that answers promptly but
+  // then stalls or drip-feeds the body (not just a hung connection before
+  // any response at all) left res.json() below with zero timeout
+  // protection, reproducing the exact "a single stuck request freezes
+  // 'רענן הכל' forever" failure mode this function's own comment above
+  // says the timeout exists to prevent - just one stage later. Keeping the
+  // timer alive (clearing it only here, after BOTH fetch() and res.json()
+  // are done) means the same abort signal still fires and cancels a stall
+  // during body reading too.
   try {
-    res = await fetch(
-      `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${process.env.MARKET_DATA_API_KEY}`,
-      { signal: controller.signal }
-    );
-  } catch (err) {
-    if (err.name === 'AbortError') throw new Error('הבקשה למקור נתוני השוק לא קיבלה מענה בזמן');
-    // A raw network-layer failure (DNS, connection reset, TLS) comes with
-    // its own English message from the fetch implementation itself — not
-    // fit to show the owner directly, but worth keeping in Railway's own
-    // log viewer for anyone actually debugging "the price feed stopped
-    // working", the same split every other service-level failure in this
-    // app already uses (a clean Hebrew message to the owner, the raw
-    // technical detail to console.error).
-    console.error('fetchQuote: network request to market data provider failed', err);
-    throw new Error('הבקשה למקור נתוני השוק נכשלה מסיבה לא צפויה — בדוק את לוגי השרת');
+    let res;
+    try {
+      res = await fetch(
+        `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${process.env.MARKET_DATA_API_KEY}`,
+        { signal: controller.signal }
+      );
+    } catch (err) {
+      if (err.name === 'AbortError') throw new Error('הבקשה למקור נתוני השוק לא קיבלה מענה בזמן');
+      // A raw network-layer failure (DNS, connection reset, TLS) comes with
+      // its own English message from the fetch implementation itself — not
+      // fit to show the owner directly, but worth keeping in Railway's own
+      // log viewer for anyone actually debugging "the price feed stopped
+      // working", the same split every other service-level failure in this
+      // app already uses (a clean Hebrew message to the owner, the raw
+      // technical detail to console.error).
+      console.error('fetchQuote: network request to market data provider failed', err);
+      throw new Error('הבקשה למקור נתוני השוק נכשלה מסיבה לא צפויה — בדוק את לוגי השרת');
+    }
+    if (!res.ok) throw new Error(`הבקשה למקור נתוני השוק נכשלה עם קוד סטטוס ${res.status}`);
+    let data;
+    try {
+      data = await res.json();
+    } catch (err) {
+      if (err.name === 'AbortError') throw new Error('הבקשה למקור נתוני השוק לא קיבלה מענה בזמן');
+      // A 2xx response with a body that isn't valid JSON (a gateway error
+      // page, a truncated response) would otherwise throw a raw English
+      // SyntaxError straight from res.json() - unlike every other failure in
+      // this function, this one wasn't caught at all, so it reached the
+      // owner verbatim via routes/financial.js's `לא ניתן היה לקבל מחיר:
+      // ${err.message}` on both the "add to watchlist" and "refresh" actions.
+      console.error('fetchQuote: market data provider returned a non-JSON response', err);
+      throw new Error('מקור נתוני השוק החזיר תגובה שאינה JSON תקין');
+    }
+    return { price: parseQuotePrice(data), fetchedAt: new Date().toISOString() };
   } finally {
     clearTimeout(timeout);
   }
-  if (!res.ok) throw new Error(`הבקשה למקור נתוני השוק נכשלה עם קוד סטטוס ${res.status}`);
-  let data;
-  try {
-    data = await res.json();
-  } catch (err) {
-    // A 2xx response with a body that isn't valid JSON (a gateway error
-    // page, a truncated response) would otherwise throw a raw English
-    // SyntaxError straight from res.json() - unlike every other failure in
-    // this function, this one wasn't caught at all, so it reached the
-    // owner verbatim via routes/financial.js's `לא ניתן היה לקבל מחיר:
-    // ${err.message}` on both the "add to watchlist" and "refresh" actions.
-    console.error('fetchQuote: market data provider returned a non-JSON response', err);
-    throw new Error('מקור נתוני השוק החזיר תגובה שאינה JSON תקין');
-  }
-  return { price: parseQuotePrice(data), fetchedAt: new Date().toISOString() };
 }

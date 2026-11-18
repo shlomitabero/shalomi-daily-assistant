@@ -110,6 +110,33 @@ test('fetchQuote times out instead of hanging forever when the provider never re
   }
 });
 
+test('fetchQuote times out instead of hanging forever when the provider responds but the body stalls mid-read', async () => {
+  // The timeout above only ever covered the wait for fetch() itself to
+  // resolve - but fetch() resolves once response HEADERS arrive, not once
+  // the body has actually been read. A provider that answers promptly and
+  // then stalls or drip-feeds the body left res.json() below with zero
+  // timeout protection at all, reproducing the exact "a single stuck
+  // request freezes 'רענן הכל' forever" failure mode the timeout above
+  // exists to prevent - just one stage later.
+  const original = process.env.MARKET_DATA_API_KEY;
+  process.env.MARKET_DATA_API_KEY = 'test-key';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { signal } = {}) => ({
+    ok: true,
+    status: 200,
+    json: () => new Promise((resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }),
+  });
+  try {
+    await assert.rejects(() => fetchQuote('AAPL', { timeoutMs: 5 }), /לא קיבלה מענה בזמן/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original !== undefined) process.env.MARKET_DATA_API_KEY = original;
+    else delete process.env.MARKET_DATA_API_KEY;
+  }
+});
+
 test('fetchQuote throws a clean Hebrew error, not a raw JSON.parse SyntaxError, when the provider returns a 2xx with a non-JSON body', async () => {
   // res.json() was the one call in this function left outside any
   // try/catch - a 200 with a malformed body (a gateway error page, a
