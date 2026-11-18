@@ -3074,6 +3074,20 @@ export function formatEntityRecordCount(
  * plural key off its own count, and the fragments concatenate back into
  * byte-identical text to the pre-existing hardcoded strings for every
  * plural case (verified against the exact previous wording).
+ *
+ * Round 2251: a pure-update re-import -- every row in the file carries the
+ * "id" column from a prior export, so EntityPanel's own buildImportRecords/
+ * buildImportRecordsFromJson treat every one as an update, none as a
+ * create (a documented, ordinary use case: bulk-editing data offline and
+ * re-importing it) -- always went through the `updatedCount > 0` branch
+ * below regardless of createdCount, with no omission for createdCount
+ * being 0 the way errorCount already has one. Confirmed live:
+ * `formatImportSummary(0, 3, 0, t)` returned "Imported 0 new records and
+ * updated 3 existing records.", a nonsensical message for an entirely
+ * ordinary action. When createdCount is 0 and updatedCount isn't, the
+ * message now starts directly with a standalone "Updated N existing
+ * record(s)" sentence instead of a "created 0" fragment nothing was
+ * actually created.
  */
 export function formatImportSummary(
   createdCount: number,
@@ -3081,28 +3095,33 @@ export function formatImportSummary(
   errorCount: number,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
-  let msg = t(
-    updatedCount > 0
-      ? createdCount === 1
-        ? "entity.import.frag.createdNew.one"
-        : "entity.import.frag.createdNew.many"
-      : createdCount === 1
-        ? "entity.import.frag.createdPlain.one"
-        : "entity.import.frag.createdPlain.many",
-    { count: createdCount },
-  );
-
-  if (updatedCount > 0) {
-    msg += t(
-      errorCount > 0
-        ? updatedCount === 1
-          ? "entity.import.frag.updatedComma.one"
-          : "entity.import.frag.updatedComma.many"
-        : updatedCount === 1
-          ? "entity.import.frag.updatedAnd.one"
-          : "entity.import.frag.updatedAnd.many",
-      { updatedCount },
+  let msg: string;
+  if (createdCount === 0 && updatedCount > 0) {
+    msg = t(updatedCount === 1 ? "entity.import.frag.updatedOnly.one" : "entity.import.frag.updatedOnly.many", { updatedCount });
+  } else {
+    msg = t(
+      updatedCount > 0
+        ? createdCount === 1
+          ? "entity.import.frag.createdNew.one"
+          : "entity.import.frag.createdNew.many"
+        : createdCount === 1
+          ? "entity.import.frag.createdPlain.one"
+          : "entity.import.frag.createdPlain.many",
+      { count: createdCount },
     );
+
+    if (updatedCount > 0) {
+      msg += t(
+        errorCount > 0
+          ? updatedCount === 1
+            ? "entity.import.frag.updatedComma.one"
+            : "entity.import.frag.updatedComma.many"
+          : updatedCount === 1
+            ? "entity.import.frag.updatedAnd.one"
+            : "entity.import.frag.updatedAnd.many",
+        { updatedCount },
+      );
+    }
   }
 
   if (errorCount > 0) {

@@ -2292,16 +2292,28 @@ function formatEntityRecordCount(shown, total) {
 // the same sentence. No translator here (this exported app has no i18n),
 // so each ternary is inlined directly rather than going through fragment
 // keys.
+//
+// Round 2251: a pure-update re-import (every row carries the "id" column
+// from a prior export, so none count as a create) always went through the
+// "updatedCount > 0" branch below regardless of createdCount, producing
+// "Imported 0 new records and updated N existing records." -- a
+// nonsensical message for an entirely ordinary action, mirroring
+// entityFormatting.ts's own identical round-2251 fix.
 function formatImportSummary(createdCount, updatedCount, errorCount) {
-  let msg =
-    updatedCount > 0
-      ? \`Imported \${createdCount} new record\${createdCount === 1 ? "" : "s"}\`
-      : \`Imported \${createdCount} record\${createdCount === 1 ? "" : "s"}\`;
-  if (updatedCount > 0) {
-    msg +=
-      errorCount > 0
-        ? \`, updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`
-        : \` and updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`;
+  let msg;
+  if (createdCount === 0 && updatedCount > 0) {
+    msg = \`Updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`;
+  } else {
+    msg =
+      updatedCount > 0
+        ? \`Imported \${createdCount} new record\${createdCount === 1 ? "" : "s"}\`
+        : \`Imported \${createdCount} record\${createdCount === 1 ? "" : "s"}\`;
+    if (updatedCount > 0) {
+      msg +=
+        errorCount > 0
+          ? \`, updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`
+          : \` and updated \${updatedCount} existing record\${updatedCount === 1 ? "" : "s"}\`;
+    }
   }
   if (errorCount > 0) {
     msg += \`, skipped \${errorCount} row\${errorCount === 1 ? "" : "s"}.\`;

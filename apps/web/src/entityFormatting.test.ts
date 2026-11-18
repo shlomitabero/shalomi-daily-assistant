@@ -4359,6 +4359,34 @@ test("formatImportSummary reproduces the pre-existing hardcoded-plural wording b
 });
 
 /**
+ * Round 2251: a pure-update re-import (every row carries the "id" column
+ * from a prior export, so EntityPanel's own buildImportRecords/
+ * buildImportRecordsFromJson treat none of them as a create -- a
+ * documented, ordinary use case: bulk-editing previously-exported data
+ * and re-importing it) always went through the `updatedCount > 0` branch
+ * regardless of createdCount, producing "Imported 0 new records and
+ * updated 3 existing records." -- a nonsensical message for an entirely
+ * ordinary action. Confirmed live before this fix:
+ * `formatImportSummary(0, 3, 0, en)` returned exactly that string. Fixed
+ * by starting the message directly with a standalone "Updated N existing
+ * record(s)" sentence whenever createdCount is 0 and updatedCount isn't,
+ * the same "only mention a count that's actually nonzero" discipline
+ * already applied to errorCount.
+ */
+test("formatImportSummary never says 'Imported 0 new records' on a pure-update import", () => {
+  const en = (key: string, params?: Record<string, string | number>) => translate("en", key, params);
+  const he = (key: string, params?: Record<string, string | number>) => translate("he", key, params);
+  assert.equal(formatImportSummary(0, 1, 0, en), "Updated 1 existing record.", "a lone updated record on a pure-update import must read singular, not 'records'");
+  assert.equal(formatImportSummary(0, 3, 0, en), "Updated 3 existing records.");
+  assert.equal(formatImportSummary(0, 3, 2, en), "Updated 3 existing records, skipped 2 rows.");
+  assert.equal(formatImportSummary(0, 1, 0, he), "עודכנה 1 רשומה קיימת.");
+  assert.equal(formatImportSummary(0, 3, 0, he), "עודכנו 3 רשומות קיימות.");
+
+  // Unaffected: a mix of created and updated records must still read as before.
+  assert.equal(formatImportSummary(2, 3, 0, en), "Imported 2 new records and updated 3 existing records.");
+});
+
+/**
  * Round 2011: `writeImportedRecords`' own `serverErrors` (EntityPanel.tsx)
  * carry no per-row identity at all, unlike `parseErrors` (each already
  * uniquely prefixed with its own "Row N:") -- a large import that runs

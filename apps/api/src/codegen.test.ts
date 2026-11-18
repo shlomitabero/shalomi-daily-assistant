@@ -1505,6 +1505,32 @@ test("the exported EntityView's formatImportSummary pluralizes created/updated/s
 });
 
 /**
+ * Round 2251: a pure-update re-import (every row carries the "id" column
+ * from a prior export, so none count as a create -- a documented, ordinary
+ * use case) always went through the "updatedCount > 0" branch above
+ * regardless of createdCount, producing "Imported 0 new records and
+ * updated 3 existing records." -- a nonsensical message for an entirely
+ * ordinary action. Mirrors the live preview's own identical round-2251 fix
+ * (entityFormatting.ts).
+ */
+test("the exported EntityView's formatImportSummary never says 'Imported 0 new records' on a pure-update import", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const formatImportSummarySrc = entityViewJsx.match(/function formatImportSummary\(createdCount, updatedCount, errorCount\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(formatImportSummarySrc, "expected to find formatImportSummary in the generated EntityView.jsx");
+
+  const formatImportSummary = new Function(`${formatImportSummarySrc}\nreturn formatImportSummary;`)() as (
+    createdCount: number,
+    updatedCount: number,
+    errorCount: number,
+  ) => string;
+  assert.equal(formatImportSummary(0, 1, 0), "Updated 1 existing record.", "a lone updated record on a pure-update import must read singular, not 'records'");
+  assert.equal(formatImportSummary(0, 3, 0), "Updated 3 existing records.");
+  assert.equal(formatImportSummary(0, 3, 2), "Updated 3 existing records, skipped 2 rows.");
+  // Unaffected: a mix of created and updated records must still read as before.
+  assert.equal(formatImportSummary(2, 3, 0), "Imported 2 new records and updated 3 existing records.");
+});
+
+/**
  * Round 2039: ported the live preview's round-2011 dedupeImportErrors fix
  * (apps/web/src/entityFormatting.ts) to this exported app's generated
  * EntityView.jsx, which never received it. A CSV/JSON import whose rows
