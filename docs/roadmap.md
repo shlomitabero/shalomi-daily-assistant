@@ -51161,3 +51161,15 @@ Following round 2211's WhatsAppPanel fix, this round swept the entire codebase f
 A concrete next lead was identified but not pursued this round: `automations.ts` lines ~1616-2262 (fireRule's collaborator-notification logic and the auto-disable-on-repeated-failure mechanics) is the one chunk of that file not yet read this routine.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2213: the last unread chunk of automations.ts, plus full reads of twin.ts and whatsappWeb.ts's connection lifecycle -- nothing credible found
+
+Read `automations.ts` lines 1616-2262 (the one chunk of this 2414-line, ~20-round-audited file not yet covered this routine) in full. Confirmed `hasTooManyConsecutiveFailuresToday`'s `7 * AUTOMATION_RUNS_RETENTION_LIMIT + 5` lookback math is still exactly correct: re-derived that there are precisely 7 bucket types excluded from the in-memory failure filter, so the multiplier guarantees the 5 real failure rows stay visible even in the worst case where all 7 excluded buckets are fully flooded ahead of them -- and confirmed the newer error buckets added in rounds 2116/2194 are deliberately *not* excluded (they're permanent misconfigurations that should count toward the cap), so they correctly don't need to widen that multiplier. Also found that "fireRule's collaborator-notification logic," as described in this chunk's own round-2212 lead, doesn't actually exist as a separate feature in this range -- the nearby comment referencing it was a loose pointer back to the already-surveyed write-access/collaborator-role checks earlier in the file, not a distinct mechanism.
+
+With that lead exhausted, pivoted to two fresh full/near-full reads: `twin.ts` (1219 lines, all non-UI logic -- entity/field label-collision disambiguation, computeRelationHubObservation's dangling-reference fallback, computeDuplicateObservations's case-folding, and the startOfDayInTimeZone/parseFieldDate timezone pairing behind overdue/due-soon stats, cross-checked against the /twin route's own timezone validation) and `whatsappWeb.ts`'s connection-lifecycle code (connect/runConnectAttempt/handleConnectionUpdate/disconnect/performSend and phone-number validation, covering concurrent-connect races, orphaned-socket cleanup, and the logged-out/restart-required/QR-expired branching). Both matched their extensive existing round-history exactly; no new defect found in either.
+
+No live/browser testing was needed this round -- purely code-reading, no permission-prompt issues encountered.
+
+A fresh lead for future rounds: `whatsappWeb.ts`'s `handleIncomingMessages` LID-resolution/batching logic (lines ~1660-1860) was only skimmed, not fully traced.
+
+Live: https://forge-ai-m7p7.onrender.com
