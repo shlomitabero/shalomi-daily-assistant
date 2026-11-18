@@ -7708,6 +7708,35 @@ test("the exported CalendarView's prev/next month buttons swap their chevron gly
 });
 
 /**
+ * Round 2221: the identical defect class the test just above fixed for
+ * CalendarView's own prev/next month chevrons (round 1505) was never
+ * ported to this same function's per-record "move one day earlier/later"
+ * chip buttons, which rendered the static glyphs '⏪'/'⏩' regardless of
+ * text direction -- unlike the live preview's own EntityPanel.tsx, which
+ * got this exact fix in round 2074 ("this grid visually mirrors for RTL
+ * -- earlier dates sit to the right, confirmed live -- ... but these two
+ * static icons never did, so clicking 'earlier' in Hebrew visually moved
+ * the chip right while showing a left-pointing icon"). The underlying
+ * date math (getDate() ± 1) is unaffected by RTL and stays correct either
+ * way; only the glyph needs to swap, exactly like the sibling chevrons
+ * just above in this same CalendarView function.
+ */
+test("the exported CalendarView's per-record move-earlier/move-later buttons swap their glyph under RTL, matching the live preview's own round-2074 fix", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  assert.match(
+    entityViewJsx,
+    /className="calendar-record-move-earlier"[\s\S]{0,600}?>\s*\{document\.documentElement\.dir === "rtl" \? "⏩" : "⏪"\}\s*</,
+    "expected 'move earlier' to show the forward-pointing glyph under RTL and the backward-pointing one under LTR",
+  );
+  assert.match(
+    entityViewJsx,
+    /className="calendar-record-move-later"[\s\S]{0,600}?>\s*\{document\.documentElement\.dir === "rtl" \? "⏪" : "⏩"\}\s*</,
+    "expected 'move later' to show the backward-pointing glyph under RTL and the forward-pointing one under LTR",
+  );
+});
+
+/**
  * New in this round: the exported CalendarView had the identical gap the
  * live preview's own EntityPanel.tsx did -- reaching a date more than a
  * couple of months away meant clicking the prev/next chevron that many

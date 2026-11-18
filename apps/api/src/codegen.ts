@@ -5725,7 +5725,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                       onReschedule(record, target, dayKey);
                     }}
                   >
-                    ⏪
+                    {document.documentElement.dir === "rtl" ? "⏩" : "⏪"}
                   </button>
                   <button
                     type="button"
@@ -5739,7 +5739,7 @@ function CalendarView({ entity, dateField, endDateField, records, month, onPrevM
                       onReschedule(record, target, dayKey);
                     }}
                   >
-                    ⏩
+                    {document.documentElement.dir === "rtl" ? "⏪" : "⏩"}
                   </button>
                   <button
                     type="button"
