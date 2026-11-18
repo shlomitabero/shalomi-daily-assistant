@@ -35696,6 +35696,36 @@ test("the exported app's empty print sheet stub is excluded from the @media prin
 });
 
 /**
+ * Round 2232: ports the live preview's own round-2232 fix (styles.css) --
+ * `body * { visibility: hidden; }` hides every other element visually,
+ * but doesn't remove it from normal document flow, so body's own rendered
+ * height stayed the full height of the entire (now-invisible) app screen
+ * that was on-screen when Print was clicked. The browser's print
+ * pagination engine still laid that full height out across however many
+ * physical pages it required, so every print of the exported app produced
+ * 1-2 completely blank trailing pages, independent of the print sheet's
+ * own content -- confirmed live against the live preview's own real
+ * headless-Chromium repro (real PDF renders: a short single record, a
+ * 2-page overflow record, and a print-list table all came out 3 pages,
+ * every page past what the print sheet needed left blank) before porting
+ * the identical fix here. jsdom has no paint/pagination engine and can't
+ * reproduce page counts, so this reads the generated CSS's own source
+ * text, the same discipline the tests above already use for this file.
+ */
+test("the exported app's @media print collapses html/body's own box so the rest of the (invisible) app screen stops contributing blank trailing pages", () => {
+  const files = generateExportFiles(project);
+  const stylesCss = files.find((f) => f.path === "web/src/styles.css")!.content;
+
+  const mediaPrint = stylesCss.match(/@media print \{[^]*?\n\}/)?.[0];
+  assert.ok(mediaPrint, "expected an @media print block in the generated styles.css");
+  assert.match(
+    mediaPrint!,
+    /html,\s*body\s*\{\s*height:\s*0;\s*overflow:\s*hidden;\s*\}/,
+    "the exported app's @media print must collapse html/body's own height (not just set visibility: hidden on body *, which keeps every hidden element's full layout height and pads the printed PDF with blank trailing pages)",
+  );
+});
+
+/**
  * New in this round (1376): the exported app's `.entity-undo-toast` is
  * `display: flex` with the delete-undo message text and the "Undo" button
  * as direct flex children, and had no `flex-wrap`/`overflow-wrap` of its

@@ -10659,6 +10659,35 @@ test("the print sheets and the badge color variables reset to light/white for @m
 });
 
 /**
+ * Round 2232's finding: `@media print`'s `body * { visibility: hidden; }`
+ * hides everything else visually, but doesn't remove it from normal
+ * document flow -- html/body's own rendered height stayed the full height
+ * of the entire (now-invisible) app screen that was on-screen when Print
+ * was clicked, since that content is all still normal-flow and still
+ * contributes its full layout height. The browser's print pagination
+ * engine still had to lay out that full height across however many
+ * physical pages it required, so every print produced 1-2 completely
+ * blank trailing pages regardless of the print sheet's own content --
+ * confirmed live via real PDF renders (a short single record, a 2-page
+ * overflow record, and a print-list table all came out as 3 pages, with
+ * every page past what the print sheet itself needed left blank). jsdom
+ * has no paint/pagination engine and can't reproduce page counts, so this
+ * reads styles.css's own source directly, the same discipline as the two
+ * tests just above.
+ */
+test("@media print collapses html/body's own box so the rest of the (invisible) app screen stops contributing blank trailing pages", () => {
+  const stylesCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+  const mediaPrint = stylesCss.match(/@media print \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(mediaPrint, "expected an @media print block in styles.css");
+  assert.match(
+    mediaPrint!,
+    /html,\s*body\s*\{\s*height:\s*0;\s*overflow:\s*hidden;\s*\}/,
+    "@media print must collapse html/body's own height (not just set visibility: hidden on body *, which keeps every hidden element's full layout height and pads the printed PDF with blank trailing pages)",
+  );
+});
+
+/**
  * Round 2013: RecordPrintSheet and RecordListPrintSheet (both just above)
  * are BOTH always rendered -- each is an empty `<div className="print-
  * record-sheet" />`/`<div className="print-list-sheet" />` stub whenever

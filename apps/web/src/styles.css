@@ -4095,6 +4095,27 @@ button.sort-header:hover:not(:disabled) {
   body {
     background: #fff;
   }
+  /* Round 2232: `visibility: hidden` below hides every element visually,
+     but doesn't remove it from normal document flow -- html/body's own
+     rendered height stays the full height of the entire (now-invisible)
+     app screen that was on-screen when Print was clicked, since all of
+     that content is still normal-flow and still contributes its full
+     layout height. The browser's print pagination engine still has to
+     lay out html/body's full height across however many physical pages
+     that requires, so every page beyond what the print sheet itself
+     needs (position: absolute; inset: 0, see below) came out completely
+     blank -- a short single record still produced 2-3 blank trailing
+     pages, tracking the surrounding app screen's height, not the print
+     sheet's own content. Collapsing html/body's own box is safe: the
+     print sheet's `position: absolute` has no positioned ancestor, so
+     its containing block is the page box itself, independent of body's
+     now-collapsed height -- confirmed empirically (real PDF renders) to
+     still paginate correctly for genuine multi-page overflow content. */
+  html,
+  body {
+    height: 0;
+    overflow: hidden;
+  }
   body * {
     visibility: hidden;
   }

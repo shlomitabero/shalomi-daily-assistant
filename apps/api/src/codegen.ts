@@ -12302,6 +12302,7 @@ nav button.active .tab-count { background: rgba(255, 255, 255, 0.25); color: inh
 @media print {
   :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --success: #287a4d; --success-soft: #e2f2e8; --danger: #c0392b; --danger-soft: #fbe6e2; --steel: #4c5b6a; --steel-soft: #e9edf0; }
   body { background: #fff; }
+  html, body { height: 0; overflow: hidden; }
   body * { visibility: hidden; }
   .print-record-sheet, .print-record-sheet *, .print-list-sheet, .print-list-sheet * { visibility: visible !important; }
   .print-record-sheet:not(:empty), .print-list-sheet:not(:empty) { display: block !important; position: absolute; inset: 0; padding: 24px; }
