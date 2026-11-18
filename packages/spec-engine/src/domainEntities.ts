@@ -758,8 +758,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // "dish"/"מסעדה", so excluding the UI-chrome phrasing (rather than
     // dropping the keyword outright) preserves every genuine menu-only
     // restaurant description while rejecting the ubiquitous UI sense.
+    // Round 2241: "burger menu" -- a real, if less common, synonym for the
+    // "hamburger menu" UI icon -- was never added to round 880's own list.
+    // Confirmed live: "a burger menu that links to profile and settings
+    // pages" matched ONLY MenuItem, same failure mode round 880 fixed.
+    // Unlike the other excluded words, though, "burger" is NOT safe to add
+    // to that same immediate-lookbehind list outright -- "burger" (unlike
+    // "navigation"/"hamburger"/"dropdown"/etc.) has a genuine, ordinary
+    // restaurant sense of its own ("the burger menu and daily specials"),
+    // so a blanket exclusion would wrongly reject every real burger-joint
+    // app description instead. This is the exact same "genuinely
+    // ambiguous between two domains" shape round 1828/2110 already solved
+    // for "property"/"נכס" (asset vs. real estate) with a document-wide
+    // bidirectional lookaround rather than a simple adjacent-word
+    // exclusion: "burger menu" is excluded only when an unambiguous
+    // software-UI cue word (navigation/icon/sidebar/profile/settings/tap/
+    // click/link) co-occurs ANYWHERE in the text, in either order
+    // relative to "burger" -- otherwise it still matches as the ordinary
+    // restaurant idiom it usually is.
     keywords: [
-      /(?<!\b(?:navigation|nav|hamburger|dropdown|drop-down|side|context|settings)\s)\bmenu\b(?!\s*bar\b)/i,
+      /(?<!\b(?:navigation|nav|hamburger|dropdown|drop-down|side|context|settings)\s)(?<!\bburger\s(?=[\s\S]*?\b(?:navigation|icon|sidebar|profile|settings|tap|click|link)\b))(?<!\b(?:navigation|icon|sidebar|profile|settings|tap|click|link)\b[\s\S]*?\bburger\s)\bmenu\b(?!\s*bar\b)/i,
       /(?<!\bsatellite\s)\bdish(es)?\b(?!\s*(soap|racks?|towels?|network)\b)/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
       /תפריט(?!\s*(ניווט|נפתח|צד))/, /(?<!ז)מנות/, "בית קפה",
       // "בית קפה" (café) had no plural entry (round 582). Unlike this

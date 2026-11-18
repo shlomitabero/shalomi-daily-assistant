@@ -3082,6 +3082,38 @@ test("MenuItem's 'menu'/'תפריט' keyword doesn't spuriously trigger on 'navi
 });
 
 /**
+ * Round 2241's finding: round 880's own exclusion list never covered
+ * "burger menu" -- a real, if less common, synonym for the "hamburger
+ * menu" UI icon. Unlike the other excluded words, "burger" also has a
+ * genuine, ordinary restaurant sense of its own, so this can't be fixed
+ * with a blanket exclusion the way round 880's own list was -- that would
+ * wrongly reject real burger-joint app descriptions. Instead this mirrors
+ * the document-wide bidirectional disambiguation round 1828/2110 already
+ * established for "property"/"נכס" (asset vs. real estate): "burger
+ * menu" is excluded only when an unambiguous software-UI cue word
+ * (navigation/icon/sidebar/profile/settings/tap/click/link) co-occurs
+ * anywhere in the text, in either order relative to "burger", and still
+ * matches as the ordinary restaurant idiom otherwise.
+ */
+test("MenuItem's 'menu' keyword doesn't spuriously trigger on 'burger menu' when it means the UI icon, but still matches a genuine burger-restaurant menu", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const burgerMenuUiAfter = await provider.generate(
+    "A mobile app with a burger menu that links to profile and settings pages, plus a task list to manage daily todos.",
+  );
+  assert.ok(!burgerMenuUiAfter.entities.some((e) => e.name === "MenuItem"), "'burger menu' with a UI cue AFTER it must not spuriously match MenuItem");
+
+  const burgerMenuUiBefore = await provider.generate("A note app with a navigation icon shaped like a burger menu, plus a list of notes.");
+  assert.ok(!burgerMenuUiBefore.entities.some((e) => e.name === "MenuItem"), "'burger menu' with a UI cue BEFORE it must not spuriously match MenuItem either");
+
+  // The real burger-restaurant sense still works, with no UI cue anywhere
+  // in the text -- this is the exact case a blanket "burger" exclusion
+  // (like round 880's own list) would have wrongly broken.
+  const realBurgerMenu = await provider.generate("A diner app to manage its burger menu, prices, and categories.");
+  assert.ok(realBurgerMenu.entities.some((e) => e.name === "MenuItem"), "a genuine burger-restaurant 'menu' must still match MenuItem");
+});
+
+/**
  * Regression test for a real bug found in round 448's survey and fixed in
  * round 449: Product's bare "product" keyword is a substring of
  * "production" -- an ordinary word in a creative/media description that has
