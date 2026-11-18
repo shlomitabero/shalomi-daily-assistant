@@ -31,6 +31,11 @@ import {
   WHATSAPP_MISSING_COUNTRY_CODE_ERROR,
   WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR,
   EMAIL_INVALID_ADDRESS_ERROR,
+  WEBHOOK_NO_URL_ERROR,
+  EMAIL_NO_DESTINATION_ERROR,
+  EMAIL_DESTINATION_FIELD_EMPTY_ERROR,
+  WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR,
+  WHATSAPP_NO_DESTINATION_ERROR,
 } from "./automations.js";
 
 function baseRule(overrides: Partial<Parameters<typeof insertAutomationRule>[1]> = {}) {
@@ -998,6 +1003,37 @@ test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure 
 
 test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 invalid_email_address rows independently, so one kind can never evict the other", () => {
   assertOwnRetentionBucket(EMAIL_INVALID_ADDRESS_ERROR, "invalid-email-address");
+});
+
+/**
+ * Round 2194: same bug class as the tests above, for 5 more stable,
+ * always-identical config-error literals that were missed by every prior
+ * round's sweep for the same reason -- they're inline string literals in
+ * apps/api/src/automations.ts, not named `_ERROR =` exports, so a grep for
+ * that convention never surfaced them. Same flood risk: a rule with no
+ * destination configured, or a toMode:"field" rule whose resolved field is
+ * empty for many bulk-updated records, produces one of these exact
+ * literals per record (round 1076's "fires one automation per record,
+ * unsuppressed" design).
+ */
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 'no webhook URL configured' rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(WEBHOOK_NO_URL_ERROR, "no-webhook-url");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 'no destination email configured' rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(EMAIL_NO_DESTINATION_ERROR, "no-email-destination");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 'email-address field empty' rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(EMAIL_DESTINATION_FIELD_EMPTY_ERROR, "email-field-empty");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 'phone-number field empty' rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR, "phone-field-empty");
+});
+
+test("recordAutomationRun's retention prune keeps the newest 20 genuine-failure rows and the newest 20 'no destination phone configured' rows independently, so one kind can never evict the other", () => {
+  assertOwnRetentionBucket(WHATSAPP_NO_DESTINATION_ERROR, "no-phone-destination");
 });
 
 /**

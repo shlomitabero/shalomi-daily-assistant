@@ -246,6 +246,33 @@ export const WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR = "attachment_unavailable";
  */
 export const EMAIL_INVALID_ADDRESS_ERROR = "invalid_email_address";
 
+/**
+ * Round 2194: these 5 literals (apps/api/src/automations.ts's
+ * fireWebhookAction/fireEmailAction/fireRule's generic send_whatsapp
+ * branch/fireScheduledRule) are the exact same kind of stable, always-
+ * identical, per-record/per-rule config-error text as the 12 bucketed
+ * errors above -- a rule with no destination configured, or a
+ * toMode:"field" rule whose resolved field is empty for this particular
+ * record, produces the IDENTICAL literal on every single firing (a bulk
+ * update/CSV import fires one automation per record unsuppressed, round
+ * 1076). They're already listed in apps/web/src/api.ts's own
+ * AUTOMATION_CONFIG_ERROR_CODES map right alongside the ones that DO
+ * have a bucket here -- but, being inline string literals rather than
+ * named exports, they were missed by every prior round's sweep (each one
+ * keyed off grepping for `_ERROR =` constant exports, per their own doc
+ * comments above). Without a bucket, a flood of 20+ of one of these
+ * (e.g. 21 bulk-updated records that all happen to have an empty phone
+ * field) falls into the shared catch-all bucket below and can evict a
+ * genuinely different, older failure for that same rule -- confirmed via
+ * a real flood-then-assert-survivor-count repro, mirroring this file's
+ * own test suite's existing assertOwnRetentionBucket technique.
+ */
+export const WEBHOOK_NO_URL_ERROR = "This rule has no valid webhook URL configured";
+export const EMAIL_NO_DESTINATION_ERROR = "This rule has no destination email address configured";
+export const EMAIL_DESTINATION_FIELD_EMPTY_ERROR = "This record has no value in the configured email-address field";
+export const WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR = "This record has no value in the configured phone-number field";
+export const WHATSAPP_NO_DESTINATION_ERROR = "This rule has no destination phone number configured";
+
 export interface AutomationRule {
   id: string;
   projectId: string;
@@ -1074,6 +1101,38 @@ export function recordAutomationRun(
       SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(projectId, id, EMAIL_INVALID_ADDRESS_ERROR, projectId, id, EMAIL_INVALID_ADDRESS_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2194: mirrors the buckets above, for WEBHOOK_NO_URL_ERROR's own
+  // identical flood risk -- see its own doc comment.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WEBHOOK_NO_URL_ERROR, projectId, id, WEBHOOK_NO_URL_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2194: mirrors the bucket just above, for EMAIL_NO_DESTINATION_ERROR.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, EMAIL_NO_DESTINATION_ERROR, projectId, id, EMAIL_NO_DESTINATION_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2194: mirrors the bucket just above, for EMAIL_DESTINATION_FIELD_EMPTY_ERROR.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, EMAIL_DESTINATION_FIELD_EMPTY_ERROR, projectId, id, EMAIL_DESTINATION_FIELD_EMPTY_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2194: the send_whatsapp sibling of the bucket just above, for
+  // WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR, projectId, id, WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
+  // Round 2194: mirrors the bucket just above, for WHATSAPP_NO_DESTINATION_ERROR.
+  db.prepare(
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND error = ? AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    )`,
+  ).run(projectId, id, WHATSAPP_NO_DESTINATION_ERROR, projectId, id, WHATSAPP_NO_DESTINATION_ERROR, AUTOMATION_RUNS_RETENTION_LIMIT);
   // Round 1416: this catch-all bucket had no isTest awareness at all --
   // round 1263 gave isTest rows their own flag and taught
   // hasTooManyConsecutiveFailuresToday (apps/api/src/automations.ts) to
@@ -1091,8 +1150,8 @@ export function recordAutomationRun(
   // 1263's own ALTER TABLE (see ensureAutomationRunsTable above), which
   // never got a value and so are not Test rows.
   db.prepare(
-    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
-      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
+    `DELETE FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) AND id NOT IN (
+      SELECT id FROM automation_runs WHERE projectId = ? AND ruleId = ? AND (error IS NULL OR (error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ? AND error != ?)) AND (isTest IS NULL OR isTest = 0) ORDER BY triggeredAt DESC, rowid DESC LIMIT ?
     )`,
   ).run(
     projectId,
@@ -1109,6 +1168,11 @@ export function recordAutomationRun(
     WHATSAPP_MISSING_COUNTRY_CODE_ERROR,
     WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR,
     EMAIL_INVALID_ADDRESS_ERROR,
+    WEBHOOK_NO_URL_ERROR,
+    EMAIL_NO_DESTINATION_ERROR,
+    EMAIL_DESTINATION_FIELD_EMPTY_ERROR,
+    WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR,
+    WHATSAPP_NO_DESTINATION_ERROR,
     projectId,
     id,
     WHATSAPP_NOT_CONNECTED_ERROR,
@@ -1123,6 +1187,11 @@ export function recordAutomationRun(
     WHATSAPP_MISSING_COUNTRY_CODE_ERROR,
     WHATSAPP_ATTACHMENT_UNAVAILABLE_ERROR,
     EMAIL_INVALID_ADDRESS_ERROR,
+    WEBHOOK_NO_URL_ERROR,
+    EMAIL_NO_DESTINATION_ERROR,
+    EMAIL_DESTINATION_FIELD_EMPTY_ERROR,
+    WHATSAPP_DESTINATION_FIELD_EMPTY_ERROR,
+    WHATSAPP_NO_DESTINATION_ERROR,
     AUTOMATION_RUNS_RETENTION_LIMIT,
   );
   // Round 1416: isTest rows' own independent bucket -- mirrors the
