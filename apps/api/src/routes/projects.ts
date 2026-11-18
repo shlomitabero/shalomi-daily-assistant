@@ -4619,8 +4619,32 @@ export function createProjectsRouter(
           // revoked/removed/demoted uploader now gets the identical
           // 403/404 any other write attempt of theirs would), with the
           // same cleanup-the-orphaned-file behavior on any failure.
+          //
+          // Round 2181: the recheck above only ever re-derived write
+          // ACCESS, never whether this exact field is still the one this
+          // upload was meant for -- a concurrent checkpoint restore or
+          // /refine that retypes/removes this field while multer's own
+          // disk write is still in flight can commit entirely inside this
+          // same real-I/O window, and the upload still 200s with a real,
+          // permanent file URL that can never be legitimately attached to
+          // any record again (the field isn't type "file" anymore).
+          // cleanupFileFieldsRetypedAway (pipeline.ts), the sweep this
+          // codebase already runs after every retype that drops a "file"
+          // field, only ever looks at values already sitting in a
+          // persisted record's own column -- a freshly-uploaded URL
+          // nothing has attached to a record yet is invisible to it by
+          // construction, so it never catches this either. Re-running
+          // findEntity/findField against the FRESH project
+          // requireProjectWriteAccess just re-fetched, and re-checking
+          // field.type, closes this the same way round 2086 closed the
+          // access gap.
           try {
-            requireProjectWriteAccess(db, req.params.id, req.userId!);
+            const freshProject = requireProjectWriteAccess(db, req.params.id, req.userId!);
+            const freshEntity = findEntity(freshProject, req.params.entityName);
+            const freshField = findField(freshEntity, req.params.fieldName);
+            if (freshField.type !== "file") {
+              throw new HttpError(400, `Field "${freshField.name}" is not a file field`, "NOT_A_FILE_FIELD");
+            }
           } catch (err) {
             await rm(file.path, { force: true }).catch(() => {});
             throw err;

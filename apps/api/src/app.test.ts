@@ -20735,6 +20735,112 @@ test("uploading a file as a collaborator who gets demoted to viewer while the (s
 });
 
 /**
+ * Round 2181: the same real-I/O window round 2086's own fix (just above)
+ * closed for a demoted uploader was never closed for the equally-real
+ * concurrent mutation that retypes the TARGET FIELD itself away from
+ * "file" -- a checkpoint restore, exactly like round 2091's own test just
+ * below this one, but racing the upload instead of a collaborator
+ * demotion. Before this round's fix, the upload's own re-check only ever
+ * re-derived write access, never whether "attachment" was still a file
+ * field at all -- so it still 200s with a real, permanent file URL for a
+ * field the restore already turned into plain text underneath it, a file
+ * that can never be legitimately attached to any record again and that
+ * cleanupFileFieldsRetypedAway (pipeline.ts) can never find either, since
+ * it only ever looks at values already sitting in a persisted record's
+ * own column, not a freshly-returned, still-unattached upload URL.
+ */
+test("uploading a file to a field that gets retyped away from 'file' by a concurrent checkpoint restore while the (slow) upload is still in flight must be rejected, not silently completed as an orphaned file", async () => {
+  await withServer(async (baseUrl, db, uploadsDir) => {
+    const email = `upload-vs-retype-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+
+    // The checkpoint being restored TO: "attachment" was "text" back then.
+    const oldSpec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    // The project's CURRENT spec: "attachment" is "file" -- the upload's
+    // own entry-point check passes against this.
+    const currentSpec: ProductSpec = {
+      ...oldSpec,
+      entities: [
+        {
+          name: "Document",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "Documents", description: "test", spec: currentSpec });
+    diffAndMigrate(db, projectId, undefined, currentSpec);
+    markProjectBuilt(db, projectId);
+    insertCheckpoint(db, { id: "cp-old", projectId, label: "Initial build", kind: "build", spec: oldSpec });
+
+    const boundary = `----forgeTestBoundary${randomUUID()}`;
+    const head = new TextEncoder().encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="scan.pdf"\r\nContent-Type: application/pdf\r\n\r\n`,
+    );
+    const tail = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+    const contentPieces = Array.from({ length: 5 }, (_, i) => new TextEncoder().encode(`fake-scan-bytes-piece-${i}-`));
+
+    const slowBody = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(head);
+        for (const piece of contentPieces) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          controller.enqueue(piece);
+        }
+        controller.enqueue(tail);
+        controller.close();
+      },
+    });
+
+    const uploadPromise = fetch(`${baseUrl}/api/projects/${projectId}/entities/Document/fields/attachment/upload`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: slowBody,
+      duplex: "half",
+    } as RequestInit);
+
+    // Same short-head-start convention as round 2086's own test above --
+    // the upload's own entry-point check has already passed (attachment
+    // was still "file" at that moment) before the concurrent restore fires.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const restoreRes = await fetch(`${baseUrl}/api/projects/${projectId}/checkpoints/cp-old/restore`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    assert.equal(restoreRes.status, 200);
+
+    const uploadRes = await uploadPromise;
+    assert.notEqual(uploadRes.status, 200, "must not report success once its own target field is no longer type file");
+    assert.equal(uploadRes.status, 400);
+    assert.equal(((await uploadRes.json()) as { code?: string }).code, "NOT_A_FILE_FIELD");
+
+    const entriesDir = path.join(uploadsDir, projectId, "Document");
+    const entries = existsSync(entriesDir) ? readdirSync(entriesDir) : [];
+    assert.deepEqual(entries, [], "the file must not be left behind on disk, permanently unattachable, for a field that no longer wants it");
+  });
+});
+
+/**
  * Round 2088: the identical demoted-uploader-mid-flight race the test above
  * just fixed on the entity file-field upload route, but on its own sibling
  * -- the WhatsApp attachment upload route. Round 2086's fix was only ever
