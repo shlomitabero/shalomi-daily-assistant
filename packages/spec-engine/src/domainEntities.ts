@@ -969,7 +969,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // co-occurs anywhere in the text, in either order relative to the
       // keyword.
       "real estate",
-      /\b(?<!job\s)(?<!product\s)(?<!business\s)(?<!event\s)(?<!episode\s)(?<!market\s)(?<!recruiter\s)listing(s)?\b/,
+      // Round 2240: round 2129's own exclusion list (business/event/
+      // episode/market/recruiter) still never covered "service listing(s)"
+      // -- an extremely ordinary phrase for any marketplace/directory/
+      // freelancer-platform app -- so such a description got a bogus
+      // Property entity bolted on alongside the real Service entity
+      // (matchEntities returns the union of every matched rule, with no
+      // mutual exclusivity, so "service" matching Service doesn't stop
+      // "listing" from also matching Property). Confirmed live before
+      // fixing: "contractors can post service listings" spuriously
+      // matched both Service AND Property.
+      /\b(?<!job\s)(?<!product\s)(?<!business\s)(?<!event\s)(?<!episode\s)(?<!market\s)(?<!recruiter\s)(?<!service\s)listing(s)?\b/,
       "apartment for rent",
       /נכס(?:ים)?(?![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))(?<![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))/,
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",

@@ -3544,6 +3544,33 @@ test("Property's 'listing' keyword doesn't spuriously match business/event/podca
 });
 
 /**
+ * Round 2240's finding: round 2129's own exclusion list (business/event/
+ * episode/market/recruiter) still never covered "service listing(s)" --
+ * an extremely ordinary phrase for any marketplace/directory/freelancer-
+ * platform app. Since matchEntities returns the union of every matched
+ * rule with no mutual exclusivity, "service" matching the real Service
+ * entity never stopped "listing" from also spuriously matching Property.
+ * Confirmed live before fixing: each description below injected a bogus
+ * Property entity alongside the correct Service entity.
+ */
+test("Property's 'listing' keyword doesn't spuriously match 'service listing(s)' either", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const contractorListings = await provider.generate(
+    "A directory app where contractors can post service listings so homeowners can browse and contact them.",
+  );
+  assert.ok(!contractorListings.entities.some((e) => e.name === "Property"), "'service listings' alone must not spuriously match Property");
+
+  const freelancerListings = await provider.generate("A marketplace where freelancers create service listings describing what they offer.");
+  assert.ok(!freelancerListings.entities.some((e) => e.name === "Property"), "'service listings' alone must not spuriously match Property");
+
+  // The real estate term still works, with none of the new exclusion
+  // words nearby.
+  const realListing = await provider.generate("A real estate app to manage property listings for sale.");
+  assert.ok(realListing.entities.some((e) => e.name === "Property"), "a genuine real-estate 'listings' description must still match Property");
+});
+
+/**
  * Regression test for round 558's finding: Property's bare "property"
  * keyword is genuinely ambiguous English -- it means a real-estate asset
  * in most descriptions, but "intellectual property" (patents/trademarks),
