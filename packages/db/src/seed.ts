@@ -413,7 +413,13 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
       return null;
     case "text":
     default:
-      return textSeedValueFor(field.name, entity.name, isHebrew, index);
+      // Round 2228: entityName/fieldLabel here are the label-preferring
+      // locals computed above (entity.label ?? entity.name / field.label ??
+      // field.name) -- threaded through so textSeedValueFor's own two
+      // generic fallback branches can use the real label instead of the
+      // raw ASCII identifier every entity-specific branch inside it still
+      // correctly matches against (see its own comment).
+      return textSeedValueFor(field.name, entity.name, isHebrew, index, entityName, fieldLabel);
   }
 }
 
@@ -426,7 +432,14 @@ function seedValueFor(field: Field, entity: Entity, index: number): unknown {
 // case.
 const CATALOG_NAME_ENTITIES = new Set(["Service", "Item"]);
 
-function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boolean, index: number): string {
+function textSeedValueFor(
+  fieldName: string,
+  entityName: string,
+  isHebrew: boolean,
+  index: number,
+  entityLabel: string,
+  fieldLabel: string,
+): string {
   switch (fieldName) {
     case "email":
       if (entityName === "Courier") return `${pick(COURIER_EMAIL_LOCAL_PARTS, index)}@example.com`;
@@ -608,7 +621,13 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(TIME_RANGES, index);
     case "description":
       if (entityName === "Expense") return pick(isHebrew ? EXPENSE_DESCRIPTIONS_HE : EXPENSE_DESCRIPTIONS_EN, index);
-      return isHebrew ? `${entityName} - ${fieldName} ${index + 1}` : `${entityName} ${fieldName} ${index + 1}`;
+      // Round 2228: use the label-preferring locals, not the raw ASCII
+      // entityName/fieldName params above (those are only for the
+      // entity-specific === comparisons, which must keep matching the
+      // AI-generated spec's plain-ASCII "name", never its translated
+      // "label") -- otherwise a Hebrew-labeled app's placeholder here came
+      // out as mixed-language garbage like "Customer - description 1".
+      return isHebrew ? `${entityLabel} - ${fieldLabel} ${index + 1}` : `${entityLabel} ${fieldName} ${index + 1}`;
     case "name":
       // "name" means different things for different entity shapes -- a
       // person for people-shaped entities, a thing for catalog-shaped
@@ -658,9 +677,16 @@ function textSeedValueFor(fieldName: string, entityName: string, isHebrew: boole
       return pick(isHebrew ? PERSON_NAMES_HE : PERSON_NAMES_EN, index);
     default:
       // No specific pool for this field name (a custom entity from an
-      // AI-generated or refined spec, not the built-in domain library) —
+      // AI-generated or refined spec, not the built-in domain library) --
       // fall back to a labeled placeholder rather than guessing wrong.
-      return isHebrew ? `${entityName} - ${fieldName} ${index + 1}` : `${entityName} ${fieldName} ${index + 1}`;
+      // Round 2228: that placeholder must actually BE labeled -- use
+      // entityLabel/fieldLabel (entity.label ?? entity.name / field.label
+      // ?? field.name), not the raw ASCII entityName/fieldName params,
+      // which this comment's own wording always claimed but which this
+      // branch never did, leaving a Hebrew-labeled app's custom "text"
+      // fields the one placeholder still half-English next to its own
+      // fully-Hebrew "longtext" sibling (which already got this right).
+      return isHebrew ? `${entityLabel} - ${fieldLabel} ${index + 1}` : `${entityLabel} ${fieldName} ${index + 1}`;
   }
 }
 

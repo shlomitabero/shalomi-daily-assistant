@@ -1352,3 +1352,42 @@ test("Pet's 'ownerName', Rental's 'renterName', Donation's 'donorName', Insuranc
   const reviewerNames = generateSeedRecords(review, 4).map((r) => r.reviewerName as string);
   for (const name of reviewerNames) assert.ok(!customerNames.has(name), `Review's reviewerName "${name}" must not be one of Customer's own sample names`);
 });
+
+/**
+ * Round 2228's finding: seedValueFor's "longtext" case already builds its
+ * placeholder from the label-preferring entityName/fieldLabel locals
+ * (entity.label ?? entity.name / field.label ?? field.name), correctly
+ * producing a fully-Hebrew string for a Hebrew-labeled app. Its "text"/
+ * default sibling discarded both locals and passed the raw ASCII
+ * entity.name/field.name straight through instead -- so a custom "text"
+ * field with no dedicated pool (the common case for an AI-generated
+ * spec's own field names) came out as mixed-language garbage like
+ * "Customer - notes 1" sitting right next to its own "longtext" sibling's
+ * correct, fully-Hebrew "ביוגרפיה לדוגמה עבור לקוחות מספר 1." on the same
+ * row.
+ */
+test("a custom 'text' field with no dedicated seed pool uses the entity's and field's Hebrew labels, not their raw ASCII names, matching its 'longtext' sibling", () => {
+  const customerHe: Entity = {
+    name: "Customer",
+    label: "לקוחות",
+    fields: [
+      { name: "notes", label: "הערות", type: "text", required: false },
+      { name: "bio", label: "ביוגרפיה", type: "longtext", required: false },
+    ],
+  };
+  const [record] = generateSeedRecords(customerHe, 1);
+
+  assert.equal(record.notes, "לקוחות - הערות 1");
+  assert.ok(!/[A-Za-z]/.test(record.notes as string), `"text" field's seeded value "${record.notes}" must not contain any raw ASCII entity/field name`);
+  assert.equal(record.bio, "ביוגרפיה לדוגמה עבור לקוחות מספר 1.");
+
+  // An English-labeled (or unlabeled) app's "text" fallback is unaffected --
+  // entity.name/field.name already ARE the label in that case, so this
+  // fix is a no-op for every existing non-Hebrew app.
+  const customerEn: Entity = {
+    name: "Customer",
+    fields: [{ name: "notes", type: "text", required: false }],
+  };
+  const [recordEn] = generateSeedRecords(customerEn, 1);
+  assert.equal(recordEn.notes, "Customer notes 1");
+});
