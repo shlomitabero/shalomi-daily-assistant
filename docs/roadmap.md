@@ -51651,3 +51651,17 @@ Round 2247 fixed Patient's "patient" adjective matching attributively before a p
 **Tests:** added a new test alongside round 888/2247's own tests, covering both comma-adjective reproductions plus a regression check that a genuine medical sentence with an unrelated comma near "patient" still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 381/381 (was 380), no build script for this package (tests only).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+### Round 2249: Student's "pupil" eye-anatomy exclusion (round 561) only covered 4 of the many ordinary ways this whole-word polysemy collision shows up
+
+Round 561 already recognized that "pupil" is a genuine whole-word collision between the school sense (Student entity) and the ophthalmology/optometry term for part of the eye, and excluded the eye-anatomy sense only in four specific phrasings: "pupil dilation", "pupil size", "pupil reaction", "pupil response", and "dilated pupil(s)". An equally common vocabulary of everyday eye-care terms -- contraction, movement, diameter, color -- was never added.
+
+**Confirmed via direct `HeuristicSpecProvider.generate()` calls:** "A mobile app for photographers to study how pupil contraction changes under different lighting conditions." matched ONLY `['Student']`; "An app that tracks pupil movement during eye exams for an ophthalmology clinic." matched ONLY `['Student']`; "A research tool for measuring pupil diameter changes in response to light stimuli in a vision science lab." matched ONLY `['Student']`; and "An app to log pupil color changes after cataract surgery for an eye clinic." matched ONLY `['Student']` -- each fabricating a bogus school entity for a vision-science/ophthalmology app with zero connection to education, the real domain entirely lost.
+
+**The fix:** widened the exclusion list with the four reproductions' own immediate-following words (contraction/movement/diameter/color), plus "constriction" for symmetry with the already-excluded "dilation" (its direct physiological opposite), mirroring round 561's own lookbehind/lookahead style exactly. The real school phrasing ("each pupil's attendance", "all the pupils' attendance") has none of these words anywhere near "pupil", confirmed unaffected by both the existing and new tests.
+
+**Not applicable:** no `codegen.ts`/`twin.ts` duplicate -- confined entirely to `packages/spec-engine`'s spec-generation-time heuristic provider.
+
+**Tests:** added a new test alongside round 561's own test, covering all 4 new reproductions plus a regression check that the real school phrasing still matches. Verified fail-before/pass-after via `git stash` (stashing only the source fix, keeping the new test) -- failed with the exact predicted assertion before the fix, passed cleanly after. Full `@forge/spec-engine` suite: 382/382 (was 381), no build script for this package (tests only).
+
+Live: https://forge-ai-m7p7.onrender.com
