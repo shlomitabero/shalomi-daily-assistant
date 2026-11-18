@@ -777,7 +777,24 @@ for (const entity of ENTITIES) {
   app.patch(\`\${base}/:id\`, (req, res) => {
     try {
       const existing = db.prepare(\`SELECT * FROM \${q(entity.name)} WHERE id = ?\`).get(req.params.id);
-      if (!existing) return res.status(404).json({ error: "Not found" });
+      // Round 2201: this generated client's own request() helper (below)
+      // throws an Error with a \`.code\` taken straight from the response
+      // body's own \`code\` field -- but this 404 never set one, so every
+      // one of this same generated app's own NOT_FOUND-recovery branches
+      // (commitPendingDelete, handleSubmit, handleBulkUpdate,
+      // handleMoveFields, commitInlineEdit, the CSV/JSON importers --
+      // added across rounds 1864-2179, all checking \`err.code ===
+      // "NOT_FOUND"\`) could never actually fire in a real exported app:
+      // the comparison always failed against \`undefined\`, so a
+      // concurrently-deleted record's edit/delete/move/import always fell
+      // through to that path's generic failure handling instead of the
+      // graceful one each of those rounds specifically built. Mirrors the
+      // \`code: "RECORD_MODIFIED_SINCE_DELETE"\` this same route's own
+      // DELETE handler already sets just below, and the live Forge AI
+      // backend's own app.ts, which sets \`code: "NOT_FOUND"\` on every one
+      // of ITS OWN not-found responses -- this generated route is the one
+      // place that pattern was never carried over.
+      if (!existing) return res.status(404).json({ error: "Not found", code: "NOT_FOUND" });
       // Only a field actually present in the request body is re-coerced --
       // an untouched field keeps its already-stored raw value as-is, the
       // same fix as the live Forge AI backend's own repository.ts.
@@ -857,7 +874,14 @@ for (const entity of ENTITIES) {
         }
       }
       const result = db.prepare(\`DELETE FROM \${q(entity.name)} WHERE id = ?\`).run(req.params.id);
-      if (result.changes === 0) return res.status(404).json({ error: "Not found" });
+      // Round 2201: see the PATCH route's own identical fix above -- this
+      // DELETE's own 404 had the same missing-code gap, which specifically
+      // broke commitPendingDelete's own \`r.reason.code === "NOT_FOUND"\`
+      // check (round 1891): a second tab deleting this exact record first
+      // made this deferred DELETE 404 with no code, so the first tab
+      // treated it as a genuine failure and restored the already-deleted
+      // row back into its own table instead of silently dropping it.
+      if (result.changes === 0) return res.status(404).json({ error: "Not found", code: "NOT_FOUND" });
       res.status(204).end();
     } catch (err) {
       // PRAGMA foreign_keys (above) throws this exact message when another

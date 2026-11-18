@@ -3870,6 +3870,76 @@ test("generated server.js serves an existing file attachment at /api/uploads/<pr
 });
 
 /**
+ * Round 2201: the generated client's own request() helper throws an Error
+ * whose `.code` comes straight from the response body's own `code` field
+ * -- and every one of this same generated app's own NOT_FOUND-recovery
+ * branches (commitPendingDelete, handleSubmit, handleBulkUpdate,
+ * handleMoveFields, commitInlineEdit, the CSV/JSON importers -- added
+ * across rounds 1864-2179) checks `err.code === "NOT_FOUND"` specifically
+ * to treat a concurrently-deleted record gracefully instead of as a real
+ * failure. But the generated PATCH/:id and DELETE/:id routes' own 404s
+ * never actually set that field, so none of those branches could ever
+ * fire in a real exported app -- every existing unit test for them mocks
+ * the error with `code: "NOT_FOUND"` already attached, which is exactly
+ * why this mismatch went unnoticed. Confirmed directly against a real
+ * spawned server.js, not a mock.
+ */
+test("generated server.js's PATCH/:id and DELETE/:id 404s set code: \"NOT_FOUND\", so the generated client's own NOT_FOUND-recovery branches can actually fire", async () => {
+  const files = generateExportFiles(project);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-notfound-code-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const entityName = project.spec.entities[0].name;
+    const patchRes = await fetch(`http://localhost:${port}/api/${entityName}/999999`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(patchRes.status, 404);
+    const patchBody = (await patchRes.json()) as { code?: string };
+    assert.equal(patchBody.code, "NOT_FOUND", "PATCH of a nonexistent record must set code: NOT_FOUND, the same field the generated client's own request() helper reads to decide this was a concurrent-delete race, not a genuine failure");
+
+    const deleteRes = await fetch(`http://localhost:${port}/api/${entityName}/999999`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 404);
+    const deleteBody = (await deleteRes.json()) as { code?: string };
+    assert.equal(deleteBody.code, "NOT_FOUND", "DELETE of a nonexistent record must set code: NOT_FOUND too, for the identical reason -- this is exactly what commitPendingDelete's own deferred-DELETE race depends on");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1182: same port, for this file's generated CALENDAR FEED route
  * (/api/calendar/:entityName.ics) -- `feedRelationDisplayLabel`'s own
  * `targetEntity` lookup, and the ANTECEDENT that decides whether this
