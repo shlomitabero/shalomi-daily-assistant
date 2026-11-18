@@ -6543,19 +6543,37 @@ export function createProjectsRouter(
       }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       if (run.recordId === null) {
-        if (rule.trigger !== "schedule") {
-          throw new HttpError(
-            400,
-            "This run has no record to retry against -- it was recorded before this app could track which record triggered a run, so there's no current data left to resend",
-            "AUTOMATION_RUN_NOT_RETRYABLE",
-          );
-        }
+        // Round 2182: mirrors round 2098's own fix just below, for this
+        // branch's sibling check instead -- the rule.trigger guard used to
+        // run here, BEFORE withIdempotency, so it was still re-evaluated
+        // against the CURRENT rule on a replay with the same
+        // X-Idempotency-Key (withIdempotency's own "done" branch returns
+        // the cached response WITHOUT ever calling its callback, so a
+        // check placed outside it is never actually skipped by that
+        // short-circuit). A schedule-trigger rule's own `trigger` is
+        // freely PATCH-able after the fact (UpdateAutomationRuleSchema),
+        // with no restriction tied to existing run history -- so a retry
+        // that already fully succeeded (fireScheduledRule ran, the 200 was
+        // cached) could still 400 AUTOMATION_RUN_NOT_RETRYABLE on a
+        // genuine fetchWithWakeRetry replay if anyone edited the rule's
+        // trigger away from "schedule" in between, reporting an
+        // already-successful retry as a failure. Moving the check inside
+        // the callback means a cached "done" replay never re-evaluates it
+        // at all, the same guarantee round 2098 already gives this exact
+        // route's other branch.
         const { status, body } = await withIdempotency(
           db,
           idempotencyKey,
           req.userId!,
           `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
           async () => {
+            if (rule.trigger !== "schedule") {
+              throw new HttpError(
+                400,
+                "This run has no record to retry against -- it was recorded before this app could track which record triggered a run, so there's no current data left to resend",
+                "AUTOMATION_RUN_NOT_RETRYABLE",
+              );
+            }
             // Round 2114: callerUserId re-verifies write access after this
             // genuine await -- see automations.ts's stillHasWriteAccess own
             // doc comment.

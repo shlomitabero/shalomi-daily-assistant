@@ -5480,6 +5480,101 @@ test("POST .../automations/:ruleId/runs/:runId/retry replays its cached success 
 });
 
 /**
+ * Round 2182: mirrors round 2098's own fix just above, for this route's
+ * sibling branch (a schedule-trigger rule's null-recordId run) instead.
+ * The `rule.trigger !== "schedule"` guard used to run BEFORE
+ * withIdempotency, so it was still re-evaluated against the CURRENT rule
+ * on a replay with the same X-Idempotency-Key -- a rule's own `trigger`
+ * is freely PATCH-able after the fact, with no restriction tied to
+ * existing run history, so a retry that had ALREADY succeeded (the 200
+ * already cached) could still 400 AUTOMATION_RUN_NOT_RETRYABLE on a
+ * genuine fetchWithWakeRetry replay if anyone edited the rule's trigger
+ * away from "schedule" in between, instead of replaying the cached
+ * success.
+ */
+test("POST .../automations/:ruleId/runs/:runId/retry (schedule-trigger branch) replays its cached success on a genuine idempotency-key retry, even if the rule's trigger was changed afterward", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `schedule-retry-idempotent-replay-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+    const owner = findUserByEmail(db, email)!;
+
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Reminder", fields: [{ name: "title", type: "text", required: true }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: owner.id, name: "Reminders", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const scheduleRuleRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Reminder/automations`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        trigger: "schedule",
+        scheduleTimeUtc: "09:00",
+        actionType: "send_whatsapp",
+        toMode: "static",
+        toNumber: "972500000000",
+        messageTemplate: "Reminder!",
+      }),
+    });
+    const { rule } = (await scheduleRuleRes.json()) as { rule: { id: string } };
+
+    // Simulated directly (no real scheduler tick in this test), same
+    // convention as round 972's own schedule-retry test above -- a
+    // schedule rule's own run never has a recordId at all. WhatsApp is
+    // never connected in this test, so the retry attempt itself still
+    // fails, but the ROUTE call succeeds (200) and caches that response.
+    recordAutomationRun(db, projectId, rule.id, { status: "failed", error: "WhatsApp is not connected" }, "send_whatsapp");
+    const { runs } = (await (await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs`, { headers: authHeaders(token) })).json()) as {
+      runs: { id: string; recordId: number | null }[];
+    };
+    assert.equal(runs[0]!.recordId, null);
+
+    const idempotencyKey = randomUUID();
+    const firstRetryRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${runs[0]!.id}/retry`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "X-Idempotency-Key": idempotencyKey },
+    });
+    assert.equal(firstRetryRes.status, 200, "sanity check: the route call itself must succeed even though the re-attempt fails at the WhatsApp layer");
+    const { run: firstRun } = (await firstRetryRes.json()) as { run: { id: string; status: string } | null };
+    assert.equal(firstRun?.status, "failed", "sanity check: WhatsApp was never connected, so the re-attempt itself still fails");
+
+    // The rule's own trigger is edited AFTER the retry already succeeded
+    // at the HTTP level -- an ordinary, unrelated PATCH, simulating any
+    // actor editing it in the gap before the client's own response for
+    // the call above was lost in transit.
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ trigger: "record_created" }),
+    });
+    assert.equal(patchRes.status, 200);
+
+    // A genuine fetchWithWakeRetry replay with the SAME key must replay
+    // the cached success -- not re-evaluate rule.trigger against the
+    // rule's now-changed current state.
+    const replayRes = await fetch(`${baseUrl}/api/projects/${projectId}/automations/${rule.id}/runs/${runs[0]!.id}/retry`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "X-Idempotency-Key": idempotencyKey },
+    });
+    assert.equal(
+      replayRes.status,
+      200,
+      "a replay with the same idempotency key must replay the cached success, not 400 AUTOMATION_RUN_NOT_RETRYABLE against the rule's now-changed trigger",
+    );
+    const { run: replayedRun } = (await replayRes.json()) as { run: { id: string; status: string } | null };
+    assert.equal(replayedRun?.id, firstRun?.id, "the replay must return the exact same cached run, not a new one");
+  });
+});
+
+/**
  * Round 991: unlike record_created/field_equals (exercised by the retry
  * test just above), a "record_deleted" rule's own triggering event IS
  * that record's deletion -- getRecord(db, project.id, entity, run.recordId)
