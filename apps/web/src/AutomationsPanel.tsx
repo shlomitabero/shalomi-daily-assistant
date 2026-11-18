@@ -1095,6 +1095,19 @@ export function AutomationsPanel({
     if (!window.confirm(t("automations.confirmDelete"))) return;
     setBusyRuleId(rule.id);
     setError(null);
+    // Round 2199: captured before the `await` below, same reason and same
+    // shape as handleSubmit's own formInstanceAtSubmitTime a few lines up
+    // (round 1927) -- the in-form Cancel button and the form's own Escape
+    // handler are gated on createBusy, never on busyRuleId, so either one
+    // is fully clickable while this exact rule's own Delete is still in
+    // flight. Without this, cancelling/escaping the edit and starting a
+    // fresh draft during that window (an ordinary, unhurried sequence) had
+    // its new draft silently wiped the instant this delete resolved: the
+    // check just below read editingRuleId from this function's own stale
+    // closure, still equal to this rule's id even though the live form had
+    // already moved on. Round 1927 added the identical guard to every
+    // resetToCreateMode() call in handleSubmit but never reached this one.
+    const formInstanceAtDeleteTime = formInstanceKeyRef.current;
     try {
       await deleteAutomationRule(projectId, rule.id);
       setRules((prev) => (prev ?? []).filter((r) => r.id !== rule.id));
@@ -1110,7 +1123,7 @@ export function AutomationsPanel({
       // EntityPanel.tsx's own identical "delete the record currently being
       // edited" guard (its in-form Delete button only resets editingId
       // once the delete actually went through).
-      if (editingRuleId === rule.id) resetToCreateMode();
+      if (editingRuleId === rule.id && formInstanceKeyRef.current === formInstanceAtDeleteTime) resetToCreateMode();
     } catch (err) {
       // Round 2117: mirrors handleToggle's own identical fix (round 1875) --
       // another tab/collaborator can delete this exact rule between this

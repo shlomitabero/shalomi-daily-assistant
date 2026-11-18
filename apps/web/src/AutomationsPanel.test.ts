@@ -1035,6 +1035,77 @@ test("AutomationsPanel's Escape key, like the adjacent Cancel button, is a no-op
 });
 
 /**
+ * Round 2199: handleDelete's own resetToCreateMode() call (right after its
+ * `await deleteAutomationRule` resolves) read editingRuleId from this
+ * function's own closure, captured at the moment Delete was clicked --
+ * never re-checked against the live form once that await settled. Unlike
+ * every resetToCreateMode() call in handleSubmit (round 1927's own
+ * formInstanceKeyRef guard), this one had no such check, even though the
+ * Cancel button and Escape handler right next to it are gated on createBusy
+ * only, never on busyRuleId -- so cancelling the edit and starting a fresh
+ * draft while this exact rule's own Delete is still in flight (an ordinary,
+ * unhurried sequence, no fast double-action needed) had that new draft
+ * silently wiped the instant the Delete resolved.
+ */
+test("AutomationsPanel's Delete does not wipe a fresh draft started after Cancel, while that same rule's own Delete is still in flight", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    let resolveDelete!: (value: Response) => void;
+    const deleteHeld = new Promise<Response>((resolve) => {
+      resolveDelete = resolve;
+    });
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule({ id: "rule1" })] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/automations/rule1") {
+        return deleteHeld; // the Delete stays in flight until the test resolves it
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      fireEvent.click(Array.from(document.querySelectorAll(".automations-rule-actions button")).find((b) => b.textContent === "Edit") as HTMLButtonElement);
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /Edit rule/, "expected to actually be editing rule1 before deleting it");
+
+      fireEvent.click(document.querySelector(".automations-rule-actions .danger") as HTMLButtonElement);
+      await new Promise((resolve) => setTimeout(resolve, 0)); // let the DELETE call actually start
+
+      // Cancel the edit while rule1's own Delete is still in flight -- the
+      // Cancel button is disabled by createBusy only, never busyRuleId, so
+      // this is fully clickable right now.
+      fireEvent.click(Array.from(document.querySelectorAll(".automations-create-form button")).find((b) => b.textContent === "Cancel") as HTMLButtonElement);
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "sanity check: Cancel must have reset the form to New rule");
+
+      // Start a brand-new draft on the now-fresh form.
+      const messageField = document.querySelector(".automations-create-form textarea") as HTMLTextAreaElement;
+      fireEvent.change(messageField, { target: { value: "a brand-new draft started after cancelling" } });
+
+      // NOW let the earlier Delete (of rule1, the one that was open for
+      // editing when Delete was clicked) finally resolve.
+      resolveDelete(new Response(null, { status: 204 }));
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 0);
+
+      assert.equal(
+        messageField.value,
+        "a brand-new draft started after cancelling",
+        "the fresh draft started after Cancel must survive the earlier Delete resolving -- it must not be silently wiped",
+      );
+      assert.match(document.querySelector(".automations-new-heading")!.textContent ?? "", /New rule/, "the form must still be in 'New rule' mode, not bounced back into an 'Edit rule' state for a rule that no longer exists");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * The server (apps/api/src/routes/projects.ts's validateAutomationToField)
  * rejects any toField that isn't "text" or "longtext" -- a round 666
  * regression test: the "send to a field" dropdown used to list every field
