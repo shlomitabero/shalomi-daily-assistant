@@ -1223,9 +1223,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // adjective is almost always used in) -- neither excludes any real
     // medical phrasing ("a patient visit", "patient records", "manage
     // patients"), confirmed empirically before fixing.
+    //
+    // Round 2247: round 888's own two exclusions only covered the adjective
+    // directly after a copula/intensifier, or directly before " with" --
+    // they never covered its equally common ATTRIBUTIVE use, directly
+    // BEFORE a person/role noun ("a patient tutor", "a patient and friendly
+    // piano teacher", "a patient customer support team", "a patient and
+    // encouraging coach") -- the single most natural way to use this
+    // adjective to describe a person in English. Confirmed live: "We're
+    // looking for a patient tutor to help kids with math homework." matched
+    // ['Patient'], fabricating a medical-care entity for an ordinary
+    // tutoring app with zero connection to healthcare, the identical
+    // catch-all-losing severity round 888's own comment above describes.
+    // Added a lookahead excluding a short list of common non-medical
+    // person/role nouns (optionally preceded by "and" plus more
+    // adjectives) appearing shortly after "patient" -- deliberately NOT a
+    // blanket "a/an patient" exclusion, which would wrongly kill the real
+    // medical noun-adjunct phrasings ("a patient visit", "a patient
+    // encounter") this entity must still match.
     keywords: [
       /\bpatients\b/,
-      /(?<!\b(?:be|being|been|stay|staying|remain|remaining|very|so|quite|extremely|incredibly|too)\s)\bpatient\b(?!\s+with\b)/,
+      /(?<!\b(?:be|being|been|stay|staying|remain|remaining|very|so|quite|extremely|incredibly|too)\s)\bpatient\b(?!\s+with\b)(?!\s+(?:\S+\s+){0,3}(?:tutor|teacher|coach|instructor|mentor|driver|employee|manager|rep|staff|team)\b)/,
       "outpatient", "clinic patient", "מטופל", "מטופלת", "מטופלים",
     ],
     labelHe: "מטופלים",

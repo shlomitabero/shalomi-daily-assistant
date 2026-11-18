@@ -2761,6 +2761,43 @@ test("Patient's 'patient' keyword doesn't spuriously match the adjective 'patien
 });
 
 /**
+ * Round 2247: round 888's own two exclusions (directly after a copula/
+ * intensifier, or directly before " with") never covered the adjective's
+ * equally common ATTRIBUTIVE use, directly before a person/role noun --
+ * "a patient tutor", "a patient and friendly piano teacher", "a patient
+ * customer support team", "a patient and encouraging coach" -- the single
+ * most natural way to use this adjective to describe a person. Confirmed
+ * live before this fix: each description below matched ONLY ['Patient'],
+ * fabricating a medical-care entity for an ordinary tutoring/music-lesson/
+ * support-desk/coaching app with zero connection to healthcare, the
+ * identical catch-all-losing severity round 888's own comment describes.
+ */
+test("Patient's 'patient' keyword doesn't spuriously match the adjective's attributive use before a person/role noun ('a patient tutor'), and real medical phrasings still match", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const patientTutor = await provider.generate("We're looking for a patient tutor to help kids with math homework.");
+  assert.ok(!patientTutor.entities.some((e) => e.name === "Patient"), "'a patient tutor' (the adjective) must not spuriously match Patient");
+
+  const patientTeacher = await provider.generate("A scheduling app for a patient and friendly piano teacher who gives private lessons.");
+  assert.ok(!patientTeacher.entities.some((e) => e.name === "Patient"), "'a patient and friendly piano teacher' (the adjective) must not spuriously match Patient");
+
+  const patientSupportTeam = await provider.generate("An app to track a patient customer support team handling complaints.");
+  assert.ok(!patientSupportTeam.entities.some((e) => e.name === "Patient"), "'a patient customer support team' (the adjective) must not spuriously match Patient");
+
+  const patientCoach = await provider.generate("A patient and encouraging coach helps students improve.");
+  assert.ok(!patientCoach.entities.some((e) => e.name === "Patient"), "'a patient and encouraging coach' (the adjective) must not spuriously match Patient");
+
+  // The fix must not lose real recall: real medical noun-adjunct phrasings
+  // ("a patient visit", "patient records"), with no role noun nearby, must
+  // still match.
+  const realPatientVisit = await provider.generate("A clinic app to track patient visits and medical history.");
+  assert.ok(realPatientVisit.entities.some((e) => e.name === "Patient"), "a real 'patient visit' description must still get a Patient entity");
+
+  const realPatientRecords = await provider.generate("An app to manage patient records and patient encounters at our clinic.");
+  assert.ok(realPatientRecords.entities.some((e) => e.name === "Patient"), "a real 'patient records'/'patient encounters' description must still get a Patient entity");
+});
+
+/**
  * Regression test for a real bug found in round 889: the exact same
  * grammatical-polysemy shape round 888 fixed for Patient's "patient", but
  * on Customer's bare "client"/"קליינט" keywords. Both are correctly-
