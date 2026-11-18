@@ -89,7 +89,7 @@ import { generateExportFiles } from "../codegen.js";
 import { generateBackupZipEntries, parseColumnOrdersQueryParam } from "../backup.js";
 import { buildZip } from "../zip.js";
 import { computeBusinessTwin } from "../twin.js";
-import { deleteUploadedFile, isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
+import { collectUploadedFileZipEntries, deleteUploadedFile, isPathInsideDir, UPLOADED_FILENAME } from "../uploadPaths.js";
 import type { WhatsAppAttachment, WhatsAppWebManager } from "../whatsappWeb.js";
 import { findMatchingRecord, isPhoneLikeNumber } from "../whatsapp.js";
 import { recordDisplayLabel } from "../displayField.js";
@@ -4017,7 +4017,14 @@ export function createProjectsRouter(
         }
         throw err;
       }
-      const zip = buildZip(files);
+      // Round 2200: without this, every file field's existing attachment
+      // (uploaded in the live preview before this export) rendered as a
+      // real, clickable link in the generated EntityView.jsx that 404ed
+      // forever once deployed -- renderServerJs's own new /api/uploads
+      // static route has nothing to serve without these bundled alongside
+      // it. Mirrors generateBackupZipEntries' own identical round-1203 fix
+      // for the data-backup ZIP.
+      const zip = buildZip([...files, ...collectUploadedFileZipEntries(db, uploadsDir, project)]);
       const safeName = project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "forge-app";
       res.setHeader("content-type", "application/zip");
       res.setHeader("content-disposition", `attachment; filename="${safeName}.zip"`);

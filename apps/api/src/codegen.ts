@@ -669,6 +669,25 @@ const RECORD_LIST_RESPONSE_CAP = 5000;
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "dist")));
+// Round 2200: serves whichever file attachments were already uploaded (in
+// the live Forge AI preview) before this app was exported -- bundled into
+// this export's own "uploads" directory at the exact same relative path
+// shape ("<projectId>/<entityName>/<filename>") every stored file field's
+// own JSON descriptor already points at, so the existing <a href>/<img
+// src> links in the generated EntityView.jsx (which this app, unlike the
+// live preview, has no way to upload a NEW file through) resolve correctly
+// with no rewriting needed anywhere. Same Content-Disposition/nosniff
+// headers as the live Forge AI preview's own /api/uploads route, for the
+// identical stored-content-type-sniffing/XSS reason given there.
+app.use(
+  "/api/uploads",
+  express.static(path.join(__dirname, "uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", "attachment");
+    },
+  }),
+);
 
 app.get("/api/entities", (_req, res) => res.json({ entities: ENTITIES }));
 

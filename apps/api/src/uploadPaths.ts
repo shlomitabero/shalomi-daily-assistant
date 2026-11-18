@@ -1,6 +1,8 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import type { Project } from "@forge/shared";
+import { listRecords, type ForgeDatabase } from "@forge/db";
 
 /**
  * Whether `candidate` resolves to `dir` itself or a true descendant of it.
@@ -117,4 +119,50 @@ export async function deleteUploadedFile(uploadsDir: string, projectId: string, 
   const target = resolveUploadedFilePath(uploadsDir, projectId, entityName, rawValue);
   if (!target) return;
   await rm(target, { force: true }).catch(() => {});
+}
+
+/**
+ * Round 2200: codegen.ts's generated EntityView.jsx renders a `file`
+ * field's existing attachment as a real, clickable <a href={url}>/<img
+ * src={url}> (parseFileFieldValue's own round-908 regex requires `url` to
+ * already match this exact "/api/uploads/<projectId>/<entityName>/
+ * <filename>" shape) -- but the exported app's own generated server.js
+ * never served that route, and the /export ZIP never bundled the actual
+ * uploaded bytes. A record with a file attached before export rendered
+ * what looked like a normal, working link; clicking it 404s against the
+ * exported app's own origin, forever, with no warning anywhere (the one
+ * UI note next to it only says files "can't be added or changed", never
+ * that an EXISTING one won't open). Mirrors backup.ts's own identical
+ * round-1203 fix for the data-backup ZIP (reads each file field's current
+ * upload via resolveUploadedFilePath, the same validated resolution
+ * deleteUploadedFile above uses) -- this one for the code export instead,
+ * at ZIP paths ("uploads/<projectId>/<entityName>/<filename>") that match
+ * the new static route renderServerJs now generates byte-for-byte, so the
+ * already-stored relative URL resolves with no rewriting needed on either
+ * side. Best-effort, like every other caller of resolveUploadedFilePath:
+ * a value that doesn't resolve to a real upload (already deleted,
+ * malformed, or empty) is silently skipped rather than failing the whole
+ * export over one missing file.
+ */
+export function collectUploadedFileZipEntries(db: ForgeDatabase, uploadsDir: string, project: Project): { path: string; content: Buffer }[] {
+  const entries: { path: string; content: Buffer }[] = [];
+  for (const entity of project.spec.entities) {
+    const fileFields = entity.fields.filter((f) => f.type === "file");
+    if (fileFields.length === 0) continue;
+    const records = listRecords(db, project.id, entity);
+    for (const record of records) {
+      for (const field of fileFields) {
+        const target = resolveUploadedFilePath(uploadsDir, project.id, entity.name, record[field.name]);
+        if (!target) continue;
+        let content: Buffer;
+        try {
+          content = readFileSync(target);
+        } catch {
+          continue;
+        }
+        entries.push({ path: `uploads/${project.id}/${entity.name}/${target.slice(target.lastIndexOf(path.sep) + 1)}`, content });
+      }
+    }
+  }
+  return entries;
 }

@@ -3796,6 +3796,80 @@ test("generated server.js's /api/backup CSV still resolves a relation column to 
 });
 
 /**
+ * Round 2200: EntityView.jsx's own "file" branches (table cell and record
+ * form) render a file field's stored descriptor's `url` as a real,
+ * clickable <a href>/<img src> -- but until this round, renderServerJs
+ * never generated any route to serve it, so that link 404ed against the
+ * exported app's own origin, forever, for every attachment uploaded
+ * before export (the one case this app can ever have one at all, since it
+ * has no upload endpoint of its own). Confirmed directly against a real
+ * spawned server.js, with a real file placed exactly where the real
+ * export ZIP now bundles one (uploads/<projectId>/<entityName>/<filename>,
+ * relative to server.js) -- not a mock.
+ */
+test("generated server.js serves an existing file attachment at /api/uploads/<project>/<entity>/<filename>, instead of 404ing forever", async () => {
+  const fileProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [{ name: "Applicant", fields: [{ name: "resume", type: "file", required: false }] }],
+    },
+  };
+  const files = generateExportFiles(fileProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-upload-serve-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const filename = "11111111-1111-1111-1111-111111111111.pdf";
+  mkdirSync(path.join(dir, "uploads", fileProject.id, "Applicant"), { recursive: true });
+  const realBytes = Buffer.from("%PDF-fake-resume-bytes");
+  writeFileSync(path.join(dir, "uploads", fileProject.id, "Applicant", filename), realBytes);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const fileRes = await fetch(`http://localhost:${port}/api/uploads/${fileProject.id}/Applicant/${filename}`);
+    assert.equal(fileRes.status, 200, "the exact relative url EntityView.jsx's own <a href> links to must actually resolve, not 404");
+    const body = Buffer.from(await fileRes.arrayBuffer());
+    assert.deepEqual(body, realBytes, "the served bytes must be the real uploaded file, not something else");
+    assert.equal(fileRes.headers.get("content-disposition"), "attachment", "mirrors the live Forge AI preview's own /api/uploads route's forced-download header");
+    assert.equal(fileRes.headers.get("x-content-type-options"), "nosniff", "mirrors the live Forge AI preview's own /api/uploads route's anti-sniffing header");
+
+    const missingRes = await fetch(`http://localhost:${port}/api/uploads/${fileProject.id}/Applicant/${"2".repeat(12)}-2222-2222-2222-222222222222.pdf`);
+    assert.equal(missingRes.status, 404, "a file that was never actually bundled into this export must still 404, not silently serve something else");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 1182: same port, for this file's generated CALENDAR FEED route
  * (/api/calendar/:entityName.ics) -- `feedRelationDisplayLabel`'s own
  * `targetEntity` lookup, and the ANTECEDENT that decides whether this
