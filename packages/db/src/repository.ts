@@ -283,6 +283,30 @@ function getRowValue(row: Record<string, unknown>, fieldName: string): unknown {
   return matchingKey === undefined ? undefined : row[matchingKey];
 }
 
+/**
+ * Round 2190: a refine can cosmetically recase a field's `name` (e.g.
+ * "status" -> "Status") as a documented no-op (rounds 617-620, 954,
+ * 1159-1162, 1176, 1270, 1530, 1895, 2160) -- the physical column keeps
+ * its original casing, and every OTHER read/match path in this codebase
+ * (getRowValue just above, automations.ts's own resolveStoredFieldName,
+ * findEntity, relation/relationTo matching, ...) was hardened
+ * case-insensitively for exactly this reason. But insertRecord/
+ * updateRecord's own mapping from the caller's submitted `data` object to
+ * `entity.fields` did an exact-case lookup, with no such fallback: a
+ * client whose form was open before the recase still submits the field
+ * under its OLD casing, so `hasOwnProperty(data, field.name)` is false
+ * for the new casing, and the submitted value is silently dropped --
+ * updateRecord keeps the stale stored value (a real edit is lost with a
+ * 200 OK), and insertRecord stores null/empty (or throws a confusing
+ * "field is required") instead of the value the user actually typed.
+ * Mirrors getRowValue's own exact-then-case-insensitive fallback shape.
+ */
+function resolveSubmittedKey(data: Record<string, unknown>, fieldName: string): string | undefined {
+  if (Object.prototype.hasOwnProperty.call(data, fieldName)) return fieldName;
+  const lowerFieldName = fieldName.toLowerCase();
+  return Object.keys(data).find((key) => key.toLowerCase() === lowerFieldName);
+}
+
 function rowToRecord(entity: Entity, row: Record<string, unknown>): EntityRecord {
   const record: EntityRecord = {
     id: row.id as number,
@@ -409,7 +433,10 @@ export function insertRecord(
   const table = tableNameFor(projectId, entity.name);
   ensureCreatedByUserIdColumn(db, table);
   const columns = fieldColumns(entity);
-  const values = entity.fields.map((field) => coerceValue(field, data[field.name], projectId, entity.name));
+  const values = entity.fields.map((field) => {
+    const submittedKey = resolveSubmittedKey(data, field.name);
+    return coerceValue(field, submittedKey === undefined ? undefined : data[submittedKey], projectId, entity.name);
+  });
   const createdAt = new Date().toISOString();
 
   const placeholders = ["?", "?", ...columns.map(() => "?")].join(", ");
@@ -505,8 +532,9 @@ export function updateRecord(
   // satisfies the new definition, even an update (inline cell edit, bulk
   // field update, a Kanban drag) that never touches that field at all.
   const values = entity.fields.map((field) => {
-    if (!Object.prototype.hasOwnProperty.call(data, field.name)) return getRowValue(existingRow, field.name);
-    const coerced = coerceValue(field, data[field.name], projectId, entity.name);
+    const submittedKey = resolveSubmittedKey(data, field.name);
+    if (submittedKey === undefined) return getRowValue(existingRow, field.name);
+    const coerced = coerceValue(field, data[submittedKey], projectId, entity.name);
     // Round 1037: a self-referencing relation field (field.relationTo ===
     // this entity's own name -- e.g. Employee.managerId -> Employee) has
     // no guard anywhere else in the write path: the SQL FOREIGN KEY

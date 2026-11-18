@@ -925,8 +925,15 @@ export function computeChangedFields(
  * it claimed.
  */
 export function computeIgnoredFields(entity: Entity, data: Record<string, unknown>): string[] {
-  const fieldNames = new Set(entity.fields.map((f) => f.name));
-  return Object.keys(data).filter((key) => !fieldNames.has(key));
+  // Round 2190: a cosmetic refine-time field recase (e.g. "status" ->
+  // "Status") is a documented no-op elsewhere in this app -- see
+  // repository.ts's own resolveSubmittedKey doc comment -- but this
+  // exact-case comparison flagged a stale form still submitting the OLD
+  // casing as a field that "no longer exists," even though it does
+  // (just recased), misleading the user right as repository.ts's own
+  // identical exact-case gap was silently dropping their edit.
+  const fieldNamesLower = new Set(entity.fields.map((f) => f.name.toLowerCase()));
+  return Object.keys(data).filter((key) => !fieldNamesLower.has(key.toLowerCase()));
 }
 
 /**

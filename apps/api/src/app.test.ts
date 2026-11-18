@@ -19712,6 +19712,106 @@ test("a stale record-edit submitted after a checkpoint restore shrinks the live 
 });
 
 /**
+ * Round 2190: the test just above covers a field genuinely REMOVED out
+ * from under a stale form -- this one covers the opposite, much more
+ * common case: a field only cosmetically RECASED by a refine (rounds
+ * 617-620, 954, 1159-1162, 1176, 1270, 1530, 1895, 2160's own documented
+ * no-op). Before this fix, computeIgnoredFields (routes/projects.ts) and
+ * repository.ts's insertRecord/updateRecord both did an exact-case
+ * comparison between the submitted body's keys and the entity's CURRENT
+ * field names, with no case-insensitive fallback (unlike every other
+ * read/match path in this app, which was hardened case-insensitively for
+ * this exact reason) -- so a stale form still submitting a recased
+ * field's OLD casing got back `ignoredFields: ["status"]` (even though
+ * "status" still exists, just as "Status" now) and had that field's real
+ * edit silently discarded, with the record's previous value for it
+ * preserved under a 200 OK.
+ */
+test("a stale record-edit submitted after a field is recased by a refine (not removed) still applies, and is not falsely reported as ignored", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `stale-edit-after-recase-${randomUUID()}@example.com`;
+    const token = await signup(baseUrl, email);
+
+    const specLowercase: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [
+        {
+          name: "Task",
+          fields: [
+            { name: "title", type: "text", required: true },
+            { name: "status", type: "text", required: false },
+          ],
+        },
+      ],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+
+    const projectId = randomUUID();
+    insertProject(db, {
+      id: projectId,
+      ownerId: findUserByEmail(db, email)!.id,
+      name: "Task tracker",
+      description: "A task tracker.",
+      spec: specLowercase,
+    });
+    diffAndMigrate(db, projectId, undefined, specLowercase);
+    markProjectBuilt(db, projectId);
+
+    // A real record is created through the real HTTP route while the spec
+    // still has the lowercase "status" casing.
+    const createRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Task`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Write report", status: "In progress" }),
+    });
+    assert.equal(createRes.status, 201);
+    const { record: created } = (await createRes.json()) as { record: { id: number; status: string } };
+    assert.equal(created.status, "In progress", "sanity check: the record really has a stored status for this test to mean anything");
+
+    // "Tab 2": a refine cosmetically recases "status" to "Status" --
+    // a documented no-op migration, unlike the field-removal test above.
+    const specRecased: ProductSpec = { ...specLowercase, entities: [{ ...specLowercase.entities[0], fields: [specLowercase.entities[0].fields[0], { ...specLowercase.entities[0].fields[1], name: "Status" }] }] };
+    const changes = diffAndMigrate(db, projectId, specLowercase, specRecased);
+    assert.deepEqual(changes, [], "a pure case rename is a no-op migration (rounds 617/618), for this test to mean anything");
+    updateProjectSpec(db, projectId, specRecased);
+
+    // "Tab 1" (never saw the recase): submits its already-open stale
+    // form, which still knows this field as "status", not "Status".
+    const patchRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Task/${created.id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Write report (final draft)", status: "Done" }),
+    });
+    assert.equal(patchRes.status, 200);
+    const patchBody = (await patchRes.json()) as { record: { title: string; Status?: string }; ignoredFields?: string[] };
+    assert.equal(patchBody.record.title, "Write report (final draft)");
+    assert.equal(patchBody.record.Status, "Done", "an edit submitted under the field's stale pre-recase casing must still apply, not be silently discarded");
+    assert.equal(patchBody.ignoredFields, undefined, "a recased (not removed) field must never be reported as ignored -- it still exists, just under a different casing");
+
+    // Cross-checks the raw stored row directly, the same way the
+    // field-removal test above does.
+    const table = tableNameFor(projectId, "Task");
+    const rawRow = db.prepare(`SELECT * FROM ${quoteIdentifier(table)} WHERE id = ?`).get(created.id) as { status: string };
+    assert.equal(rawRow.status, "Done", "the stale-cased edit must actually reach the physical column, which keeps its original casing");
+
+    // The identical gap on the CREATE side.
+    const staleCreateRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Task`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "Second task", status: "New" }),
+    });
+    assert.equal(staleCreateRes.status, 201);
+    const staleCreateBody = (await staleCreateRes.json()) as { record: { Status?: string }; ignoredFields?: string[] };
+    assert.equal(staleCreateBody.record.Status, "New", "a create submitted under the field's stale pre-recase casing must still store the submitted value");
+    assert.equal(staleCreateBody.ignoredFields, undefined);
+  });
+});
+
+/**
  * Round 977: diffAndMigrate's own type_changed detection never touches a
  * retyped field's existing column DATA (by design -- same test file's own
  * migrationWarning tests just above confirm that), but it also never

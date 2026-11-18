@@ -789,6 +789,41 @@ test("a field renamed only by letter case across a refine stays readable, writab
 });
 
 /**
+ * Round 2190: the test just above only ever submits data under the
+ * recased field's OWN current casing ("Name"), or edits a DIFFERENT,
+ * untouched field ("status") after the rename -- it never submits data
+ * under the recased field's own STALE (pre-rename) key, which is exactly
+ * what a client whose form was already open before the recase actually
+ * sends. insertRecord/updateRecord's own `data[field.name]`/
+ * `hasOwnProperty(data, field.name)` lookup was an exact-case match with
+ * no fallback (unlike getRowValue's read-side case-insensitive fallback,
+ * or automations.ts's resolveStoredFieldName), so a stale-cased submit
+ * for the recased field itself was silently treated as "field not
+ * submitted" -- updateRecord kept the OLD stored value instead of
+ * applying the caller's edit (a 200 OK that silently did nothing), and
+ * insertRecord stored null/empty instead of the value the caller typed.
+ */
+test("submitting a write under a field's STALE pre-rename casing (not just a different, untouched field) still applies, instead of being silently dropped", () => {
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", spec);
+  const created = insertRecord(db, "proj1", customer, { name: "Alice", status: "New" });
+
+  const renamed: Entity = { ...customer, fields: [customer.fields[0], customer.fields[1], { ...customer.fields[2], name: "Status" }] };
+  const changes = diffAndMigrate(db, "proj1", spec, { ...spec, entities: [renamed] });
+  assert.deepEqual(changes, [], "a pure case rename is a no-op migration (rounds 617/618)");
+
+  // "Tab 1" never saw the rename -- its already-open edit form still
+  // submits the field under its OLD casing ("status"), not "Status".
+  const updated = updateRecord(db, "proj1", renamed, created.id, { status: "Won" });
+  assert.equal(updated.Status, "Won", "an edit submitted under the field's stale pre-rename casing must still apply, not be silently discarded");
+
+  // Same gap on the CREATE side: a stale "new record" form built before
+  // the rename submits the same stale-cased key.
+  const createdStale = insertRecord(db, "proj1", renamed, { name: "Bob", status: "Won" });
+  assert.equal(createdStale.Status, "Won", "a create submitted under the field's stale pre-rename casing must still store the submitted value, not null/empty");
+});
+
+/**
  * Round 2140: diffAndMigrate only reacts to a field's TYPE changing
  * (prevField.type !== field.type), never to `required` alone, so flipping
  * `name` from required to optional across a refine leaves the column's
