@@ -71,6 +71,7 @@ import {
   listSchemaLabelEdits,
   insertAutomationRuleDeletion,
   listAutomationRuleDeletions,
+  getIdempotencyRecord,
   type ForgeDatabase,
   type AutomationTrigger,
   type AutomationToMode,
@@ -2909,13 +2910,15 @@ export function createProjectsRouter(
     "/projects/:id/collaborators/:userId/role",
     inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
-      const parsed = UpdateCollaboratorRoleSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${req.params.id}/collaborators/${req.params.userId}/role`, async () => {
         const project = requireProjectOwner(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): validation must stay AFTER the
+        // access check -- see the /roles route's own doc comment above.
+        const parsed = UpdateCollaboratorRoleSchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         if (req.params.userId === project.ownerId) {
           throw new HttpError(400, "The project owner doesn't have a collaborator role to change", "CANNOT_CHANGE_OWNER_ROLE");
         }
@@ -3236,13 +3239,15 @@ export function createProjectsRouter(
     "/projects/:id/transfer-ownership",
     inviteCollaboratorRateLimiter,
     asyncRoute(async (req, res) => {
-      const parsed = TransferOwnershipSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/transfer-ownership`, async () => {
         const project = requireProjectOwner(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): validation must stay AFTER the
+        // access check -- see the /roles route's own doc comment above.
+        const parsed = TransferOwnershipSchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         const previousRole = getCollaboratorRole(db, project.id, parsed.data.userId);
         if (previousRole === null) {
           throw new HttpError(404, "Collaborator not found", "COLLABORATOR_NOT_FOUND");
@@ -3306,7 +3311,23 @@ export function createProjectsRouter(
     "/projects/:id/answers",
     aiGenerationRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+      // Round 2189 (regression-fix audit note): unlike every other route
+      // this round touched, this one's body MUST be parsed before the
+      // route even knows whether it's taking the no-op early-return below
+      // or the withIdempotency-guarded mutating path -- `sections.length`
+      // depends on parsed.data. That means a fresh (non-replay) call with
+      // an invalid body from a viewer gets 400 here, not 403, unlike
+      // /roles and friends (see that route's own doc comment) where
+      // access and validation both now run inside the same callback in
+      // the right order. Restoring access-before-validation here would
+      // mean checking access unconditionally BEFORE withIdempotency is
+      // ever called, which reintroduces the exact replay-blocked-by-
+      // revoked-access bug this same round already fixed for the mutating
+      // branch just below (see its own doc comment) -- the two goals
+      // conflict for this one route. No test currently depends on the
+      // 403-before-400 ordering specifically for /answers (unlike
+      // automations-create, where this was a real regression), so this is
+      // left as a deliberate, documented tradeoff rather than a fix.
       const parsed = AnswerQuestionsSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
@@ -3330,6 +3351,13 @@ export function createProjectsRouter(
         sections.push(`Additional request: ${additionalRequest}`);
       }
       if (sections.length === 0) {
+        // Round 2189: this no-op path never reaches withIdempotency at all
+        // (nothing to cache), so there's no idempotency-replay hazard here
+        // -- a fresh access check on every call is correct as-is. Moved
+        // below the body-shape parsing above so a request with no real
+        // answers/request never pays for a DB access-check roundtrip only
+        // to immediately return the project unchanged.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
         res.json({ project });
         return;
       }
@@ -3342,7 +3370,21 @@ export function createProjectsRouter(
       // again -- a second real AI call -- and overwrite project.spec a
       // second time.
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/answers`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/answers`, async () => {
+        // Round 2189: this access check used to run at the very top of the
+        // route, BEFORE withIdempotency was ever called at all -- the
+        // same anti-pattern round 2183's own two checks just below it were
+        // already fixed for, just one level higher up (and therefore an
+        // even earlier blocker on a cached replay): withIdempotency's own
+        // "done" branch returns the cached response WITHOUT ever invoking
+        // this callback, so an access check sitting outside it ran on
+        // EVERY call including a genuine replay, 404ing a replay whose own
+        // key's work had already fully succeeded if the caller's access
+        // was revoked in between (the collaborator-removed-after-success
+        // scenario rounds 945/2099 already document for their own sibling
+        // routes). Resolved fresh here, inside the callback, so a cached
+        // "done" replay never re-evaluates it at all.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
         // Round 2183: these two checks used to run BEFORE withIdempotency
         // was ever called, instead of inside this callback -- but
         // withIdempotency's own "done" branch (idempotency.ts) returns the
@@ -3663,14 +3705,22 @@ export function createProjectsRouter(
     "/projects/:id/checkpoints/:checkpointId/restore",
     checkpointRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/checkpoints/${req.params.checkpointId}/restore`,
+        `POST /projects/${req.params.id}/checkpoints/${req.params.checkpointId}/restore`,
         async () => {
+          // Round 2189: this used to run BEFORE withIdempotency was ever
+          // called, instead of inside this callback -- see the /answers
+          // route's own doc comment (above, earlier in this file) for the
+          // full mechanism. A comment that used to sit a few lines below
+          // this one even noted that access "can't have changed in
+          // between" was known false (round 2089's repros), but never
+          // actually fixed the real blocker: the OUTER check itself, which
+          // ran on every call including a genuine idempotency-key replay.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           const checkpoint = tryGetCheckpoint(db, req.params.checkpointId);
           if (!checkpoint || checkpoint.projectId !== project.id) {
             throw new HttpError(404, `Checkpoint "${req.params.checkpointId}" not found`, "CHECKPOINT_NOT_FOUND");
@@ -3843,18 +3893,22 @@ export function createProjectsRouter(
     "/projects/:id/checkpoints/:checkpointId",
     checkpointRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = RenameCheckpointSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/checkpoints/${req.params.checkpointId}`,
+        `PATCH /projects/${req.params.id}/checkpoints/${req.params.checkpointId}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the /answers
+          // route's own doc comment above for the full mechanism.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the /roles route's own doc comment above.
+          const parsed = RenameCheckpointSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           const checkpoint = renameCheckpoint(db, project.id, req.params.checkpointId, parsed.data.label);
           return { status: 200, body: { checkpoint } };
         },
@@ -3891,14 +3945,16 @@ export function createProjectsRouter(
     "/projects/:id/checkpoints/:checkpointId",
     checkpointRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/checkpoints/${req.params.checkpointId}`,
+        `DELETE /projects/${req.params.id}/checkpoints/${req.params.checkpointId}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the /answers
+          // route's own doc comment above for the full mechanism.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           deleteCheckpoint(db, project.id, req.params.checkpointId);
           return { status: 204, body: null };
         },
@@ -4055,12 +4111,6 @@ export function createProjectsRouter(
     "/projects/:id/integrations/whatsapp/send",
     whatsappRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = WhatsAppSendSchema.safeParse(req.body ?? {});
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
-      const { to, message, attachment } = parsed.data;
       // Unlike every sibling mutating route in this file (/roles,
       // /assumptions, /entities, /entities/:entityName/automations, the
       // record-creation route, …), this one was never wrapped in
@@ -4075,8 +4125,22 @@ export function createProjectsRouter(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/integrations/whatsapp/send`,
+        `POST /projects/${req.params.id}/integrations/whatsapp/send`,
         async () => {
+          // Round 2189: this access check used to run BEFORE withIdempotency
+          // was ever called at all -- see the /answers route's own doc
+          // comment (above, earlier in this file) for the full mechanism.
+          // Round 2101 already moved the connection-status/attachment
+          // checks just below into this same callback, but left this
+          // original, even-earlier blocker in place.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the /roles route's own doc comment above.
+          const parsed = WhatsAppSendSchema.safeParse(req.body ?? {});
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
+          const { to, message, attachment } = parsed.data;
           // Round 2101: the connection-status check and the attachment's
           // existsSync check used to run BEFORE withIdempotency was ever
           // called (above this callback) -- but withIdempotency's own
@@ -4253,14 +4317,16 @@ export function createProjectsRouter(
     "/projects/:id/integrations/whatsapp/messages/:messageId",
     whatsappHistoryRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/integrations/whatsapp/messages/${req.params.messageId}`,
+        `DELETE /projects/${req.params.id}/integrations/whatsapp/messages/${req.params.messageId}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the /answers
+          // route's own doc comment above for the full mechanism.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           deleteWhatsAppMessage(db, project.id, req.params.messageId);
           return { status: 204, body: null };
         },
@@ -4386,11 +4452,6 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName",
     recordWriteRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
-      }
-      const entity = findEntity(project, req.params.entityName);
       /**
        * Round 594: the one business-record-mutation route this design's
        * own "Full inventory of mutating routes" (docs/wakeRetry-idempotency-
@@ -4413,8 +4474,18 @@ export function createProjectsRouter(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/entities/${entity.name}`,
+        `POST /projects/${req.params.id}/entities/${req.params.entityName}`,
         async () => {
+          // Round 2189: the access check, the built-status check, and
+          // findEntity all used to run BEFORE withIdempotency was ever
+          // called -- see the /answers route's own doc comment above for
+          // the full mechanism. Moved together since the status check and
+          // findEntity both depend on `project`.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          if (project.status !== "built") {
+            throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
+          }
+          const entity = findEntity(project, req.params.entityName);
           /**
            * Same `PRAGMA foreign_keys = ON` constraint the DELETE route
            * below already translates (round 292), but on the write side:
@@ -4520,6 +4591,30 @@ export function createProjectsRouter(
     fileUploadRateLimiter,
     (req, res, next) => {
       try {
+        // Round 2189: this whole stage runs unconditionally, before the
+        // async handler below -- and before withIdempotency itself -- even
+        // starts, specifically so a doomed request never reaches multer's
+        // own disk-storage middleware (round 907's own comment just
+        // below). That means a genuine idempotency-key replay of an
+        // already-succeeded upload would otherwise hit this stage's own
+        // access/field checks on CURRENT state and 404/400 right here,
+        // before ever reaching withIdempotency's own "done" short-circuit
+        // -- the same anti-pattern the /answers route's own doc comment
+        // (above, earlier in this file) documents, just one Express stage
+        // earlier than usual. Peeking at the idempotency table directly
+        // (the same lookup withIdempotency itself does internally) lets a
+        // real "done" replay skip this validation and fall straight
+        // through to the async handler, which replays the cached response
+        // without resolving anything or ever touching multer.
+        const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
+        if (idempotencyKey) {
+          const routeKey = `POST /projects/${req.params.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/upload`;
+          const existing = getIdempotencyRecord(db, idempotencyKey);
+          if (existing && existing.userId === req.userId && existing.route === routeKey && existing.status === "done") {
+            next();
+            return;
+          }
+        }
         const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
         if (project.status !== "built") {
           throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
@@ -4560,34 +4655,42 @@ export function createProjectsRouter(
     // a second file at all, not merely "writes one but the client doesn't
     // see its URL."
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const entity = findEntity(project, req.params.entityName);
-      const field = findField(entity, req.params.fieldName);
-      // Round 1211: normalized to the entity's own canonical-cased name
-      // now that findEntity has resolved it -- multer's own destination
-      // callback (createUploadMiddleware above) and this route's own
-      // response body below both read req.params.entityName directly, so
-      // a differently-cased but still-resolving :entityName (findEntity's
-      // own case-insensitive fallback, round 1162 -- a real, demonstrated
-      // occurrence after a case-only entity rename, or simply a stale
-      // client) would otherwise write the file to, and return a url
-      // naming, a directory cased differently from every downstream
-      // reader of the same descriptor: coerceValue's round-1210 fix
-      // (packages/db/src/repository.ts) requires the stored url to match
-      // this record's own canonical entity.name exactly, rejecting a
-      // completely legitimate upload the moment its descriptor is saved
-      // into a record; resolveUploadedFilePath/deleteUploadedFile
-      // (uploadPaths.ts) rebuild the physical path from the canonical
-      // entityName they're called with, never finding a file actually
-      // written under the mismatched casing either.
-      req.params.entityName = entity.name;
+      // Round 2189: the key below is built from the RAW, un-normalized
+      // params (matching the pre-multer middleware stage's own identical
+      // routeKey above, so a replay's lookup there and this call's lookup
+      // here always agree on the same string) -- access/entity/field
+      // resolution, and the round-1211 canonicalization that depends on
+      // it, all move inside the callback below instead of running out
+      // here, for the same "a check before withIdempotency still blocks a
+      // cached replay" reason as every other route fixed this round.
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/entities/${entity.name}/fields/${field.name}/upload`,
+        `POST /projects/${req.params.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/upload`,
         async () => {
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          const entity = findEntity(project, req.params.entityName);
+          const field = findField(entity, req.params.fieldName);
+          // Round 1211: normalized to the entity's own canonical-cased name
+          // now that findEntity has resolved it -- multer's own destination
+          // callback (createUploadMiddleware above) and this route's own
+          // response body below both read req.params.entityName directly, so
+          // a differently-cased but still-resolving :entityName (findEntity's
+          // own case-insensitive fallback, round 1162 -- a real, demonstrated
+          // occurrence after a case-only entity rename, or simply a stale
+          // client) would otherwise write the file to, and return a url
+          // naming, a directory cased differently from every downstream
+          // reader of the same descriptor: coerceValue's round-1210 fix
+          // (packages/db/src/repository.ts) requires the stored url to match
+          // this record's own canonical entity.name exactly, rejecting a
+          // completely legitimate upload the moment its descriptor is saved
+          // into a record; resolveUploadedFilePath/deleteUploadedFile
+          // (uploadPaths.ts) rebuild the physical path from the canonical
+          // entityName they're called with, never finding a file actually
+          // written under the mismatched casing either.
+          req.params.entityName = entity.name;
           await new Promise<void>((resolve, reject) => {
             upload.single("file")(req, res, (err: unknown) => {
               if (err instanceof MulterError) {
@@ -4759,14 +4862,16 @@ export function createProjectsRouter(
     "/projects/:id/integrations/whatsapp/attachments/upload",
     whatsappRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/integrations/whatsapp/attachments/upload`,
+        `POST /projects/${req.params.id}/integrations/whatsapp/attachments/upload`,
         async () => {
+          // Round 2189: moved inside the callback -- see the /answers
+          // route's own doc comment above for the full mechanism.
+          requireProjectWriteAccess(db, req.params.id, req.userId!);
           await new Promise<void>((resolve, reject) => {
             whatsappAttachmentUpload.single("file")(req, res, (err: unknown) => {
               if (err instanceof MulterError) {
@@ -4877,26 +4982,36 @@ export function createProjectsRouter(
    * tab), the retry silently reverts it back to the old value, with no
    * error to either side. findEntity moves inside the callback (not just
    * the mutation) since it reads live state that could have changed by
-   * the time a request actually runs; RenameEntityLabelSchema's own
-   * request-body-shape validation stays outside, matching every sibling
-   * PATCH route's established convention.
+   * the time a request actually runs. RenameEntityLabelSchema's own
+   * request-body-shape validation moved inside this callback too (round
+   * 2189), right after the access check -- leaving it outside would have
+   * let an invalid body from a viewer with no write access get 400
+   * instead of 403, reversing this route's original access-before-
+   * validation order the moment the access check itself moved inside.
    */
   router.patch(
     "/projects/:id/entities/:entityName/label",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = RenameEntityLabelSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/entities/${req.params.entityName}/label`,
+        `PATCH /projects/${req.params.id}/entities/${req.params.entityName}/label`,
         async () => {
+          // Round 2189: the access check itself also used to run BEFORE
+          // withIdempotency, one level earlier than round 2188's own fix
+          // below -- see the /answers route's own doc comment (above,
+          // earlier in this file) for why that's the identical bug one
+          // guard higher up.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the /roles route's own doc comment above.
+          const parsed = RenameEntityLabelSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           // Round 2188: this used to run BEFORE withIdempotency was ever
           // called, instead of inside this callback -- but
           // withIdempotency's own "done" branch (idempotency.ts) returns
@@ -4969,18 +5084,22 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/fields/:fieldName/label",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = RenameFieldLabelSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/label`,
+        `PATCH /projects/${req.params.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/label`,
         async () => {
+          // Round 2189: moved inside the callback -- see the entity-label
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the /roles route's own doc comment above.
+          const parsed = RenameFieldLabelSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           // Round 2188: moved inside the callback -- same activePipelines
           // guard as the entity-label route above, moved for the same
           // reason -- see its own doc comment.
@@ -5036,18 +5155,22 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/fields/:fieldName/required",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = SetFieldRequiredSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/required`,
+        `PATCH /projects/${req.params.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/required`,
         async () => {
+          // Round 2189: moved inside the callback -- see the entity-label
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the /roles route's own doc comment above.
+          const parsed = SetFieldRequiredSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           // Round 2188: both checks below used to run BEFORE
           // withIdempotency was ever called -- see the entity-label
           // route's own doc comment above for the general mechanism. The
@@ -5126,26 +5249,31 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/fields/:fieldName/type",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = SetFieldTypeSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
-      // Round 1196: same case-insensitive tolerance, same reason, as the
-      // identical check in the POST .../fields route just above.
-      if (
-        parsed.data.type === "relation" &&
-        !project.spec.entities.some((e) => e.name === parsed.data.relationTo || e.name.toLowerCase() === parsed.data.relationTo?.toLowerCase())
-      ) {
-        throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/type`,
+        `PATCH /projects/${req.params.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}/type`,
         async () => {
+          // Round 2189: moved inside the callback -- see the entity-label
+          // route's own doc comment above. The relation-target validation
+          // just below depends on `project`, so it moves with it.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the /roles route's own doc comment above.
+          const parsed = SetFieldTypeSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
+          // Round 1196: same case-insensitive tolerance, same reason, as the
+          // identical check in the POST .../fields route just above.
+          if (
+            parsed.data.type === "relation" &&
+            !project.spec.entities.some((e) => e.name === parsed.data.relationTo || e.name.toLowerCase() === parsed.data.relationTo?.toLowerCase())
+          ) {
+            throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
+          }
           // Round 2188: moved inside the callback -- see the field-
           // required route's own doc comment above for why the
           // `status === "built"` direction is the vulnerable one.
@@ -5303,13 +5431,23 @@ export function createProjectsRouter(
     "/projects/:id/roles",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddRoleSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/roles`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/roles`, async () => {
+        // Round 2189: the access check itself also used to run BEFORE
+        // withIdempotency -- see the /answers route's own doc comment
+        // (above, earlier in this file).
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): body validation must stay AFTER the
+        // access check, not before it -- a viewer with no write access
+        // must get 403 even when their body also fails validation. Moving
+        // only the access check inside this callback while leaving this
+        // safeParse outside/before it silently flipped that order; see
+        // this file's own regression note on the automations-create route
+        // below for the full story.
+        const parsed = AddRoleSchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         // Round 2188: moved inside the callback -- see the entity-label
         // route's own doc comment (above, earlier in this file) for why a
         // guard placed before withIdempotency still re-evaluates against
@@ -5346,13 +5484,17 @@ export function createProjectsRouter(
     "/projects/:id/assumptions",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddAssumptionSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/assumptions`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/assumptions`, async () => {
+        // Round 2189: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): validation must stay AFTER the
+        // access check -- see the POST /roles route's own doc comment above.
+        const parsed = AddAssumptionSchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         // Round 2188: moved inside the callback -- see the POST /roles
         // route's own doc comment above.
         if (activePipelines.has(project.id)) {
@@ -5391,13 +5533,17 @@ export function createProjectsRouter(
     "/projects/:id/personas",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddPersonaSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/personas`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/personas`, async () => {
+        // Round 2189: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): validation must stay AFTER the
+        // access check -- see the POST /roles route's own doc comment above.
+        const parsed = AddPersonaSchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         // Round 2188: moved inside the callback -- see the POST /roles
         // route's own doc comment above.
         if (activePipelines.has(project.id)) {
@@ -5438,9 +5584,11 @@ export function createProjectsRouter(
     "/projects/:id/roles/:index",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${project.id}/roles/${req.params.index}`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `DELETE /projects/${req.params.id}/roles/${req.params.index}`, async () => {
+        // Round 2189: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
         // Round 2188: moved inside the callback -- see the POST /roles
         // route's own doc comment above.
         if (activePipelines.has(project.id)) {
@@ -5475,14 +5623,16 @@ export function createProjectsRouter(
     "/projects/:id/assumptions/:index",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/assumptions/${req.params.index}`,
+        `DELETE /projects/${req.params.id}/assumptions/${req.params.index}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           // Round 2188: moved inside the callback -- see the POST /roles
           // route's own doc comment above.
           if (activePipelines.has(project.id)) {
@@ -5525,14 +5675,16 @@ export function createProjectsRouter(
     "/projects/:id/personas/:index",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/personas/${req.params.index}`,
+        `DELETE /projects/${req.params.id}/personas/${req.params.index}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           // Round 2188: moved inside the callback -- see the POST /roles
           // route's own doc comment above.
           if (activePipelines.has(project.id)) {
@@ -5577,23 +5729,27 @@ export function createProjectsRouter(
    * (the OLD value) against the list which, post-rename, now holds the NEW
    * value at that index -- the same confusing ROLE_STALE_INDEX for a rename
    * that already fully succeeded. parseListIndex/assertIndexStillMatches
-   * move inside the callback for the same reason as the DELETE route;
-   * AddRoleSchema's own body-shape validation stays outside, matching the
-   * add-field route's own convention (deterministic, side-effect-free, so
-   * safe to re-run even on a retry that the idempotency wrap short-circuits
-   * before ever reaching here).
+   * move inside the callback for the same reason as the DELETE route.
+   * AddRoleSchema's own body-shape validation moved inside this callback
+   * too (round 2189), right after the access check -- leaving it outside
+   * would have let an invalid body from a viewer with no write access get
+   * 400 instead of 403.
    */
   router.patch(
     "/projects/:id/roles/:index",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddRoleSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${project.id}/roles/${req.params.index}`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `PATCH /projects/${req.params.id}/roles/${req.params.index}`, async () => {
+        // Round 2189: moved inside the callback -- see the POST /roles
+        // route's own doc comment above.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): validation must stay AFTER the
+        // access check -- see the POST /roles route's own doc comment above.
+        const parsed = AddRoleSchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         // Round 2188: moved inside the callback -- see the POST /roles
         // route's own doc comment above.
         if (activePipelines.has(project.id)) {
@@ -5628,18 +5784,22 @@ export function createProjectsRouter(
     "/projects/:id/assumptions/:index",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddAssumptionSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/assumptions/${req.params.index}`,
+        `PATCH /projects/${req.params.id}/assumptions/${req.params.index}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the POST /roles route's own doc comment above.
+          const parsed = AddAssumptionSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           // Round 2188: moved inside the callback -- see the POST /roles
           // route's own doc comment above.
           if (activePipelines.has(project.id)) {
@@ -5689,18 +5849,22 @@ export function createProjectsRouter(
     "/projects/:id/personas/:index",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddPersonaSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/personas/${req.params.index}`,
+        `PATCH /projects/${req.params.id}/personas/${req.params.index}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the POST /roles
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the POST /roles route's own doc comment above.
+          const parsed = AddPersonaSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           // Round 2188: moved inside the callback -- see the POST /roles
           // route's own doc comment above.
           if (activePipelines.has(project.id)) {
@@ -5773,14 +5937,17 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/entities/${req.params.entityName}`,
+        `DELETE /projects/${req.params.id}/entities/${req.params.entityName}`,
         async () => {
+          // Round 2189: the access check itself also used to run BEFORE
+          // withIdempotency -- see the /answers route's own doc comment
+          // (above, earlier in this file).
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           // Round 2188: both checks below used to run BEFORE
           // withIdempotency was ever called -- see the field-required
           // route's own doc comment (above, earlier in this file) for why
@@ -5893,13 +6060,17 @@ export function createProjectsRouter(
     "/projects/:id/entities",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = AddEntitySchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${project.id}/entities`, async () => {
+      const { status, body } = await withIdempotency(db, idempotencyKey, req.userId!, `POST /projects/${req.params.id}/entities`, async () => {
+        // Round 2189: moved inside the callback -- see the entity-removal
+        // route's own doc comment above.
+        const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+        // Round 2189 (regression fix): validation must stay AFTER the
+        // access check -- see the POST /roles route's own doc comment above.
+        const parsed = AddEntitySchema.safeParse(req.body);
+        if (!parsed.success) {
+          throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+        }
         // Round 2188: both checks below moved inside the callback -- see
         // the entity-removal route's own doc comment above.
         if (project.status === "built") {
@@ -5959,14 +6130,16 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/duplicate",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/entities/${req.params.entityName}/duplicate`,
+        `POST /projects/${req.params.id}/entities/${req.params.entityName}/duplicate`,
         async () => {
+          // Round 2189: moved inside the callback -- see the entity-removal
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           // Round 2188: both checks below moved inside the callback -- see
           // the entity-removal route's own doc comment above.
           if (project.status === "built") {
@@ -6065,36 +6238,42 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/fields",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const entity = findEntity(project, req.params.entityName);
-      const parsed = AddFieldSchema.safeParse(req.body);
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
-      // Round 1196: case-insensitive, mirroring findEntity's own round-1162
-      // fallback -- this route's relationTo dropdown is populated from the
-      // client's own `allEntities`, which can go stale by letter case alone
-      // if a DIFFERENT browser tab/collaborator renames the target entity
-      // (a supported, case-only-safe live action, see migrate.ts) between
-      // this form being opened and submitted; this exact client-side race
-      // is otherwise blocked by this file's own cross-entity busy-gating
-      // (anyEntityOrAddBusy in App.tsx), but that gating has no visibility
-      // across separate tabs/sessions, so the server's own check still
-      // needs this same tolerance every other relationTo-resolution call
-      // site in this app already has (rounds 1159-1188).
-      if (
-        parsed.data.type === "relation" &&
-        !project.spec.entities.some((e) => e.name === parsed.data.relationTo || e.name.toLowerCase() === parsed.data.relationTo?.toLowerCase())
-      ) {
-        throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/entities/${entity.name}/fields`,
+        `POST /projects/${req.params.id}/entities/${req.params.entityName}/fields`,
         async () => {
+          // Round 2189: the access check and entity resolution both used
+          // to run BEFORE withIdempotency -- see the entity-removal
+          // route's own doc comment above. The relation-target validation
+          // just below depends on `project`, so it moves with them.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): validation must stay AFTER the
+          // access check -- see the POST /roles route's own doc comment above.
+          const parsed = AddFieldSchema.safeParse(req.body);
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
+          const entity = findEntity(project, req.params.entityName);
+          // Round 1196: case-insensitive, mirroring findEntity's own round-1162
+          // fallback -- this route's relationTo dropdown is populated from the
+          // client's own `allEntities`, which can go stale by letter case alone
+          // if a DIFFERENT browser tab/collaborator renames the target entity
+          // (a supported, case-only-safe live action, see migrate.ts) between
+          // this form being opened and submitted; this exact client-side race
+          // is otherwise blocked by this file's own cross-entity busy-gating
+          // (anyEntityOrAddBusy in App.tsx), but that gating has no visibility
+          // across separate tabs/sessions, so the server's own check still
+          // needs this same tolerance every other relationTo-resolution call
+          // site in this app already has (rounds 1159-1188).
+          if (
+            parsed.data.type === "relation" &&
+            !project.spec.entities.some((e) => e.name === parsed.data.relationTo || e.name.toLowerCase() === parsed.data.relationTo?.toLowerCase())
+          ) {
+            throw new HttpError(400, `"${parsed.data.relationTo}" is not an entity in this project`, "RELATION_TARGET_NOT_FOUND");
+          }
           // Round 2188: both checks below moved inside the callback -- see
           // the entity-removal route's own doc comment above.
           if (project.status === "built") {
@@ -6144,15 +6323,18 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/fields/:fieldName",
     specEditRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const entity = findEntity(project, req.params.entityName);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/entities/${entity.name}/fields/${req.params.fieldName}`,
+        `DELETE /projects/${req.params.id}/entities/${req.params.entityName}/fields/${req.params.fieldName}`,
         async () => {
+          // Round 2189: the access check and entity resolution both used
+          // to run BEFORE withIdempotency -- see the entity-removal
+          // route's own doc comment above.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          const entity = findEntity(project, req.params.entityName);
           // Round 2188: both checks below moved inside the callback -- see
           // the entity-removal route's own doc comment above.
           if (project.status === "built") {
@@ -6211,12 +6393,6 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/:recordId",
     recordWriteRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
-      }
-      const entity = findEntity(project, req.params.entityName);
-      const recordId = parseRecordId(req.params.recordId);
       /**
        * Round 792: same withIdempotency extension as the DELETE route just
        * below's own doc comment -- a response lost in transit after
@@ -6236,8 +6412,18 @@ export function createProjectsRouter(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/entities/${entity.name}/${recordId}`,
+        `PATCH /projects/${req.params.id}/entities/${req.params.entityName}/${req.params.recordId}`,
         async () => {
+          // Round 2189: the access check, built-status check, findEntity,
+          // and recordId parsing all used to run BEFORE withIdempotency --
+          // see the /answers route's own doc comment (above, earlier in
+          // this file) for the full mechanism.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          if (project.status !== "built") {
+            throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
+          }
+          const entity = findEntity(project, req.params.entityName);
+          const recordId = parseRecordId(req.params.recordId);
           const before = getRecord(db, project.id, entity, recordId);
           // Same FOREIGN KEY constraint translation as the POST route above --
           // see its own comment for why this is reachable through the real UI.
@@ -6301,12 +6487,6 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/:recordId",
     recordWriteRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      if (project.status !== "built") {
-        throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
-      }
-      const entity = findEntity(project, req.params.entityName);
-      const recordId = parseRecordId(req.params.recordId);
       /**
        * Round 792: every other real-effect mutation on a record (create,
        * update) already got withIdempotency protection (rounds 471-594) --
@@ -6329,8 +6509,18 @@ export function createProjectsRouter(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/entities/${entity.name}/${recordId}`,
+        `DELETE /projects/${req.params.id}/entities/${req.params.entityName}/${req.params.recordId}`,
         async () => {
+          // Round 2189: the access check, built-status check, findEntity,
+          // and recordId parsing all used to run BEFORE withIdempotency --
+          // see the /answers route's own doc comment (above, earlier in
+          // this file) for the full mechanism.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          if (project.status !== "built") {
+            throw new HttpError(409, "Project has not been built yet — call POST /build first", "BUILD_REQUIRED");
+          }
+          const entity = findEntity(project, req.params.entityName);
+          const recordId = parseRecordId(req.params.recordId);
           // Fetched before the delete below purely so a `file`-type field's
           // own upload can be cleaned up afterward (see
           // deleteReplacedFileFields) -- `undefined` here just means the
@@ -6596,44 +6786,47 @@ export function createProjectsRouter(
     "/projects/:id/automations/:ruleId/runs/:runId/retry",
     whatsappRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const rule = getAutomationRule(db, project.id, req.params.ruleId);
-      if (!rule) {
-        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
-      }
-      const run = getAutomationRun(db, project.id, rule.id, req.params.runId);
-      if (!run) {
-        throw new HttpError(404, `Automation run "${req.params.runId}" not found`, "AUTOMATION_RUN_NOT_FOUND");
-      }
-      if (run.status !== "failed") {
-        throw new HttpError(400, "Only a failed run can be retried", "AUTOMATION_RUN_NOT_FAILED");
-      }
+      // Round 2189: the access check, rule lookup, run lookup, and the
+      // "already failed" status check all used to run BEFORE
+      // withIdempotency was ever called at all -- one level earlier than
+      // the two moves rounds 2098/2182 already made just below. Both
+      // branches share the exact same route-key string (only the
+      // CALLBACK body differs, not the key), so they're folded into one
+      // withIdempotency call with the branch decision made inside it --
+      // see the /answers route's own doc comment (above, earlier in this
+      // file) for the full mechanism.
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      if (run.recordId === null) {
-        // Round 2182: mirrors round 2098's own fix just below, for this
-        // branch's sibling check instead -- the rule.trigger guard used to
-        // run here, BEFORE withIdempotency, so it was still re-evaluated
-        // against the CURRENT rule on a replay with the same
-        // X-Idempotency-Key (withIdempotency's own "done" branch returns
-        // the cached response WITHOUT ever calling its callback, so a
-        // check placed outside it is never actually skipped by that
-        // short-circuit). A schedule-trigger rule's own `trigger` is
-        // freely PATCH-able after the fact (UpdateAutomationRuleSchema),
-        // with no restriction tied to existing run history -- so a retry
-        // that already fully succeeded (fireScheduledRule ran, the 200 was
-        // cached) could still 400 AUTOMATION_RUN_NOT_RETRYABLE on a
-        // genuine fetchWithWakeRetry replay if anyone edited the rule's
-        // trigger away from "schedule" in between, reporting an
-        // already-successful retry as a failure. Moving the check inside
-        // the callback means a cached "done" replay never re-evaluates it
-        // at all, the same guarantee round 2098 already gives this exact
-        // route's other branch.
-        const { status, body } = await withIdempotency(
-          db,
-          idempotencyKey,
-          req.userId!,
-          `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
-          async () => {
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${req.params.id}/automations/${req.params.ruleId}/runs/${req.params.runId}/retry`,
+        async () => {
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          const rule = getAutomationRule(db, project.id, req.params.ruleId);
+          if (!rule) {
+            throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+          }
+          const run = getAutomationRun(db, project.id, rule.id, req.params.runId);
+          if (!run) {
+            throw new HttpError(404, `Automation run "${req.params.runId}" not found`, "AUTOMATION_RUN_NOT_FOUND");
+          }
+          if (run.status !== "failed") {
+            throw new HttpError(400, "Only a failed run can be retried", "AUTOMATION_RUN_NOT_FAILED");
+          }
+          if (run.recordId === null) {
+            // Round 2182: mirrors round 2098's own fix just below, for this
+            // branch's sibling check instead -- the rule.trigger guard
+            // used to run outside withIdempotency entirely, so it was
+            // still re-evaluated against the CURRENT rule on a replay. A
+            // schedule-trigger rule's own `trigger` is freely PATCH-able
+            // after the fact (UpdateAutomationRuleSchema), with no
+            // restriction tied to existing run history -- so a retry that
+            // already fully succeeded (fireScheduledRule ran, the 200 was
+            // cached) could still 400 AUTOMATION_RUN_NOT_RETRYABLE on a
+            // genuine fetchWithWakeRetry replay if anyone edited the
+            // rule's trigger away from "schedule" in between, reporting
+            // an already-successful retry as a failure.
             if (rule.trigger !== "schedule") {
               throw new HttpError(
                 400,
@@ -6647,30 +6840,18 @@ export function createProjectsRouter(
             await fireScheduledRule(db, whatsapp, emailSender, project, rule, new Date(), false, req.userId!);
             const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
             return { status: 200, body: { run: latestRun ?? null } };
-          },
-        );
-        res.status(status).json(body);
-        return;
-      }
-      // Round 2098: findEntity/getRecord used to run here, BEFORE
-      // withIdempotency -- but withIdempotency's own "done" branch
-      // (idempotency.ts) returns the cached response WITHOUT ever calling
-      // its callback, so a lookup placed outside it still runs against
-      // CURRENT database state on every call, including a replay with the
-      // same X-Idempotency-Key (the exact anti-pattern round 1609 fixed in
-      // webhookIn.ts, and the PATCH .../:recordId route's own comment
-      // already names). A retry that already succeeded once -- already
-      // sent the real WhatsApp message, already cached a 200 under this
-      // key -- could still 404 AUTOMATION_RUN_RECORD_GONE on a genuine
-      // fetchWithWakeRetry replay if the record was deleted by any actor
-      // in between, instead of replaying the cached success. Both lookups
-      // now live inside the callback, so a replay skips them entirely.
-      const { status, body } = await withIdempotency(
-        db,
-        idempotencyKey,
-        req.userId!,
-        `POST /projects/${project.id}/automations/${rule.id}/runs/${run.id}/retry`,
-        async () => {
+          }
+          // Round 2098: findEntity/getRecord used to run outside
+          // withIdempotency entirely -- a lookup placed outside it still
+          // runs against CURRENT database state on every call, including
+          // a replay with the same X-Idempotency-Key (the exact
+          // anti-pattern round 1609 fixed in webhookIn.ts, and the PATCH
+          // .../:recordId route's own comment already names). A retry
+          // that already succeeded once -- already sent the real
+          // WhatsApp message, already cached a 200 under this key --
+          // could still 404 AUTOMATION_RUN_RECORD_GONE on a genuine
+          // fetchWithWakeRetry replay if the record was deleted by any
+          // actor in between, instead of replaying the cached success.
           const entity = findEntity(project, rule.entityName);
           // Round 991, revised round 1837: a run's OWN recordSnapshot (not
           // the rule's CURRENT trigger name) is what says its triggering
@@ -6761,19 +6942,26 @@ export function createProjectsRouter(
     "/projects/:id/automations/:ruleId/test",
     whatsappRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const rule = getAutomationRule(db, project.id, req.params.ruleId);
-      if (!rule) {
-        throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
-      }
+      // Round 2189: the access check and rule lookup both used to run
+      // BEFORE withIdempotency was ever called at all -- one level
+      // earlier than round 2102's own fix just below. Both branches share
+      // the exact same route-key string (only the CALLBACK body differs),
+      // so they're folded into one withIdempotency call with the branch
+      // decision made inside it -- see the /answers route's own doc
+      // comment (above, earlier in this file) for the full mechanism.
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
-      if (rule.trigger === "schedule") {
-        const { status, body } = await withIdempotency(
-          db,
-          idempotencyKey,
-          req.userId!,
-          `POST /projects/${project.id}/automations/${rule.id}/test`,
-          async () => {
+      const { status, body } = await withIdempotency(
+        db,
+        idempotencyKey,
+        req.userId!,
+        `POST /projects/${req.params.id}/automations/${req.params.ruleId}/test`,
+        async () => {
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          const rule = getAutomationRule(db, project.id, req.params.ruleId);
+          if (!rule) {
+            throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
+          }
+          if (rule.trigger === "schedule") {
             // Round 1261: isManualTest=true -- see fireScheduledRule's own
             // doc comment on that parameter for why this route specifically
             // must not let a successful test mark today's real scheduled
@@ -6784,31 +6972,17 @@ export function createProjectsRouter(
             await fireScheduledRule(db, whatsapp, emailSender, project, rule, new Date(), true, req.userId!);
             const [latestRun] = listAutomationRuns(db, project.id, rule.id, 1);
             return { status: 200, body: { run: latestRun ?? null } };
-          },
-        );
-        res.status(status).json(body);
-        return;
-      }
-      // Round 2102: findEntity and the record-lookup/no-records check used
-      // to run here, BEFORE withIdempotency -- the exact anti-pattern
-      // rounds 945/2098/2099/2101 already fixed elsewhere (round 2098 in
-      // particular fixed this route's own immediate neighbor, .../runs/
-      // :runId/retry, for the identical shape, but missed this sibling).
-      // withIdempotency's own "done" branch (idempotency.ts) returns the
-      // cached response WITHOUT ever invoking this callback, so a check
-      // placed outside it still ran against CURRENT database state on
-      // every call, including a genuine replay with the same
-      // X-Idempotency-Key. A test-send that had already succeeded (already
-      // sent the real message, already cached a 200 under this key) could
-      // 400 AUTOMATION_TEST_NO_RECORDS on a replay if the triggering
-      // record was deleted afterward, instead of returning the cached
-      // success.
-      const { status, body } = await withIdempotency(
-        db,
-        idempotencyKey,
-        req.userId!,
-        `POST /projects/${project.id}/automations/${rule.id}/test`,
-        async () => {
+          }
+          // Round 2102: findEntity and the record-lookup/no-records check
+          // used to run outside withIdempotency entirely -- the exact
+          // anti-pattern rounds 945/2098/2099/2101 already fixed
+          // elsewhere (round 2098 in particular fixed this route's own
+          // immediate neighbor, .../runs/:runId/retry, for the identical
+          // shape, but missed this sibling). A test-send that had already
+          // succeeded (already sent the real message, already cached a
+          // 200 under this key) could 400 AUTOMATION_TEST_NO_RECORDS on a
+          // replay if the triggering record was deleted afterward,
+          // instead of returning the cached success.
           const entity = findEntity(project, rule.entityName);
           // Round 998: a record-triggered rule can be created before the
           // project is ever built (rule creation itself has no project.status
@@ -6854,21 +7028,6 @@ export function createProjectsRouter(
     "/projects/:id/entities/:entityName/automations",
     automationRuleRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const entity = findEntity(project, req.params.entityName);
-      const parsed = CreateAutomationRuleSchema.safeParse(req.body ?? {});
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
-      const data = parsed.data;
-      if (data.trigger === "field_equals" && data.fieldName) {
-        const field = findField(entity, data.fieldName);
-        if (data.fieldValue) validateAutomationFieldValue(field, data.fieldValue);
-        if (data.fieldOperator) validateAutomationFieldOperator(field, data.fieldOperator);
-      }
-      if (data.toMode === "field" && data.toField) {
-        validateAutomationToField(findField(entity, data.toField));
-      }
       /**
        * Round 600: the one insert route in this feature docs/wakeRetry-
        * idempotency-design.md never listed, since Automation Rules was
@@ -6888,8 +7047,40 @@ export function createProjectsRouter(
         db,
         idempotencyKey,
         req.userId!,
-        `POST /projects/${project.id}/entities/${entity.name}/automations`,
+        `POST /projects/${req.params.id}/entities/${req.params.entityName}/automations`,
         async () => {
+          // Round 2189: access check, entity resolution, and the
+          // field-shape validations below all used to run BEFORE
+          // withIdempotency -- see the /answers route's own doc comment
+          // (above, earlier in this file) for the full mechanism.
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          // Round 2189 (regression fix): body-shape validation must stay
+          // AFTER the access check, not before it -- a viewer with no
+          // write access must get 403 VIEWER_READ_ONLY even when their
+          // body also fails CreateAutomationRuleSchema (e.g. a missing
+          // required `toMode`). Moving only the access check inside this
+          // callback while leaving this safeParse outside/before it
+          // silently flipped that order: a fresh viewer request with an
+          // invalid body got 400 before the relocated access check ever
+          // ran, breaking this file's own "a 'viewer' collaborator ... gets
+          // a real 403 ... on every kind of write" regression test. See
+          // the POST /roles route's own doc comment above for the general
+          // fix -- every other route this round touched had the same
+          // hazard, caught by re-auditing all of them against this one.
+          const parsed = CreateAutomationRuleSchema.safeParse(req.body ?? {});
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
+          const data = parsed.data;
+          const entity = findEntity(project, req.params.entityName);
+          if (data.trigger === "field_equals" && data.fieldName) {
+            const field = findField(entity, data.fieldName);
+            if (data.fieldValue) validateAutomationFieldValue(field, data.fieldValue);
+            if (data.fieldOperator) validateAutomationFieldOperator(field, data.fieldOperator);
+          }
+          if (data.toMode === "field" && data.toField) {
+            validateAutomationToField(findField(entity, data.toField));
+          }
           const rule = insertAutomationRule(db, {
             projectId: project.id,
             entityName: entity.name,
@@ -6933,27 +7124,30 @@ export function createProjectsRouter(
    * inside the withIdempotency callback -- not stay where they were, above
    * -- so a genuine retry replays the first call's cached success instead
    * of re-running them against state the first call already changed.
-   * UpdateAutomationRuleSchema's own body-shape validation stays outside,
-   * matching the roles/assumptions PATCH routes' own convention -- it's
-   * deterministic and side-effect-free, so safe to re-run even though a
-   * genuine retry never reaches it.
+   * UpdateAutomationRuleSchema's own body-shape validation moved inside
+   * this callback too (round 2189), right after the access check --
+   * leaving it outside would have let an invalid body from a viewer with
+   * no write access get 400 instead of 403; see the POST /roles route's
+   * own doc comment above.
    */
   router.patch(
     "/projects/:id/automations/:ruleId",
     automationRuleRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
-      const parsed = UpdateAutomationRuleSchema.safeParse(req.body ?? {});
-      if (!parsed.success) {
-        throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
-      }
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status, body } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `PATCH /projects/${project.id}/automations/${req.params.ruleId}`,
+        `PATCH /projects/${req.params.id}/automations/${req.params.ruleId}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the /answers
+          // route's own doc comment (above, earlier in this file).
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
+          const parsed = UpdateAutomationRuleSchema.safeParse(req.body ?? {});
+          if (!parsed.success) {
+            throw new HttpError(400, formatValidationError(parsed.error), "VALIDATION_ERROR");
+          }
           const existing = getAutomationRule(db, project.id, req.params.ruleId);
           if (!existing) {
             throw new HttpError(404, `Automation rule "${req.params.ruleId}" not found`, "AUTOMATION_RULE_NOT_FOUND");
@@ -7081,14 +7275,16 @@ export function createProjectsRouter(
     "/projects/:id/automations/:ruleId",
     automationRuleRateLimiter,
     asyncRoute(async (req, res) => {
-      const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
       const idempotencyKey = req.header("X-Idempotency-Key") || undefined;
       const { status } = await withIdempotency(
         db,
         idempotencyKey,
         req.userId!,
-        `DELETE /projects/${project.id}/automations/${req.params.ruleId}`,
+        `DELETE /projects/${req.params.id}/automations/${req.params.ruleId}`,
         async () => {
+          // Round 2189: moved inside the callback -- see the /answers
+          // route's own doc comment (above, earlier in this file).
+          const project = requireProjectWriteAccess(db, req.params.id, req.userId!);
           // Round 1666: the delete half of the automation-rule audit-trail
           // pair round 1664 (createdByUserId/updatedByUserId) closed for
           // create/update -- read before deleting, since the row itself
