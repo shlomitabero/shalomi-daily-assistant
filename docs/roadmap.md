@@ -53929,3 +53929,100 @@ script-substitution corruption from rounds 2316/2324/2325 (round 2332,
 deferred to a dedicated future round).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2334: Donation was missing the 'charity' keyword, named in its own disambiguation cue list but never promoted
+
+**Bug:** Donation's own "תרומה"/"תרומות" disambiguation regex (line
+2727) names "צדקה" (charity) as a cue word that helps unlock THAT
+keyword -- but "צדקה" was never itself promoted to a standalone
+Donation keyword anywhere in the file. This is the FOURTH confirmed
+instance of the "named but missing as its own positive keyword" shape
+this window, continuing the generalization from round 2333 (an
+entity's own internal cue list, not just another entity's exclusion
+list) applied to a different entity's cue list this time.
+
+The survey agent also checked the OTHER cue words in that same regex
+and correctly ruled out the rest as deliberate, not bugs: "עמותה"/
+"עמותות" were already removed as bare keywords in rounds 2297/2306 (too
+broad a signal); "איברים" (limbs/organs generally) and "דם" (blood, with
+its own heavy idiom risk) are both correctly cue-only, since promoting
+either would cause heavy false positives in medical/fitness contexts.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אנחנו אוספים צדקה למשפחות נזקקות בקהילה שלנו." (we collect charity
+for needy families) and "האפליקציה מנהלת קופת צדקה עבור יתומים ומשפחות עניות." (a charity fund for
+orphans) both fell through to the generic `Item` fallback, and since
+Donation is in BILLING_ENTITY_NAMES, the payment recommendation also
+flipped from Stripe to "no payments".
+
+**Fix** (`domainEntities.ts`, Donation's keyword array):
+```js
+/צדקה(?!\s*ב(?:טענת|טענתה|טענתו|תלונת|תלונתה|תלונתו|עמדת|עמדתה|עמדתו|תביעת|תביעתה|תביעתו|דרישת|דרישתה|דרישתו|חשד|חשדה|חשדו|הערכת|הערכתה|הערכתו|תחזית|תחזיתה|תחזיתו|הנחת|הנחתה|הנחתו|החלטת|החלטתה|החלטתו|גישת|גישתה|גישתו|ניתוח|ניתוחה|ניתוחו|פרשנות|פרשנותה|פרשנותו|קביעת|קביעתה|קביעתו|דעת|דעתה|דעתו|חששות|חששותיה|חששותיו|ציפיית|ציפייתה|ציפייתו)\S*)(?!\s*כ(?:ש|אשר)\s*(?:טענ|אמר|חשש|הזהיר|ציפ|דאג)\S*)/
+```
+"צדקה" is NOT safe as a bare substring: it's also the ordinary feminine
+3rd-person PAST TENSE of צדק ("to be right"), e.g.
+"הלקוחה צדקה בטענתה שהמוצר היה פגום." (the customer WAS RIGHT in her claim
+that the product was defective) -- confirmed live this idiom is
+unrelated to charity. A blanket exclusion on a following "ב" or "כש" is
+too broad: it would wrongly exclude genuine charity phrasing where an
+unrelated word happens to follow ("אנחנו תורמים כספים לצדקה בכל חודש בעירייה." --
+charity every month) or where "כש" is part of an unrelated word
+("הארגון נותן צדקה כשיטת חיים לכל העובדים." -- charity as a way of life), both
+confirmed empirically before choosing this fix. Instead, the guard
+names only the specific claim/stance/suspicion-type nouns the "was
+right in/about X" idiom actually takes, the same shape as this file's
+other idiom-exclusion guards.
+
+**BILLING_ENTITY_NAMES:** Donation IS a member, so this false negative
+also corrupted the payment-recommendation `openQuestions` field, not
+just the entity list -- confirmed live, same dual-severity class as
+every other תרם/תורם/צדקה fix in this entity this window.
+
+**Deliberately a leaky denylist, not an exhaustive fix:** like round
+2027's own ספק guard, a stance noun outside the named list (e.g. "...
+היא צדקה בחשדה שהעובד גנב כסף." or the "היא צדקה כשטענה שהפרויקט יתעכב."
+phrasing style with an unlisted verb) could in principle still slip
+through; the confirmed-live repro cases and the realistic common
+continuations of this idiom are what this guard closes, not every
+conceivable phrasing.
+
+**Test added** (`heuristic.test.ts`): confirms the charity sentences
+(including the Stripe recommendation check) now match Donation, the
+"was right" idiom sentences still correctly do not, and the two
+specific false-exclusion risks (unrelated "ב"-word, "כשיטת") are both
+confirmed not to wrongly suppress genuine charity phrasing.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 245 (the new test), as predicted; pass-after showed 245/245.
+Full `@forge/spec-engine` suite: 441/441 (up from 440). Full
+`@forge/api` suite: 1782/1782, unchanged, run via Bash's native
+`run_in_background` from `apps/api` (disk space checked healthy
+beforehand). Production build: clean (`dist/server.js 1.5mb`, exit
+code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 40 confirmed instances total. The "named but
+missing as its own positive keyword" discovery method is now validated
+4-for-4 across two entities' cue lists (Order's exclusion list for
+Event's חתונת/מסיבה, rounds 2330-2331; Donation's own disambiguation
+cue list for both its present-tense donor forms, round 2333, and now
+charity, round 2334) -- worth continuing to check every entity's
+internal disambiguation regex, not just cross-entity exclusion guards.
+This round's survey agent also correctly identified several cue words
+that are deliberately NOT bugs (bare-word-too-broad or heavy-idiom-risk
+gaps already accepted elsewhere in this file), showing the method needs
+judgment, not blind promotion of every cue word. Standing deferred/
+unsafe gaps, unchanged this round: Ticket bare-noun gap (rounds
+2282-2283); Courier license/insurance/traffic-ticket sub-case (round
+2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318); Order's
+forward-only "הזמנה" exclusion-lookahead directionality gap (round
+2331, accepted trade-off); pre-existing roadmap.md script-substitution
+corruption from rounds 2316/2324/2325 (round 2332, deferred to a
+dedicated future round); Donation's own "צדקה" guard's residual
+unlisted-stance-noun leak (this round, an accepted trade-off, same
+class as round 2027's ספק guard).
+
+Live: https://forge-ai-m7p7.onrender.com
