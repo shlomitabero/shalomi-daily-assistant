@@ -55892,3 +55892,97 @@ digital courses" gap (never recognized "digital", only "online"),
 newly noted, out of scope this round.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2355: Course's "שיעור" comeuppance-idiom guard missing 1st-person-plural FUTURE form, safely gated on a homograph risk
+
+**Bug:** this round's survey agent re-confirmed that rounds 2352-2354's
+two active bug-finding methods (the Hebrew idiom-guard 2fs-future "-י"
+audit, and PAYMENT_KEYWORDS's verb-form/proximity gaps) are both now
+exhausted across the file -- a genuinely new angle was needed. It
+found that Course's "שיעור" give-verb comeuppance-idiom guard
+(`domainEntities.ts`), already extended across rounds 2314/2328/2344/
+2353, was still missing the 1st-person-PLURAL future of לתת ("we will
+give"): "ניתן". Unlike every prior missing-form fix in this bug class,
+"ניתן" could not simply be added as a bare literal, because it is
+ALSO an extremely common, unrelated Hebrew word meaning "possible/
+available" (e.g. "ניתן לרכוש..." = "it's possible to acquire...") --
+almost certainly why it was never added earlier.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול שכנים. אנחנו ניתן לשכן הבעייתי שיעור שהוא לא ישכח." (we will teach the problematic
+neighbor a lesson he won't forget, in a neighbor-management app)
+wrongly fabricated a Course entity.
+
+**Fix** (`domainEntities.ts`, Course's `keywords` array): gates on
+"אנחנו ניתן" (the pronoun "we" immediately before "ניתן") as a single
+unit, rather than the bare literal:
+```js
+/(?<!(?:לתת|אתן|תיתן|תתני|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|אנחנו\s+ניתן|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/
+```
+This is unambiguous: the "possible" sense of "ניתן" is a passive
+participle that agrees in number with its subject -- a plural subject
+like "אנחנו" would require the agreeing plural form "ניתנים", never
+the bare singular "ניתן". So "אנחנו ניתן" can only mean "we will
+give", never "we [are] possible".
+
+**Verification (including independent collision checks beyond the
+agent's own set):** confirmed live that bare "ניתן" business sentences
+like "אפליקציית הרשמה לקורסים. ניתן לרכוש גישה לכל שיעור בנפרד באתר שלנו." stay correctly matched to Course, as do genuine
+"אנחנו ניתן שיעור..." sentences where "אנחנו ניתן" has no ל-object
+immediately after it (so the idiom shape doesn't apply), and "אנחנו
+ניתנים" (the correctly-agreeing plural adjective form, a different
+string entirely) is unaffected. Noted but left as an accepted residual
+(same class as this file's other documented trade-offs): "אנחנו לא
+ניתן..." (with a negation word between the pronoun and the verb) still
+isn't caught by this narrow literal, since "לא" breaks the required
+immediate adjacency -- a genuinely rarer phrasing than the bare "אנחנו
+ניתן" idiom this round closes.
+
+**Method-exhaustion note (from this round's survey):** re-checked
+every idiom-exclusion guard of the 2fs-future-audit shape in the file
+(Vendor's "ספק", Vendor's "רכש", Donation's "תרם", Event's "כנס") for
+the 1st-person-plural future "-נ" slice -- Course's "שיעור" guard was
+the only one with a gap, and only because of this specific homograph
+risk that made it unsafe to close with the file's usual one-literal
+convention until now.
+
+**Test added** (`heuristic.test.ts`): confirms the bug sentence (and
+its "ו"-conjunction-prefixed variant) no longer matches Course;
+non-regression checks confirm bare "ניתן" business sentences and
+genuine "אנחנו ניתן שיעור" sentences without a ל-object stay matched.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 266 (the new test), as predicted; pass-after showed 266/266 --
+no regression. Full `@forge/spec-engine` suite: 462/462 (up from 461).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** this round demonstrates a new sub-pattern
+worth watching for in future rounds -- a missing grammatical form that
+was *skipped on purpose* (not merely overlooked) because the bare
+literal would collide with a common homograph, fixable by gating on
+an adjacent, disambiguating word instead of a bare literal. Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap
+(rounds 2282-2283); Courier license/insurance/traffic-ticket sub-case
+(round 2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course "courses"-
+vs-restaurant-meal-courses sub-case (round 2318); Order's forward-only
+"הזמנה" exclusion-lookahead directionality gap (round 2331, accepted
+trade-off); pre-existing roadmap.md script-substitution corruption
+from rounds 2316/2324/2325 (round 2332, deferred to a dedicated future
+round); Donation's "צדקה" guard's residual unlisted-stance-noun leak
+(round 2334, accepted trade-off); Patient's "מטופל" guard's residual
+leaks (round 2336, accepted trade-off); Deal's "הזדמנות" guard's
+residual leak (round 2337, accepted trade-off); Customer's "לקוח"
+guard's residual leak (round 2338, accepted trade-off); Appointment's
+"מספרת" guard's residual leak (round 2339, accepted trade-off);
+Shipment's "שילוח" guard's residual leaks (round 2340, accepted
+trade-off); PAYMENT_KEYWORDS' "נשלם" gap, permanently deferred (rounds
+2349-2350); Course's "תתני" alternative's residual leak on the
+unrelated "להתנות" verb sense (round 2353, accepted trade-off);
+PAYMENT_KEYWORDS' "sells digital courses" gap (round 2354, out of
+scope); Course's "אנחנו לא ניתן" (negation-interrupted) residual,
+accepted trade-off (round 2355).
+
+Live: https://forge-ai-m7p7.onrender.com
