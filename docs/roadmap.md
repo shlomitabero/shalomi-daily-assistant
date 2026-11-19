@@ -53648,3 +53648,94 @@ sub-case (round 2316); Course military-topic-vs-squad-unit ambiguity
 (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2331: Event was also missing 'מסיבה'/'מסיבות'/'מסיבת' (party) and 'יום הולדת' (birthday) keywords
+
+**Bug:** Order's own "הזמנה" exclusion guard (line 528) already named
+"מסיבה"/"מסיבת"/"מסיבות" (party) and "יום הולדת" (birthday) by name --
+the exact same discovery method round 2330 used to find Event's missing
+"חתונת" -- but neither word existed as a positive keyword for Event (or
+any other entity) at all. Ordinary party/birthday-planning descriptions
+fell through to the generic `Item` entity with Event entirely missing.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול מסיבה בחצר הבית, עם רשימת אורחים ותקציב." (app for managing a party
+in the backyard), "מערכת לניהול מסיבות לילדים במתנ״ס, עם רשימת אורחים לכל מסיבה." (system for managing kids'
+parties), "אתר לתכנון מסיבת רווקות עם רשימת אורחים ותקציב." (site for planning a bachelorette
+party), and "אפליקציה לניהול יום הולדת מפתיע לחברה, עם רשימת אורחים ותקציב." (app for managing a surprise birthday for
+a friend) all lost the Event entity entirely.
+
+**Critical difference from round 2330's "חתונת":** bare "מסיבה" is NOT
+safe to add as a plain string on its own. It also spells the ordinary
+"for a[n] ... reason" idiom (מ + סיבה, "reason"), confirmed live to be
+extremely common in business-app descriptions: "ההזמנה בוטלה מסיבה לא ידועה ואני רוצה אפליקציה למעקב אחרי הזמנות."
+(the order was cancelled for an unknown reason), "העובד התפטר מסיבה אישית ואני רוצה אפליקציה לניהול עובדים."
+(the employee resigned for a personal reason), "המשלוח התעכב מסיבה טכנית ואני רוצה אפליקציה למעקב אחרי משלוחים."
+(the shipment was delayed for a technical reason), and the plural
+equivalents "הפרויקט נדחה מסיבות שונות ואני רוצה אפליקציה לניהול פרויקטים." (the project was postponed for
+various reasons) and "הם התפטרו מסיבות אישיות ואני רוצה אפליקציה לניהול עובדים." (they resigned for
+personal reasons). Independently verifying the survey agent's proposed
+fix caught this: a naive plain-string "מסיבה" addition, as originally
+proposed, would have introduced a brand-new false positive on every one
+of these idioms.
+
+**Fix** (`domainEntities.ts`, Event's keyword array): "מסיבה" and
+"מסיבות" each get their own negative lookahead excluding the
+empirically-confirmed reason-qualifying continuations (לא ידועה, אישית,
+טכנית, כלכלית, זו, כלשהי, מסוימת, שונה/שונות, etc.); "מסיבת" (construct
+state) and "יום הולדת" have no equivalent collision and were added as
+plain strings:
+```js
+/מסיבה(?!\s*(?:לא\s*ידועה|אישית|טכנית|כלכלית|זו|כלשהי|מסוימת|שונה|אחרת|בלתי\s*ידועה))/
+/מסיבות(?!\s*(?:שונות|אישיות|טכניות|כלכליות|כלשהן|מסוימות|שלא\s*לשליטתנו))/
+"מסיבת", "יום הולדת",
+```
+
+**Backtracking pitfall, reconfirmed:** a naive merged
+"מסיב(?:ה|ות|ת)" variant sharing ONE lookahead across all suffixes was
+tested and confirmed to reintroduce the classic pitfall -- the plural
+"שונות"/"אישיות" reason-continuations aren't in a singular-only shared
+lookahead, so the engine backtracks past the "ות" suffix and vacuously
+matches. Independent branches per suffix are required here, the same
+lesson already learned on Vendor's רכש and Donation's תרם guards.
+
+**BILLING_ENTITY_NAMES:** Event is not a member, so this bug's impact is
+limited to the fabricated/missing entity, no payment-recommendation
+`openQuestions` side effect. A separate, pre-existing residual issue was
+also noted but deliberately not touched: Order's own "הזמנה" exclusion
+lookahead only looks FORWARD for an immediately-following "מסיבה", so a
+sentence where "מסיבה" appears earlier than "הזמנות" can still
+co-produce a spurious Order alongside the now-correct Event -- an
+accepted positional trade-off of the same class as this file's other
+idiom guards, flagged for a future round rather than fixed here.
+
+**Test added** (`heuristic.test.ts`): confirms all four new party/
+birthday forms now match Event, while all five reason-idiom sentences
+(singular and plural) still correctly do not.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 242 (the new test), as predicted; pass-after showed 242/242. Full
+`@forge/spec-engine` suite: 438/438 (up from 437). Full `@forge/api`
+suite: 1782/1782, unchanged, run via Bash's native `run_in_background`
+from `apps/api` (disk space checked healthy beforehand). Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 37 confirmed instances total. Round 2330's
+"check other entities' exclusion lists for named inflected forms missing
+as positive keywords" discovery method is now validated 2-for-2 (חתונת,
+then מסיבה/יום הולדת) and is worth continuing -- Order's own exclusion
+list in particular may still hold more leads. Also worth remembering:
+unlike a pure inflection gap, a "missing positive keyword found via
+another entity's exclusion list" can itself introduce a NEW collision
+risk (as מסיבה did here) that must be independently checked, not assumed
+safe just because the word was already known elsewhere in the file.
+Standing deferred/unsafe gaps, unchanged this round, plus the new
+Order-forward-only-lookahead positional note above: Ticket bare-noun gap
+(rounds 2282-2283); Courier license/insurance/traffic-ticket sub-case
+(round 2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
