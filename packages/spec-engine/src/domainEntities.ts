@@ -1608,6 +1608,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // keeps separate (the same reason WorkOrder deliberately avoids
       // Vehicle's own "מוסך"/"מכונאי" keywords above).
       /\brental(s)?\b/,
+      // Round 2279: round 1812's own fix just above closed the gap for
+      // generic NOUN phrasing ("bike rental"/"party rental") but never
+      // covered ordinary verb conjugations of "rent" itself -- the only
+      // verb-shaped keyword here is the literal "rent out" infinitive,
+      // which doesn't match "rents"/"rented"/"renting". "A bike shop that
+      // rents bicycles by the hour." and "A company renting out kayaks and
+      // paddleboards to tourists." both fell through to the generic Item
+      // fallback, which also silently flips the payments recommendation to
+      // "No payments" (Rental is one of heuristic.ts's own
+      // BILLING_ENTITY_NAMES). \b-bounded on BOTH sides and requiring one
+      // of the three suffixes -- deliberately NOT bare "rent" itself,
+      // which is genuinely ambiguous with the unrelated landlord/tenant
+      // noun ("collect rent from tenants", "pay their rent on time" --
+      // this file's own existing "apartment for sale or rent" test
+      // fixture), the same kind of real non-commercial/unrelated-concept
+      // counter-example this file already declines to fix elsewhere (see
+      // Appointment/Service's own bare-word exclusions). The suffixed
+      // forms carry no such ambiguity: "rents"/"rented"/"renting" are
+      // unambiguously verb conjugations, never the noun. Confirmed live
+      // that the leading \b alone (no lookbehind needed) already rejects
+      // "parents"/"parenting" -- there is no word boundary between the
+      // "pa" and "rent" inside them, so \brents?\b never reaches the
+      // "p-a" prefix at all.
+      /\brent(?:s|ed|ing)\b/,
     ],
     labelHe: "השכרות",
     descriptionHe: "פריט שהושכר ללקוח לתקופה מוגדרת.",

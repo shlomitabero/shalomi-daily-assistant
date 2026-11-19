@@ -1800,6 +1800,43 @@ test("recognizes a plain 'bike rental'/'party rental' description as the Rental 
   assert.ok(!parentalControls.entities.some((e) => e.name === "Rental"), "'parental' must not spuriously match Rental via a bare 'rental' substring");
 });
 
+// Round 2279: round 1812's own fix above only ever covered generic NOUN
+// phrasing ("bike rental"/"party rental") -- it never covered ordinary verb
+// conjugations of "rent" itself. The only verb-shaped keyword was the
+// literal "rent out" infinitive, which doesn't match "rents"/"rented"/
+// "renting" -- so a description using only one of those conjugations (no
+// co-occurring "rental(s)" noun or "rent out" infinitive) fell through to
+// the generic Item fallback, which also silently flips the heuristic's
+// payments recommendation to "No payments" for an unambiguously paid
+// rental business.
+test("recognizes 'rents'/'renting'/'rented' (ordinary verb conjugations of 'rent') as the Rental entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const bikeShop = await provider.generate("A bike shop that rents bicycles by the hour.");
+  assert.ok(bikeShop.entities.some((e) => e.name === "Rental"), "'rents' alone must match Rental, not fall through to Item");
+
+  const kayakCompany = await provider.generate("A company renting out kayaks and paddleboards to tourists.");
+  assert.ok(kayakCompany.entities.some((e) => e.name === "Rental"), "'renting' alone must match Rental, not fall through to Item");
+
+  const storageUnits = await provider.generate("We are renting out storage units to tenants.");
+  assert.ok(storageUnits.entities.some((e) => e.name === "Rental"), "'renting' alone must match Rental, not fall through to Item");
+
+  const pastTense = await provider.generate("A business that rented tents and chairs for a backyard party.");
+  assert.ok(pastTense.entities.some((e) => e.name === "Rental"), "'rented' alone must match Rental, not fall through to Item");
+
+  // Bare "rent" (no suffix) is deliberately NOT matched -- it's genuinely
+  // ambiguous with the unrelated landlord/tenant noun ("collect rent",
+  // "pay rent"), so it must stay unaffected.
+  const landlordApp = await provider.generate("An app for landlords to collect rent from tenants and track payments.");
+  assert.ok(!landlordApp.entities.some((e) => e.name === "Rental"), "bare 'rent' (the landlord/tenant noun) must never match Rental");
+
+  // "parents"/"parenting" must stay unaffected -- no word boundary
+  // separates "pa" from "rent" inside them, the same collision class the
+  // round-1812 "parental" test above already guards against.
+  const parentingApp = await provider.generate("An app for parents to track their children's school activities and parenting tips.");
+  assert.ok(!parentingApp.entities.some((e) => e.name === "Rental"), "'parents'/'parenting' must not spuriously match Rental");
+});
+
 /**
  * Round 1752: the Pet entity rule's keywords only ever covered the
  * clinic/grooming phrasing of a pet business ("veterinary", "vet clinic",
