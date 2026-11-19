@@ -6646,6 +6646,33 @@ test("Course's 'שיעור' comeuppance-idiom guard (round 2314) also covers the
   assert.ok(genuineLesson.entities.some((e) => e.name === "Course"), "'אני מציע שיעור יוגה פרטי' (a genuine standalone lesson) must still match Course");
 });
 
+test("Vendor's 'ספק' doubt-idiom guard (round 2027) also excludes the 3rd-person-PLURAL 'casts/raises doubt' idioms it missed", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralMascMeila = await provider.generate("החברים מעלים ספק גדול בנוגע לתוכנית ואני רוצה אפליקציה לניהול דיונים.");
+  assert.ok(!pluralMascMeila.entities.some((e) => e.name === "Vendor"), "'החברים מעלים ספק גדול' (the members raise great doubt) must not spuriously match Vendor");
+
+  const pluralFemMeila = await provider.generate("הבוחנות מעלות ספק רב בנוגע לתוצאה ואני רוצה אפליקציה לניהול בדיקות.");
+  assert.ok(!pluralFemMeila.entities.some((e) => e.name === "Vendor"), "'הבוחנות מעלות ספק רב' (the examiners raise much doubt) must not spuriously match Vendor");
+
+  const pluralMascMatil = await provider.generate("המנהלים מטילים ספק כבד בנוגע לפרויקט ואני רוצה אפליקציה למעקב אחרי החלטות.");
+  assert.ok(!pluralMascMatil.entities.some((e) => e.name === "Vendor"), "'המנהלים מטילים ספק כבד' (the managers cast heavy doubt) must not spuriously match Vendor");
+
+  const pluralFemMatil = await provider.generate("המנהלות מטילות ספק כבד בנוגע לפרויקט ואני רוצה אפליקציה למעקב אחרי החלטות.");
+  assert.ok(!pluralFemMatil.entities.some((e) => e.name === "Vendor"), "'המנהלות מטילות ספק כבד' (the managers-fem cast heavy doubt) must not spuriously match Vendor");
+
+  // Non-regression: round 2027's own singular controls must still be excluded.
+  const singularMasc = await provider.generate("הוא מטיל ספק בתוכנית ואני רוצה אפליקציה לניהול דיונים.");
+  assert.ok(!singularMasc.entities.some((e) => e.name === "Vendor"), "'הוא מטיל ספק' (round 2027's own 3rd-person-singular exclusion) must still not match Vendor");
+
+  const singularFem = await provider.generate("היא מעלה ספק בתוכנית ואני רוצה אפליקציה לניהול דיונים.");
+  assert.ok(!singularFem.entities.some((e) => e.name === "Vendor"), "'היא מעלה ספק' (round 2027's own 3rd-person-singular-fem exclusion) must still not match Vendor");
+
+  // Non-regression: genuine vendor usage must still match.
+  const genuineVendor = await provider.generate("יש לי כמה ספקים וחשוב לי לנהל את הקשר איתם, ואני רוצה אפליקציה לניהול ספקים.");
+  assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'יש לי כמה ספקים' (a genuine vendor mention) must still match Vendor");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the

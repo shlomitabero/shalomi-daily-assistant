@@ -2869,9 +2869,33 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // after (e.g. "קיים ספק מסוים") can still slip through -- this
     // remains a leaky denylist for an extremely productive Hebrew word,
     // not an exhaustive fix.
+    //
+    // Round 2329: round 2027's own warning above proved correct -- the
+    // "מטיל"/"מעלה" lookbehinds only covered the 3rd-person-SINGULAR
+    // "casts/raises doubt" forms, never the 3rd-person-PLURAL forms
+    // "מטילים"/"מטילות" (they cast doubt, masc./fem.) or
+    // "מעלים"/"מעלות" (they raise doubt, masc./fem.) -- the same "missing
+    // grammatical person/number" gap shape already found three times
+    // this window on completely different idiom guards (Vendor's own
+    // רכש guard round 2326, Donation's תרם guard round 2327, Course's
+    // נתן guard round 2328), this time recurring within Vendor itself on
+    // an unrelated root. Confirmed live: "החברים מעלים ספק גדול בנוגע
+    // לתוכנית..." (the members raise great doubt about the plan) and
+    // "המנהלים מטילים ספק כבד בנוגע לפרויקט..." (the managers cast heavy
+    // doubt about the project) both fabricated Vendor with zero
+    // procurement content; the existing "(?!\s*אם)" lookahead doesn't
+    // depend on the preceding verb's person, so only the "אם"-less
+    // plural phrasings slipped through. Adding the four plural
+    // lookbehinds closes this without regressing round 2027's own
+    // singular exclusions or genuine vendor usage. As in round 2328, a
+    // naive merged "(?<!מטיל(?:ה|ים|ות)? )" / "(?<!מעל(?:ה|ים|ות) )"
+    // variant was tested and does NOT reintroduce the backtracking
+    // pitfall here (same lookbehind-with-mandatory-connector shape) --
+    // independent alternatives are kept anyway for consistency with this
+    // file's established defensive convention.
     keywords: [
       "vendor", "vendors", "supplier", "suppliers", "procurement",
-      /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מעלה )ספק(?!ות)(?!\s*אם)/,
+      /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!מעלה )(?<!מעלים )(?<!מעלות )ספק(?!ות)(?!\s*אם)/,
       "ספקים",
       // Round 2309: bare "רכש" is the correct noun for "procurement"
       // ("ניהול רכש"), but it's also the ordinary 3rd-person-masc. past-
