@@ -54774,3 +54774,108 @@ negation phrasings not yet enumerated (round 2342, accepted
 trade-off, same leaky-denylist class).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2343: Donation's 'תרם' keyword had NO future-tense or imperative forms at all
+
+**Bug:** Unlike every other round's idiom-COLLISION bug on this file
+(a false positive from an unguarded idiom), this was a pure
+OMISSION: rounds 2111/2322/2327 covered the past tense (all persons)
+and round 2333 covered the present-tense participle
+(תורם/תורמת/תורמים/תורמות), but neither round -- nor any other --
+ever added the future tense or the imperative mood of the same "תרם"
+(donate) verb. A genuine future or imperative donation description
+matched no Donation entity at all. Since Donation IS a member of
+BILLING_ENTITY_NAMES, this wasn't just a missed entity: it also
+flipped the payment-provider recommendation from "Stripe" to "בלי
+תשלומים" (no payments).
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציית גיוס כספים. אני אתרום כסף רב למען הילדים החולים בבית החולים." (1st-person future:
+I will donate) and "אפליקציית גיוס כספים. תרמי כסף רב עוד היום למען הילדים החולים." (2nd-person-feminine-
+singular imperative: donate!) both produced zero Donation entities and
+a "בלי תשלומים" payment recommendation, versus the already-working
+past-tense sibling "העובד תרם כסף רב לעמותה" which correctly produces
+Donation + "Stripe".
+
+**Fix** (`domainEntities.ts`, Donation's keyword array), 7 new
+independent branches covering every remaining person/number/gender of
+future tense plus both imperative forms:
+```js
+/אתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תתרמי(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /יתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /נתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמי(?!ל)(?!ת)(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+```
+Each reuses this entity's own already-tested "contributes to X" idiom-
+exclusion lookahead verbatim, since the identical metaphorical idiom
+exists in every tense/mood ("הכלי יתרום לקידום המטרה" = the tool will
+contribute to advancing the goal).
+
+**A regression caught by this round's OWN full test suite, before
+ever being pushed:** the bare imperative "תרמי" branch is a literal
+4-character prefix of BOTH "תרמילים"/"תרמיל" (backpacks) and "תרמית"
+(fraud) -- an existing round-2293 collision test for this exact entity
+immediately failed the moment the branch was added without a guard.
+Fixed by adding "(?!ל)(?!ת)" to the "תרמי" branch's lookahead chain,
+the same technique this file already uses elsewhere to stop a shorter
+branch from mistaking a longer, unrelated word's prefix for itself.
+This is a reminder that the usual verification cycle (full
+heuristic.test.ts run, not just the new test) catches exactly this
+class of mistake -- the fix was corrected and re-verified before any
+commit, so no regression ever reached the branch.
+
+**BILLING_ENTITY_NAMES:** Donation IS a member, so this bug had the
+documented payment-recommendation side effect, not just entity
+fabrication/omission.
+
+**Test added** (`heuristic.test.ts`): confirms all 6 new tense/mood
+forms correctly match Donation, 3 matching idiom sentences in the same
+new tenses/moods still correctly do NOT match, and the payment
+recommendation correctly flips back to "Stripe" once Donation is
+detected.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 255 (the new test), as predicted; pass-after showed 255/255.
+Full `@forge/spec-engine` suite: 451/451 (up from 450). Full
+`@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round's lead came directly from round
+2342's own roadmap entry, which flagged Donation's תרם/תורם family as
+an unchecked priority candidate for the "missing grammatical form"
+discipline. Unlike every prior instance of that discipline (Vendor's
+רכש/ספק, Donation's own past-tense forms, Course's נתן), this was the
+first case where the missing piece was an entire TENSE/MOOD, not just
+a handful of person/number forms within an already-covered tense --
+worth remembering that "re-derive the full paradigm" means checking
+every tense and mood, not only every person/number/gender combination
+within the tenses already covered. Course's נתן/שיעור guard family
+(flagged alongside Donation's in round 2342) remains unchecked.
+Standing deferred/unsafe gaps, unchanged this round: Ticket bare-noun
+gap (rounds 2282-2283); Courier license/insurance/traffic-ticket
+sub-case (round 2311); Course bare-price-crashing sub-case (round
+2316); Course military-topic-vs-squad-unit ambiguity (round 2316);
+Course "courses"-vs-restaurant-meal-courses sub-case (round 2318);
+Order's forward-only "הזמנה" exclusion-lookahead directionality gap
+(round 2331, accepted trade-off); pre-existing roadmap.md
+script-substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+leaks (round 2340, accepted trade-off); Vendor's "ספק" guard's
+residual leak on rarer doubt-phrasings (round 2341, accepted
+trade-off); Vendor's "רכש" guard's residual leak on any future-form
+negation phrasings not yet enumerated (round 2342, accepted
+trade-off); Donation's new future/imperative branches' residual leak
+on any idiom phrasing not matching the existing ל+noun lookahead list
+(round 2343, accepted trade-off, same leaky-denylist class).
+
+Live: https://forge-ai-m7p7.onrender.com
