@@ -3923,6 +3923,38 @@ test("Review's bare 'דירוג' keyword doesn't spuriously match an unrelated t
   assert.ok(starRating.entities.some((e) => e.name === "Review"), "'דירוג כוכבים למוצרים' (star rating for products) must still match Review");
 });
 
+test("round 2360: Review's 'דירוג' cue-word alternation (round 2109) was missing 'מסעדה''s construct-state singular 'מסעדת' and plain plural 'מסעדות', so a genuine rating description using only one of those restaurant forms lost the Review entity entirely", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const constructMeat = await provider.generate("אפליקציה לדירוג מסעדת הבשרים הטובה בעיר.", true);
+  assert.ok(constructMeat.entities.some((e) => e.name === "Review"), "'מסעדת הבשרים' (construct-state singular restaurant cue) with 'דירוג' must match Review");
+
+  const constructFish = await provider.generate("המערכת אוספת דירוג עבור מסעדת הדגים המקומית.", true);
+  assert.ok(constructFish.entities.some((e) => e.name === "Review"), "'מסעדת הדגים' (construct-state singular restaurant cue) with 'דירוג' must match Review");
+
+  const constructPizza = await provider.generate("אנחנו בונים כלי לדירוג מסעדת הפיצה השכונתית.", true);
+  assert.ok(constructPizza.entities.some((e) => e.name === "Review"), "'מסעדת הפיצה' (construct-state singular restaurant cue) with 'דירוג' must match Review");
+
+  const pluralCue1 = await provider.generate("אפליקציה לדירוג מסעדות באזור.", true);
+  assert.ok(pluralCue1.entities.some((e) => e.name === "Review"), "'מסעדות' (plain plural restaurant cue) with 'דירוג' must match Review");
+
+  const pluralCue2 = await provider.generate("המערכת אוספת דירוג של מסעדות שונות בעיר.", true);
+  assert.ok(pluralCue2.entities.some((e) => e.name === "Review"), "'מסעדות' (plain plural restaurant cue) with 'דירוג' must match Review");
+
+  // Non-regression: the bare absolute-singular form must still work (round 2109's own fix).
+  const bareRestaurant = await provider.generate("אפליקציה לדירוג מסעדה טובה בעיר.", true);
+  assert.ok(bareRestaurant.entities.some((e) => e.name === "Review"), "bare 'מסעדה' cue with 'דירוג' must still match Review");
+
+  // Non-regression: round 2109's own no-cue tournament guard must NOT be reopened.
+  const tournamentNoCue = await provider.generate("אפליקציה לניהול טבלת דירוג של שחקנים בטורניר.", true);
+  assert.ok(!tournamentNoCue.entities.some((e) => e.name === "Review"), "tournament leaderboard with no restaurant/customer/product/service/star cue must NOT spuriously match Review (round 2109)");
+
+  // Non-regression: the construct-state/plural restaurant cue must only ever unlock Review
+  // alongside 'דירוג', never match on its own.
+  const restaurantMenuNoRating = await provider.generate("האתר מציג את תפריט מסעדת הבשרים שלנו.", true);
+  assert.ok(!restaurantMenuNoRating.entities.some((e) => e.name === "Review"), "construct-state 'מסעדת' cue with no 'דירוג' wording must NOT spuriously match Review");
+});
+
 /**
  * Regression test for a real bug found in round 446: Employee's bare
  * "worker" keyword (used both in DOMAIN_ENTITY_RULES and ROLE_RULES) is a

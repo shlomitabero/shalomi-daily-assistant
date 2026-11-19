@@ -3746,7 +3746,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /\btestimonials?\b(?!\s+(?:evidence|statements?|privilege|immunity))/,
       /ביקור(?:ות|ת)(?!\s*(?:פנים|פנימית|חשבונות|תקנים|תקן|איכות|בטיחות|מס|רגולטורית|חוקית))/,
       "חוות דעת", /משוב(?!ח)/,
-      /דירוג(?=[\s\S]*(?:לקוח|מוצר|שירות|כוכב|מסעדה))|(?:לקוח|מוצר|שירות|כוכב|מסעדה)(?=[\s\S]*דירוג)/,
+      // Round 2360: the cue-word alternation below (added round 2109) only
+      // ever listed the absolute singular "מסעדה" ("restaurant"), missing
+      // both its construct-state singular "מסעדת" (e.g. "מסעדת הדגים" =
+      // "the fish restaurant") and its plain plural "מסעדות" -- "מסעדה" is
+      // a substring of neither (ה vs ת in construct state, ה vs ו in the
+      // plural), so the cue search never recognized them. Same gap shape
+      // as round 2359's Donation fix, found on a different disambiguation
+      // guard's cue-word list.
+      /דירוג(?=[\s\S]*(?:לקוח|מוצר|שירות|כוכב|מסעדה|מסעדות|מסעדת))|(?:לקוח|מוצר|שירות|כוכב|מסעדה|מסעדות|מסעדת)(?=[\s\S]*דירוג)/,
     ],
     labelHe: "ביקורות",
     descriptionHe: "ביקורת או משוב שהשאיר לקוח.",
