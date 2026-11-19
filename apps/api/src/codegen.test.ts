@@ -3984,6 +3984,243 @@ test("generated server.js serves an existing file attachment at /api/uploads/<pr
 });
 
 /**
+ * Round 2267: mirrors backup.ts's own round-1203 test exactly, for the
+ * exported app's own, previously CSV-only "Backup all data" route -- see
+ * addBackupUploadedFileEntries's own doc comment in codegen.ts for why this
+ * is now reachable (round 2200 gave this exported app a real uploadsDir to
+ * read from, closing the exact gap round 1204 found this not-yet-applicable
+ * for, over a thousand rounds ago). Confirmed directly against a real
+ * spawned server.js, not a mock: places a real file exactly where a real
+ * export bundles one (same uploads/<projectId>/<entityName>/<filename>
+ * layout the round-2200 test above already exercises), POSTs a record whose
+ * file field descriptor points at it (the only way to populate a file field
+ * in an exported app, since its own UI has no upload endpoint), then hits
+ * /api/backup and unzips the result.
+ */
+test("generated server.js's /api/backup route bundles a file field's real uploaded bytes as their own ZIP entry, instead of only the filename text", async () => {
+  const fileProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Applicant",
+          label: "מועמדים",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "resume", label: "קורות חיים", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(fileProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-file-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const filename = "11111111-1111-1111-1111-111111111111.pdf";
+  mkdirSync(path.join(dir, "uploads", fileProject.id, "Applicant"), { recursive: true });
+  const realBytes = Buffer.from("%PDF-fake-resume-bytes");
+  writeFileSync(path.join(dir, "uploads", fileProject.id, "Applicant", filename), realBytes);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const createRes = await fetch(`http://localhost:${port}/api/Applicant`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Dana Levi",
+        resume: JSON.stringify({ url: `/api/uploads/${fileProject.id}/Applicant/${filename}`, name: "dana-resume.pdf", size: realBytes.length, mimeType: "application/pdf" }),
+      }),
+    });
+    assert.equal(createRes.status, 201, "expected the record create to succeed -- coerce()'s own file-descriptor shape check must accept this value");
+    const applicant = (await createRes.json()).record;
+
+    const backupRes = await fetch(`http://localhost:${port}/api/backup`);
+    assert.equal(backupRes.status, 200);
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    const extractDir = path.join(dir, "extracted");
+    mkdirSync(extractDir);
+    execFileSync("unzip", ["-o", zipPath, "-d", extractDir]);
+
+    const fileEntryPath = path.join(extractDir, "מועמדים", "files", `${applicant.id}-resume-dana-resume.pdf`);
+    const extractedBytes = readFileSync(fileEntryPath);
+    assert.deepEqual(extractedBytes, realBytes, "the bundled ZIP entry's bytes must exactly match what was actually uploaded, not just the filename");
+
+    const applicantCsv = readFileSync(path.join(extractDir, "מועמדים.csv"), "utf8");
+    assert.match(applicantCsv, /Dana Levi,dana-resume\.pdf/, "the CSV cell itself must still be unchanged -- just the filename, same as before this round");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2267: mirrors backup.ts's own round-1434/1936 collision-dedup test
+ * (sanitizeZipEntryName deliberately leaves "." untouched, so an entity
+ * literally labeled "Report.csv" sanitizes to itself, and its own uploaded-
+ * file directory "Report.csv/files/..." would otherwise collide with a
+ * SEPARATE entity labeled "Report"'s own flat "Report.csv" CSV entry) --
+ * see this route's own collidesWithExisting comment in codegen.ts. Without
+ * it, the archive would contain "Report.csv" as both a flat file and a
+ * directory prefix, which a real zip tool's own extraction rejects as a
+ * name conflict -- confirmed here via a real spawned server.js and a real
+ * unzip, not a mock of buildZip's own entry list.
+ */
+test("generated server.js's /api/backup route disambiguates an uploaded-file directory prefix that collides with another entity's own flat CSV path", async () => {
+  // Round 2267: unlike backup.ts's own identical-in-spirit round-1434 test,
+  // this exported-app codegen.ts path runs every entity.name through its
+  // own assertSafe (SAFE_IDENTIFIER: letters/digits/underscore only, no
+  // "." -- entity.name is used as a real JS identifier/route segment in
+  // the generated source, unlike backup.ts's own plain-string entity.name)
+  // -- a literal "Report.csv" entity NAME is rejected outright by
+  // generateExportFiles before this route is ever reached. The identical
+  // string-collision hazard is still fully reachable here, just via the
+  // entity's own LABEL (free-form display text, no such restriction)
+  // instead of its name -- feedEntityDisplayLabel prefers label over name,
+  // so a validly-named "ReportAttachments" entity labeled "Report.csv"
+  // produces the exact same "Report.csv" string this route's own
+  // collidesWithExisting checks against.
+  const collidingProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        { name: "Report", fields: [{ name: "name", type: "text", required: true }] },
+        {
+          name: "ReportAttachments",
+          label: "Report.csv",
+          fields: [
+            { name: "name", type: "text", required: true },
+            { name: "attachment", type: "file", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(collidingProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-backup-collision-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const filename = "11111111-1111-1111-1111-111111111111.pdf";
+  mkdirSync(path.join(dir, "uploads", collidingProject.id, "ReportAttachments"), { recursive: true });
+  const realBytes = Buffer.from("%PDF-fake-attachment-bytes");
+  writeFileSync(path.join(dir, "uploads", collidingProject.id, "ReportAttachments", filename), realBytes);
+
+  const port = 54000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    await fetch(`http://localhost:${port}/api/Report`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "The real Report entity" }),
+    });
+    const createRes = await fetch(`http://localhost:${port}/api/ReportAttachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Row one",
+        attachment: JSON.stringify({
+          url: `/api/uploads/${collidingProject.id}/ReportAttachments/${filename}`,
+          name: "scan.pdf",
+          size: realBytes.length,
+          mimeType: "application/pdf",
+        }),
+      }),
+    });
+    const reportAttachmentsRecord = (await createRes.json()).record;
+
+    const backupRes = await fetch(`http://localhost:${port}/api/backup`);
+    assert.equal(backupRes.status, 200);
+    const zipBuffer = Buffer.from(await backupRes.arrayBuffer());
+    const zipPath = path.join(dir, "backup.zip");
+    writeFileSync(zipPath, zipBuffer);
+    const extractDir = path.join(dir, "extracted");
+    mkdirSync(extractDir);
+    execFileSync("unzip", ["-o", zipPath, "-d", extractDir]);
+
+    const reportCsv = readFileSync(path.join(extractDir, "Report.csv"), "utf8");
+    assert.match(reportCsv, /The real Report entity/, "entity \"Report\"'s own flat CSV must be untouched at the bare \"Report.csv\" path");
+
+    // Entity "ReportAttachments"'s own CSV is named after its LABEL
+    // ("Report.csv"), a DIFFERENT path from the bare path plus ".csv" --
+    // sanitizeZipEntryName leaves "." untouched, so this never collides
+    // with entity "Report"'s own "Report.csv" CSV in the first place, and
+    // is never bumped.
+    const reportDotCsvCsv = readFileSync(path.join(extractDir, "Report.csv.csv"), "utf8");
+    assert.match(reportDotCsvCsv, /Row one/, "entity \"ReportAttachments\"'s own CSV (labeled \"Report.csv\") must stay at its own literal \"Report.csv.csv\" path, unbumped");
+
+    // The uploaded file's own directory prefix is the BARE "Report.csv"
+    // string (never suffixed with ".csv"), which DOES collide with entity
+    // "Report"'s own flat "Report.csv" CSV -- disambiguated independently
+    // from (and to a DIFFERENT name than) the CSV path just above.
+    const fileEntryPath = path.join(extractDir, "Report.csv (2)", "files", `${reportAttachmentsRecord.id}-attachment-scan.pdf`);
+    const extractedBytes = readFileSync(fileEntryPath);
+    assert.deepEqual(extractedBytes, realBytes, "the bundled file entry must live under its own, independently-disambiguated directory name");
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Round 2201: the generated client's own request() helper throws an Error
  * whose `.code` comes straight from the response body's own `code` field
  * -- and every one of this same generated app's own NOT_FOUND-recovery
@@ -21682,6 +21919,14 @@ test("the exported server.js's own /api/backup route returns a clear 422 instead
   // dependency already is. Trivial name-passthrough stubs are enough
   // here: this test only exercises the Zip64 catch branch, never the
   // real label-based naming (covered by the end-to-end backup tests).
+  //
+  // Round 2267: the route now also computes `uploadsDir` via
+  // `path.join(__dirname, "uploads")` and calls addBackupUploadedFileEntries
+  // once per entity -- three more free variables from this extracted
+  // handler's own point of view. `path`/`__dirname` only need to not throw
+  // (addBackupUploadedFileEntries itself is stubbed to a no-op, since this
+  // test only exercises the Zip64 catch branch, never real file bundling --
+  // covered by its own dedicated tests below).
   const buildHandler = (buildZipStub: (entries: unknown[]) => unknown) =>
     new Function(
       "ENTITIES",
@@ -21695,6 +21940,9 @@ test("the exported server.js's own /api/backup route returns a clear 422 instead
       "sanitizeZipEntryName",
       "feedEntityLabelOccurrences",
       "feedEntityDisplayLabel",
+      "__dirname",
+      "path",
+      "addBackupUploadedFileEntries",
       `const handler = ${handlerSrc}\nreturn handler;`,
     )(
       [{ name: "Thing" }],
@@ -21708,6 +21956,9 @@ test("the exported server.js's own /api/backup route returns a clear 422 instead
       (name: string) => name,
       () => ({}),
       (entity: { name: string }) => entity.name,
+      "",
+      { join: (..._args: string[]) => "" },
+      () => {},
     ) as (req: unknown, res: ReturnType<typeof makeRes>) => void;
 
   const zip64Handler = buildHandler(() => {

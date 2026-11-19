@@ -336,6 +336,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1265,6 +1266,90 @@ function backupFieldDisplayValue(field, value, recordIndexByEntity) {
   return String(value);
 }
 
+// Round 2267: mirrors backup.ts's own round-1203 addUploadedFileEntries --
+// "Backup all data" was CSV-only for file fields (backupFieldDisplayValue
+// above, deliberately scoped to just the filename text per round 749's own
+// doc comment) even though, since round 2200, this exported app's own
+// uploads/ directory on disk genuinely holds real uploaded bytes (bundled
+// in at export time, served at runtime via the /api/uploads static route
+// above) -- the only way a file field is ever populated here, since the
+// generated UI has no upload endpoint of its own ("Files can't be added or
+// changed in an exported app") and CSV/JSON import both explicitly skip
+// "file" columns. A project with a file field that's backed up via this
+// route, then has its record/project data deleted, permanently loses that
+// file's real content despite the "backup" in hand -- the identical
+// data-loss gap round 1203 fixed in the live app, never ported here when
+// round 2200 first gave this exported app its own real uploadsDir to read
+// from (round 1204's own prior investigation correctly found this
+// inapplicable back then, before round 2200 existed -- the premise it
+// relied on, "no local upload storage of its own," no longer holds).
+//
+// Deliberately simpler than uploadPaths.ts's own resolveUploadedFilePath:
+// this server is single-project (one export == one project's own data), so
+// there is no separate projectId to accept as a parameter -- it's read
+// straight out of the descriptor's own url, which already embeds it (the
+// exact segment express.static's own uploads/<projectId>/... route above
+// already expects). filename must still match the UUID shape this
+// server's own coerce() (file branch above) already validates on write,
+// and the resolved path must still stay inside uploadsDir -- the
+// projectId/entityName segments are NOT inherently safe (an entity's own
+// label has no character-set restriction), so isPathInsideBackupUploadsDir
+// below is what actually prevents a crafted descriptor from resolving
+// outside uploads/ entirely.
+const UPLOADED_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\\.[a-z0-9]{1,10})?$/;
+function isPathInsideBackupUploadsDir(candidate, uploadsDir) {
+  const resolvedDir = path.resolve(uploadsDir);
+  const resolvedCandidate = path.resolve(candidate);
+  return resolvedCandidate === resolvedDir || resolvedCandidate.startsWith(resolvedDir + path.sep);
+}
+function resolveBackupUploadedFilePath(uploadsDir, value) {
+  if (typeof value !== "string" || value === "") return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (typeof parsed?.url !== "string") return null;
+  const match = /^\\/api\\/uploads\\/([^/]+)\\/([^/]+)\\/([^/]+)$/.exec(parsed.url);
+  if (!match) return null;
+  const [, projectId, entityNameSegment, filename] = match;
+  if (!UPLOADED_FILENAME.test(filename)) return null;
+  const target = path.join(uploadsDir, projectId, entityNameSegment, filename);
+  if (!isPathInsideBackupUploadsDir(target, uploadsDir)) return null;
+  return target;
+}
+
+// Mirrors backup.ts's own addUploadedFileEntries, adapted to this route's
+// own flat zipEntries array/per-entity baseName loop (the /api/backup route
+// below already computes and dedups baseName for its own CSV entry; this
+// reuses the exact same, already-unique string as the files directory
+// prefix -- see the route's own collidesWithExisting comment for why that's
+// still collision-safe against an EARLIER entity's own files/ directory,
+// not just other entities' flat CSVs). Best-effort: a value that doesn't
+// resolve to a real upload (already-deleted, malformed, or simply never
+// set) is silently skipped, exactly like resolveUploadedFilePath's own
+// established best-effort contract, rather than failing the whole backup
+// over one missing file.
+function addBackupUploadedFileEntries(zipEntries, uploadsDir, baseName, entity, records) {
+  const fileFields = entity.fields.filter((f) => f.type === "file");
+  if (fileFields.length === 0) return;
+  for (const record of records) {
+    for (const field of fileFields) {
+      const target = resolveBackupUploadedFilePath(uploadsDir, record[field.name]);
+      if (!target) continue;
+      let content;
+      try {
+        content = readFileSync(target);
+      } catch {
+        continue;
+      }
+      const originalName = sanitizeZipEntryName(backupFileFieldDisplayName(String(record[field.name])) || path.basename(target));
+      zipEntries.push({ path: \`\${baseName}/files/\${record.id}-\${sanitizeZipEntryName(field.name)}-\${originalName}\`, content });
+    }
+  }
+}
+
 // Mirrors the live Forge AI preview's own backup.ts: reorders entity.fields
 // to match the user's drag-reordered column order for this entity's table
 // (EntityView.jsx's own getColumnOrder/applyColumnOrder) -- a field the
@@ -1395,15 +1480,31 @@ app.get("/api/backup", (req, res) => {
   // identical reason.
   const backupLabelOccurrences = feedEntityLabelOccurrences(ENTITIES);
   const zipEntries = [];
+  // Round 2267: mirrors backup.ts's own addUploadedFileEntries' collides()
+  // helper exactly -- a flat "<X>.csv" entry and a "<X>/files/..." directory
+  // prefix (added below, for each entity's own uploaded-file bytes) can
+  // coexist as DIFFERENT strings yet still collide once a zip tool treats
+  // the same path as both a file and a directory. E.g. one entity literally
+  // labeled "Report.csv" puts its own files under "Report.csv/files/...",
+  // which clashes with a SEPARATE entity labeled "Report"'s own flat
+  // "Report.csv" CSV entry -- a collision the original exact-match-only
+  // dedup below never considered, since those two strings are equal only
+  // once compared case-insensitively against a "/"-suffixed prefix, not
+  // against each other directly.
+  const collidesWithExisting = (candidate) => {
+    const lower = candidate.toLowerCase();
+    return zipEntries.some((e) => e.path.toLowerCase() === lower || e.path.toLowerCase().startsWith(\`\${lower}/\`));
+  };
+  const uploadsDir = path.join(__dirname, "uploads");
   for (const entity of ENTITIES) {
     const baseName = sanitizeZipEntryName(feedEntityDisplayLabel(entity, backupLabelOccurrences));
     // Named entryPath, not path -- this route's own enclosing module
     // already imports the real Node "path" module (used by the uploads
     // static route elsewhere in this same generated server.js).
     let entryPath = \`\${baseName}.csv\`;
-    if (zipEntries.some((e) => e.path.toLowerCase() === entryPath.toLowerCase())) {
+    if (collidesWithExisting(entryPath)) {
       let suffix = 2;
-      while (zipEntries.some((e) => e.path.toLowerCase() === \`\${baseName} (\${suffix}).csv\`.toLowerCase())) suffix += 1;
+      while (collidesWithExisting(\`\${baseName} (\${suffix}).csv\`)) suffix += 1;
       entryPath = \`\${baseName} (\${suffix}).csv\`;
     }
     zipEntries.push({
@@ -1412,6 +1513,30 @@ app.get("/api/backup", (req, res) => {
         "\\uFEFF" +
         entityToCsv(entity, recordsByEntity[entity.name], recordIndexByEntity, orderedFieldsFor(entity, columnOrders)),
     });
+    // Round 2267: a SEPARATE collision check from entryPath just above --
+    // the files directory prefix below is always the bare \`baseName\`
+    // (never suffixed with ".csv", unlike entryPath), so it must be
+    // independently deduped against that bare string, exactly mirroring
+    // addUploadedFileEntries (backup.ts)'s own separate, un-suffixed
+    // collides(entityDir) check. An entity literally labeled "Report.csv"
+    // has its own CSV safely at "Report.csv.csv" (sanitizeZipEntryName
+    // deliberately leaves "." untouched, so entryPath above never collides
+    // with a separate "Report" entity's own "Report.csv" -- two different
+    // strings), but its own attachments' directory prefix is the BARE
+    // "Report.csv" string, which DOES collide with that same "Report"
+    // entity's own flat "Report.csv" CSV -- a collision entryPath's own
+    // dedup above can never catch, since it only ever compares
+    // ".csv"-suffixed strings against each other.
+    let filesDirName = baseName;
+    if (collidesWithExisting(filesDirName)) {
+      let suffix = 2;
+      while (collidesWithExisting(\`\${baseName} (\${suffix})\`)) suffix += 1;
+      filesDirName = \`\${baseName} (\${suffix})\`;
+    }
+    // See addBackupUploadedFileEntries's own doc comment above -- bundles
+    // each file field's real uploaded bytes alongside the CSV, the same
+    // way backup.ts's own live-app sibling already does.
+    addBackupUploadedFileEntries(zipEntries, uploadsDir, filesDirName, entity, recordsByEntity[entity.name]);
   }
   // Round 1604: mirrors routes/projects.ts's own round-1557 fix for the
   // identical live-app sibling route -- buildZip throws a plain Error
