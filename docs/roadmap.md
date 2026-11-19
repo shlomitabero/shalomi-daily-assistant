@@ -53494,3 +53494,78 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2329: Vendor's own ספק doubt-idiom guard was also missing the 3rd-person-PLURAL "casts/raises doubt" forms
+
+**Bug:** Round 2027 excluded "ספק" (supplier/doubt homograph) after the
+3rd-person-SINGULAR doubt verbs "מטיל"/"מטילה" (casts doubt) and "מעלה"
+(raises doubt) -- but never checked the 3rd-person-PLURAL forms
+"מטילים"/"מטילות" (they cast doubt) or "מעלים"/"מעלות" (they raise
+doubt). Round 2027's own comment already warned this denylist was
+"leaky... not an exhaustive fix", and this round's survey agent --
+briefed to keep hunting the same "missing grammatical person/number"
+shape on any other Hebrew idiom guard -- confirmed that warning correct,
+this time recurring within Vendor itself on an unrelated root (not רכש,
+already fixed round 2326). This makes the pattern 4-for-4 this window:
+Vendor/רכש (2326), Donation/תרם (2327), Course/נתן (2328), and now
+Vendor/ספק (this round).
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "החברים מעלים ספק גדול בנוגע לתוכנית ואני רוצה אפליקציה לניהול דיונים." (the members raise
+great doubt about the plan), "הבוחנות מעלות ספק רב בנוגע לתוצאה ואני רוצה אפליקציה לניהול בדיקות." (the examiners
+raise much doubt about the result), "המנהלים מטילים ספק כבד בנוגע לפרויקט ואני רוצה אפליקציה למעקב אחרי החלטות." (the
+managers cast heavy doubt about the project), and "המנהלות מטילות ספק כבד בנוגע לפרויקט ואני רוצה אפליקציה למעקב אחרי החלטות."
+(the managers-fem cast heavy doubt about the project) all fabricated a
+spurious Vendor entity with zero procurement content. Round 2027's own
+singular controls ("הוא מטיל ספק בתוכנית ואני רוצה אפליקציה לניהול דיונים.", "היא מעלה ספק בתוכנית ואני רוצה אפליקציה לניהול דיונים.") and
+genuine vendor usage ("יש לי כמה ספקים וחשוב לי לנהל את הקשר איתם, ואני רוצה אפליקציה לניהול ספקים.") all still behaved correctly.
+
+**Fix** (`domainEntities.ts`, Vendor's "ספק" keyword): the four missing
+plural lookbehinds were added, each its own full independent alternative:
+```js
+/(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!מעלה )(?<!מעלים )(?<!מעלות )ספק(?!ות)(?!\s*אם)/
+```
+
+**BILLING_ENTITY_NAMES:** Vendor is not a member, so this bug's impact is
+limited to the fabricated entity/screen, no payment-recommendation
+`openQuestions` side effect.
+
+**Backtracking pitfall, checked and found NOT to apply here:** same as
+round 2328's finding, a naive merged "(?<!מטיל(?:ה|ים|ות)? )"/
+"(?<!מעל(?:ה|ים|ות) )" variant was tested directly against all bug/control
+sentences and does NOT reintroduce the pitfall -- this is a lookbehind
+gated by a mandatory, non-optional whitespace connector immediately after
+the verb (the same shape as Course's guard), not a lookahead-gated guard
+like Vendor's own רכש or Donation's תרם (where the pitfall DOES apply).
+Independent alternatives were kept anyway, matching this file's
+established defensive convention.
+
+**Test added** (`heuristic.test.ts`): confirms all four new plural idiom
+forms no longer fabricate Vendor, while round 2027's own singular
+exclusions and genuine vendor usage all still behave correctly.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 240 (the new test), as predicted; pass-after showed 240/240. Full
+`@forge/spec-engine` suite: 436/436 (up from 435). Full `@forge/api`
+suite: 1782/1782, unchanged, run via Bash's native `run_in_background`
+from `apps/api` (disk space checked healthy beforehand). Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 35 confirmed instances total. The "missing
+grammatical person/number" gap shape is now confirmed 4-for-4 across
+Vendor/רכש (2326), Donation/תרם (2327), Course/נתן (2328), and Vendor/ספק
+(this round) -- it recurs even within a single entity across unrelated
+idiom roots, so a guard being "already fixed" for one root doesn't rule
+out the same gap on another root in the same entity. This round's survey
+agent explicitly audited every remaining `(?<!...)`/`(?!...)` Hebrew
+idiom construct in the file and found no further unaudited instance of
+this shape -- the next round should return to broader Strategy A/B
+coverage. Standing deferred/unsafe gaps, unchanged this round: Ticket
+bare-noun gap (rounds 2282-2283); Courier license/insurance/traffic-ticket
+sub-case (round 2311); Course bare-price-crashing sub-case (round 2316);
+Course military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
