@@ -2717,6 +2717,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // ordinary idiom that repurposes "recruiting"/"recruiter(s)" for an
       // unrelated meaning.
       "recruiting", "recruiter", "recruiters",
+      // Round 2369: round 1818 above covered the gerund and agent-noun
+      // forms, but never the base verb's own ordinary conjugations --
+      // bare "recruit", 3rd-person/plural "recruits", or past "recruited"
+      // ("we recruit engineers", "our agency recruited candidates") --
+      // which don't share a substring with "recruiting"/"recruiter(s)"
+      // (the "t" vs "ti"/"te" split), so the entity was lost entirely for
+      // descriptions in those tenses. This shares the same polysemy risk
+      // round 1818's "recruiting" already carries (military/sports
+      // "recruiting"), not a new one.
+      /\brecruit(?:s|ed)?\b/,
       // Round 2315: bare "מועמד"/"מועמדים" ("candidate(s)") collided
       // with the political/electoral candidate sense ("מועמד לנשיאות"
       // = presidential candidate, "מועמדים לכנסת" = Knesset candidates,

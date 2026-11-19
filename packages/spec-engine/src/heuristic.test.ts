@@ -2833,6 +2833,32 @@ test("JobApplicant's 'recruiting'/'recruiter(s)' keywords match, not just 'recru
   assert.ok(recruiters.entities.some((e) => e.name === "JobApplicant"), "'recruiters' alone must match JobApplicant");
 });
 
+// Round 2369: round 1818 above covered the gerund and agent-noun forms,
+// but never the base verb's own ordinary conjugations -- bare "recruit",
+// 3rd-person/plural "recruits", or past "recruited" -- which don't share
+// a substring with "recruiting"/"recruiter(s)", so the entity was lost
+// entirely for descriptions phrased in those tenses.
+test("JobApplicant's 'recruit'/'recruits'/'recruited' verb forms match, not just 'recruiting'/'recruiter(s)'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const past = await provider.generate("An app to track candidates our agency recruited for client companies last year.");
+  assert.ok(past.entities.some((e) => e.name === "JobApplicant"), "'recruited' alone must match JobApplicant");
+
+  const bare = await provider.generate("A system to help our team recruit top talent for open positions.");
+  assert.ok(bare.entities.some((e) => e.name === "JobApplicant"), "bare 'recruit' must match JobApplicant");
+  assert.ok(!bare.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const thirdPerson = await provider.generate("Our startup recruits new engineers every quarter to grow the team.");
+  assert.ok(thirdPerson.entities.some((e) => e.name === "JobApplicant"), "'recruits' alone must match JobApplicant");
+
+  // Non-regression: the existing round-1818 forms must still match.
+  const recruitingApp = await provider.generate("A recruiting app to track candidates and resumes.");
+  assert.ok(recruitingApp.entities.some((e) => e.name === "JobApplicant"), "'recruiting' must still match JobApplicant");
+
+  const recruiters = await provider.generate("A CRM for recruiters to track candidates.");
+  assert.ok(recruiters.entities.some((e) => e.name === "JobApplicant"), "'recruiters' must still match JobApplicant");
+});
+
 /**
  * Regression test for a real bug found in round 371: Deal's own keyword
  * list used to include bare "pipeline", which is also the single most
