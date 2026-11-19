@@ -56745,3 +56745,67 @@ guarded correctly; the pre-existing singular gap is a separate,
 narrower residual left for a future round.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2366: PAYMENT_KEYWORDS' own "מספרת" mirror missing idiom guard
+
+**Bug:** taking on the already-diagnosed candidate round 2365 flagged
+but did not fix: `heuristic.ts`'s `PAYMENT_KEYWORDS` array had a bare,
+completely unguarded `"מספרת"` string (added round 2294) -- unlike
+`domainEntities.ts`'s own Appointment-entity `"מספרת"` keyword, which
+round 2339 guarded with a negative lookahead against the unrelated
+ordinary feminine-singular present-tense verb "tells/narrates" (e.g.
+"מספרת סיפור" = "tells a story"). Since `matchesKeyword()` uses plain
+`.includes()` for a string keyword, any storytelling sentence using
+bare "מספרת" spuriously hit this array and got recommended Stripe,
+even though round 2339 already fixed the entity-match side so the
+same sentence correctly doesn't match Appointment at all. The sibling
+"מספרות" entry added to this same array in round 2365 was already
+correctly guarded -- only the older "מספרת" entry was left bare.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`, with a per-keyword match dump to rule out
+any other keyword accounting for the match): "המזכירה מספרת סיפור קצר לילדים בכל יום." and
+"הסבתא מספרת סיפור לפני השינה." -- naming only the storytelling verb, no hair-salon
+business at all -- both correctly matched no Appointment entity, yet
+still got "Stripe" recommended, solely via the bare "מספרת" string.
+
+**Fix** (`heuristic.ts`, `PAYMENT_KEYWORDS` array):
+```js
+"מספרה", /מספרת(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/, /מספרות(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/, "סלון יופי", /ספא(?!רי|ם)/, "עיסוי"
+```
+Replaces the bare string with the identical negative-lookahead guard
+already used by `domainEntities.ts`'s own "מספרת" keyword and by
+this array's own "מספרות" entry (round 2365) -- a straight sync, not
+a novel guard design.
+
+**Verification (regression/collision checks run live):** confirmed
+both bug sentences now correctly recommend "No payments"; confirmed
+all 4 genuine hair-salon forms (bare, both construct-state singulars,
+and plural) still correctly recommend Stripe.
+
+**Test added** (`heuristic.test.ts`, immediately after the existing
+round-2339 entity-side test): confirms 2 storytelling-verb sentences
+no longer spuriously recommend Stripe; confirms 3 genuine hair-salon
+forms still do.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 277 (the new test), as predicted; pass-after showed 277/277 --
+no regression. Full `@forge/spec-engine` suite: 473/473 (up from 472).
+Full `@forge/api` suite: one run showed 1781/1782 with a single
+`EADDRINUSE` port-contention failure in an unrelated generated-server
+file-upload integration test (`codegen.test.ts`), confirmed to be a
+pre-existing flake unrelated to this change by re-running that file
+alone (611/611 clean) and the full suite again (1782/1782 clean).
+Production build: clean (`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "4th Hebrew inflection missing from an
+incrementally-built keyword/guard" lens and its sibling "mirror-array
+drift" pattern have now found bugs in 8 consecutive rounds (2359-2366).
+This round's bug was specifically a `PAYMENT_KEYWORDS`-mirror guard
+drift (the entity side was fixed in round 2339 but its payment-array
+mirror never caught up) -- the same mirror-drift class rounds
+2294/2295 already fixed for this array historically, worth keeping in
+mind alongside the construct-state/inflection lens for future rounds.
+
+Live: https://forge-ai-m7p7.onrender.com
