@@ -1915,7 +1915,32 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // plain underwear-store description spuriously matched Event. This
       // excludes the specific "ת" prefix directly, same approach as the
       // "כנס" fix just above.
-      /(?<!ת)חתונה/, /(?<!ת)חתונות/,
+      //
+      // Round 2330: this keyword list never had a construct-state
+      // (סמיכות) "חתונת" entry at all -- unlike "ה"-ending "חתונה"/
+      // "חתונות", "חתונת" ends in "ת" so it's not a substring of either
+      // and silently escaped matching entirely (the "missing inflection"
+      // pitfall this file's own header already warns about, already
+      // fixed for "פגישה"->"פגישת" round 2287, "משימה"->"משימת" round
+      // 2289, "הזמנה"->"הזמנת" round 2292 -- Order's own "הזמנה" guard a
+      // few lines above even already lists "חתונת" by name in its own
+      // exclusion lookahead, proving the gap was already known about
+      // elsewhere in this file, just never applied here). Confirmed
+      // live: "אפליקציה לניהול חתונת החלומות שלנו..." (app for managing
+      // our dream wedding) and "אתר לתכנון חתונת האביב..." (site for
+      // planning the spring wedding) both lost Event entirely. Adding
+      // "חתונת" with the same "(?<!ת)" lookbehind as its siblings closes
+      // this (no "תחתונת" collision exists for the unrelated underwear
+      // word, confirmed empirically). A naive merged
+      // "(?<!ת)חתונ(?:ה|ות|ת)?" variant was tested and behaves
+      // identically to the independent fix -- this guard's "(?<!ת)"
+      // sits before the matched word, not gating a lookahead after an
+      // optional suffix, so there's no shared-optional-suffix
+      // backtracking path here (same shape as round 2328's Course/נתן
+      // and round 2329's Vendor/ספק lookbehind guards). Independent
+      // literals kept anyway for consistency with this file's
+      // established defensive convention.
+      /(?<!ת)חתונה/, /(?<!ת)חתונות/, /(?<!ת)חתונת/,
     ],
     labelHe: "אירועים",
     descriptionHe: "אירוע שהעסק מארגן או מנהל.",

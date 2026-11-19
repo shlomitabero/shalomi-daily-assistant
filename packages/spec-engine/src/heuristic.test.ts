@@ -6673,6 +6673,30 @@ test("Vendor's 'ספק' doubt-idiom guard (round 2027) also excludes the 3rd-per
   assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'יש לי כמה ספקים' (a genuine vendor mention) must still match Vendor");
 });
 
+test("Event's 'חתונה' (wedding) keyword also covers the construct-state (סמיכות) inflection 'חתונת' (previously a false negative)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const constructDream = await provider.generate("אפליקציה לניהול חתונת החלומות שלנו, כולל מוזמנים, ספקים ותקציב.");
+  assert.ok(constructDream.entities.some((e) => e.name === "Event"), "'חתונת החלומות' (dream wedding, construct state) must match Event");
+
+  const constructSpring = await provider.generate("אתר לתכנון חתונת האביב של הלקוחות שלנו.");
+  assert.ok(constructSpring.entities.some((e) => e.name === "Event"), "'חתונת האביב' (spring wedding, construct state) must match Event");
+
+  // Non-regression: the pre-existing bare singular/plural forms must still match.
+  const bareSingular = await provider.generate("אפליקציה לניהול חתונה שלנו, כולל מוזמנים, ספקים ותקציב.");
+  assert.ok(bareSingular.entities.some((e) => e.name === "Event"), "'חתונה' (bare singular, pre-existing) must still match Event");
+
+  const barePlural = await provider.generate("אני מתכנן חתונות ואירועים גדולים לאורך כל השנה.");
+  assert.ok(barePlural.entities.some((e) => e.name === "Event"), "'חתונות' (bare plural, pre-existing) must still match Event");
+
+  // Non-regression: the unrelated "תחתונה"/"תחתונות" (underwear) substring collision must still be excluded.
+  const underwearSingular = await provider.generate("חנות אונליין למכירת הלבשה תחתונה ותחתוני נשים.");
+  assert.ok(!underwearSingular.entities.some((e) => e.name === "Event"), "'תחתונה' (underwear, singular) must not spuriously match Event");
+
+  const underwearPlural = await provider.generate("אפליקציה לניהול מלאי של תחתונות וחזיות לחנות הלבשה.");
+  assert.ok(!underwearPlural.entities.some((e) => e.name === "Event"), "'תחתונות' (underwear, plural) must not spuriously match Event");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
