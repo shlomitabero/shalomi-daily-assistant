@@ -2131,7 +2131,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // for the same sofit-vs-regular-mem reason ("תורם" has a vav between
     // the resh and mem, same shape as the infinitive).
     keywords: [
-      /\bdonations?\b/, "donor", "nonprofit", "fundraising campaign",
+      /\bdonations?\b/, "donor", "fundraising campaign",
+      // Round 2297: bare "nonprofit" alone -- with no donor/donation/
+      // fundraising wording anywhere in the description -- fabricated a
+      // Donation entity, which this file's own BILLING_ENTITY_NAMES
+      // mechanism then turned into a wrongly-recommended "Stripe"
+      // payment provider. Plenty of real nonprofit apps have nothing to
+      // do with donations (a volunteer-coordination tracker, a free
+      // tutoring program, an advocacy/outreach tool), the same bare-
+      // overly-broad-word pitfall BILLING_ENTITY_NAMES's own comment
+      // below already explains for why Service/Appointment/Pet/Patient/
+      // Case stayed out of that set. Confirmed live: "A nonprofit
+      // organization tracking volunteer hours and community outreach
+      // events." and "Our nonprofit runs a free after-school tutoring
+      // program for kids." both matched Donation and recommended
+      // "Stripe" on nothing but the word "nonprofit" itself. Removed;
+      // every existing test that matched Donation via "nonprofit" also
+      // independently contains "donor(s)"/"donation(s)"/"fundraising
+      // campaign", so none regress. The Hebrew "עמותה"/"עמותות" below is
+      // deliberately left untouched this round: round 576's own
+      // dedicated regression test requires that exact bare-word match
+      // (no donor/תרומה wording) for Hebrew, so removing it here would
+      // directly break established, intentional precedent -- whether
+      // that same precedent should also be revisited is an open
+      // question for a future round, not resolved by this one.
       /\bdonat(?:e|es|ed|ing)\b/,
       /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
       "עמותה", "עמותות", "תרם", "תרמה", "תרמו", "לתרום",

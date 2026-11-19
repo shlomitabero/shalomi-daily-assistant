@@ -4549,6 +4549,36 @@ test("Donation's 'donation' keyword doesn't spuriously match 'condonation'", asy
 });
 
 /**
+ * Round 2297: bare "nonprofit" alone -- with no donor/donation/
+ * fundraising wording anywhere in the description -- fabricated a
+ * Donation entity, which then wrongly recommended "Stripe" via
+ * BILLING_ENTITY_NAMES, even for nonprofit apps that have nothing to do
+ * with donations (a volunteer-coordination tracker, a free tutoring
+ * program). Confirmed this doesn't regress any genuine donation
+ * description, which always also contains "donor(s)"/"donation(s)"/
+ * "fundraising campaign" independently.
+ */
+test("'nonprofit' alone (no donor/donation/fundraising wording) does not spuriously match Donation or recommend Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const volunteerTracker = await provider.generate("A nonprofit organization tracking volunteer hours and community outreach events.");
+  assert.ok(!volunteerTracker.entities.some((e) => e.name === "Donation"), "'nonprofit' alone must not spuriously match Donation");
+  const volunteerTrackerPaymentQuestion = volunteerTracker.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(volunteerTrackerPaymentQuestion);
+  assert.equal(volunteerTrackerPaymentQuestion!.recommendation, "No payments", "'nonprofit' alone must not spuriously recommend Stripe");
+
+  const tutoringProgram = await provider.generate("Our nonprofit runs a free after-school tutoring program for kids.");
+  assert.ok(!tutoringProgram.entities.some((e) => e.name === "Donation"), "'nonprofit' alone must not spuriously match Donation");
+  const tutoringProgramPaymentQuestion = tutoringProgram.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(tutoringProgramPaymentQuestion);
+  assert.equal(tutoringProgramPaymentQuestion!.recommendation, "No payments", "'nonprofit' alone must not spuriously recommend Stripe");
+
+  // Non-regression: a genuine donation description must still match.
+  const realNonprofitDonation = await provider.generate("A donation tracking app for a small nonprofit, with donor records and fundraising campaigns.");
+  assert.ok(realNonprofitDonation.entities.some((e) => e.name === "Donation"), "a genuine donation description must still match Donation");
+});
+
+/**
  * Regression test for round 557's finding: Appointment's bare "booking"
  * keyword is a substring of the unrelated, ordinary word "overbooking"
  * (airline/hotel capacity management) -- the same pitfall-1 shape as
