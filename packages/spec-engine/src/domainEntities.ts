@@ -453,9 +453,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "הזמנה"/"הזמנות" is a true Hebrew homograph: it means both "order"
       // (a purchase) and "invitation" (a wedding/party/event invitation --
       // "הזמנה לחתונה", "הזמנות למסיבה"). Excludes the idiomatic "invitation
-      // to X" phrasing (including construct-state forms) while still
-      // matching every genuine order/purchase use.
-      /הזמנ(?:ה|ות)(?!\s*ל(?:חתונה|חתונת|חתונות|אירוע|אירועי|אירועים|מסיבה|מסיבת|מסיבות|כנס|יום\s*הולדת))/,
+      // to X" phrasing while still matching every genuine order/purchase
+      // use.
+      //
+      // Round 2292: despite this comment's own original claim to also
+      // handle "construct-state forms," the alternation only ever covered
+      // "ה"/"ות" -- there was no "ת" branch at all, so the construct-state
+      // ORDER sense "הזמנת" (e.g. "הזמנת לקוח", "customer order" -- an
+      // everyday, idiomatic way to describe exactly the purchase this
+      // entity exists for) never matched in the first place. Simply
+      // adding "ת" isn't enough on its own: "הזמנת חתונה"/"הזמנת יום
+      // הולדת" (construct-state wedding/birthday INVITATION) would then
+      // start matching too, since the exclusion lookahead only recognized
+      // the "ל"-preposition phrasing ("הזמנה לחתונה"), not the construct-
+      // state phrasing that drops the "ל" entirely ("הזמנת חתונה" has no
+      // "ל" at all). The "ל" in the lookahead is made optional to cover
+      // both phrasings uniformly. Confirmed via the real matchEntities:
+      // "אפליקציה למעקב אחרי הזמנת לקוח" matched only Customer before this
+      // fix, with the real Order domain entirely lost, while the bare-
+      // noun twin ("...הזמנה של לקוח...") already matched Order correctly.
+      /הזמנ(?:ה|ות|ת)(?!\s*ל?(?:חתונה|חתונת|חתונות|אירוע|אירועי|אירועים|מסיבה|מסיבת|מסיבות|כנס|יום\s*הולדת))/,
       "רכישה", "רכישות", "משלוח", "משלוחים",
       // "וולט" is the Hebrew transliteration of both the Wolt delivery
       // app and the electrical unit "volt" -- identical spelling, no way

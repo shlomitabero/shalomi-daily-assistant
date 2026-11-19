@@ -1451,6 +1451,12 @@ test("a genuine Hebrew mention of the Wolt delivery brand still produces an Orde
 // invitation). A bare, unguarded keyword match spuriously tagged a
 // wedding/party-invitation description with an unrelated Order entity,
 // the same bare-substring/homograph-collision bug family as round 2059.
+//
+// Round 2292: also covers the construct-state invitation phrasing
+// ("הזמנת חתונה"/"הזמנת יום הולדת", no "ל" preposition at all) that this
+// round's own fix for the construct-state ORDER sense ("הזמנת לקוח")
+// could otherwise have spuriously started matching if the exclusion
+// lookahead weren't extended at the same time.
 test("a wedding/event-invitation description does not spuriously get an Order entity", async () => {
   const provider = new HeuristicSpecProvider();
 
@@ -1459,6 +1465,37 @@ test("a wedding/event-invitation description does not spuriously get an Order en
 
   const conferenceSpec = await provider.generate("מערכת לשליחת הזמנה לכנס השנתי של החברה ומעקב אחרי אישורי הגעה");
   assert.ok(!conferenceSpec.entities.map((e) => e.name).includes("Order"), `Conference-invitation app must not get a spurious Order entity: ${conferenceSpec.entities.map((e) => e.name)}`);
+
+  const weddingInviteConstruct = await provider.generate("הזמנת חתונה מעוצבת");
+  assert.ok(!weddingInviteConstruct.entities.map((e) => e.name).includes("Order"), `Construct-state 'הזמנת חתונה' must not get a spurious Order entity: ${weddingInviteConstruct.entities.map((e) => e.name)}`);
+
+  const birthdayInviteConstruct = await provider.generate("הזמנת יום הולדת מודפסת");
+  assert.ok(!birthdayInviteConstruct.entities.map((e) => e.name).includes("Order"), `Construct-state 'הזמנת יום הולדת' must not get a spurious Order entity: ${birthdayInviteConstruct.entities.map((e) => e.name)}`);
+});
+
+/**
+ * Round 2292: the Order entity's own "הזמנה"/"הזמנות" keyword regex's own
+ * doc comment claimed to handle "construct-state forms," but the
+ * alternation never had a "ת" branch at all, so the construct-state
+ * ORDER sense "הזמנת" (e.g. "הזמנת לקוח", "customer order" -- an
+ * everyday, idiomatic way to describe exactly the purchase this entity
+ * exists for) never matched. Confirmed live via the real matchEntities
+ * before this fix: "אפליקציה למעקב אחרי הזמנת לקוח" matched only
+ * Customer, with the real Order domain entirely lost, while the bare-
+ * noun twin ("...הזמנה של לקוח...") already matched Order correctly.
+ */
+test("recognizes the Hebrew construct-state 'הזמנת' form (e.g. 'הזמנת לקוח') as the Order entity, not just the bare 'הזמנה'/'הזמנות' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const customerOrder = await provider.generate("אפליקציה למעקב אחרי הזמנת לקוח", true);
+  assert.ok(customerOrder.entities.some((e) => e.name === "Order"), "Hebrew 'הזמנת לקוח' must match the Order entity rule");
+
+  const customerOrderStored = await provider.generate("המערכת שומרת את הזמנת הלקוח במסד הנתונים", true);
+  assert.ok(customerOrderStored.entities.some((e) => e.name === "Order"), "Hebrew 'הזמנת הלקוח' must match the Order entity rule");
+
+  // Non-regression: the already-working bare-noun form must still match.
+  const bareForm = await provider.generate("אפליקציה למעקב אחרי הזמנה של לקוח", true);
+  assert.ok(bareForm.entities.some((e) => e.name === "Order"), "the bare 'הזמנה' form must still match (no regression)");
 });
 
 test("a genuine Hebrew order/purchase description still produces an Order entity", async () => {
