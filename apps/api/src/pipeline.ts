@@ -99,6 +99,31 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   /(?:(?<![a-zA-Z])ssn|SSN)s?(?![a-z])/,
   "creditcard",
   "credit_card",
+  // Round 2278: this whole array only ever covered six categories
+  // (password, secret, apikey, token, ssn, creditcard) -- a "PaymentMethod"
+  // entity with cardNumber/cvv/bankAccountNumber/routingNumber/iban/pin/
+  // passportNumber/driversLicenseNumber fields all escaped it entirely,
+  // scoring a perfect 100/100 with zero warnings even though every one of
+  // those is exactly the "do not put a real secret in it" hazard this
+  // mechanism exists to flag (its own warning text just above). Live-
+  // confirmed via the real runSecurityScan before this fix.
+  "cardnumber", "card_number", "cvv", "cvc",
+  "bankaccount", "bank_account", "routingnumber", "routing_number", "iban",
+  "passport", "driverslicense", "driver_license",
+  // Bare "pin" needs the same \b-bounded-on-original-case treatment as
+  // "secret"/"token"/"ssn" above: a plain substring check would also match
+  // "pineapple"/"pink"/"pint" (immediately followed by a lowercase letter)
+  // and, less obviously, "shipping" itself (the "pin" inside "ship-PIN-g" is
+  // preceded by the letter "p", not a word start) and "opinion"/"spinner"
+  // (their own "pin" is likewise preceded by a letter, "o"/"s"). Mirrors
+  // the "ssn" regex's exact shape: lowercase "pin" only counts at a word
+  // start (not preceded by a letter) or as capitalized "Pin" anywhere
+  // (covering "pinCode"/"securityPin"), and either form is rejected when
+  // immediately followed by a lowercase letter -- which is exactly what
+  // rules out "pineapple"/"pink"/"pint" while still catching the plural
+  // "pins"/"securityPins" via the optional trailing "s", the same plural
+  // fix round 1913 already applied to "secret"/"token"/"ssn".
+  /(?:(?<![a-zA-Z])pin|Pin)s?(?![a-z])/,
 ];
 
 interface ImpactSummary {

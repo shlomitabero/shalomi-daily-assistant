@@ -2645,6 +2645,73 @@ test("Security scan flags the snake_case form of a sensitive field name, not jus
 });
 
 /**
+ * Regression test for round 2278: SENSITIVE_FIELD_HINTS only ever covered
+ * six categories (password, secret, apikey, token, ssn, creditcard) -- a
+ * "PaymentMethod" entity with cardNumber/cvv/bankAccountNumber/
+ * routingNumber/iban/pin/passportNumber/driversLicenseNumber fields all
+ * escaped it entirely, scoring a perfect 100/100 with zero warnings even
+ * though every one of those is exactly the "do not put a real secret in
+ * it" hazard this mechanism exists to flag. Also confirms the new bare
+ * "pin" hint's own boundary regex doesn't spuriously flag "pineapple"/
+ * "pink"/"opinion"/"spinner"/"napkin" -- including "shipping", whose own
+ * "pin" substring (the "ping" inside "ship-ping") is preceded by a letter,
+ * not a word start, the same collision class the pre-existing "ssn" hint
+ * already guards against for "businessName"/"className".
+ */
+test("Security scan flags card/bank/PIN/passport/driver's-license field names, without spuriously flagging 'pineapple'/'pink'/'opinion'/'spinner'/'napkin'/'shipping'", () => {
+  const spec: ProductSpec = {
+    summary: "test",
+    personas: [],
+    roles: ["Admin"],
+    screens: [],
+    assumptions: [],
+    openQuestions: [],
+    entities: [
+      {
+        name: "PaymentMethod",
+        fields: [
+          { name: "name", type: "text", required: true },
+          { name: "cardNumber", type: "text", required: false },
+          { name: "cvv", type: "text", required: false },
+          { name: "bankAccountNumber", type: "text", required: false },
+          { name: "routingNumber", type: "text", required: false },
+          { name: "iban", type: "text", required: false },
+          { name: "pin", type: "text", required: false },
+          { name: "pinCode", type: "text", required: false },
+          { name: "securityPins", type: "text", required: false },
+          { name: "passportNumber", type: "text", required: false },
+          { name: "driversLicenseNumber", type: "text", required: false },
+          { name: "shippingAddress", type: "text", required: false },
+          { name: "opinion", type: "text", required: false },
+          { name: "pineapple", type: "text", required: false },
+          { name: "spinnerStyle", type: "text", required: false },
+          { name: "napkinCount", type: "text", required: false },
+        ],
+      },
+    ],
+  };
+
+  const security = runSecurityScan("proj1", spec);
+
+  for (const field of [
+    "cardNumber", "cvv", "bankAccountNumber", "routingNumber", "iban",
+    "pin", "pinCode", "securityPins", "passportNumber", "driversLicenseNumber",
+  ]) {
+    assert.ok(
+      security.warnings.some((w) => w.includes(`"PaymentMethod.${field}"`)),
+      `'${field}' must be flagged -- it's a genuinely sensitive-sounding field name`,
+    );
+  }
+  for (const field of ["shippingAddress", "opinion", "pineapple", "spinnerStyle", "napkinCount"]) {
+    assert.ok(
+      !security.warnings.some((w) => w.includes(`"PaymentMethod.${field}"`)),
+      `an ordinary '${field}' field must never be flagged just because it contains the substring "pin"`,
+    );
+  }
+  assert.equal(security.warnings.length, 10, "exactly the 10 genuinely sensitive-sounding fields should be flagged");
+});
+
+/**
  * Real end-to-end proof of the same fix, run through the actual
  * runBuildPipeline a real build/refine uses (real migrations, real seed
  * data, every real agent step) rather than calling runSecurityScan in
