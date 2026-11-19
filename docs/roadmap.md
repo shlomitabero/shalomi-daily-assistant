@@ -56932,3 +56932,69 @@ for the same tense/plural-completeness gap this round found for Order
 multi-word English keyword lists not yet individually swept).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2369: JobApplicant's "recruit" keyword missing base verb conjugations
+
+**Bug:** `domainEntities.ts`'s JobApplicant entity (round 1818) added
+the gerund "recruiting" and agent-noun forms "recruiter"/"recruiters",
+but never the base verb's own ordinary conjugations -- bare "recruit",
+3rd-person/plural "recruits", or past "recruited". Describing a
+recruiting feature in the plain verb form ("we recruit engineers",
+"our agency recruited candidates") is at least as natural as
+"recruiting"/"recruiter(s)". Since none of "recruit"/"recruits"/
+"recruited" is a substring of "recruiting"/"recruiter(s)" (the "t" vs
+"ti"/"te" divergence), the JobApplicant entity was lost entirely for
+such descriptions -- the second instance of the "English verb-tense/
+plural completeness gap" method round 2368 opened.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`, with a per-keyword match dump to rule out any
+other keyword accounting for the match): "An app to track candidates our agency recruited for client companies last year.", "A system to help our team recruit top talent for open positions.",
+and "Our startup recruits new engineers every quarter to grow the team." all matched zero JobApplicant entity (falling
+through to `Customer` or the generic `Item` fallback) on the
+unmodified code.
+
+**Fix** (`domainEntities.ts`, JobApplicant entity):
+```js
+/\brecruit(?:s|ed)?\b/
+```
+Added alongside the existing round-1818 keywords. This carries the
+same pre-existing military/sports "recruiting" polysemy risk the
+sibling "recruiting" keyword already has (confirmed live: "the army
+recruiting office signs up new soldiers" and "the sports team is
+recruiting new players" both already matched JobApplicant today, pre-
+fix, via the bare "recruiting" string) -- not a new regression, just
+extended consistently to the base verb, the same reuse-the-existing-
+guard-as-is approach round 2368 took for Order's "purchase".
+
+**Test added** (`heuristic.test.ts`, immediately after the existing
+round-1818 test): confirms the 3 new verb-form sentences now match
+JobApplicant; confirms the 2 existing round-1818 forms ("recruiting",
+"recruiters") still match.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 279 (the new test), as predicted; pass-after showed 279/279 --
+no regression. Full `@forge/spec-engine` suite: 475/475 (up from 474).
+Full `@forge/api` suite: 1782/1782 clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "English verb-tense/plural completeness
+gap" method (opened round 2368) has now found 2 bugs in 2 rounds. This
+round's survey agent also swept Donation's "donate" paradigm (already
+complete: donate/donates/donated/donating), Rental's "rent" paradigm
+(already complete for verb forms: rents/rented/renting, with the
+ambiguous bare noun "rent" deliberately excluded), Subscription (no
+verb-form keyword exists at all -- a different keyword strategy, not
+a completeness gap), and Review's "review"/"rate" family (deliberately
+uses only multi-word phrases, no bare verb form to have a gap in) --
+all ruled out. Also confirmed only 3 regex-based English verb-paradigm
+families exist in the whole file (Order's "purchase", Rental's "rent",
+Donation's "donate"), and only one other separate-string gerund family
+("recruiting", now fixed). Next round should treat this method as
+likely exhausted too unless a genuinely new candidate turns up, and
+fall back to a fresh angle on structural logic bugs in heuristic.ts
+(checked twice now, rounds 2367-2368, with no findings) or look for
+an entirely new 5th method.
+
+Live: https://forge-ai-m7p7.onrender.com
