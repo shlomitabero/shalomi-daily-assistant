@@ -54116,3 +54116,100 @@ dedicated future round); Donation's "צדקה" guard's residual
 unlisted-stance-noun leak (round 2334, accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2336: Patient's 'מטופל' keyword collided with the unrelated administrative adjective 'being handled'
+
+**Bug:** Patient's Hebrew keywords "מטופל"/"מטופלת"/"מטופלים" were
+listed completely unguarded (`domainEntities.ts`, Patient's keyword
+array) -- unlike nearly every other Hebrew keyword in this file. This
+is the same grammatical-polysemy shape round 888 already fixed for the
+ENGLISH "patient" (adjective "calm" vs. noun "patient"), never applied
+to the Hebrew side: "מטופל"/"מטופלת"/"מטופלים" is the passive-participle
+adjective of טיפל ("to handle/deal with/take care of"), routinely used
+in ordinary administrative "this request/complaint/case is being
+handled" phrasing with zero medical connection.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): a customer-support ticketing app
+("אפליקציה לתמיכת לקוחות שמנהלת פניות - כל פנייה מטופלת על ידי נציג שירות ומתועדת במערכת."), a complaints-tracking system
+("מערכת לניהול תלונות לקוחות - כל תלונה מטופלת תוך 24 שעות על ידי הצוות."), and a legal case-management app
+("אפליקציה למעקב אחרי תיקים משפטיים - כל תיק מטופל על ידי עורך דין אחד.") each fabricated a bogus `Patient` entity
+(fields name/email/phone/dateOfBirth/notes) with zero medical content.
+Two further administrative phrasings reproduce the same bug:
+"הבקשה מטופלת בוואטסאפ בין הצוות לנציג." and "הנושא מטופל בבדיקה פנימית של החברה.".
+
+**Fix** (`domainEntities.ts`, Patient's keyword array):
+```js
+/(?<!(?:^|\s)(?:תיק|תלונה|פנייה|בקשה|נושא|התיק|התלונה|הפנייה|הבקשה|הנושא)\s)מטופל(?:ת|ים)?/
+```
+Hebrew has no `\b`, so this excludes the specific administrative cue
+nouns (bare or with the ה-definite-article prefix) immediately before
+the keyword. A genuine medical occurrence is unaffected, confirmed
+including the SAME adjective used in its medical sense
+("המטופל מטופל על ידי הרופא לאחר הניתוח." -- still matches via the leading "המטופל"
+noun occurrence) and a case where the cue noun follows rather than
+precedes the keyword ("כל מטופל מקבל תיק רפואי אישי." -- unaffected, since the
+guard only excludes the cue noun immediately BEFORE the keyword). The
+baseline genuine-clinic case ("מרפאה המנהלת מטופלים ותיקי טיפול רפואי.") still matches
+as before.
+
+**BILLING_ENTITY_NAMES:** Patient is NOT a member, so this bug is
+entity-fabrication only.
+
+**Deliberately a leaky denylist, not an exhaustive fix**, same class as
+round 2027's ספק guard and round 2334's צדקה guard: two residual gaps
+are disclosed rather than silently left unmentioned -- (1) a ב-prefix
+variant of the cue noun ("בנושא מטופל כרגע") isn't excluded, since the
+lookbehind only checks for a bare or ה-prefixed cue noun; (2) a cue
+noun outside this curated list (e.g. "הבעיה מטופלת", problem, rather
+than case/complaint/request/ticket/topic) also isn't excluded. Both
+are accepted trade-offs for the confirmed-live common cases this
+closes.
+
+**Test added** (`heuristic.test.ts`): confirms all five bug sentences
+no longer match Patient, the genuine-clinic baseline and the same-
+adjective-medical-sense sentence still match, and a cue noun appearing
+after rather than before the keyword is correctly unaffected.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 247 (the new test), as predicted; pass-after showed 247/247.
+Full `@forge/spec-engine` suite: 443/443 (up from 442). Full
+`@forge/api` suite: 1782/1782, unchanged, run via Bash's native
+`run_in_background` from `apps/api` (disk space checked healthy
+beforehand: ~1.1GB tsx cache, 21G free). Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round used discovery method (C)
+(fresh Strategy A/B hunting rather than a pre-named prior gap),
+finding a THIRD confirmed instance of grammatical-polysemy false
+positives on an entirely unguarded Hebrew keyword in this file (same
+underlying shape as round 888's English "patient" fix, now also
+confirmed on the Hebrew side of the very same entity). The survey
+agent also re-verified, without finding any new gap, Event's כנס
+login-idiom guard (now fully exhausted across both spelling
+conventions per round 2335, confirmed not to need re-checking),
+Employee's מאמן/תלמיד construct-state forms (already fully covered),
+Courier's שליח/נהג guards, Property's נכס/listing guards, Course's
+קורס/כיתה/שיעור guards, and Patient's own English-side guards
+(888/2247/2248) -- all already thoroughly iterated with no fresh gap
+found. It also noticed, but did not pursue as the main finding, that
+bare "מטופל" is already a literal Hebrew substring of the feminine
+plural "מטופלות" (letters מ-ט-ו-פ-ל match the first five letters of
+מ-ט-ו-פ-ל-ו-ת) -- confirmed live this is NOT a second gap, since the
+existing bare "מטופל" keyword already covers that plural form via
+substring matching, with no additional entry needed. Standing deferred/
+unsafe gaps, unchanged this round: Ticket bare-noun gap (rounds
+2282-2283); Courier license/insurance/traffic-ticket sub-case (round
+2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318); Order's
+forward-only "הזמנה" exclusion-lookahead directionality gap (round
+2331, accepted trade-off); pre-existing roadmap.md script-substitution
+corruption from rounds 2316/2324/2325 (round 2332, deferred to a
+dedicated future round); Donation's "צדקה" guard's residual
+unlisted-stance-noun leak (round 2334, accepted trade-off); Patient's
+own "מטופל" guard's residual ב-prefix and unlisted-cue-noun leaks
+(round 2336, accepted trade-off).
+
+Live: https://forge-ai-m7p7.onrender.com
