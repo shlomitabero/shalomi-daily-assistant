@@ -3315,9 +3315,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // regressing any of rounds 2027/2329's existing exclusions or
     // genuine vendor usage. Same unmerged-lookbehind convention as
     // rounds 2328/2329 for consistency.
+    //
+    // Round 2345: round 2341 covered present and past tense of the
+    // "casts/raises doubt" idiom but, just like Donation's תרם (round
+    // 2343) and Course's שיעור (round 2344), never covered an entire
+    // TENSE outright -- future tense (יטיל/תטיל/נטיל/אטיל ספק = "will
+    // cast doubt", יעלה/תעלה/נעלה/אעלה ספק = "will raise doubt") was
+    // completely absent. Confirmed live: "המנהל יטיל ספק רב בתוכנית
+    // המכירות בשבוע הבא" (the manager will cast great doubt on the
+    // sales plan next week) and "הוועדה תעלה ספק משמעותי לגבי התקציב
+    // בפגישה הקרובה" (the committee will raise significant doubt about
+    // the budget), among five other person combinations, all
+    // fabricated Vendor with zero procurement content. Adds the eight
+    // missing future-tense lookbehinds (1st/2nd/3rd person singular,
+    // both roots). Known residual gap, same leaky-denylist class as
+    // every other guard in this file: future-tense PLURAL forms
+    // (יטילו/תטילו/יעלו/תעלו) still leak, since a fixed-literal
+    // lookbehind can't match the shorter prefix before a longer
+    // inflected form's own suffix -- deferred to a future round.
     keywords: [
       "vendor", "vendors", "supplier", "suppliers", "procurement",
-      /(?<!ללא )(?<!אין )(?<!בלי )(?<!ללא כל )(?<!אין כל )(?<!בלי כל )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!הטיל )(?<!הטילה )(?<!הטילו )(?<!מעלה )(?<!מעלים )(?<!מעלות )(?<!העלה )(?<!העלתה )(?<!העלו )ספק(?!ות)(?!\s*אם)/,
+      /(?<!ללא )(?<!אין )(?<!בלי )(?<!ללא כל )(?<!אין כל )(?<!בלי כל )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!הטיל )(?<!הטילה )(?<!הטילו )(?<!יטיל )(?<!תטיל )(?<!נטיל )(?<!אטיל )(?<!מעלה )(?<!מעלים )(?<!מעלות )(?<!העלה )(?<!העלתה )(?<!העלו )(?<!יעלה )(?<!תעלה )(?<!נעלה )(?<!אעלה )ספק(?!ות)(?!\s*אם)/,
       "ספקים",
       // Round 2309: bare "רכש" is the correct noun for "procurement"
       // ("ניהול רכש"), but it's also the ordinary 3rd-person-masc. past-

@@ -7749,3 +7749,35 @@ test("Course's 'שיעור' give-verb idiom guard was never given PRESENT-tense 
   const tanurControl = await provider.generate("יש לנו תנור לבישול לפני השיעור.");
   assert.ok(tanurControl.entities.some((e) => e.name === "Course"), "'יש לנו תנור לבישול' (oven, 'תנור') must still match Course via the unrelated 'שיעור' mention, not be mistaken for imperative 'תנו'");
 });
+
+test("Vendor's 'ספק' (doubt) idiom-exclusion guard was ALSO missing an entire FUTURE tense, the same gap shape rounds 2343/2344 found on Donation/Course", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futureCastMasc = await provider.generate("המנהל יטיל ספק רב בתוכנית המכירות בשבוע הבא");
+  assert.ok(!futureCastMasc.entities.some((e) => e.name === "Vendor"), "'יטיל ספק' (will cast doubt, 3ms future) must not spuriously match Vendor");
+
+  const futureRaiseFem = await provider.generate("הוועדה תעלה ספק משמעותי לגבי התקציב בפגישה הקרובה");
+  assert.ok(!futureRaiseFem.entities.some((e) => e.name === "Vendor"), "'תעלה ספק' (will raise doubt, 2ms/3fs future) must not spuriously match Vendor");
+
+  const futureCastPlural1st = await provider.generate("אנחנו נטיל ספק בנתונים האלה לפני שנאשר אותם");
+  assert.ok(!futureCastPlural1st.entities.some((e) => e.name === "Vendor"), "'נטיל ספק' (will cast doubt, 1pl future) must not spuriously match Vendor");
+
+  const futureCastSg1st = await provider.generate("אני אטיל ספק בהצעה הזו לפני שנחתום");
+  assert.ok(!futureCastSg1st.entities.some((e) => e.name === "Vendor"), "'אטיל ספק' (will cast doubt, 1sg future) must not spuriously match Vendor");
+
+  const futureRaiseSg1st = await provider.generate("אני אעלה ספק משמעותי בנושא הזה במהלך הישיבה");
+  assert.ok(!futureRaiseSg1st.entities.some((e) => e.name === "Vendor"), "'אעלה ספק' (will raise doubt, 1sg future) must not spuriously match Vendor");
+
+  const futureCastFem = await provider.generate("היא תטיל ספק רב בטיעון שלך");
+  assert.ok(!futureCastFem.entities.some((e) => e.name === "Vendor"), "'תטיל ספק' (will cast doubt, 2ms/3fs future) must not spuriously match Vendor");
+
+  const futureRaisePlural1st = await provider.generate("אנחנו נעלה ספק חשוב בנושא התקציב");
+  assert.ok(!futureRaisePlural1st.entities.some((e) => e.name === "Vendor"), "'נעלה ספק' (will raise doubt, 1pl future) must not spuriously match Vendor");
+
+  // Non-regression: existing present/past-tense exclusions and genuine vendor usage must still hold.
+  const presentCastMasc = await provider.generate("המנהל מטיל ספק רב בתוכנית המכירות");
+  assert.ok(!presentCastMasc.entities.some((e) => e.name === "Vendor"), "'מטיל ספק' (present tense, round 2341's existing fix) must still not match Vendor");
+
+  const genuineVendor = await provider.generate("יש לנו ספק טוב שמספק לנו חומרי גלם למפעל שלנו");
+  assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'יש לנו ספק טוב' (we have a good supplier) must still match Vendor");
+});
