@@ -7921,3 +7921,52 @@ test("PAYMENT_KEYWORDS round 2350: future-tense שילם forms (תשלם/תשל�
   // unresolved homograph at this spelling with no safe local-adverb disambiguator -- deliberately
   // NOT added to PAYMENT_KEYWORDS. This mirrors the existing wasCompleted non-regression case above.
 });
+
+test("PAYMENT_KEYWORDS round 2351: the 'sell(ing) + course(s)/class(es)' and 'sell(ing) + ticket(s)' phrases were missing 'sells'/'sold' verb forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const sellsCourses = await provider.generate("An online academy that sells online courses to working professionals.");
+  assert.strictEqual(sellsCourses.openQuestions?.[0]?.recommendation, "Stripe", "'sells online courses' (3rd person singular present) must recommend Stripe, not 'No payments'");
+
+  const soldCourses = await provider.generate("A marketplace that sold online courses to thousands of students last year.");
+  assert.strictEqual(soldCourses.openQuestions?.[0]?.recommendation, "Stripe", "'sold online courses' (past tense) must recommend Stripe, not 'No payments'");
+
+  const sellsTickets = await provider.generate("A box office app that sells tickets for local theater shows.");
+  assert.strictEqual(sellsTickets.openQuestions?.[0]?.recommendation, "Stripe", "'sells tickets' (3rd person singular present) must recommend Stripe, not 'No payments'");
+
+  const soldTickets = await provider.generate("An events company that sold tickets for last summer's festival.");
+  assert.strictEqual(soldTickets.openQuestions?.[0]?.recommendation, "Stripe", "'sold tickets' (past tense) must recommend Stripe, not 'No payments'");
+
+  // Non-regression: the already-working infinitive/gerund forms must still work.
+  const sellCourses = await provider.generate("A platform for creators to sell online courses and digital downloads.");
+  assert.strictEqual(sellCourses.openQuestions?.[0]?.recommendation, "Stripe", "'sell online courses' (infinitive, pre-existing) must still recommend Stripe");
+
+  const sellingTickets = await provider.generate("A startup selling tickets for live concerts and events.");
+  assert.strictEqual(sellingTickets.openQuestions?.[0]?.recommendation, "Stripe", "'selling tickets' (gerund, pre-existing) must still recommend Stripe");
+
+  // Non-regression: round 460/893's own adversarial cases must still stay excluded.
+  // These are English-language inputs, so the heuristic's open-questions recommendation
+  // comes back as the English "No payments" label, not the Hebrew "בלי תשלומים" one.
+  const stripedShirts = await provider.generate("An inventory tracker for a small shop selling striped shirts and accessories.");
+  assert.strictEqual(stripedShirts.openQuestions?.[0]?.recommendation, "No payments", "'selling striped shirts' (round 460, unrelated inventory) must not trigger Stripe");
+
+  const freeTickets = await provider.generate("A system for distributing free tickets to our community festival.");
+  assert.strictEqual(freeTickets.openQuestions?.[0]?.recommendation, "No payments", "'free tickets' distribution (round 893) must not trigger Stripe");
+
+  const itTicketing = await provider.generate("A support ticketing system for our IT helpdesk.");
+  assert.strictEqual(itTicketing.openQuestions?.[0]?.recommendation, "No payments", "IT support ticketing must not trigger Stripe");
+
+  const freeCourses = await provider.generate("A platform offering free online courses and classes for hobbyists.");
+  assert.strictEqual(freeCourses.openQuestions?.[0]?.recommendation, "No payments", "free online courses (round 1700) must not trigger Stripe");
+
+  // Non-regression: the new "sold"/"sells" alternatives must not be swallowed by words that
+  // merely contain "sold" without a word boundary immediately before it.
+  const oversold = await provider.generate("The popular course got oversold and now there's a waitlist for online courses.");
+  assert.strictEqual(oversold.openQuestions?.[0]?.recommendation, "No payments", "'oversold' (no word boundary before 'sold') must not trigger the new sold+courses pattern");
+
+  const unsoldTickets = await provider.generate("The venue reported hundreds of unsold tickets after the show.");
+  assert.strictEqual(unsoldTickets.openQuestions?.[0]?.recommendation, "No payments", "'unsold tickets' (no word boundary before 'sold') must not trigger the new sold+tickets pattern");
+
+  const resoldTickets = await provider.generate("A marketplace where fans can list resold tickets for sporting events.");
+  assert.strictEqual(resoldTickets.openQuestions?.[0]?.recommendation, "No payments", "'resold tickets' (no word boundary before 'sold') must not trigger the new sold+tickets pattern");
+});

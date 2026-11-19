@@ -211,7 +211,27 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // Verified live that a plain "free weekly yoga classes" description
   // still correctly stays "No payments" (bare "classes" alone is
   // untouched, same as bare "courses" already was).
-  /\bsell(?:ing)?\s+(?:online\s+)?(?:courses?|classes?)\b/,
+  //
+  // Round 2351: the verb-form list within this scoped phrase was itself
+  // incomplete -- "sell(?:ing)?" covers only the bare infinitive and the
+  // gerund, not the equally common 3rd-person-singular present "sells" or
+  // the past tense "sold". "An online academy that sells online courses
+  // to working professionals" and "A marketplace that sold online courses
+  // to thousands of students last year" both wrongly recommended "No
+  // payments" despite describing a course-selling business. Fixed by
+  // adding "sells?"/"sold" as sibling alternatives; this does not touch
+  // bare "sell"/"selling"/"sold" outside this adjacent phrase, so the
+  // round-460/893 "too broad a signal" concern that originally kept this
+  // scoped to "+ course(s)/class(es)" is unaffected. Confirmed live that
+  // the round-460 "selling striped shirts" inventory-tracker case, and
+  // "oversold"/"unsold" (neither has a word boundary immediately before
+  // "sold" as required by \b, so neither is swallowed), all still
+  // correctly stay unaffected. Note: the fix only matches "sold"/"sells"
+  // immediately adjacent to "(online) course(s)/class(es)", the same
+  // narrow adjacency the existing "sell"/"selling" forms already required
+  // -- a sentence with words wedged in between (e.g. "sold thousands of
+  // online courses") is a separate, broader-proximity gap, not this one.
+  /\b(?:sells?|selling|sold)\s+(?:online\s+)?(?:courses?|classes?)\b/,
   /\bpaid\s+(?:online\s+)?(?:courses?|classes?)\b/,
   "למכור קורסים", "מכירת קורסים", "קורסים בתשלום", "קורס בתשלום",
   // Round 1989: same "course"/"class" synonym gap as the two regexes just
@@ -491,7 +511,19 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // stay "No payments" -- neither contains "sell"/"selling" immediately
   // before "ticket(s)", nor "ticket sales"/"box office", nor collides with
   // Ticket's own "כרטיסי תמיכה" (support tickets) Hebrew keyword.
-  /\bsell(?:ing)?\s+tickets?\b/,
+  //
+  // Round 2351: same verb-form gap as the "sell(ing) + course(s)" pattern
+  // above -- "sell(?:ing)?" missed "sells"/"sold". "A box office app that
+  // sells tickets for local theater shows" and "An events company that
+  // sold tickets for last summer's festival" both wrongly recommended
+  // "No payments". Fixed the same way (same adjacency scope as the fix
+  // above -- "event" or any other word wedged between the verb and
+  // "tickets" is a separate gap, not this one); confirmed live that
+  // "unsold"/"resold tickets" still stay unaffected (no word boundary
+  // immediately before "sold" inside either word), as does the
+  // free-tickets-distribution and IT-ticketing
+  // non-regression cases above.
+  /\b(?:sells?|selling|sold)\s+tickets?\b/,
   "ticket sales", "box office",
   "מכירת כרטיסים", "למכור כרטיסים", "כרטיסים בתשלום",
 ];
