@@ -851,7 +851,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       /(?<!\b(?:navigation|nav|hamburger|dropdown|drop-down|side|context|settings)\s)(?<!\bburger\s(?=[\s\S]*?\b(?:navigation|icon|sidebar|profile|settings|tap|click|link)\b))(?<!\b(?:navigation|icon|sidebar|profile|settings|tap|click|link)\b[\s\S]*?\bburger\s)\bmenu\b(?!\s*bar\b)/i,
       /(?<!\bsatellite\s)\bdish(es)?\b(?!\s*(soap|racks?|towels?|network)\b)/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
-      /תפריט(?!\s*(ניווט|נפתח|צד))/, /(?<!ז)מנות/, "בית קפה",
+      /תפריט(?!\s*(ניווט|נפתח|צד))/,
+      // Round 2304: bare "מנות" (plural of "מנה") already excluded the
+      // "הזמנות" (orders) collision via the (?<!ז) lookbehind, but had no
+      // guard against its equally common medical/clinical "dose(s)"
+      // sense (medication/vitamin/radiation doses) -- a true Hebrew
+      // homograph, the same "genuinely ambiguous between two domains"
+      // shape this file's own burger-menu/property-נכס fixes already
+      // use a document-wide bidirectional lookaround for. Confirmed
+      // live: a nursing-home medication-dose tracker, a vitamin-dose
+      // tracker, and an oncology radiation-dose tracker all fabricated
+      // a MenuItem entity (plus a wrong Stripe recommendation) purely
+      // from "מנות", with zero restaurant/menu concept. Not a bare
+      // deletion -- "מציגה את כל המנות עם מחיר" (a real menu-with-
+      // pricing description) depends solely on this bare word with no
+      // other MenuItem keyword present, so a document-wide exclusion
+      // (mirroring the property-נכס approach) is used instead, only
+      // when an unambiguous dosage-cue word co-occurs ANYWHERE in the
+      // text, in either order relative to "מנות".
+      /(?<!ז)מנות(?![\s\S]*?(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות))(?<!(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות)[\s\S]*)/,
+      "בית קפה",
       // "בית קפה" (café) had no plural entry (round 582). Unlike this
       // file's other missing-plural fixes (576-581, all a ה→ות swap or a
       // sofit-letter swap), "בית" (house) forms its plural with the

@@ -365,6 +365,41 @@ test("'technician' in a clinical/lab/broadcast sense (English and Hebrew) does n
   assert.ok(acHe.entities.some((e) => e.name === "WorkOrder"), "Hebrew AC-technician service-call description must still match WorkOrder");
 });
 
+/**
+ * Round 2304: MenuItem's bare Hebrew "מנות" (plural of "מנה",
+ * "portion/dish") already excluded the "הזמנות" (orders) collision, but
+ * had no guard against its equally common medical/clinical "dose(s)"
+ * sense (medication/vitamin/radiation doses) -- a true Hebrew homograph,
+ * the same shape this file's own burger-menu/property-נכס fixes already
+ * use a document-wide bidirectional lookaround for. The sixth confirmed
+ * instance of the bare-overly-broad-keyword shape rounds 2297/2300/
+ * 2301/2302/2303 fixed.
+ */
+test("MenuItem's Hebrew 'מנות' keyword doesn't spuriously match the medical 'dose(s)' sense (medication/vitamin/radiation)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const medication = await provider.generate("אפליקציה לניהול מנות תרופה יומיות למטופלים בבית אבות.");
+  assert.ok(!medication.entities.some((e) => e.name === "MenuItem"), "medication-dose 'מנות' must not spuriously match MenuItem");
+
+  const vitamins = await provider.generate("כלי למעקב אחרי מנות ויטמינים שהמטופל צריך לקחת כל יום.");
+  assert.ok(!vitamins.entities.some((e) => e.name === "MenuItem"), "vitamin-dose 'מנות' must not spuriously match MenuItem");
+
+  const radiation = await provider.generate("מערכת שמנהלת מנות קרינה שמטופלים מקבלים בטיפולי אונקולוגיה.");
+  assert.ok(!radiation.entities.some((e) => e.name === "MenuItem"), "radiation-dose 'מנות' must not spuriously match MenuItem");
+
+  // Non-regression: genuine menu descriptions depend SOLELY on this bare
+  // word (no other MenuItem keyword present) and must still match.
+  const realMenu = await provider.generate("האפליקציה מציגה את כל המנות עם מחיר לכל אחת ומאפשרת להזמין.");
+  assert.ok(realMenu.entities.some((e) => e.name === "MenuItem"), "a genuine menu-with-pricing description must still match MenuItem");
+
+  const dailyDishes = await provider.generate("ניהול המנות שמוגשות בכל יום בבית העסק שלנו.");
+  assert.ok(dailyDishes.entities.some((e) => e.name === "MenuItem"), "a genuine daily-dishes-served description must still match MenuItem");
+
+  // Non-regression: the pre-existing הזמנות exclusion must remain intact.
+  const ordersOnly = await provider.generate("אפליקציה לניהול הזמנות של לקוחות.");
+  assert.ok(!ordersOnly.entities.some((e) => e.name === "MenuItem"), "'הזמנות' must still not spuriously match MenuItem via 'מנות'");
+});
+
 test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
   // Round 1690: "membership fee" is the single most natural English
   // phrase for what a gym/studio/co-working-space business charges, but
