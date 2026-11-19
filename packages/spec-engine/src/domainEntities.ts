@@ -1955,7 +1955,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // רכש, Donation's תרם) doesn't apply here -- confirmed empirically
       // that a naive merged single-lookbehind variant behaves
       // identically to the independent chain.
-      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)(?<!א)כנס/,
+      //
+      // Round 2335: the chain above covers ניכנס/תיכנס/יכנס/ייכנס/נכנס/
+      // להיכנס/מתכנס/התכנסות/אכנס, but missed the "ktiv chaser" (vowel-
+      // letter-dropped) spelling of the 2nd-person future -- "תכנס"
+      // (masc. sing.), "תכנסי" (fem. sing.), "תכנסו" (plural), e.g. "...
+      // תכנס למערכת עם שם משתמש וסיסמה..." ([you] will log in to the
+      // system with a username and password). This spelling drops the
+      // extra "י" that "תיכנס" has, so the character immediately before
+      // "כנס" is bare "ת", which none of the existing lookbehinds (all
+      // either 0 chars, or a specific 2-char sequence ending in something
+      // other than bare "ת") catch -- confirmed live this ordinary,
+      // arguably more common-in-casual-UI-copy login phrasing spuriously
+      // fabricated an Event entity (fields name/date/venue/capacity/
+      // status) into specs for unrelated apps (inventory, task tracker).
+      // "ת" is never itself a prefix of a genuine standalone "כנס"/"הכנס"
+      // (conference) usage -- Hebrew has no noun-prefix "ת" (unlike
+      // ב/ל/מ/ה, which do attach directly to nouns) -- so a bare "(?<!ת)"
+      // lookbehind is safe, confirmed empirically including composite
+      // sentences containing both the login verb and a real conference
+      // mention, and confirmed no regression on "מתכנס"/"להתכנס"
+      // (convene/assemble senses), which were already excluded by the
+      // pre-existing (?<!מת)/(?<!הת) entries (both still immediately
+      // preceded by "ת" as well, so this round's new entry changes
+      // nothing about their already-correct exclusion).
+      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)(?<!א)(?<!ת)כנס/,
       // Bare "חתונה"/"חתונות" (round 575) are substrings of "תחתונה"/
       // "תחתונות" ("lower [clothing]"/"underwear", e.g. "הלבשה תחתונה"),
       // an unrelated, common clothing/lingerie term -- "תחתונה" is

@@ -6825,6 +6825,28 @@ test("Donation's keywords also cover 'צדקה' (charity), already named in the 
   assert.ok(charityAsWayOfLife.entities.some((e) => e.name === "Donation"), "'צדקה כשיטת חיים' (charity as a way of life) must still match Donation");
 });
 
+test("Event's 'כנס' (conference) login-idiom exclusion guard also covers the 'ktiv chaser' 2nd-person future forms תכנס/תכנסי/תכנסו", async () => {
+  const provider = new HeuristicSpecProvider();
+  const loginMasc = await provider.generate("אפליקציה לניהול מלאי. כדי להתחיל, תכנס למערכת עם שם משתמש וסיסמה.");
+  assert.ok(!loginMasc.entities.some((e) => e.name === "Event"), "'תכנס למערכת' (masc. sing. 'you will log in') must not spuriously match Event");
+  const loginFem = await provider.generate("אפליקציה לניהול מלאי. גברת, תכנסי למערכת עם שם משתמש וסיסמה.");
+  assert.ok(!loginFem.entities.some((e) => e.name === "Event"), "'תכנסי למערכת' (fem. sing.) must not spuriously match Event");
+  const loginPlural = await provider.generate("אפליקציה לניהול מלאי. תכנסו למערכת עם שם משתמש וסיסמה.");
+  assert.ok(!loginPlural.entities.some((e) => e.name === "Event"), "'תכנסו למערכת' (plural) must not spuriously match Event");
+
+  // Non-regression: already-fixed forms from prior rounds must stay excluded.
+  const alreadyFixed = await provider.generate("אפליקציה לניהול מלאי. תיכנס למערכת עם שם משתמש וסיסמה.");
+  assert.ok(!alreadyFixed.entities.some((e) => e.name === "Event"), "'תיכנס למערכת' (already-fixed full spelling) must stay excluded from Event");
+
+  // Non-regression: genuine conference usage must still match.
+  const genuineConference = await provider.generate("אפליקציה לניהול כנס עסקי שנתי עם הרשמה ותשלום.");
+  assert.ok(genuineConference.entities.some((e) => e.name === "Event"), "a genuine conference description must still match Event");
+
+  // Non-regression: a sentence with both the login verb and a genuine conference mention must still match.
+  const mixedUsage = await provider.generate("מצב בו תכנס לכנס בעוד שעה.");
+  assert.ok(mixedUsage.entities.some((e) => e.name === "Event"), "a sentence containing both the login verb and the conference noun must still match Event via the genuine noun occurrence");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
