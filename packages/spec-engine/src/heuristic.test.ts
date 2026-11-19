@@ -7671,3 +7671,39 @@ test("Vendor's 'רכש' idiom-exclusion guard also needed the 2nd-person-feminin
   const genuineVendorFuture = await provider.generate("תרכשי סחורה נוספת מהספק");
   assert.ok(genuineVendorFuture.entities.some((e) => e.name === "Vendor"), "'תרכשי סחורה... מהספק' (you[f] will acquire goods from the supplier) must still match Vendor");
 });
+
+test("Donation's 'תרם' keyword was never given its FUTURE-tense or IMPERATIVE-mood forms, so genuine future/imperative donation descriptions wrongly matched no Donation at all", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futureFirstSg = await provider.generate("אפליקציית גיוס כספים. אני אתרום כסף רב למען הילדים החולים בבית החולים.");
+  assert.ok(futureFirstSg.entities.some((e) => e.name === "Donation"), "'אני אתרום כסף רב' (1st person future: I will donate) must match Donation");
+
+  const imperativeFemSg = await provider.generate("אפליקציית גיוס כספים. תרמי כסף רב עוד היום למען הילדים החולים.");
+  assert.ok(imperativeFemSg.entities.some((e) => e.name === "Donation"), "'תרמי כסף רב' (2fs imperative: donate!) must match Donation");
+
+  const futureSecondMasc = await provider.generate("אתה תתרום כסף רב לעמותה בחודש הבא");
+  assert.ok(futureSecondMasc.entities.some((e) => e.name === "Donation"), "'אתה תתרום כסף רב' (2nd person masc. future) must match Donation");
+
+  const futureThirdMasc = await provider.generate("הוא יתרום כסף רב לקרן המחקר");
+  assert.ok(futureThirdMasc.entities.some((e) => e.name === "Donation"), "'הוא יתרום כסף רב' (3rd person masc. future) must match Donation");
+
+  const futurePlural = await provider.generate("אנחנו נתרום כסף רב לעמותה השנה");
+  assert.ok(futurePlural.entities.some((e) => e.name === "Donation"), "'אנחנו נתרום כסף רב' (1st person plural future) must match Donation");
+
+  const imperativeMasc = await provider.generate("תרום כסף רב למען הילדים החולים");
+  assert.ok(imperativeMasc.entities.some((e) => e.name === "Donation"), "'תרום כסף רב' (masc. imperative: donate!) must match Donation");
+
+  // Non-regression: the same metaphorical "contributes to X" idiom must still be excluded in these new tenses/moods.
+  const idiomFuture2fs = await provider.generate("את תתרמי רבות להצלחת הפרויקט החדש שלנו.");
+  assert.ok(!idiomFuture2fs.entities.some((e) => e.name === "Donation"), "'תתרמי רבות להצלחת הפרויקט' (idiom: will contribute greatly) must not spuriously match Donation");
+
+  const idiomImperativeMasc = await provider.generate("תרום רבות לשיפור התפוקה של הצוות.");
+  assert.ok(!idiomImperativeMasc.entities.some((e) => e.name === "Donation"), "'תרום רבות לשיפור התפוקה' (idiom: contribute! to improving output) must not spuriously match Donation");
+
+  const idiomFutureThird = await provider.generate("הכלי החדש יתרום לקידום המטרה העסקית שלנו.");
+  assert.ok(!idiomFutureThird.entities.some((e) => e.name === "Donation"), "'יתרום לקידום המטרה' (idiom: will contribute to advancing the goal) must not spuriously match Donation");
+
+  // Non-regression: payment recommendation flips back to Stripe once Donation is correctly detected.
+  const paymentSpec = await provider.generate("אפליקציית גיוס כספים. אני אתרום כסף רב למען הילדים החולים בבית החולים.");
+  assert.strictEqual(paymentSpec.openQuestions?.[0]?.recommendation, "Stripe", "a genuine future-tense donation description must recommend Stripe, not 'בלי תשלומים'");
+});

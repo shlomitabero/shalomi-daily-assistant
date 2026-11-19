@@ -3005,6 +3005,41 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /תורמת(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תורמים(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תורמות(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      // Round 2343: rounds 2111/2322/2327 covered the PAST tense (all
+      // persons) and round 2333 covered the PRESENT-tense participle
+      // (תורם/תורמת/תורמים/תורמות), but neither ever touched the FUTURE
+      // tense or the IMPERATIVE mood of the same verb. Since Donation IS
+      // a member of BILLING_ENTITY_NAMES below, this wasn't just a missed
+      // entity -- a genuine future/imperative donation description wrongly
+      // flipped the payment-provider recommendation from "Stripe" to "בלי
+      // תשלומים" (no payments). Confirmed live: "אני אתרום כסף רב למען
+      // הילדים החולים..." (1st-person future: I will donate) and "תרמי
+      // כסף רב עוד היום למען הילדים החולים..." (2nd-person-feminine-
+      // singular imperative: donate!) both failed to produce a Donation
+      // entity at all -- a pure false NEGATIVE (omission), unlike every
+      // other round's idiom-collision false POSITIVE on this file. Each
+      // new form reuses this entity's own already-tested idiom-exclusion
+      // lookahead verbatim (the same metaphorical "contributes to X"
+      // idiom applies in every tense/mood: "הכלי יתרום לקידום המטרה" =
+      // the tool will contribute to advancing the goal). Independent
+      // branches per form, as always, not a merged suffix group.
+      //
+      // The bare imperative "תרמי" branch also needed its own
+      // collision guard: it is a literal 4-character prefix of BOTH
+      // "תרמילים"/"תרמיל" (backpack/backpacks) and "תרמית" (fraud) --
+      // caught empirically by this file's own pre-existing collision
+      // test for this entity (round 2293's "תרם"/"תרמילים"/"תרמית"
+      // guard test), which started failing the moment this branch was
+      // added without it. Excludes "ל" and "ת" directly after "תרמי"
+      // the same way other branches in this file exclude a longer
+      // form's own next letter.
+      /אתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תתרמי(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /יתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /נתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמי(?!ל)(?!ת)(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       // Round 2334: "צדקה" (charity) is named as a cue word inside this
       // entity's own "תרומה"/"תרומות" disambiguation regex above (used
       // only to help disambiguate THAT keyword) but was never itself
