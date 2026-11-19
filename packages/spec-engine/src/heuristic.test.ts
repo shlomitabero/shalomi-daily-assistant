@@ -5942,6 +5942,29 @@ test("Vendor's Hebrew 'רכש' keyword doesn't spuriously match the 'acquired ex
 });
 
 /**
+ * Round 2310: Review's bare "testimonial" is the correct word for a
+ * customer testimonial, but it's also standard legal/courtroom jargon
+ * for a category of evidence ("testimonial evidence") or a type of
+ * statement ("testimonial statements"), with nothing to do with
+ * customer feedback. The thirteenth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2309 fixed.
+ */
+test("Review's 'testimonial' keyword doesn't spuriously match the legal 'testimonial evidence/statements' jargon", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const evidence = await provider.generate("A courtroom case-management app to track testimonial evidence versus physical evidence for each case.");
+  assert.ok(!evidence.entities.some((e) => e.name === "Review"), "'testimonial evidence' must not spuriously match Review");
+
+  const statements = await provider.generate("A tool to manage affidavits and testimonial statements collected during a deposition.");
+  assert.ok(!statements.entities.some((e) => e.name === "Review"), "'testimonial statements' must not spuriously match Review");
+
+  // Non-regression: a genuine customer-testimonial description depends
+  // SOLELY on this bare word (no other Review keyword present) and must still match.
+  const landingPage = await provider.generate("A landing page to showcase testimonials from our clients.");
+  assert.ok(landingPage.entities.some((e) => e.name === "Review"), "a genuine customer-testimonial description must still match Review");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

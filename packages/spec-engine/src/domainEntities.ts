@@ -2596,7 +2596,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // "membership" collision -- "דירוג לקוחות"/"דירוג כוכבים למוצרים"/
     // "דירוג שירות" still match correctly either way around.
     keywords: [
-      "customer review", "customer feedback", "product review", "testimonial",
+      "customer review", "customer feedback", "product review",
+      // Round 2310: bare "testimonial" is the correct word for a
+      // customer testimonial, but it's also standard legal/courtroom
+      // jargon for a category of evidence ("testimonial evidence" vs.
+      // documentary/physical evidence) or a type of statement
+      // ("testimonial statements" from confrontation-clause doctrine),
+      // with nothing to do with customer feedback. Confirmed live: "A
+      // courtroom case-management app to track testimonial evidence
+      // versus physical evidence for each case." and a similar
+      // deposition-tracking sentence both fabricated Review as the
+      // SOLE entity, entirely losing the app's real case-management
+      // domain. Not a bare deletion: "A landing page to showcase
+      // testimonials from our clients." depends solely on this word,
+      // with no other Review keyword present. Guarded with a lookahead
+      // excluding the specific legal collocations confirmed to
+      // collide, the same bare-overly-broad-word shape rounds
+      // 2297/2300-2309 already fixed elsewhere in this file.
+      /\btestimonials?\b(?!\s+(?:evidence|statements?|privilege|immunity))/,
       /ביקור(?:ות|ת)(?!\s*(?:פנים|פנימית|חשבונות|תקנים|תקן|איכות|בטיחות|מס|רגולטורית|חוקית))/,
       "חוות דעת", /משוב(?!ח)/,
       /דירוג(?=[\s\S]*(?:לקוח|מוצר|שירות|כוכב|מסעדה))|(?:לקוח|מוצר|שירות|כוכב|מסעדה)(?=[\s\S]*דירוג)/,
