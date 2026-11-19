@@ -56998,3 +56998,73 @@ fall back to a fresh angle on structural logic bugs in heuristic.ts
 an entirely new 5th method.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2370: Volunteer's "volunteer" keyword missing past-tense/gerund forms
+
+**Bug:** `domainEntities.ts`'s Volunteer entity keyword (rounds
+2108/2131/2242/2357) already guarded the bare noun/verb forms
+"volunteer"/"volunteers" against several idiom collisions, but never
+covered the equally natural past tense "volunteered" or gerund
+"volunteering" -- "hours people volunteered at the shelter",
+"coordinating volunteering opportunities". Since neither form shares
+a substring with "volunteer" (no overlap with the bare form's own
+letters past the root), the Volunteer entity was lost entirely for
+descriptions phrased in either tense -- the third instance of the
+"English verb-tense/plural completeness gap" method (rounds
+2368/2369).
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "An app to track hours people volunteered at the animal shelter last month.", "A system to log who volunteered for the weekend cleanup event.", and
+"A nonprofit platform for coordinating volunteering opportunities at the food bank." all matched zero Volunteer entity (the third fell
+through to only `Deal`, via an unrelated "opportunities" keyword) on
+the unmodified code.
+
+**Fix** (`domainEntities.ts`, Volunteer entity):
+```js
+/\bvolunteer(?:s|ed|ing)?\b(?!\s+(?:a|an|the|our|their|his|her|its|my|your|some|any)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/
+```
+Widens only the character class (`volunteers?` to
+`volunteer(?:s|ed|ing)?`), keeping both existing idiom-exclusion
+guards (the determiner lookahead and the "...information/details/
+feedback/..." lookahead) untouched -- confirmed live that both guards
+apply identically and correctly to the new `-ing` form ("he was
+volunteering his opinion on everything" and "she kept volunteering
+information nobody asked for" both still correctly exclude Volunteer).
+
+**Test added** (`heuristic.test.ts`, immediately after the existing
+round-2357 determiner-guard test): confirms the 3 new tense/gerund
+sentences now match Volunteer; confirms the 2 existing bare-noun
+controls still match; confirms the determiner- and information-guard
+non-regression cases still exclude Volunteer on the new `-ing` form.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 280 (the new test), as predicted; pass-after showed 280/280 --
+no regression. Full `@forge/spec-engine` suite: 476/476 (up from 475).
+Full `@forge/api` suite: 1782/1782 clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "English verb-tense/plural completeness
+gap" method has now found 3 bugs in 3 rounds (2368-2370). This round's
+survey agent did a full pass over every English regex/string keyword
+in both `DOMAIN_ENTITY_RULES` and `ROLE_RULES` and found exactly two
+other candidates with a genuine gap, both set aside as needing a
+dedicated disambiguation design rather than a bare widening: Service's
+"service(s)" is missing "serviced"/"servicing" but collides with
+real-estate "serviced apartments"; Product's "stock(s)" is missing
+"stocked"/"stocking" but collides with the clothing/hosiery noun
+"stocking(s)". Everything else checked (Donation, Rental, Order,
+JobApplicant, Subscription, Review, courses/classes/patients/project/
+task/car/garage/membership/shipping/testimonial/plumber/electrician/
+handyman/locksmith/roofer/AC-repair/lawyer, plus Admin/Manager/
+Employee role keywords) is either already complete or deliberately
+noun/phrase-only by design. This method is now effectively exhausted
+for easy, bare-widening fixes -- the two remaining candidates
+(Service, Product) are real but need their own exclusion-list designs,
+not a one-line regex change. Next round should either tackle one of
+those two with a proper guard (following the "bound, don't skip"
+discipline from round 2364), or pivot to a fresh structural-logic
+angle on heuristic.ts (tried twice already, rounds 2367/2368, with no
+findings) or an entirely new 5th bug-finding method.
+
+Live: https://forge-ai-m7p7.onrender.com
