@@ -5884,6 +5884,38 @@ test("'deals'/'עסקה' in a criminal/diplomatic sense (drug/illegal/hostage) d
 });
 
 /**
+ * Round 2308: Project's bare "project(s)" (already \b-bounded against
+ * "projector" since round 456) had no guard against the ordinary
+ * business-English VERB "to project" (forecast/convey) -- "project
+ * revenue"/"project cash flow"/"project confidence"/"project earnings"
+ * are all common, genuinely unrelated phrasings with zero client-work
+ * management content. The eleventh confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2307 fixed.
+ */
+test("Project's 'project(s)' keyword doesn't spuriously match the forecasting/coaching verb 'to project'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const confidence = await provider.generate("A tool that helps public speakers project confidence and connect with their audience.");
+  assert.ok(!confidence.entities.some((e) => e.name === "Project"), "'project confidence' must not spuriously match Project");
+
+  const cashFlow = await provider.generate("A business planning app that lets store owners project cash flow needs for the next quarter.");
+  assert.ok(!cashFlow.entities.some((e) => e.name === "Project"), "'project cash flow' must not spuriously match Project");
+
+  const revenue = await provider.generate("A financial app that projects revenue growth per quarter for small business owners.");
+  assert.ok(!revenue.entities.some((e) => e.name === "Project"), "'projects revenue growth' must not spuriously match Project");
+
+  const earnings = await provider.generate("An app for sales teams to project earnings and track costs quarterly.");
+  assert.ok(!earnings.entities.some((e) => e.name === "Project"), "'project earnings' must not spuriously match Project");
+
+  // Non-regression: genuine client-work descriptions must still match.
+  const agency = await provider.generate("An app for an agency to manage projects and tasks.");
+  assert.ok(agency.entities.some((e) => e.name === "Project"), "a genuine 'manage projects' description must still match Project");
+
+  const clientProject = await provider.generate("An app for a design agency to track every client project and its deadline.");
+  assert.ok(clientProject.entities.some((e) => e.name === "Project"), "a genuine client-project description must still match Project");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

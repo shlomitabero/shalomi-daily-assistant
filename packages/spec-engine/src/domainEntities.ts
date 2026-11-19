@@ -1460,7 +1460,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // nothing to do with managing client work, so it spuriously matched
       // this entity. \b-bounded, same pitfall-1 shape as the thirteen
       // other collision fixes already in this file.
-      /\bproject(s)?\b/,
+      //
+      // Round 2308: \b-bounding only fixed the "projector" substring --
+      // "project"/"projects" is also the ordinary business-English VERB
+      // "to project" (forecast/convey), as in "project revenue"/"project
+      // cash flow"/"project confidence"/"project earnings", with zero
+      // client-work-management content. Confirmed live: "A tool that
+      // helps public speakers project confidence..." and three similar
+      // forecasting/coaching sentences all fabricated a Project entity,
+      // with several losing the app's real domain entirely. Guarded with
+      // a lookahead excluding the specific forecasting/coaching objects
+      // confirmed to collide, the same bare-overly-broad-word shape
+      // rounds 2297/2300-2307 already fixed elsewhere in this file.
+      /\bproject(s)?\b(?!\s+(?:revenue|cash\s*flow|growth|confidence|earnings|sales|costs?|authority|an?\s+image|calm(?:ness)?|voice)\b)/,
       "פרויקט", "פרויקטים",
     ],
     labelHe: "פרויקטים",
