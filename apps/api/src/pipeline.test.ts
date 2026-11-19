@@ -2692,6 +2692,8 @@ test("Security scan flags card/bank/PIN/passport/driver's-license field names, w
           { name: "cardPIN", type: "text", required: false },
           { name: "passportNumber", type: "text", required: false },
           { name: "driversLicenseNumber", type: "text", required: false },
+          { name: "driverLicenseNumber", type: "text", required: false },
+          { name: "drivers_license_number", type: "text", required: false },
           { name: "shippingAddress", type: "text", required: false },
           { name: "opinion", type: "text", required: false },
           { name: "pineapple", type: "text", required: false },
@@ -2708,6 +2710,7 @@ test("Security scan flags card/bank/PIN/passport/driver's-license field names, w
     "cardNumber", "cvv", "bankAccountNumber", "routingNumber", "iban",
     "pin", "pinCode", "securityPins", "passportNumber", "driversLicenseNumber",
     "PIN", "securityPIN", "cardPIN",
+    "driverLicenseNumber", "drivers_license_number",
   ]) {
     assert.ok(
       security.warnings.some((w) => w.includes(`"PaymentMethod.${field}"`)),
@@ -2720,7 +2723,7 @@ test("Security scan flags card/bank/PIN/passport/driver's-license field names, w
       `an ordinary '${field}' field must never be flagged just because it contains the substring "pin"`,
     );
   }
-  assert.equal(security.warnings.length, 13, "exactly the 13 genuinely sensitive-sounding fields should be flagged");
+  assert.equal(security.warnings.length, 15, "exactly the 15 genuinely sensitive-sounding fields should be flagged");
 });
 
 /**

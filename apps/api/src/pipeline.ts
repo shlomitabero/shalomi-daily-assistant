@@ -109,7 +109,24 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   // confirmed via the real runSecurityScan before this fix.
   "cardnumber", "card_number", "cvv", "cvc",
   "bankaccount", "bank_account", "routingnumber", "routing_number", "iban",
-  "passport", "driverslicense", "driver_license",
+  "passport",
+  // Round 2285: the original round-2278 pair above ("driverslicense" --
+  // plural "drivers", no underscore -- and "driver_license" -- singular
+  // "driver", with an underscore) only ever covered two of the four
+  // natural spellings. Both are plain-substring checks, so neither
+  // tolerates the OTHER spelling's own choice of plural-vs-singular and
+  // underscore-vs-none at the same time: "driverLicenseNumber" (singular
+  // "driver", camelCase -- the exact convention every sibling field this
+  // same round-2278 commit added uses: cardNumber, bankAccountNumber,
+  // routingNumber, passportNumber are all singular) has neither the "s"
+  // "driverslicense" needs nor the underscore "driver_license" needs, and
+  // "drivers_license_number" (plural "drivers", snake_case) has the
+  // underscore but not the no-"s" form, and the "s" but not the no-
+  // underscore form -- so both silently escaped the scan. Live-confirmed
+  // via the real runSecurityScan: a PaymentMethod entity with
+  // driverLicenseNumber/drivers_license_number fields (alongside the two
+  // already-covered spellings) scored those two fields zero warnings.
+  "driverslicense", "driverlicense", "driver_license", "drivers_license",
   // Bare "pin" needs the same \b-bounded-on-original-case treatment as
   // "secret"/"token"/"ssn" above: a plain substring check would also match
   // "pineapple"/"pink"/"pint" (immediately followed by a lowercase letter)
