@@ -57132,3 +57132,68 @@ twice already, rounds 2367/2368, with no findings) or an entirely new
 5th method.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2372: Product's "stock" keyword missing past-tense/gerund forms -- all four known methods now exhausted
+
+**Bug:** `domainEntities.ts`'s Product entity keyword already matched
+the bare noun/verb forms "stock"/"stocks", but never the equally
+natural past tense "stocked" or gerund "stocking" -- "items we
+stocked in the warehouse", "stocking shelves at the store". Since
+neither form shares a substring with "stock(s)", the Product entity
+was lost entirely for descriptions phrased in either tense -- the
+fifth and final instance of the "English verb-tense/plural
+completeness gap" method (rounds 2368-2371), closing the last known
+candidate round 2370/2371 left open.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "An app to track items we stocked in the warehouse." and "A tool for stocking shelves at the store." (plus two
+more similar sentences) all matched zero Product entity on the
+unmodified code.
+
+**Fix** (`domainEntities.ts`, Product entity):
+```js
+/\bproduct(s)?\b/, "inventory", /\bstock(?:s|ed|ing)?\b(?!\s+(?:stuffers?|and\s+hosiery\b))(?<!(?:christmas|nylon|silk|fishnet|pair\s+of|pairs\s+of)\s)/
+```
+Widens the character class (`s` to `s|ed|ing`) and adds a negative
+lookahead/lookbehind excluding the clothing/hosiery sense of
+"stocking(s)" -- which can be marked either by what precedes it
+(Christmas/nylon/silk/fishnet stockings, pair(s) of stockings) or what
+follows it (stocking stuffers, stockings and hosiery). Confirmed live
+that "A store for Christmas stockings and decorations." (plus four more clothing-collision sentences)
+does not spuriously gain a Product match before or after the fix, and
+that the existing round-449 "livestock" substring guard still holds.
+
+**Test added** (`heuristic.test.ts`, immediately after the existing
+round-2106-era "screwdriver(s)"/"webdriver"/"livestock" collision
+test): confirms the 4 new tense/gerund sentences now match Product;
+confirms the 2 existing bare-noun controls still match; confirms 5
+clothing-collision sentences still exclude Product; confirms
+"livestock" still does not spuriously match.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 282 (the new test), as predicted; pass-after showed 282/282 --
+no regression. Full `@forge/spec-engine` suite: 478/478 (up from 477).
+Full `@forge/api` suite: 1782/1782 clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**STANDING NOTES -- MILESTONE:** this round closes the "English
+verb-tense/plural completeness gap" method with 5 bugs found in 5
+rounds (2368-2372: Order, JobApplicant, Volunteer, Service, Product).
+Combined with the three Hebrew-side methods -- (a) bidirectional-
+lookaround cue-word gaps (exhausted round 2360/2363), (b) 4th Hebrew
+inflection missing (exhausted round 2367), (c) mirror-array drift
+between `domainEntities.ts` and `PAYMENT_KEYWORDS` (exhausted round
+2367) -- **all four known bug-finding methods used across this entire
+window (rounds 2359-2372) are now independently confirmed exhausted
+file-wide.** No further candidates are known under any of them. The
+only remaining fallback tried so far is a structural-logic-bug sweep
+of `heuristic.ts`'s control flow, attempted twice (rounds 2367 and
+2368) with no findings either time. Future rounds should either find
+a genuinely new, fifth bug-finding method category, or make another
+serious attempt at the structural-logic angle with concretely
+different inputs/traces than the first two attempts -- continuing to
+re-sweep the four exhausted methods is not expected to find anything
+new.
+
+Live: https://forge-ai-m7p7.onrender.com
