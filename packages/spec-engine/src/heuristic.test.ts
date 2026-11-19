@@ -1838,6 +1838,45 @@ test("recognizes 'rents'/'renting'/'rented' (ordinary verb conjugations of 'rent
 });
 
 /**
+ * Round 2280: the round-2279 fix just above only ever checked for
+ * collision with the bare real-estate NOUN "rent" (money owed) -- it
+ * never checked for collision with the ordinary real-estate VERB sense
+ * of "rents"/"renting"/"rented" itself, which is exactly as common as the
+ * equipment/vehicle-rental sense that fix targeted. "A landlord who rents
+ * apartments to multiple tenants." matched ONLY Rental (and never
+ * Property) before this fix -- the real domain entirely lost, strictly
+ * worse than falling through to the honest generic Item fallback.
+ */
+test("the round-2279 'rents'/'renting'/'rented' regex doesn't spuriously match Rental for a landlord/apartment real-estate description", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  for (const desc of [
+    "A landlord who rents apartments to multiple tenants.",
+    "An app for a landlord who rents apartments to tenants.",
+    "I own a few rental apartments and rent them out to tenants every year.",
+    "A small business renting out apartments to long-term tenants.",
+    "An app for a landlord renting out apartments to tenants.",
+  ]) {
+    const spec = await provider.generate(desc);
+    assert.ok(
+      !spec.entities.some((e) => e.name === "Rental"),
+      `a landlord/apartment description must not spuriously match Rental via the 'rents'/'renting' regex: "${desc}"`,
+    );
+  }
+
+  // Non-regression: every one of round 2279's own positive fixtures (none
+  // of which mention "apartment"/"landlord") must still match Rental.
+  const bikeShop = await provider.generate("A bike shop that rents bicycles by the hour.");
+  assert.ok(bikeShop.entities.some((e) => e.name === "Rental"), "'rents' alone must still match Rental");
+
+  const storageUnits = await provider.generate("We are renting out storage units to tenants.");
+  assert.ok(
+    storageUnits.entities.some((e) => e.name === "Rental"),
+    "'renting ... to tenants' (no 'apartment'/'landlord') must still match Rental -- bare 'tenant' alone must not exclude it",
+  );
+});
+
+/**
  * Round 1752: the Pet entity rule's keywords only ever covered the
  * clinic/grooming phrasing of a pet business ("veterinary", "vet clinic",
  * "pet grooming", "animal clinic") -- a dog walking, pet sitting, pet

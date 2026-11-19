@@ -1607,7 +1607,18 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // match Rental, blurring an entity boundary this file deliberately
       // keeps separate (the same reason WorkOrder deliberately avoids
       // Vehicle's own "מוסך"/"מכונאי" keywords above).
-      /\brental(s)?\b/,
+      //
+      // Round 2280: that last paragraph's own reasoning ("blurring an
+      // entity boundary this file deliberately keeps separate") turns out
+      // to already be reachable through the ENGLISH noun form too, not
+      // just a hypothetical Hebrew one -- "I own a few rental apartments
+      // and rent them out to tenants every year." matched only Rental via
+      // this exact bare "rental" noun, Property never firing at all.
+      // Given the identical "apartment(s)"/"landlord(s)" exclusion this
+      // same round adds to the verb-conjugation regex just below (for the
+      // identical underlying ambiguity), applying it here too closes the
+      // noun-form sibling of that same gap.
+      /\brental(s)?\b(?![\s\S]*?\b(?:apartments?|landlords?)\b)(?<![\s\S]*?\b(?:apartments?|landlords?)\b)/,
       // Round 2279: round 1812's own fix just above closed the gap for
       // generic NOUN phrasing ("bike rental"/"party rental") but never
       // covered ordinary verb conjugations of "rent" itself -- the only
@@ -1631,7 +1642,36 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "parents"/"parenting" -- there is no word boundary between the
       // "pa" and "rent" inside them, so \brents?\b never reaches the
       // "p-a" prefix at all.
-      /\brent(?:s|ed|ing)\b/,
+      //
+      // Round 2280: that same round-2279 fix checked for collision with
+      // the bare real-estate NOUN "rent" (money owed) but never checked
+      // for collision with the ordinary real-estate VERB sense of
+      // "rents"/"renting"/"rented" itself -- a landlord/apartment-
+      // management description is exactly as common a use of these verb
+      // forms as the equipment/vehicle-rental sense this fix targeted.
+      // Since matchEntities returns the union of every matching rule and
+      // Property's own keywords require much more specific phrasing
+      // ("real estate"/"apartment for rent"/"listing(s)"), a plain "A
+      // landlord who rents apartments to multiple tenants." matched ONLY
+      // Rental (itemName/renterName/Reserved-Active-Returned fields) and
+      // never Property (address/price/rooms/Sold-Rented fields) at all --
+      // the real domain entirely lost, strictly worse than the pre-2279
+      // behavior of falling through to the honest generic Item fallback.
+      // Confirmed live via matchEntities that every one of five realistic
+      // landlord/apartment phrasings matched only Rental before this
+      // fix. Excluded via the same document-wide bidirectional-lookaround
+      // technique this file's own "נכס" (asset vs. property) regex above
+      // already uses: never fires when "apartment(s)"/"landlord(s)"
+      // appears anywhere in the text, in either order relative to the
+      // match. Deliberately NOT "tenant(s)"/"lease"/"property" -- round
+      // 2279's own "renting out storage units to tenants" test fixture
+      // uses "tenants" for a genuine equipment/self-storage rental
+      // business with no real estate involved at all, so excluding on
+      // bare "tenant" would have reintroduced the exact same regression
+      // this fix closes, just for a different phrasing. Confirmed live
+      // that fixture, and the other three round-2279 positive fixtures,
+      // still correctly match Rental after this additional exclusion.
+      /\brent(?:s|ed|ing)\b(?![\s\S]*?\b(?:apartments?|landlords?)\b)(?<![\s\S]*?\b(?:apartments?|landlords?)\b)/,
     ],
     labelHe: "השכרות",
     descriptionHe: "פריט שהושכר ללקוח לתקופה מוגדרת.",
