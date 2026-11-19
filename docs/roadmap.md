@@ -56375,3 +56375,75 @@ exhausted for the whole file. Next round should return to either the
 or heuristic.ts structural logic bugs, per round 2359's standing note.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2361: ROLE_RULES.Manager spuriously matches feminine-plural "מנהלות מערכת"
+
+**Bug:** with the bidirectional-lookaround cue-word angle fully
+exhausted (rounds 2359-2360), this round's survey agent widened the
+search to `ROLE_RULES` -- a sibling export of `DOMAIN_ENTITY_RULES`
+used by `matchRoles`, flagged by round 2338 as under-audited relative
+to the heavily-swept `DOMAIN_ENTITY_RULES` table -- and found a fourth
+missing inflection in a recurring guard rounds 659/811/814 already
+built up incrementally. Manager's bare "מנהל" ("manager") keyword
+needs to exclude the unrelated idiom "מנהל/ת/י מערכת" ("system
+administrator(s)"), since `matchRoles` already adds Admin
+unconditionally for every description. Those three rounds' lookahead
+`(?!י?ת?\s*מערכת)` covers the masculine singular, feminine singular,
+and construct-plural inflections -- but that alternation can only ever
+produce the suffix strings "", "י", "ת", or "ית" (there is no "ו"
+anywhere in the pattern), so it can never produce "ות". The fourth,
+equally common inflection, feminine plural "מנהלות מערכת" ("female
+system administrators"), was never covered and still slipped through
+as a spurious Manager match.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "יש לנו כמה מנהלות מערכת שמטפלות בהרשאות הצוות." and
+"המערכת מנוהלת על ידי מנהלות מערכת בלבד, שאר הצוות הם עובדים רגילים." -- each naming only system
+administrators, feminine plural, with no other manager/management
+wording -- both spuriously got the Manager role (`roles` included
+"מנהל/ת") on top of the always-present Admin, exactly the same
+false-positive shape rounds 659/811/814 already fixed for the other
+three inflections.
+
+**Fix** (`domainEntities.ts`, `ROLE_RULES.Manager`):
+```js
+Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!(?:י|ת|ות)?\s*מערכת)/, "ניהול"], labelHe: "מנהל/ת" }
+```
+Replaces the `י?ת?` alternation with an explicit `(?:י|ת|ות)?`
+alternation covering all four suffix shapes.
+
+**Verification (regression/collision checks run live):** confirmed
+all three already-fixed inflections (bare "מנהל מערכת", "מנהלת
+מערכת", "מנהלי מערכת") stay correctly excluded; confirmed a real
+feminine-plural store-manager phrase ("מנהלות חנות") still correctly
+adds Manager; confirmed bare "מנהל"/"מנהלת"/"מנהלים"/"מנהלות" (with
+no "מערכת" at all) are all unaffected; confirmed the "מנהלות מערכת
+ההפעלה" (extra trailing word) case is now also correctly excluded,
+consistent with the other three inflections' own existing behavior
+for that case.
+
+**Test added** (`heuristic.test.ts`, immediately after round 814's
+existing construct-plural test): confirms both bug sentences no
+longer add Manager; confirms a real feminine-plural store-manager
+phrase still does.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 272 (the new test), as predicted; pass-after showed 272/272 --
+no regression. Full `@forge/spec-engine` suite: 468/468 (up from 467).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** `ROLE_RULES` (distinct from the much more
+heavily audited `DOMAIN_ENTITY_RULES`) is a promising direction for
+future rounds -- this round found a real bug there on the very first
+look, in a guard three separate prior rounds had already touched
+without ever confirming all four Hebrew inflections were covered.
+Angle A ("stale entity" method, rounds 2357-2358) was also surveyed
+this round and found Employee/Invoice/Order/Courier/Property/Project/
+Task/Vehicle/Pet/Rental/Ticket/Subscription/InsuranceClaim/WorkOrder/
+Case (every never-round-titled `DOMAIN_ENTITY_RULES` entity) to
+already be extensively audited under generic sweep-round comments --
+no fresh construct-state gap found there this round.
+
+Live: https://forge-ai-m7p7.onrender.com
