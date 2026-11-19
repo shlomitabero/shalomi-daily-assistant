@@ -1724,7 +1724,25 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // idiom shape doesn't apply) all correctly unaffected, as does
       // "אנחנו ניתנים" (the correctly-agreeing plural form, a different
       // string entirely).
-      /(?<!(?:לתת|אתן|תיתן|תתני|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|אנחנו\s+ניתן|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
+      //
+      // Round 2356: this guard still missed the 2nd/3rd-person-PLURAL
+      // FUTURE forms of לתת -- "תתנו" ("you-all will give") and "ייתנו"
+      // ("they will give"). Neither is a plain oversight nor a
+      // homograph-collision case like round 2355's "ניתן" (both strings
+      // have no common unrelated meaning); it's simply a gap in the
+      // future-plural slice, the same shape rounds 2347 (Vendor ספק)
+      // and others already closed for their own guards. Critically,
+      // "תתנו" is NOT already caught by the existing bare
+      // "(?<![א-ת])תנו" alternative: that alternative requires NO
+      // Hebrew letter immediately before "תנו", but in "תתנו" the
+      // character right before "תנו" is "ת" -- a Hebrew letter -- so
+      // the negative lookbehind blocks it, confirming this is a real,
+      // distinct gap. Confirmed live: "אתם תתנו לשכן הבעייתי שיעור שהוא
+      // לא ישכח" (you-all will teach the problematic neighbor a lesson
+      // he won't forget) and "הם ייתנו לשכן הבעייתי שיעור שהוא לא
+      // ישכח" (they will teach him a lesson), same comeuppance idiom,
+      // zero educational content, both wrongly fabricated Course.
+      /(?<!(?:לתת|אתן|תיתן|תתני|תתנו|ייתן|ייתנו|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|אנחנו\s+ניתן|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",

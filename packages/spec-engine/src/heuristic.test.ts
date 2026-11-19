@@ -7796,6 +7796,39 @@ test("Course's 'שיעור' comeuppance-idiom guard round 2355: was also missing
   assert.ok(genuineWeGiveDrivingLesson.entities.some((e) => e.name === "Course"), "'אנחנו ניתן שיעור נהיגה' (we give a first driving lesson) must still match Course");
 });
 
+test("Course's 'שיעור' comeuppance-idiom guard round 2356: was also missing the 2nd/3rd-person-plural FUTURE forms 'תתנו'/'ייתנו' (not already caught by the existing bare 'תנו' entry)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const future2pl = await provider.generate("אפליקציה לניהול שכנים. אתם תתנו לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!future2pl.entities.some((e) => e.name === "Course"), "'אתם תתנו לשכן שיעור' (you-all will teach the neighbor a lesson, comeuppance idiom) must not spuriously match Course");
+
+  const future3pl = await provider.generate("אפליקציה לניהול שכנים. הם ייתנו לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!future3pl.entities.some((e) => e.name === "Course"), "'הם ייתנו לשכן שיעור' (they will teach the neighbor a lesson, comeuppance idiom) must not spuriously match Course");
+
+  const future2plWithConjunction = await provider.generate("אפליקציה לניהול שכנים. ואתם תתנו לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!future2plWithConjunction.entities.some((e) => e.name === "Course"), "'ואתם תתנו לשכן שיעור' (conjunction-prefixed variant) must not spuriously match Course");
+
+  // Non-regression: genuine lesson usage across tenses/persons must still match Course.
+  const genuineYogaLessons = await provider.generate("אפליקציה לניהול שיעורי יוגה ומנויים לסטודיו.");
+  assert.ok(genuineYogaLessons.entities.some((e) => e.name === "Course"), "'שיעורי יוגה ומנויים' (yoga lessons and subscriptions) must still match Course");
+
+  const genuinePastLesson = await provider.generate("המורה נתן שיעור מעולה היום בכיתה.");
+  assert.ok(genuinePastLesson.entities.some((e) => e.name === "Course"), "'המורה נתן שיעור מעולה' (the teacher gave an excellent lesson, past) must still match Course");
+
+  const genuinePresentPluralLesson = await provider.generate("אנחנו נותנים שיעור פרטי לכל תלמיד.");
+  assert.ok(genuinePresentPluralLesson.entities.some((e) => e.name === "Course"), "'אנחנו נותנים שיעור פרטי' (we give a private lesson, present plural) must still match Course");
+
+  const interestRateControl = await provider.generate("שיעור הריבית עלה החודש.");
+  assert.ok(!interestRateControl.entities.some((e) => e.name === "Course"), "'שיעור הריבית' (interest rate, existing lookahead exclusion) must still not match Course");
+
+  // Non-regression: round 2355's own fix and non-regression case must still hold.
+  const weWillGiveLesson = await provider.generate("אנחנו ניתן לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!weWillGiveLesson.entities.some((e) => e.name === "Course"), "'אנחנו ניתן לשכן שיעור' (round 2355's own fix) must still not match Course");
+
+  const possibleToAcquireControl = await provider.generate("ניתן לרכוש גישה לכל שיעור בנפרד באתר שלנו.");
+  assert.ok(possibleToAcquireControl.entities.some((e) => e.name === "Course"), "'ניתן לרכוש גישה לכל שיעור' (round 2355's own non-regression case) must still match Course");
+});
+
 test("Vendor's 'ספק' (doubt) idiom-exclusion guard was ALSO missing an entire FUTURE tense, the same gap shape rounds 2343/2344 found on Donation/Course", async () => {
   const provider = new HeuristicSpecProvider();
 
