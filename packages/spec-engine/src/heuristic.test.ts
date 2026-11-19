@@ -2084,6 +2084,34 @@ test("recognizes the Hebrew construct-state 'מספרת' form (e.g. 'מספרת 
 });
 
 /**
+ * Round 2289: the exact same construct-state gap rounds 2287-2288 fixed
+ * for Appointment's "פגישה"/"מספרה", found in a different entity's
+ * keyword array -- Task's "משימה"/"משימות" never got the construct form
+ * "משימת" added. "משימת ניקיון" ("cleaning task") and "משימת פיתוח"
+ * ("development task") are everyday, idiomatic ways to describe exactly
+ * the to-do item this entity exists for, and "משימת" is not a substring
+ * of either bare form, so it silently escaped this hint. Confirmed live
+ * via the real matchEntities before this fix: "אפליקציה לניהול משימת
+ * ניקיון לעובדים" (an app to manage employees' cleaning tasks) matched
+ * only Employee, with the real Task domain entirely lost, while the
+ * bare-plural twin ("...משימות לעובדים") already matched both Employee
+ * and Task.
+ */
+test("recognizes the Hebrew construct-state 'משימת' form (e.g. 'משימת ניקיון') as the Task entity, not just the bare 'משימה'/'משימות' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const cleaningTask = await provider.generate("אפליקציה לניהול משימת ניקיון לעובדים", true);
+  assert.ok(cleaningTask.entities.some((e) => e.name === "Task"), "Hebrew 'משימת ניקיון' must match the Task entity rule");
+
+  const devTask = await provider.generate("אפליקציה למעקב אחרי משימת פיתוח של הצוות", true);
+  assert.ok(devTask.entities.some((e) => e.name === "Task"), "Hebrew 'משימת פיתוח' must match the Task entity rule");
+
+  // Non-regression: the already-working bare-plural form must still match.
+  const barePlural = await provider.generate("אפליקציה לניהול משימות לעובדים", true);
+  assert.ok(barePlural.entities.some((e) => e.name === "Task"), "the bare 'משימות' form must still match (no regression)");
+});
+
+/**
  * Round 1800: a different vertical than round 1799's salon/barber fix, but
  * the same degenerate-fallback failure class -- a spa or massage business
  * had no keyword anywhere matching the Appointment entity rule either.

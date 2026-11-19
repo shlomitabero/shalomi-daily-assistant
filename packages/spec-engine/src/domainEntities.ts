@@ -1388,7 +1388,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // as reservation/preservation and booking/overbooking above. \b-bounded
     // with the same "(s)?" plural handling those fixes already use, so
     // "tasks" still matches.
-    keywords: [/\btasks?\b/, "todo", "to-do", "action item", "משימה", "משימות"],
+    //
+    // Round 2289: "משימה"/"משימות" above cover the bare singular and
+    // plural, but not Hebrew's own construct-state ("סמיכות") inflection
+    // -- the same pitfall #2 this file's own header warns about, already
+    // fixed for Appointment's "פגישת"/"מספרת" (rounds 2287-2288) but
+    // missed here. "משימה" (ending ה) becomes "משימת" (ending ת)
+    // immediately before a following noun, e.g. "משימת ניקיון" ("cleaning
+    // task") or "משימת פיתוח" ("development task") -- an everyday,
+    // idiomatic way to describe exactly the to-do item this entity exists
+    // for, and "משימת" is not a substring of either bare form, so it
+    // silently escaped this hint. Confirmed via the real matchEntities:
+    // "אפליקציה לניהול משימת ניקיון לעובדים" (an app to manage employees'
+    // cleaning tasks) matched only Employee, with the real Task domain
+    // entirely lost, while the bare-plural twin ("...משימות לעובדים")
+    // already matched both Employee and Task.
+    keywords: [/\btasks?\b/, "todo", "to-do", "action item", "משימה", "משימות", "משימת"],
     labelHe: "משימות",
     descriptionHe: "פעולה קונקרטית שצריך לבצע.",
     fieldLabelsHe: { title: "כותרת", assignee: "אחראי/ת", status: "סטטוס", dueDate: "תאריך יעד" },
