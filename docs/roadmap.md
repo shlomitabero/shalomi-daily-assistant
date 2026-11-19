@@ -53836,3 +53836,96 @@ substituted-script characters (noticed this round, deferred to a
 dedicated future round).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2333: Donation was missing the entire PRESENT-tense 'תורם'/'תורמת'/'תורמים'/'תורמות' (donor) paradigm
+
+**Bug:** Donation's keyword list (rounds 2293/2322/2327) covers every
+grammatical person of the PAST-tense verb תרם ("donated"), but the
+entire PRESENT-tense paradigm -- תורם/תורמת/
+תורמים/תורמות -- was never added as a keyword in any
+form. These same four words are also the literal Hebrew nouns "donor"/
+"female donor"/"donors"/"female donors" (Hebrew present-tense verbs
+double as agent-noun participles). This round's survey agent found it
+via a variant of the method that found Event's "חתונת"/"מסיבה" gaps
+(rounds 2330-2331): "תורם"/"תורמים" already appear
+by name inside this very entity's own תרומה/תרומות disambiguation cue
+list, but were never themselves promoted to standalone keywords -- the
+"named but missing as its own positive keyword" shape, here found
+within the same entity rather than another entity's exclusion list.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול התורמים של העמותה שלנו - שם, טלפון, סכום וקמפיין." (app to manage our
+nonprofit's donors) fell through to the generic `Item` fallback,
+recommending "no payments" instead of Stripe. Three more forms --
+"אפליקציה לניהול התורם הראשי של העמותה." (masc. singular), "יש לנו התורמת העיקרית שלמדה על הפרויקט." (fem.
+singular), "התורמות הוותיקות של העמותה מקבלות תודה מיוחדת מדי שנה." (fem. plural) -- and the genuine verb
+usage "הוא תורם לקרן המחקר שלנו כל שנה." (donates to the research fund) all
+lost Donation entirely.
+
+**Fix** (`domainEntities.ts`, Donation's keyword array): each present-
+tense form reuses the entity's own already-tested "contributes to X"
+idiom-exclusion lookahead (the same metaphorical-contribution collision
+already guarded for the noun תרומה round 2111 and the past-tense verb
+תרם round 2322) and is its own independent regex entry:
+```js
+/תורם(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+/תורמת(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+/תורמים(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+/תורמות(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+```
+
+**BILLING_ENTITY_NAMES:** Donation IS a member, so this false negative
+also corrupted the payment-recommendation `openQuestions` field
+(recommending "no payments" instead of Stripe), not just the entity
+list -- confirmed live, same dual-severity class as round 2322's and
+2327's own תרם fixes.
+
+**Backtracking pitfall, reconfirmed and found MORE severe than usual:**
+"תורם" ends in the SOFIT mem while the other three forms all
+continue with the ordinary mem instead, so `"תורמים".includes("תורם")`
+is literally `false` in JavaScript -- confirmed empirically. A naive
+merged regex with one shared optional suffix doesn't just risk the
+usual backtracking pitfall here, it fails to match three of the four
+forms outright, since the base literal isn't even a substring of them
+(the same sofit-vs-regular-mem fact round 2293 already established for
+the past-tense תרם/תרמה pair, now reconfirmed for the present-tense
+paradigm).
+
+**Test added** (`heuristic.test.ts`): confirms all four present-tense
+forms now match Donation (including the Stripe recommendation check,
+not just entity presence), while the "contributes to X" idiom exclusion
+sentences ("הכלי הזה תורם לשיפור התפוקה של הצוות.", "התכונה החדשה תורמת רבות לשיפור חווית המשתמש בכל עדכון.", "כל חברי הצוות תורמים מאמץ רב להשלמת המשימה.",
+"כולם תורמים להצלחת האירוע השנתי במשרד.") all still correctly do not match Donation.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 244 (the new test), as predicted; pass-after showed 244/244. Full
+`@forge/spec-engine` suite: 440/440 (up from 439). Full `@forge/api`
+suite: 1782/1782, unchanged, run via Bash's native `run_in_background`
+from `apps/api` (disk space checked healthy beforehand). Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 39 confirmed instances total. The "named but
+missing as its own positive keyword" discovery method is now validated
+3-for-3 (Event's חתונת and מסיבה/יום הולדת from another entity's
+exclusion list, rounds 2330-2331; Donation's own תורם/תורמת/תורמים/
+תורמות from its own disambiguation cue list, this round) and generalizes
+beyond cross-entity exclusion lists to an entity's own internal
+cue-word lists too -- worth checking other entities' own disambiguation
+regexes (not just their exclusion guards) for the same shape. This
+entry's own Hebrew content was extracted entirely from the already-
+committed, already-codepoint-verified domainEntities.ts comment and
+heuristic.test.ts sentences via ASCII-anchored regex patterns, following
+round 2332's standing practice -- no Hebrew was typed directly into this
+script. Standing deferred/unsafe gaps, unchanged this round: Ticket
+bare-noun gap (rounds 2282-2283); Courier license/insurance/traffic-
+ticket sub-case (round 2311); Course bare-price-crashing sub-case
+(round 2316); Course military-topic-vs-squad-unit ambiguity (round
+2316); Course "courses"-vs-restaurant-meal-courses sub-case (round
+2318); Order's forward-only "הזמנה" exclusion-lookahead directionality
+gap (round 2331, accepted trade-off); pre-existing roadmap.md
+script-substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round).
+
+Live: https://forge-ai-m7p7.onrender.com
