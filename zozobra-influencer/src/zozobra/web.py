@@ -198,23 +198,59 @@ NAV = [("/", "לוח בקרה"), ("/plan", "תכנון שבועי"), ("/calendar
 def page(title: str, body: str, path: str = "/", refresh: bool = False) -> HTMLResponse:
     s = settings()
     nav = "".join(f'<a href="{h}" class="{"on" if h == path else ""}">{t}</a>' for h, t in NAV)
-    running = any(j["status"] == "running" for j in jobs.JOBS.values())
-    meta = '<meta http-equiv="refresh" content="8">' if (refresh or running) else ""
+    meta = ""   # no auto-reload: it jumped the page to the top and stopped videos mid-play
     banner = ('<div class="banner">🧪 מצב בדיקה: שום דבר לא מתפרסם ברשתות. '
               + ('הפקת סרטונים פעילה (משתמשת בקרדיט של fal ו-ElevenLabs).' if can_render(s) else
                  'הפקת סרטונים תופעל אחרי אימון הפנים ובחירת הקול.') + '</div>') if s.dry_run else ""
-    job_html = "".join(
-        f'<div class="row mute"><span class="pill {"ok" if j["status"]=="done" else "bad" if j["status"]=="failed" else "warn"}">'
-        f'{STATUS_HE[j["status"]]}</span> {e(j["title"])} · {e(j["started"])}'
-        f'{" — " + e(j["error"]) if j["error"] else ""}{" — " + e(j["result"][:160]) if j["status"]=="done" and j["result"] else ""}</div>'
-        for j in jobs.recent(6))
-    jobs_box = f'<div class="card"><b>משימות רקע</b>{job_html}</div>' if job_html else ""
+    job_html = jobs_html()
+    hidden = "" if job_html else ' style="display:none"'
+    jobs_box = f'<div class="card" id="jobs"{hidden}><b>משימות רקע</b><div id="jobs-list">{job_html}</div></div>'
     return HTMLResponse(f"""<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">{meta}<title>{e(title)} · LILO</title>
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="LILO">
 <meta name="apple-mobile-web-app-status-bar-style" content="black"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>{CSS}</style></head><body><header><div class="logo">LILO <b>×</b> ZOZOBRA</div><nav>{nav}</nav></header>
-<main>{banner}<h1>{e(title)}</h1>{jobs_box}{body}</main></body></html>""")
+<main>{banner}<h1>{e(title)}</h1>{jobs_box}{body}</main>{LIVE_JOBS_JS}</body></html>""")
+
+
+def jobs_html() -> str:
+    return "".join(
+        f'<div class="row mute"><span class="pill {"ok" if j["status"]=="done" else "bad" if j["status"]=="failed" else "warn"}">'
+        f'{STATUS_HE[j["status"]]}</span> {e(j["title"])} · {e(j["started"])}'
+        f'{" — " + e(j["error"]) if j["error"] else ""}{" — " + e(j["result"][:160]) if j["status"]=="done" and j["result"] else ""}</div>'
+        for j in jobs.recent(6))
+
+
+# Updates only the background-jobs box. Never reloads the page (scroll position and playing videos stay
+# put); when a job finishes it shows a small "refresh" button instead.
+LIVE_JOBS_JS = """<script>
+(() => {
+  let running = null;
+  const tick = async () => {
+    try {
+      const r = await fetch('/jobs.json', {cache: 'no-store'});
+      if (!r.ok) return;
+      const d = await r.json();
+      const box = document.getElementById('jobs'), list = document.getElementById('jobs-list');
+      if (box && list && d.html) { list.innerHTML = d.html; box.style.display = ''; }
+      if (running !== null && d.running < running && !document.getElementById('jobs-done')) {
+        const a = document.createElement('a');
+        a.id = 'jobs-done'; a.href = location.pathname; a.className = 'btn';
+        a.textContent = '✓ משימה הסתיימה: לחץ לרענון';
+        a.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:9;box-shadow:0 4px 18px #0008';
+        document.body.appendChild(a);
+      }
+      running = d.running;
+    } catch (e) {}
+  };
+  tick(); setInterval(tick, 8000);
+})();
+</script>"""
+
+
+@app.get("/jobs.json")
+def jobs_json():
+    return {"running": sum(j["status"] == "running" for j in jobs.JOBS.values()), "html": jobs_html()}
 
 
 def back(url: str) -> RedirectResponse:
@@ -296,7 +332,8 @@ def item_card(it: dict, full: bool = False) -> str:
     cls = {"approved": "ok", "published": "ok", "rejected": "bad"}.get(status, "warn")
     preview = ""
     if it.get("media_path") and Path(it["media_path"]).exists():
-        preview = f'<video src="{media_url(it["media_path"])}" controls playsinline preload="metadata"></video>'
+        ver = int(Path(it["media_path"]).stat().st_mtime)   # a re-rendered video always shows fresh
+        preview = f'<video src="{media_url(it["media_path"])}?v={ver}" controls playsinline preload="metadata"></video>'
     elif it.get("image_paths"):
         preview = "".join(f'<img class="media" src="{media_url(p)}">' for p in it["image_paths"][:1 if not full else 10])
     else:
@@ -337,7 +374,9 @@ def dashboard():
     checks = run()
     missing = [c for c in checks if c.required and not c.ok]
     items = queue_items()
-    upcoming = [i for i in items if i["day"] >= (date.today() - timedelta(days=1)).isoformat()]
+    # everything still waiting on you, even past its planned date (posting is by hand from the phone)
+    upcoming = [i for i in items if i.get("status") not in ("published", "rejected")
+                or i["day"] >= (date.today() - timedelta(days=1)).isoformat()]
     pending = [i for i in upcoming if i.get("status") == "pending"]
     setup = (f'<div class="card">⚙️ חסרים {len(missing)} דברים להפעלה מלאה: '
              f'{e(", ".join(c.title for c in missing))} — <a href="/setup">להשלמה</a></div>') if missing else \
