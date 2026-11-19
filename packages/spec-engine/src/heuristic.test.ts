@@ -326,6 +326,45 @@ test("'plumbing' used metaphorically (tech-jargon 'the plumbing' of a system) do
   assert.ok(plumber.entities.some((e) => e.name === "WorkOrder"), "'plumber' must still match WorkOrder");
 });
 
+/**
+ * Round 2303: WorkOrder's bare /\btechnician(s)?\b/ (and Hebrew sibling
+ * bare "טכנאי") collided with the generic word for many clinical/lab/
+ * broadcast professions that have nothing to do with a repair/
+ * maintenance trade business -- "medical technician", "lab technician",
+ * "dental technician", "vet technician", "sound technician" are all
+ * common, genuinely unrelated phrasings. The fifth confirmed instance of
+ * the bare-overly-broad-keyword shape rounds 2297/2300/2301/2302 fixed
+ * for "nonprofit"/"subscription"/"billing"/"plumbing".
+ */
+test("'technician' in a clinical/lab/broadcast sense (English and Hebrew) does not spuriously match WorkOrder or recommend Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const medical = await provider.generate("An app for a hospital to track emergency medical technicians and their shift schedules.");
+  assert.ok(!medical.entities.some((e) => e.name === "WorkOrder"), "'medical technician' must not spuriously match WorkOrder");
+
+  const lab = await provider.generate("A lab system to schedule lab technicians and track sample processing.");
+  assert.ok(!lab.entities.some((e) => e.name === "WorkOrder"), "'lab technician' must not spuriously match WorkOrder");
+
+  const sound = await provider.generate("An app for a radio station to schedule sound technicians and broadcast engineers.");
+  assert.ok(!sound.entities.some((e) => e.name === "WorkOrder"), "'sound technician' must not spuriously match WorkOrder");
+
+  const medicalHe = await provider.generate("אפליקציה לניהול טכנאי רפואי בבית חולים");
+  assert.ok(!medicalHe.entities.some((e) => e.name === "WorkOrder"), "Hebrew 'טכנאי רפואי' must not spuriously match WorkOrder");
+
+  // Non-regression: genuine repair-technician descriptions depend SOLELY
+  // on this bare word (no other WorkOrder keyword present) and must still match.
+  const bareTechnician = await provider.generate("An app for a technician to schedule visits and bill customers for completed work.");
+  assert.ok(bareTechnician.entities.some((e) => e.name === "WorkOrder"), "a genuine bare 'technician' description must still match WorkOrder");
+
+  const repairBusiness = await provider.generate("A general repair technician business tracking jobs and customer invoices.");
+  assert.ok(repairBusiness.entities.some((e) => e.name === "WorkOrder"), "a genuine repair-technician-business description must still match WorkOrder");
+
+  // Non-regression: the existing Hebrew bare-"טכנאי" test (round 1811)
+  // must still match, via its other keyword "קריאות שירות".
+  const acHe = await provider.generate("אפליקציה לניהול קריאות שירות לטכנאי מזגנים");
+  assert.ok(acHe.entities.some((e) => e.name === "WorkOrder"), "Hebrew AC-technician service-call description must still match WorkOrder");
+});
+
 test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
   // Round 1690: "membership fee" is the single most natural English
   // phrase for what a gym/studio/co-working-space business charges, but

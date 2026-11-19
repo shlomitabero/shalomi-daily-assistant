@@ -2541,7 +2541,20 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // this file's header warns about.
     keywords: [
       "work order", "field service", "service call", "repair job", "maintenance request",
-      "קריאת שירות", "קריאות שירות", "עבודת תחזוקה", "טכנאי", "אינסטלטור", "חשמלאי",
+      "קריאת שירות", "קריאות שירות", "עבודת תחזוקה",
+      // Round 2303: bare "טכנאי" had the identical collision its English
+      // sibling /\btechnician(s)?\b/ (fixed in this same round, see the
+      // comment below) did -- "טכנאי רפואי" (medical technician), "טכנאי
+      // מעבדה" (lab technician), "טכנאי שיניים" (dental technician) are
+      // all common, genuinely unrelated clinical/lab professions. In
+      // Hebrew the qualifying word follows "טכנאי" rather than preceding
+      // it as in English, so a lookahead exclusion is used instead of a
+      // lookbehind one -- confirmed live against the same false-positive
+      // shape, and confirmed the existing bare-"טכנאי" test (round 1811,
+      // "קריאות שירות לטכנאי מזגנים") still passes via its other keyword
+      // "קריאות שירות", unaffected by this guard.
+      /טכנאי(?!(?:ם)?\s?(?:רפואי|רפואית|רפואיים|מעבדה|מעבדתי|שיניים|קול|שידור|וטרינרי|וטרינריים))/,
+      "אינסטלטור", "חשמלאי",
       // Round 1931: a locksmith is the exact same kind of licensed
       // field-service trade this block's own round-1811 doc comment already
       // names ("plumbers, electricians, appliance/AC technicians,
@@ -2566,7 +2579,25 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // WorkOrder keyword at all and fell through to the generic Item/
       // Customer fallback. \b-bounded with the same "(s)?" plural handling
       // used throughout this file (e.g. /\bmechanic(s)?\b/ above).
-      /\bplumber(s)?\b/, /\belectrician(s)?\b/, /\btechnician(s)?\b/, /\bhandyman\b/, /\bhandymen\b/,
+      /\bplumber(s)?\b/, /\belectrician(s)?\b/,
+      // Round 2303: bare /\btechnician(s)?\b/ collided with the generic
+      // word for many clinical/lab/broadcast professions that have
+      // nothing to do with a repair/maintenance trade business --
+      // "medical technician", "lab technician", "dental technician",
+      // "vet technician", "sound technician" are all common, genuinely
+      // unrelated phrasings. Confirmed live: "An app for a hospital to
+      // track emergency medical technicians and their shift schedules."
+      // and three similar sentences all fabricated a WorkOrder entity
+      // and wrongly recommended Stripe for apps with no repair business
+      // or money involved. Not a bare deletion -- "a technician to
+      // schedule visits and bill customers" and "a general repair
+      // technician business" depend SOLELY on this bare word with no
+      // other WorkOrder keyword matching, so a lookbehind-guarded
+      // regex is used instead (same approach as this file's own
+      // Invoice/"חיוב" lookahead exclusion), excluding only the
+      // specific clinical/lab/broadcast qualifiers confirmed to collide.
+      /\b(?<!(?:medical|dental|lab|laboratory|vet|veterinary|pharmacy|surgical|radiology|nursing|sound|audio|broadcast|ultrasound)\s)technician(s)?\b/,
+      /\bhandyman\b/, /\bhandymen\b/,
       /\blocksmith(s)?\b/,
       "hvac",
       // Round 2302: bare "plumbing" was deliberately NOT like "hvac" (an
