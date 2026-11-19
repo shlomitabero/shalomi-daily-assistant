@@ -2222,6 +2222,59 @@ test("Courier's 'driver' and Product's 'stock' keywords don't spuriously trigger
   assert.ok(stock.entities.some((e) => e.name === "Product"), "a plain 'stock' description must still get a Product entity");
 });
 
+// Round 2372: the bare noun/verb forms "stock"/"stocks" were already
+// matched, but the equally natural past tense "stocked" and gerund
+// "stocking" -- "items we stocked in the warehouse", "stocking shelves at
+// the store" -- shared no substring with "stock(s)" and were never
+// covered, losing the entity entirely for those tenses. A negative
+// lookahead/lookbehind excludes the clothing/hosiery sense of
+// "stocking(s)" (e.g. "Christmas stockings", "nylon stockings", "silk
+// stockings", "stocking stuffers", "stockings and hosiery") -- a
+// clothing retailer, not an inventory-stock business.
+test("Product's 'stock' keyword also matches the past-tense 'stocked' and gerund 'stocking' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const warehouseTracked = await provider.generate("An app to track items we stocked in the warehouse.");
+  assert.ok(warehouseTracked.entities.some((e) => e.name === "Product"), "'stocked' (past tense) must match Product");
+
+  const shelvesTool = await provider.generate("A tool for stocking shelves at the store.");
+  assert.ok(shelvesTool.entities.some((e) => e.name === "Product"), "'stocking' (gerund) must match Product");
+
+  const quarterLog = await provider.generate("Software to help us manage what we stocked last quarter.");
+  assert.ok(quarterLog.entities.some((e) => e.name === "Product"), "'stocked' (past tense) must match Product");
+
+  const warehouseSystem = await provider.generate("A system for stocking the warehouse with new items.");
+  assert.ok(warehouseSystem.entities.some((e) => e.name === "Product"), "'stocking' (gerund) must match Product");
+
+  // Non-regression: the existing bare-noun controls still work.
+  const bareStock = await provider.generate("Track warehouse stock levels for our shop.");
+  assert.ok(bareStock.entities.some((e) => e.name === "Product"), "bare 'stock' must still match Product");
+
+  const bareStocks = await provider.generate("An app to manage our stocks and reorder points.");
+  assert.ok(bareStocks.entities.some((e) => e.name === "Product"), "bare 'stocks' must still match Product");
+
+  // Non-regression: the clothing/hosiery sense of "stocking(s)" must never
+  // spuriously match Product via this keyword, now extended to the new forms.
+  const hosieryShop = await provider.generate("A shop selling stockings and hosiery.");
+  assert.ok(!hosieryShop.entities.some((e) => e.name === "Product"), "'stockings and hosiery' (clothing idiom) must not match Product");
+
+  const christmasStore = await provider.generate("A store for Christmas stockings and decorations.");
+  assert.ok(!christmasStore.entities.some((e) => e.name === "Product"), "'Christmas stockings' (clothing idiom) must not match Product");
+
+  const nylonBoutique = await provider.generate("An online boutique for nylon stockings and lingerie.");
+  assert.ok(!nylonBoutique.entities.some((e) => e.name === "Product"), "'nylon stockings' (clothing idiom) must not match Product");
+
+  const stuffersShop = await provider.generate("A shop for stocking stuffers and small gifts.");
+  assert.ok(!stuffersShop.entities.some((e) => e.name === "Product"), "'stocking stuffers' (clothing idiom) must not match Product");
+
+  const silkSite = await provider.generate("A site that sells silk stockings.");
+  assert.ok(!silkSite.entities.some((e) => e.name === "Product"), "'silk stockings' (clothing idiom) must not match Product");
+
+  // Non-regression: the existing round-449 "livestock" substring guard must still hold.
+  const farmStillExcluded = await provider.generate("A farm management app for tracking livestock and pasture rotation.");
+  assert.ok(!farmStillExcluded.entities.some((e) => e.name === "Product"), "'livestock' must still not spuriously match Product");
+});
+
 /**
  * Round 2106: the same bare-English-word collision class as the test
  * above, found by continuing that round's own keyword-by-keyword audit

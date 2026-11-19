@@ -753,7 +753,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "product" (round 449) has the identical problem: it's a substring
       // of "production" ("a video production studio"), an ordinary word
       // with nothing to do with selling or tracking products.
-      /\bproduct(s)?\b/, "inventory", /\bstock(s)?\b/,
+      // Round 2372: the bare noun/verb forms "stock"/"stocks" were already
+      // matched, but the equally natural past tense "stocked" and gerund
+      // "stocking" -- "items we stocked in the warehouse", "stocking
+      // shelves at the store" -- shared no substring with "stock(s)" and
+      // were never covered, losing the entity entirely for those tenses.
+      // A negative lookahead/lookbehind excludes the clothing/hosiery
+      // sense of "stocking(s)" (e.g. "Christmas stockings", "nylon
+      // stockings", "silk stockings", "pair(s) of stockings", "stocking
+      // stuffers", "stockings and hosiery") -- a clothing retailer, not an
+      // inventory-stock business.
+      /\bproduct(s)?\b/, "inventory", /\bstock(?:s|ed|ing)?\b(?!\s+(?:stuffers?|and\s+hosiery\b))(?<!(?:christmas|nylon|silk|fishnet|pair\s+of|pairs\s+of)\s)/,
       // Bare "מוצר" (round 564) is a substring of "מוצרט" ("Mozart"
       // transliterated into Hebrew), so a concert/music-school description
       // mentioning Mozart spuriously matched Product. Hebrew has no \b
