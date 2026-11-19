@@ -55192,3 +55192,94 @@ on any idiom phrasing using a give-verb form not yet enumerated
 (round 2344, accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2347: Vendor's 'ספק' (doubt) idiom guard was also missing future-tense PLURAL forms
+
+**Bug:** Round 2345's own roadmap entry explicitly flagged this as a
+known, unfixed residual gap: the singular future-tense lookbehinds it
+added (יטיל/תטיל/נטיל/אטיל and יעלה/תעלה/נעלה/אעלה) are fixed
+literals, so they cannot match the different five/six characters
+immediately before "ספק" in the PLURAL inflected forms (יטילו/תטילו/
+יעלו/תעלו) -- the same "shorter prefix can't match before a longer
+form's own suffix" shape this file has documented many times before.
+This round closed that specific, already-named gap rather than
+discovering a new one: the round's survey agent first did a thorough
+systematic search for a NEW "vowel-insertion orthography break" bug
+(method A-3, round 2346's discovery) across Donation's תרם and
+Course's נתן roots, found neither had one (Donation's future tense
+was already correctly vav-spelled; Course's one candidate "ניתן" lead
+turned out to be the already-deliberately-excluded "possible/
+available" homograph, confirmed by an existing test), and fell back
+to this pre-identified backup finding.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "חברי הוועד יטילו ספק רב בהצלחת המיזם בשבוע הבא." (the
+committee members will cast great doubt on the project's success) and
+"הבוחנים יעלו ספק משמעותי לגבי איכות המוצר בבדיקה הבאה." (the examiners will raise significant
+doubt about the product's quality), among two other person/root
+combinations, all fabricated a Vendor entity with zero procurement
+content.
+
+**Fix** (`domainEntities.ts`, Vendor's "ספק" keyword entry):
+```js
+/(?<!ללא )(?<!אין )(?<!בלי )(?<!ללא כל )(?<!אין כל )(?<!בלי כל )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!הטיל )(?<!הטילה )(?<!הטילו )(?<!יטיל )(?<!תטיל )(?<!נטיל )(?<!אטיל )(?<!יטילו )(?<!תטילו )(?<!מעלה )(?<!מעלים )(?<!מעלות )(?<!העלה )(?<!העלתה )(?<!העלו )(?<!יעלה )(?<!תעלה )(?<!נעלה )(?<!אעלה )(?<!יעלו )(?<!תעלו )ספק(?!ות)(?!\s*אם)/
+```
+Adds the four missing plural-future lookbehinds (יטילו/תטילו for "they/
+you-pl will cast doubt", יעלו/תעלו for "they/you-pl will raise doubt"),
+same unmerged independent-branch convention as every other guard in
+this file.
+
+**BILLING_ENTITY_NAMES:** Vendor is NOT a member, so this bug is
+entity-fabrication only.
+
+**Test added** (`heuristic.test.ts`): confirms all four plural-future
+idiom sentences no longer match Vendor, while the existing singular-
+future exclusion (round 2345) and genuine vendor usage both still
+hold.
+
+**Verification:** fail-before via `git stash` showed exactly 1
+failure out of 259 (the new test), as predicted; pass-after showed
+259/259 -- the fourth consecutive round with a clean first-attempt
+fix. Full `@forge/spec-engine` suite: 455/455 (up from 454). Full
+`@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this closes the last open residual gap on
+Vendor's ספק guard from rounds 2341/2345. The survey's systematic
+negative result on method A-3 (vowel-insertion orthography break) for
+Donation's תרם and Course's נתן is itself useful signal: that bug
+shape appears specific to triliteral Pa'al roots whose future tense
+takes a cholam vowel spelled with a vav (like ר-כ-ש), not to every
+root -- Donation's engineers already got the vav-spelling right
+without realizing the significance, and Course's נתן is a guard
+lookbehind, not a primary keyword, so a missed form there only widens
+an exclusion rather than creating a false positive/negative on its
+own. Future rounds pursuing method A-3 should specifically look for
+OTHER Pa'al roots with a cholam-future used as PRIMARY keywords (not
+exclusion guards), since that is the exact shape that made Vendor's
+רכש bug (round 2346) possible. Standing deferred/unsafe gaps,
+unchanged this round: Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course military-topic-vs-
+squad-unit ambiguity (round 2316); Course "courses"-vs-restaurant-
+meal-courses sub-case (round 2318); Order's forward-only "הזמנה"
+exclusion-lookahead directionality gap (round 2331, accepted
+trade-off); pre-existing roadmap.md script-substitution corruption
+from rounds 2316/2324/2325 (round 2332, deferred to a dedicated future
+round); Donation's "צדקה" guard's residual unlisted-stance-noun leak
+(round 2334, accepted trade-off); Patient's "מטופל" guard's residual
+leaks (round 2336, accepted trade-off); Deal's "הזדמנות" guard's
+residual leak (round 2337, accepted trade-off); Customer's "לקוח"
+guard's residual leak (round 2338, accepted trade-off); Appointment's
+"מספרת" guard's residual leak (round 2339, accepted trade-off);
+Shipment's "שילוח" guard's residual leaks (round 2340, accepted
+trade-off); Vendor's "רכש" guard's residual leak on any future-form
+negation phrasings not yet enumerated (round 2342, accepted
+trade-off); Donation's new future/imperative branches' residual leak
+on any idiom phrasing not matching the existing ל+noun lookahead list
+(round 2343, accepted trade-off); Course's new imperative branches'
+residual leak on any idiom phrasing using a give-verb form not yet
+enumerated (round 2344, accepted trade-off).
+
+Live: https://forge-ai-m7p7.onrender.com
