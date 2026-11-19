@@ -771,6 +771,47 @@ test("asks about payments (recommending Stripe) for a Hebrew construct-state hai
   assert.equal(constructPaymentQuestion!.recommendation, "Stripe", "'מספרת נשים' must recommend Stripe, the same as the bare 'מספרה' form");
 });
 
+/**
+ * Round 2295: the same PAYMENT_KEYWORDS mirror-drift class round 2294
+ * found for Appointment's "מספרת", found again for Vehicle's "מוסך".
+ * domainEntities.ts's own Vehicle keyword list was extended in round
+ * 2291 with the plural "מוסכים" and construct-state "מוסכי" (e.g. "מוסכי
+ * העיר"), both ending in an ordinary kaf rather than the bare singular's
+ * sofit kaf -- a genuine Unicode character difference, so neither is a
+ * substring of "מוסך". That extension was never copied into this file's
+ * own narrower mirror, so a plural/construct-state garage description
+ * matched the identical Vehicle entity as its bare-noun twin, yet got
+ * "No payments" instead of Stripe.
+ */
+test("asks about payments (recommending Stripe) for the Hebrew plural/construct-state 'garage' forms ('מוסכים'/'מוסכי'), not just the bare 'מוסך' form", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  // Same Hebrew-aware payment-question filter as the round 2294 test
+  // above, using the sofit-safe "תשלו" prefix for the same reason.
+  const isPaymentQuestion = (q: { question: string }) => {
+    const lower = q.question.toLowerCase();
+    return lower.includes("payment") || q.question.includes("תשלו");
+  };
+
+  const bare = await provider.generate("אפליקציה לניהול מוסך לתיקון רכבים", true);
+  assert.ok(bare.entities.some((e) => e.name === "Vehicle"));
+  const barePaymentQuestion = bare.openQuestions.find(isPaymentQuestion);
+  assert.ok(barePaymentQuestion);
+  assert.equal(barePaymentQuestion!.recommendation, "Stripe");
+
+  const plural = await provider.generate("פלטפורמה להשוואת מוסכים באזור ומחירי תיקונים", true);
+  assert.ok(plural.entities.some((e) => e.name === "Vehicle"));
+  const pluralPaymentQuestion = plural.openQuestions.find(isPaymentQuestion);
+  assert.ok(pluralPaymentQuestion);
+  assert.equal(pluralPaymentQuestion!.recommendation, "Stripe", "'מוסכים' (plural) must recommend Stripe, the same as the bare 'מוסך' form");
+
+  const construct = await provider.generate("פלטפורמה להשוואת מוסכי האזור ומחירי תיקונים", true);
+  assert.ok(construct.entities.some((e) => e.name === "Vehicle"));
+  const constructPaymentQuestion = construct.openQuestions.find(isPaymentQuestion);
+  assert.ok(constructPaymentQuestion);
+  assert.equal(constructPaymentQuestion!.recommendation, "Stripe", "'מוסכי' (construct-state) must recommend Stripe, the same as the bare 'מוסך' form");
+});
+
 test("still recommends 'No payments' for a genuinely non-commercial appointment scheduler, confirming the round-1819 salon/spa fix doesn't regress bare 'appointment' ambiguity", async () => {
   const provider = new HeuristicSpecProvider();
   const school = await provider.generate("A school's system for scheduling parent-teacher conference appointments.");

@@ -109,8 +109,19 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // own exact keywords and, like "car dealership" above, always implies
   // a commercial repair business (never an internal company fleet tool),
   // so it's safe to reuse directly here.
+  //
+  // Round 2295: the same mirror-drift class round 2294 fixed for
+  // Appointment's "מספרת", found here too. domainEntities.ts's own
+  // Vehicle keyword array was extended in round 2291 with the plural
+  // "מוסכים" and construct-state "מוסכי" (e.g. "מוסכי העיר"), both of
+  // which end in an ordinary kaf ("כ") rather than the bare singular's
+  // sofit kaf ("ך") -- a genuine Unicode character difference, so
+  // neither is a substring of "מוסך". That extension was never
+  // propagated into this narrower mirror, so "פלטפורמה להשוואת מוסכים
+  // באזור..." and "...מוסכי האזור..." matched Vehicle correctly but got
+  // "No payments" instead of Stripe, unlike the bare-noun form.
   "auto repair", "car repair", "auto body shop", "auto body",
-  "מוסך", "תיקון רכבים",
+  "מוסך", "מוסכים", "מוסכי", "תיקון רכבים",
   // Round 1700: the same drift once more, this time for Course via
   // "sell"/"paid" wording rather than round 1007's "fee"/"tuition"
   // wording. "A platform for creators to sell online courses" matches
