@@ -6056,6 +6056,51 @@ test("Appointment's 'appointment' keyword doesn't spuriously match inside 'disap
 });
 
 /**
+ * Round 2313: JobApplicant's bare "hiring" collided with the
+ * British/Australian/NZ sense of "hire" = "rent" -- equipment/vehicle/
+ * costume hiring businesses have nothing to do with recruiting job
+ * applicants. The sixteenth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2312 fixed, but of
+ * the grammatical-polysemy shape (like "client"/"patient"), not a
+ * simple substring-in-a-longer-word shape -- a bare `\b` bound alone
+ * can't fix it. The fix deliberately does NOT exclude every "hiring
+ * out": a staffing/labour-hire agency "hiring out" tradespeople or
+ * temporary workers is genuine recruiting-domain phrasing and must
+ * keep matching.
+ */
+test("JobApplicant's 'hiring' keyword doesn't spuriously match the British/Australian 'hire' = 'rent' sense", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const equipment = await provider.generate("A platform to manage our camera equipment hiring business, tracking which items are hired out and returned.");
+  assert.ok(!equipment.entities.some((e) => e.name === "JobApplicant"), "'equipment hiring' (rental sense) must not spuriously match JobApplicant");
+
+  const bikeShop = await provider.generate("A bike hiring shop near the beach.");
+  assert.ok(!bikeShop.entities.some((e) => e.name === "JobApplicant"), "'bike hiring shop' must not spuriously match JobApplicant");
+
+  const partyEquipment = await provider.generate("A business for hiring out party equipment and bouncy castles to customers.");
+  assert.ok(!partyEquipment.entities.some((e) => e.name === "JobApplicant"), "'hiring out' party equipment must not spuriously match JobApplicant");
+
+  const vanCompany = await provider.generate("A van hiring company that rents vehicles by the day.");
+  assert.ok(!vanCompany.entities.some((e) => e.name === "JobApplicant"), "'van hiring company' must not spuriously match JobApplicant");
+
+  const costumeShop = await provider.generate("A costume hiring shop that rents out fancy dress outfits for parties.");
+  assert.ok(!costumeShop.entities.some((e) => e.name === "JobApplicant"), "'costume hiring shop' must not spuriously match JobApplicant");
+
+  // Non-regression: a staffing/labour-hire agency "hiring out" people is
+  // genuine recruiting-domain phrasing and must still match.
+  const staffingAgency = await provider.generate("A staffing agency hiring out skilled tradespeople to building sites.");
+  assert.ok(staffingAgency.entities.some((e) => e.name === "JobApplicant"), "a staffing agency 'hiring out' tradespeople must still match JobApplicant");
+
+  const labourHire = await provider.generate("A labour hire company hiring out temporary workers to local businesses.");
+  assert.ok(labourHire.entities.some((e) => e.name === "JobApplicant"), "a labour-hire company 'hiring out' workers must still match JobApplicant");
+
+  // Non-regression: ordinary recruitment phrasing depending solely on
+  // the bare word must still match.
+  const hiringProcess = await provider.generate("Track candidates through our hiring process for open roles.");
+  assert.ok(hiringProcess.entities.some((e) => e.name === "JobApplicant"), "'hiring process' must still match JobApplicant");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

@@ -2132,7 +2132,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
   },
   {
     keywords: [
-      "job applicant", "job application", "recruitment", "hiring", "candidate tracking",
+      "job applicant", "job application", "recruitment", "candidate tracking",
+      // Round 2313: bare "hiring" collided with the British/Australian/NZ
+      // sense of "hire" = "rent" -- "camera equipment hiring", "a bike
+      // hiring shop", "a van hiring company", "hiring out" party
+      // equipment/costumes -- all genuinely about equipment/vehicle
+      // rental, with zero connection to recruiting job applicants.
+      // Confirmed live: each of these fabricated JobApplicant as a
+      // spurious entity (sometimes the sole one), losing the real
+      // rental domain. This is the grammatical-polysemy shape (like
+      // "client"/"patient"), not a simple substring-in-a-longer-word
+      // shape, so a bare `\b` bound alone can't fix it -- "hiring" is
+      // already its own correct word in both senses.
+      //
+      // The lookahead deliberately does NOT exclude every "hiring out"
+      // -- a staffing/labour-hire agency "hiring out" tradespeople or
+      // temporary workers to businesses is genuine recruiting-domain
+      // phrasing (confirmed live: "A staffing agency hiring out skilled
+      // tradespeople to building sites." and a labour-hire-company
+      // equivalent both correctly match JobApplicant today), so a
+      // blanket "hiring out" exclusion would wrongly regress those. The
+      // fix distinguishes "hiring out <object>" (rental) from "hiring
+      // out <people>" (staffing) by requiring a people/labour noun
+      // within a short word window after "out" to keep the match.
+      /(?<!\b(?:equipment|camera|van|bike|bicycle|car|scooter|costume|tool|tools|boat|kayak|canoe|tent|marquee|chair|chairs|dress|suit|gear|machinery)\s)\bhiring\b(?!\s+out\b(?!\s+(?:\S+\s+){0,3}(?:workers?|staff|employees?|tradespeople|people|temps?|labou?r)\b))/,
       // Round 1818: "recruitment"/"hiring" were already covered, but the
       // equally common gerund/noun forms a real recruiting-app description
       // actually uses -- "recruiting platform", "recruiting software",
