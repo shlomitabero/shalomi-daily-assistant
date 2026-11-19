@@ -654,6 +654,55 @@ test("mergeRefinedSpec does NOT fold Order's own customerName field into Purchas
 });
 
 /**
+ * Round 2256: when current already contains TWO specific, non-generic
+ * members of the same alias group at once (TeamMember AND Staff both
+ * belong to ["employee","teammember","staff"]) -- a real, intended shape
+ * the alias groups' own design explicitly allows, not a contrived edge
+ * case -- a regenerated "Employee" candidate used to silently fold into
+ * whichever one happened to be LAST in current.entities, regardless of
+ * which one the refine was actually about, leaving the other sibling
+ * completely untouched and no warning anywhere. Confirmed live before this
+ * fix: with TeamMember before Staff in current.entities, Employee's new
+ * `department` field landed on Staff, not TeamMember, purely by array
+ * order. The fix: once a merge key has more than one distinct non-generic
+ * entity, treat it as permanently unresolved for alias-folding -- the
+ * generic candidate is added as its own new entity instead of guessing.
+ */
+test("mergeRefinedSpec does NOT fold a regenerated Employee entity into either sibling when BOTH TeamMember and Staff already exist -- adds it as a new entity instead of guessing which one the refine meant", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "TeamMember", label: "Team Member", fields: [{ name: "name", type: "text", required: true }, { name: "role", type: "text", required: false }] },
+      { name: "Milestone", label: "Milestone", fields: [{ name: "title", type: "text", required: true }] },
+      { name: "Staff", label: "Staff", fields: [{ name: "name", type: "text", required: true }, { name: "shift", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [
+      { name: "Employee", label: "Employee", fields: [{ name: "name", type: "text", required: true }, { name: "department", type: "text", required: false }] },
+      { name: "Milestone", label: "Milestone", fields: [{ name: "title", type: "text", required: true }, { name: "notes", type: "text", required: false }] },
+    ],
+  });
+  const merged = mergeRefinedSpec(current, candidate);
+  assert.deepEqual(
+    merged.entities.map((e) => e.name),
+    ["TeamMember", "Milestone", "Staff", "Employee"],
+    "Employee must be added as its own new entity -- neither TeamMember nor Staff can be silently assumed to be the one intended",
+  );
+  const teamMember = merged.entities.find((e) => e.name === "TeamMember")!;
+  const staff = merged.entities.find((e) => e.name === "Staff")!;
+  const employee = merged.entities.find((e) => e.name === "Employee")!;
+  assert.deepEqual(teamMember.fields.map((f) => f.name).sort(), ["name", "role"], "TeamMember must be completely untouched by the ambiguous fold");
+  assert.deepEqual(staff.fields.map((f) => f.name).sort(), ["name", "shift"], "Staff must be completely untouched by the ambiguous fold");
+  assert.deepEqual(employee.fields.map((f) => f.name).sort(), ["department", "name"], "Employee's own fields must still be preserved on the new entity");
+  const milestone = merged.entities.find((e) => e.name === "Milestone")!;
+  assert.deepEqual(
+    milestone.fields.map((f) => f.name).sort(),
+    ["notes", "title"],
+    "an unrelated exact-name merge (Milestone) must be completely unaffected by the ambiguity elsewhere in the same merge",
+  );
+});
+
+/**
  * Round 2198: the Order/PurchaseOrder fold above (and resolvableEntityKeys's
  * own round-2009 skip, a few lines up in index.ts) only ever decided whether
  * a relation field's relationTo is resolvable in principle via its alias

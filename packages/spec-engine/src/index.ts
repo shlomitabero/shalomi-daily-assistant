@@ -174,6 +174,45 @@ function isGenericAliasName(lowerName: string): boolean {
   const group = ENTITY_ALIAS_GROUPS.find((g) => g.includes(lowerName));
   return group !== undefined && group[0] === lowerName;
 }
+// Round 2256: mergeRefinedSpec's own entityByAliasAwareName (below) used to
+// populate this map with a plain, unconditional `.set()` -- silent last-
+// write-wins if TWO of a group's specific members coexist in the same spec
+// at once (e.g. a project with both a "TeamMember" AND a "Staff" entity,
+// both non-generic members of ["employee","teammember","staff"]). The alias
+// groups' own design goal is exactly that both are valid, independently
+// nameable concepts a user/template can pick -- so this is not a contrived
+// edge case, it's the group design making the collision MORE likely, not
+// less. A later refine whose candidate regenerates the shared generic name
+// ("Employee") then silently folds its new fields into whichever sibling
+// happens to be LAST in the entities array, not necessarily the one the
+// refine instruction was actually about, with the other sibling left
+// completely untouched and no warning anywhere. Confirmed live: current
+// TeamMember{name,role} + Staff{name,shift}, candidate Employee{name,
+// department} -- `department` landed on Staff, not TeamMember, purely by
+// array order.
+//
+// This tracks which merge keys have more than one DISTINCT non-generic
+// entity registered and, once a key is ambiguous, keeps it permanently
+// unresolved (deleted from the map, remembered in ambiguousAliasKeys) --
+// never guesses which sibling a generic-named candidate meant. A generic
+// candidate that can't resolve this way falls through mergeRefinedSpec's
+// own existing "!existingEntity" branch and is added as its own new entity
+// instead, the same honest "don't silently misdirect data" tradeoff this
+// function already makes elsewhere (see its own round-1714 doc comment) --
+// visible, not silent.
+function registerAliasAwareEntity(map: Map<string, Entity>, ambiguousAliasKeys: Set<string>, entity: Entity): void {
+  const lower = entity.name.toLowerCase();
+  if (isGenericAliasName(lower)) return;
+  const key = entityMergeKey(entity.name);
+  if (ambiguousAliasKeys.has(key)) return;
+  const existing = map.get(key);
+  if (existing && existing.name.toLowerCase() !== lower) {
+    map.delete(key);
+    ambiguousAliasKeys.add(key);
+    return;
+  }
+  map.set(key, entity);
+}
 /**
  * Round 2162: the directional restriction round 2161 gave mergeRefinedSpec
  * (isGenericAliasName, above) never made it into detectLikelyEntityRenames
@@ -266,9 +305,9 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
   const mergedEntities: Entity[] = current.entities.map((entity) => ({ ...entity, fields: [...entity.fields] }));
   const entityByExactName = new Map(mergedEntities.map((entity) => [entity.name.toLowerCase(), entity]));
   const entityByAliasAwareName = new Map<string, Entity>();
+  const ambiguousAliasKeys = new Set<string>();
   for (const entity of mergedEntities) {
-    const lower = entity.name.toLowerCase();
-    if (!isGenericAliasName(lower)) entityByAliasAwareName.set(entityMergeKey(entity.name), entity);
+    registerAliasAwareEntity(entityByAliasAwareName, ambiguousAliasKeys, entity);
   }
   // Round 2009: every entity named here (current's own, plus every entity
   // candidate.entities carries) is guaranteed to exist in mergedEntities by
@@ -292,7 +331,7 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
       const addedEntity = { ...candidateEntity, fields: [...candidateEntity.fields] };
       mergedEntities.push(addedEntity);
       entityByExactName.set(addedEntity.name.toLowerCase(), addedEntity);
-      if (!isGenericAliasName(addedEntity.name.toLowerCase())) entityByAliasAwareName.set(entityMergeKey(addedEntity.name), addedEntity);
+      registerAliasAwareEntity(entityByAliasAwareName, ambiguousAliasKeys, addedEntity);
       continue;
     }
     const fieldNameSet = new Set(existingEntity.fields.map((field) => field.name.toLowerCase()));
