@@ -8,6 +8,27 @@ export class NotFoundError extends Error {}
 const DATE_FORMAT = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /**
+ * Round 2252: a "number"/"relation" field's own `Number(raw)` coercion
+ * below already has four dedicated fixes rejecting other JS `Number()`
+ * quirks (an array, a boolean, a whitespace-only string, the "Infinity"
+ * string) -- but a hex/octal/binary-notation STRING ("0x10", "0b101",
+ * "0o17") was never covered, and `Number()` happily parses each of those
+ * into an unrelated real number (16, 5, 15) instead of NaN, so it slipped
+ * past every one of those existing guards and the Number.isFinite check
+ * below. Confirmed live via the real insertRecord: a required `price`
+ * field given the string "0x10" stored 16 with zero ValidationError.
+ * None of these are something a user would ever type as "the number
+ * sixteen" -- reachable via a direct API/webhook payload (not the native
+ * <input type="number">, which itself rejects "0x10" as invalid text).
+ * This plain-decimal/scientific-notation shape is checked ONLY for a
+ * string raw value -- a genuine already-numeric JSON value (42) never
+ * goes through it, and scientific notation ("1e3") is deliberately still
+ * accepted, since that's an ordinary way to write a real number, unlike
+ * the three rejected prefixes.
+ */
+const PLAIN_NUMERIC_STRING = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+/**
  * Every date field's canonical stored representation is exactly the
  * YYYY-MM-DD shape an <input type="date"> produces (see seed.ts's own
  * `toISOString().slice(0, 10)` and EntityPanel.tsx's date input) --
@@ -97,6 +118,9 @@ function coerceValue(field: Field, raw: unknown, projectId: string, entityName: 
       // a required field, `raw === false` also bypassed the required-check
       // above, since isEmpty doesn't recognize `false` as "no real value".
       if (Array.isArray(raw) || typeof raw === "boolean") {
+        throw new ValidationError(`Field "${field.name}" must be a number`);
+      }
+      if (typeof raw === "string" && !PLAIN_NUMERIC_STRING.test(raw.trim())) {
         throw new ValidationError(`Field "${field.name}" must be a number`);
       }
       const num = Number(raw);

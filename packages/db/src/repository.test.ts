@@ -672,6 +672,78 @@ test("insertRecord rejects a boolean value for a required number field, instead 
 });
 
 /**
+ * Round 2252: the same family of JS-`Number()`-coercion quirks rounds 604/
+ * 1303 already fixed (array, boolean) has a string-shaped twin those
+ * fixes never covered -- `Number("0x10")` is 16, `Number("0b101")` is 5,
+ * and `Number("0o17")` is 15, all finite, so a hex/octal/binary-notation
+ * string silently became an unrelated real number instead of being
+ * rejected. Confirmed live before this fix: `insertRecord(db, "proj1",
+ * invoice, { label: "Rent", amount: "0x10" })` stored `amount: 16` with no
+ * ValidationError. None of these are something a user would ever type as
+ * a plain number -- reachable via a direct API/webhook payload, not the
+ * native <input type="number">, which itself already rejects "0x10" as
+ * invalid text. Scientific notation ("1e3") is deliberately still
+ * accepted, since that's an ordinary way to write a real number.
+ */
+test("insertRecord rejects a hex/octal/binary-notation string for a number field, instead of silently coercing it via Number('0x10')", () => {
+  const invoice: Entity = {
+    name: "Invoice",
+    fields: [
+      { name: "label", type: "text", required: true },
+      { name: "amount", type: "number", required: true },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [invoice] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: "0x10" }),
+    ValidationError,
+    "expected '0x10' to be rejected, not coerced to 16",
+  );
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: "0b101" }),
+    ValidationError,
+    "expected '0b101' to be rejected, not coerced to 5",
+  );
+  assert.throws(
+    () => insertRecord(db, "proj1", invoice, { label: "Rent", amount: "0o17" }),
+    ValidationError,
+    "expected '0o17' to be rejected, not coerced to 15",
+  );
+
+  // The fix must not lose real recall: ordinary decimal and scientific
+  // notation must still be accepted.
+  const created = insertRecord(db, "proj1", invoice, { label: "Rent", amount: "1e3" });
+  assert.equal(created.amount, 1000, "scientific notation must still be accepted as a real number");
+});
+
+/**
+ * Same bug, but for a required "relation" field: a hex/octal/binary
+ * string raw value must be rejected with a clean ValidationError, not
+ * silently coerced into a real foreign-key id that may or may not point
+ * at an unrelated record.
+ */
+test("insertRecord rejects a hex-notation string for a required relation field, instead of silently coercing it to a foreign key id", () => {
+  const customerEntity: Entity = { name: "Customer", fields: [{ name: "name", type: "text", required: true }] };
+  const order: Entity = {
+    name: "Order",
+    fields: [
+      { name: "total", type: "number", required: true },
+      { name: "customerId", type: "relation", required: true, relationTo: "Customer" },
+    ],
+  };
+  const db = openDatabase(":memory:");
+  applyMigrations(db, "proj1", { ...spec, entities: [customerEntity, order] });
+
+  assert.throws(
+    () => insertRecord(db, "proj1", order, { total: 10, customerId: "0x10" }),
+    ValidationError,
+    "expected '0x10' to be rejected, not coerced to foreign key 16",
+  );
+});
+
+/**
  * Same bug, but for a required "relation" field: a boolean raw value must
  * be rejected with a clean ValidationError, not silently coerced into a
  * real foreign-key id (1 or 0) that may or may not point at an unrelated
