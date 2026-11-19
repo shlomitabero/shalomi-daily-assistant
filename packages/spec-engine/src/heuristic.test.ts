@@ -5642,6 +5642,37 @@ test("Case's 'עורך דין'/'עורכת דין' keywords also match their plu
   assert.ok(femSingular.entities.some((e) => e.name === "Case"), "'עורכת דין' (female singular) must still match Case");
 });
 
+/**
+ * Round 2299: all four "עורך דין"/"עורכי דין"/"עורכת דין"/"עורכות דין"
+ * forms are construct chains (סמיכות) whose definite article attaches
+ * to the SECOND noun ("דין"->"הדין"), not the first -- the same pattern
+ * round 2298 found for Pet's "חיית המחמד" and round 2286 found for
+ * lodging's "בית ההארחה". "עורך הדין שלנו" ("our lawyer") and "עורכי
+ * הדין במשרד" ("the lawyers at the firm") are at least as natural as
+ * the bare forms, but none of the four definite forms is a substring of
+ * its own indefinite keyword, so all four silently fell through to the
+ * generic Item fallback.
+ */
+test("Case's 'עורך דין'/'עורכי דין'/'עורכת דין'/'עורכות דין' keywords also match their definite-article forms 'עורך הדין'/'עורכי הדין'/'עורכת הדין'/'עורכות הדין', which aren't substrings of the indefinite forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mascSingularDef = await provider.generate("אפליקציה לניהול יומן של עורך הדין שלנו.");
+  assert.ok(mascSingularDef.entities.some((e) => e.name === "Case"), "'עורך הדין' (definite singular) must match Case");
+
+  const mascPluralDef = await provider.generate("אפליקציה לניהול יומן עבודה של עורכי הדין במשרד שלנו.");
+  assert.ok(mascPluralDef.entities.some((e) => e.name === "Case"), "'עורכי הדין' (definite plural) must match Case");
+
+  const femSingularDef = await provider.generate("אפליקציה לניהול יומן עבודה של עורכת הדין שלנו.");
+  assert.ok(femSingularDef.entities.some((e) => e.name === "Case"), "'עורכת הדין' (definite female singular) must match Case");
+
+  const femPluralDef = await provider.generate("אפליקציה לניהול יומן עבודה של עורכות הדין במשרד.");
+  assert.ok(femPluralDef.entities.some((e) => e.name === "Case"), "'עורכות הדין' (definite female plural) must match Case");
+
+  // Non-regression: the already-working indefinite form must still match.
+  const mascSingular = await provider.generate("אפליקציה לניהול יומן של עורך דין עמוס.");
+  assert.ok(mascSingular.entities.some((e) => e.name === "Case"), "'עורך דין' (indefinite) must still match Case");
+});
+
 // Round 1813: Case's Hebrew keywords already cover the bare profession
 // noun ("עורך דין"), but the English side only ever got specific phrases
 // ("legal case"/"law firm"/"case management"/"legal matter") -- a plain

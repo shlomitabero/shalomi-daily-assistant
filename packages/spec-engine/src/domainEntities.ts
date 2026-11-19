@@ -2812,7 +2812,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // plural "עורכות" has the analogous ת→ות gap round 576 found for
       // "עמותה"/"עמותות". Either plural-only phrasing ("עורכי דין"/
       // "עורכות דין") matched no domain entity at all.
+      //
+      // Round 2299: all four of those forms are construct chains
+      // (סמיכות) whose definite article attaches to the SECOND noun
+      // ("דין"->"הדין"), not the first -- the same pattern round 2298
+      // found for Pet's "חיית המחמד" and round 2286 found for lodging's
+      // "בית ההארחה". "עורך הדין שלנו" ("our lawyer") and "עורכי הדין
+      // במשרד" ("the lawyers at the firm") are at least as natural as
+      // the bare forms, but none of "עורך הדין"/"עורכי הדין"/"עורכת
+      // הדין"/"עורכות הדין" is a substring of its own indefinite
+      // keyword, so all four silently fell through to the generic Item
+      // fallback. Confirmed live: "אפליקציה לניהול יומן של עורך הדין
+      // שלנו" matched only Item, with the real legal-case domain
+      // entirely lost, while the bare-noun twin ("...עורך דין עמוס...")
+      // already matched Case correctly.
       "עורך דין", "עורכי דין", "עורכת דין", "עורכות דין",
+      "עורך הדין", "עורכי הדין", "עורכת הדין", "עורכות הדין",
       // Round 1813: the Hebrew side already has the bare profession nouns
       // above, but the English side only ever got the specific phrases
       // "legal case"/"law firm"/"case management"/"legal matter" -- the
