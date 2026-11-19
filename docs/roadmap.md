@@ -55704,3 +55704,88 @@ permanently deferred (rounds 2349-2350); PAYMENT_KEYWORDS' broader-
 proximity "sell ... course(s)/ticket(s)" gap, still open (round 2351).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2353: Course's "שיעור" comeuppance-idiom guard missing 2nd-person-feminine-singular FUTURE form
+
+**Bug:** Course's "שיעור" give-verb comeuppance-idiom guard
+(`domainEntities.ts`) -- extended round-by-round (2314, 2328, 2344)
+across many person/number/gender/tense combinations of "give" -- had
+exactly the same narrow gap round 2352 just found on Vendor's ספק
+guard: the 2nd-person-FEMININE-singular future form "תתני" ("you[f]
+will give/teach") was never covered. Critically, this form is NOT
+already caught by the existing bare "תני" alternative either: that
+alternative is deliberately guarded with `(?<![א-ת])` to require
+nothing but a word boundary immediately before it, and "תתני" has a
+Hebrew letter ("ת") right before its own "תני" suffix, so the guard
+explicitly excludes it by design -- this is a genuinely distinct,
+uncaught string, not a near-miss of an existing one.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול שכנים. את תתני לשכן הבעייתי שיעור שהוא לא ישכח." (you[f] will teach the
+problematic neighbor a lesson he won't forget -- comeuppance idiom, in
+an app for managing neighbors with zero educational content) wrongly
+fabricated a Course entity.
+
+**Fix** (`domainEntities.ts`, Course's `keywords` array):
+```js
+/(?<!(?:לתת|אתן|תיתן|תתני|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/
+```
+Adds "תתני" as a new alternative in the verb group, same
+one-alternative-per-form convention as the rest of the guard.
+
+**Residual, documented trade-off (same class already accepted
+elsewhere in this file):** "תתני" is also the 2nd-person-feminine-
+singular future of a different verb, להתנות ("to stipulate/set as a
+condition" -- "תתני תנאים" = "you'll set conditions"). Confirmed live
+that a contrived sentence using this unrelated sense before "שיעור"
+also gets excluded by the new alternative, same as several other
+listed forms in this file already double as other, rarer words. This
+residual is far rarer in natural business-description text than the
+newly-fixed common idiom usage and is not a reason to withhold the
+fix, consistent with this file's established convention (e.g. "אתן"
+doubling as the 2fpl pronoun).
+
+**Test added** (`heuristic.test.ts`): confirms the bug sentence no
+longer matches Course; non-regression checks confirm the existing
+masc./3fs future exclusion, genuine lesson usage (present and bare
+noun), and the "שיעור הריבית" (interest rate) lookahead exclusion are
+all unaffected.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 264 (the new test), as predicted; pass-after showed 264/264 --
+no regression. Full `@forge/spec-engine` suite: 460/460 (up from 459).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** round 2352's hypothesis -- that the narrow
+2fs-future (-י suffix) gap might recur on OTHER idiom guards extended
+many times across many rounds -- paid off immediately on the very
+next guard checked (Course's נתן/שיעור guard). Donation's "תרם" guard
+was investigated and ruled out: its own 2fs future form "תתרמי" was
+already added in round 2343, so no gap there. This narrow-slice audit
+method (checking one specific person/number/gender/tense combination
+across every guard with a long extension history) is now a candidate
+to try on any remaining idiom guards not yet checked for this specific
+form. Standing deferred/unsafe gaps, unchanged this round: Ticket
+bare-noun gap (rounds 2282-2283); Courier license/insurance/traffic-
+ticket sub-case (round 2311); Course bare-price-crashing sub-case
+(round 2316); Course military-topic-vs-squad-unit ambiguity (round
+2316); Course "courses"-vs-restaurant-meal-courses sub-case (round
+2318); Order's forward-only "הזמנה" exclusion-lookahead directionality
+gap (round 2331, accepted trade-off); pre-existing roadmap.md script-
+substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+leaks (round 2340, accepted trade-off); PAYMENT_KEYWORDS' "נשלם" gap,
+permanently deferred (rounds 2349-2350); PAYMENT_KEYWORDS' broader-
+proximity "sell ... course(s)/ticket(s)" gap, still open (round 2351);
+Course's new "תתני" alternative's residual leak on the unrelated
+"להתנות" (to stipulate) verb sense, accepted trade-off (round 2353).
+
+Live: https://forge-ai-m7p7.onrender.com
