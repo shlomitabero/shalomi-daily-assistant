@@ -7842,6 +7842,33 @@ test("Vendor's 'ספק' (doubt) idiom-exclusion guard was also missing the futur
   assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'עובדים עם ספק סחורה חדש' (we work with a new goods supplier) must still match Vendor");
 });
 
+test("Vendor's 'ספק' (doubt) idiom-exclusion guard round 2352: was also missing the 2nd-person-feminine-singular FUTURE forms (תטילי/תעלי)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futureFemSingularCast = await provider.generate("אפליקציה לניהול פרויקטים. את תטילי ספק רב בהצלחת התוכנית בשבוע הבא.");
+  assert.ok(!futureFemSingularCast.entities.some((e) => e.name === "Vendor"), "'תטילי ספק' (you[f] will cast doubt, 2fs future) must not spuriously match Vendor");
+
+  const futureFemSingularRaise = await provider.generate("אפליקציה לניהול תקציב. את תעלי ספק משמעותי לגבי התוכנית הכספית בפגישה.");
+  assert.ok(!futureFemSingularRaise.entities.some((e) => e.name === "Vendor"), "'תעלי ספק' (you[f] will raise doubt, 2fs future) must not spuriously match Vendor");
+
+  // Non-regression: the already-working masc./plural future exclusions and other existing guards must still hold.
+  const futureMascSingularCast = await provider.generate("אפליקציה לניהול פרויקטים. המנהל תטיל ספק רב בהצלחת התוכנית.");
+  assert.ok(!futureMascSingularCast.entities.some((e) => e.name === "Vendor"), "'תטיל ספק' (masc. future, round 2345's existing fix) must still not match Vendor");
+
+  const futurePluralCast = await provider.generate("אפליקציה לניהול פרויקטים. אתם תטילו ספק רב בהצלחת התוכנית.");
+  assert.ok(!futurePluralCast.entities.some((e) => e.name === "Vendor"), "'תטילו ספק' (plural future, round 2347's existing fix) must still not match Vendor");
+
+  const negationGuard = await provider.generate("אפליקציה לניהול פרויקטים. אין ספק שהתוכנית תצליח.");
+  assert.ok(!negationGuard.entities.some((e) => e.name === "Vendor"), "'אין ספק' (no doubt, existing negation guard) must still not match Vendor");
+
+  // Non-regression: genuine vendor usage (singular and plural) must still match.
+  const genuineVendorSingular = await provider.generate("יש לנו ספק טוב למוצרים שלנו.");
+  assert.ok(genuineVendorSingular.entities.some((e) => e.name === "Vendor"), "'יש לנו ספק טוב' (genuine singular vendor sense) must still match Vendor");
+
+  const genuineVendorPlural = await provider.generate("אפליקציה לניהול ספקים וחשבוניות עבור העסק שלנו.");
+  assert.ok(genuineVendorPlural.entities.some((e) => e.name === "Vendor"), "'ניהול ספקים' (genuine plural vendor sense) must still match Vendor");
+});
+
 test("PAYMENT_KEYWORDS only ever carried the noun 'תשלום'/'תשלומים', never the verb 'to pay' (שילם/משלם/לשלם) in any conjugation", async () => {
   const provider = new HeuristicSpecProvider();
 
