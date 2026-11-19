@@ -2854,7 +2854,35 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // ניסיון..."). The masc.-singular branch also now excludes "ו"
       // directly after "רכש" so it can never again mistake the plural's
       // prefix for itself.
-      /רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
+      //
+      // Round 2326: the guard still only covered 3rd-person forms
+      // (masc./fem. singular, plural). It never checked the OTHER
+      // grammatical persons of the same "acquired-X" idiom: 1st-person
+      // singular/plural ("רכשתי"/"רכשנו" = I/we acquired) and
+      // 2nd-person singular/plural ("רכשת"/"רכשתם"/"רכשתן" = you
+      // acquired). Confirmed live: "אנחנו רכשנו ניסיון רב בניהול
+      // פרויקטים מורכבים..." (we acquired experience), "במהלך העבודה
+      // רכשתי ניסיון רב בתחום שירות הלקוחות..." (I acquired
+      // experience), "אתה רכשת ניסיון רב בתפקיד הקודם..." (you
+      // acquired experience), and "אתם רכשתם ניסיון רב בעבודת
+      // הצוות..." (you-pl acquired experience) all fabricated Vendor
+      // with zero procurement content. Each person gets its own
+      // independent branch with its own full idiom lookahead (longest/
+      // most-specific literal first so e.g. "רכשתם" is tried before
+      // the bare "רכשת" prefix matches it). The masc.-singular "רכש"
+      // branch now also excludes "ת" and "נ" directly after it (in
+      // addition to the existing "ה"/"ו") so it can never mistake any
+      // longer inflected form's prefix for itself, and the 2nd-person-
+      // singular "רכשת" branch excludes "ם"/"ן"/"י" directly after it
+      // for the same reason relative to "רכשתם"/"רכשתן"/"רכשתי". A
+      // shared merged regex using one optional suffix group
+      // ("רכש(?:תי|תם|תן|נו|ת|ה|ו)?(?!\s*idiom)") was tested and
+      // confirmed to not only fail on all four new idiom sentences but
+      // also reintroduce TWO already-fixed regressions (rounds 2309's
+      // fem. singular and round 2320's plural) -- the same
+      // backtracking pitfall this file keeps rediscovering, this time
+      // shown to be even more damaging than previously documented.
+      /רכשתם(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתן(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשנו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשת(?!ם)(?!ן)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!ת)(?!נ)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",

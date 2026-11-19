@@ -6558,6 +6558,38 @@ test("JobApplicant's political guard also excludes 'לתפקיד'/'כהונת' i
   assert.ok(!alreadyFixedFemPlural.entities.some((e) => e.name === "JobApplicant"), "'מועמדות הנשיאות' (round 2324's own feminine-plural exclusion) must still not match JobApplicant");
 });
 
+test("Vendor's 'רכש' idiom guard also excludes the 1st/2nd-person forms 'רכשתי'/'רכשנו'/'רכשת'/'רכשתם' (they acquired idiom, every grammatical person)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const firstPersonPlural = await provider.generate("אנחנו רכשנו ניסיון רב בניהול פרויקטים מורכבים ובעבודה בצוות, ונרצה לתעד את הלקוחות ואת המשימות שלנו.");
+  assert.ok(!firstPersonPlural.entities.some((e) => e.name === "Vendor"), "'רכשנו ניסיון' (we acquired experience) must not spuriously match Vendor");
+
+  const firstPersonSingular = await provider.generate("במהלך העבודה רכשתי ניסיון רב בתחום שירות הלקוחות, ואני רוצה אפליקציה לניהול לקוחות ומשימות.");
+  assert.ok(!firstPersonSingular.entities.some((e) => e.name === "Vendor"), "'רכשתי ניסיון' (I acquired experience) must not spuriously match Vendor");
+
+  const secondPersonSingular = await provider.generate("אתה רכשת ניסיון רב בתפקיד הקודם שלך בחברה.");
+  assert.ok(!secondPersonSingular.entities.some((e) => e.name === "Vendor"), "'רכשת ניסיון' (you acquired experience) must not spuriously match Vendor");
+
+  const secondPersonPluralMasc = await provider.generate("אתם רכשתם ניסיון רב בעבודת הצוות במהלך השנה.");
+  assert.ok(!secondPersonPluralMasc.entities.some((e) => e.name === "Vendor"), "'רכשתם ניסיון' (you-pl acquired experience) must not spuriously match Vendor");
+
+  // Non-regression: genuine procurement for the same persons, and rounds 2309's/2320's own exclusions, must still hold.
+  const genuineFirstPluralProcurement = await provider.generate("אנחנו רכשנו ציוד חדש מהספק המקומי.");
+  assert.ok(genuineFirstPluralProcurement.entities.some((e) => e.name === "Vendor"), "'רכשנו ציוד חדש מהספק' (we bought new equipment from the supplier) must still match Vendor");
+
+  const genuineSecondSingularProcurement = await provider.generate("אתה רכשת ציוד חדש למשרד.");
+  assert.ok(genuineSecondSingularProcurement.entities.some((e) => e.name === "Vendor"), "'רכשת ציוד חדש' (you bought new equipment) must still match Vendor");
+
+  const alreadyFixedMascSingular = await provider.generate("העובד רכש ניסיון רב בתפקיד החדש.");
+  assert.ok(!alreadyFixedMascSingular.entities.some((e) => e.name === "Vendor"), "'רכש ניסיון' (round 2309's own masc. singular exclusion) must still not match Vendor");
+
+  const alreadyFixedFemSingular = await provider.generate("העובדת רכשה מיומנויות ניהול חדשות.");
+  assert.ok(!alreadyFixedFemSingular.entities.some((e) => e.name === "Vendor"), "'רכשה מיומנויות' (round 2309's own fem. singular exclusion) must still not match Vendor");
+
+  const alreadyFixedPlural = await provider.generate("המתמחים רכשו מיומנויות ניהול חדשות לאחר התוכנית.");
+  assert.ok(!alreadyFixedPlural.entities.some((e) => e.name === "Vendor"), "'רכשו מיומנויות' (round 2320's own 3rd-person-plural exclusion) must still not match Vendor");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
