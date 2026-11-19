@@ -6189,6 +6189,85 @@ test("JobApplicant's Hebrew 'מועמד'/'מועמדים'/'מועמדת' keyword
 });
 
 /**
+ * Round 2316: Course's bare Hebrew "קורס"/"קורסים" -- the one keyword
+ * pair in this entity's whole array with no guard at all -- collided
+ * with the ordinary verb "to collapse/crash" (in all four
+ * conjugations) and with "Corsica"/"Corsican", with zero connection to
+ * a course. The nineteenth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2315 fixed.
+ * Deliberately did NOT guard a bare "the price/prices is/are crashing"
+ * with no other crash-subject noun nearby -- a cue word broad enough
+ * to catch it (e.g. "price") would also catch real course-pricing
+ * phrasing like "the price of an online course", so that sub-case is
+ * left open/deferred, the same discipline as the Courier license/
+ * insurance gap (round 2311).
+ */
+test("Course's Hebrew 'קורס'/'קורסים' keywords don't spuriously match the 'collapse/crash' verb or 'Corsica'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const marketCrashing = await provider.generate("התראה כשהשוק קורס או נופל בחדות");
+  assert.ok(!marketCrashing.entities.some((e) => e.name === "Course"), "'השוק קורס' (the market is crashing) must not spuriously match Course");
+
+  const buildingCollapsing = await provider.generate("מערכת שמנטרת בניינים ישנים ומתריעה לפני שהמבנה קורס");
+  assert.ok(!buildingCollapsing.entities.some((e) => e.name === "Course"), "'המבנה קורס' (the building is collapsing) must not spuriously match Course");
+
+  const companyCollapsingFem = await provider.generate("אפליקציה שמתריעה כשהחברה קורסת כלכלית");
+  assert.ok(!companyCollapsingFem.entities.some((e) => e.name === "Course"), "'החברה קורסת' (feminine, the company is collapsing) must not spuriously match Course");
+
+  const stocksCrashingFemPl = await provider.generate("מעקב אחרי מניות שקורסות בשוק ההון");
+  assert.ok(!stocksCrashingFemPl.entities.some((e) => e.name === "Course"), "'מניות שקורסות' (feminine plural, stocks crashing) must not spuriously match Course");
+
+  const corsicaTravel = await provider.generate("מדריך טיולים לקורסיקה");
+  assert.ok(!corsicaTravel.entities.some((e) => e.name === "Course"), "'קורסיקה' (Corsica) must not spuriously match Course");
+
+  // Non-regression: genuine course descriptions, including ones that
+  // deliberately resemble the collision sentences, must still match.
+  const onlineCourse = await provider.generate("אפליקציה לניהול קורס אונליין עם תלמידים ומדריכים");
+  assert.ok(onlineCourse.entities.some((e) => e.name === "Course"), "a genuine online-course description must still match Course");
+
+  const stockTradingCourse = await provider.generate("קורס למסחר במניות");
+  assert.ok(stockTradingCourse.entities.some((e) => e.name === "Course"), "a genuine stock-trading-course description must still match Course");
+
+  const stockMarketCourse = await provider.generate("קורס בשוק ההון");
+  assert.ok(stockMarketCourse.entities.some((e) => e.name === "Course"), "a genuine stock-market-course description must still match Course");
+
+  const employeeCourses = await provider.generate("חברה שמציעה קורסים לעובדים");
+  assert.ok(employeeCourses.entities.some((e) => e.name === "Course"), "a genuine employee-courses description must still match Course");
+});
+
+/**
+ * Round 2316: Course's bare Hebrew "כיתה" also collides with the
+ * ordinary Hebrew word for a military "squad", with zero connection to
+ * a classroom. Scoped NARROWLY to specific structural/organizational
+ * military terms that essentially never appear in a genuine
+ * classroom-app description -- deliberately NOT guarding the more
+ * generic "army"/"soldiers"/"commander" cues, since a civics/history
+ * class description that genuinely discusses the military would be
+ * wrongly excluded by those broader cues (adversarially tested below).
+ * That broader military-topic-vs-military-unit ambiguity is left
+ * open/deferred rather than force-fixed with an unsafe guard, the same
+ * discipline as the Courier license/insurance gap (round 2311).
+ */
+test("Course's Hebrew 'כיתה' keyword doesn't spuriously match the military 'squad' sense (narrowly scoped)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const combatSquad = await provider.generate("מערכת לניהול כיתה קרבית ומפקד הכיתה");
+  assert.ok(!combatSquad.entities.some((e) => e.name === "Course"), "'כיתה קרבית' (combat squad) must not spuriously match Course");
+
+  const basicTrainingSquad = await provider.generate("ניהול כיתה בטירונות של הצבא");
+  assert.ok(!basicTrainingSquad.entities.some((e) => e.name === "Course"), "'כיתה בטירונות' (a squad in basic training) must not spuriously match Course");
+
+  // Non-regression: genuine classroom descriptions must still match.
+  const schoolClassroom = await provider.generate("אפליקציה לניהול כיתה בבית ספר עם תלמידים ומורה");
+  assert.ok(schoolClassroom.entities.some((e) => e.name === "Course"), "a genuine school-classroom description must still match Course");
+
+  // Adversarial: a civics/history class that genuinely discusses the
+  // military must NOT be excluded by this narrowly-scoped guard.
+  const civicsClass = await provider.generate("אפליקציה לניהול כיתה הלומדת על שירות בצבא");
+  assert.ok(civicsClass.entities.some((e) => e.name === "Course"), "a genuine civics-class description discussing military service must still match Course, not be wrongly excluded by the narrow guard");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

@@ -1344,7 +1344,54 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // would collide with "of course" and "golf course", both far more
     // common than any real education-app phrasing that needs it.
     keywords: [
-      /\bcourses\b/, "curriculum", "קורס", "קורסים", "שיעורים", "כיתה",
+      /\bcourses\b/, "curriculum", "שיעורים",
+      // Round 2316: bare "קורס"/"קורסים" (the one keyword pair in this
+      // entity's whole array with no guard at all) collided with three
+      // unrelated senses with zero connection to a course: the ordinary
+      // verb "to collapse/crash", in all four conjugations -- masc.sg
+      // "קורס", fem.sg "קורסת", masc.pl "קורסים", fem.pl "קורסות" --
+      // ("the price/market/building/company is crashing/collapsing"),
+      // and "Corsica"/"Corsican". Confirmed live: a stock-price-crash
+      // alert app, a market-crash alert, a collapsing-building monitor
+      // (and its feminine/plural conjugations), and a Corsica travel
+      // guide each fabricated Course as the sole entity. The lookbehind
+      // excludes only when one of the confirmed crash-subject nouns
+      // (share/shares, stock exchange, structure, building, company,
+      // market) sits immediately before the keyword, including through
+      // the attached relative pronoun; the lookahead excludes the
+      // Corsica derivatives. Deliberately a LOCAL immediately-adjacent
+      // check, not a document-wide one: a genuine course description
+      // very plausibly names its topic AFTER the keyword (a course in
+      // stock trading, in the stock market, in economics), never
+      // immediately before it as a bare construct -- confirmed all
+      // such phrasings, and the two existing test-fixture sentences,
+      // still match. Deliberately did NOT add "price"/"prices" as a
+      // crash-subject cue: "the price of an online course" is itself
+      // plausible genuine phrasing, so a bare "the price/prices is/are
+      // crashing" with no other crash-subject noun nearby remains an
+      // open, deliberately deferred gap, the same discipline as the
+      // Courier license/insurance gap (round 2311) -- a cue word broad
+      // enough to catch it would also catch real course-pricing
+      // phrasing.
+      /(?<!(?:מניה|מניות|בורסה|מבנה|בניין|חברה|שוק)\s)(?<!(?:מניה|מניות|בורסה|מבנה|בניין|חברה|שוק)\sש)קורס(?:ת|ים|ות)?(?!יק)/,
+      // Round 2316: bare "כיתה" also collides with the ordinary Hebrew
+      // word for a military "squad" (a combat squad, a squad in basic
+      // training), with zero connection to a classroom. Confirmed live:
+      // a combat-squad management app and a basic-training-squad
+      // tracker each fabricated Course. Scoped NARROWLY to specific
+      // structural/organizational military terms (combat/combat-unit,
+      // battalion, company (military unit), basic training) that
+      // essentially never appear in a genuine classroom-app
+      // description. Deliberately did NOT add the more generic "army"/
+      // "soldiers"/"soldier"/"commander"/"IDF" -- adversarially tested
+      // and confirmed a civics/history class description that
+      // genuinely discusses the military (a class learning about
+      // military service) would be wrongly excluded by those broader
+      // cues, the same unsafe-document-wide-marker pitfall round 2311
+      // found for Courier's license/insurance sub-case. That broader
+      // military-topic-vs-military-unit ambiguity is left open/
+      // deferred rather than force-fixed with an unsafe guard.
+      /כיתה(?![\s\S]*?(?:קרבית|קרבי|גדוד|פלוגה|טירונות))(?<!(?:קרבית|קרבי|גדוד|פלוגה|טירונות)[\s\S]*?)/,
       // Round 2314: bare "lesson"/"lessons" collided with three common
       // idioms with zero connection to education -- "teach X a lesson"
       // (moral comeuppance/revenge), "learn(ed) a hard/valuable/...
