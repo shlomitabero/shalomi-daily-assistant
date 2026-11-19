@@ -6145,6 +6145,50 @@ test("Course's 'lesson(s)'/'שיעור' keywords don't spuriously match the 'tea
 });
 
 /**
+ * Round 2315: JobApplicant's bare Hebrew "מועמד"/"מועמדים" ("candidate(s)")
+ * collided with the political/electoral candidate sense ("מועמד
+ * לנשיאות" = presidential candidate, "מועמדים לכנסת" = Knesset
+ * candidates, "מועמד לראשות העיר" = mayoral candidate) and the
+ * academic sense ("מועמד לדוקטורט" = PhD candidate), with zero
+ * connection to a job applicant -- the Hebrew-side twin of round
+ * 2313's English "hiring" fix on this same entity, and the reason the
+ * English side deliberately only ever uses "candidate tracking", never
+ * bare "candidate". The eighteenth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2314 fixed. Also
+ * guards the feminine "מועמדת" form, which the bare "מועמד" keyword
+ * already matched as a substring and so carried the identical bug
+ * (e.g. "מועמדת לראשות העיר" = a female mayoral candidate).
+ */
+test("JobApplicant's Hebrew 'מועמד'/'מועמדים'/'מועמדת' keywords don't spuriously match the political/academic candidate sense", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const presidential = await provider.generate("פלטפורמה למעקב אחר מועמדים לנשיאות וסקרי דעת קהל לפני הבחירות.");
+  assert.ok(!presidential.entities.some((e) => e.name === "JobApplicant"), "'מועמדים לנשיאות' (presidential candidates) must not spuriously match JobApplicant");
+
+  const phd = await provider.generate("אפליקציה לניהול מועמדים לדוקטורט במחלקה לפיזיקה, כולל סטטוס הועדה.");
+  assert.ok(!phd.entities.some((e) => e.name === "JobApplicant"), "'מועמדים לדוקטורט' (PhD candidates) must not spuriously match JobApplicant");
+
+  const knesset = await provider.generate("אתר המרכז מידע על מועמדים לכנסת מכל המפלגות.");
+  assert.ok(!knesset.entities.some((e) => e.name === "JobApplicant"), "'מועמדים לכנסת' (Knesset candidates) must not spuriously match JobApplicant");
+
+  const mayoralFeminine = await provider.generate("מועמדת לראשות העיר תגיע לדיון הערב.");
+  assert.ok(!mayoralFeminine.entities.some((e) => e.name === "JobApplicant"), "'מועמדת לראשות העיר' (feminine mayoral candidate) must not spuriously match JobApplicant");
+
+  const presidentialFeminine = await provider.generate("מועמדת לנשיאות ארה׳ב נואמת הערב.");
+  assert.ok(!presidentialFeminine.entities.some((e) => e.name === "JobApplicant"), "'מועמדת לנשיאות' (feminine presidential candidate) must not spuriously match JobApplicant");
+
+  // Non-regression: genuine recruiting descriptions must still match.
+  const recruiting = await provider.generate("אפליקציה למעקב אחרי מועמדים למשרות פתוחות בחברה שלנו.");
+  assert.ok(recruiting.entities.some((e) => e.name === "JobApplicant"), "a genuine recruiting description must still match JobApplicant");
+
+  const degreeRequirement = await provider.generate("דרוש/ה מועמד/ת עם תואר ראשון בהנדסה.");
+  assert.ok(degreeRequirement.entities.some((e) => e.name === "JobApplicant"), "a genuine degree-requirement description (containing 'תואר' but no political/academic-candidacy phrase) must still match JobApplicant");
+
+  const femaleCandidate = await provider.generate("דרושה מועמדת לתפקיד מנהלת חשבונות.");
+  assert.ok(femaleCandidate.entities.some((e) => e.name === "JobApplicant"), "a genuine feminine job-candidate description must still match JobApplicant");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

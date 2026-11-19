@@ -2203,7 +2203,28 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // ordinary idiom that repurposes "recruiting"/"recruiter(s)" for an
       // unrelated meaning.
       "recruiting", "recruiter", "recruiters",
-      "מועמד", "מועמדים",
+      // Round 2315: bare "מועמד"/"מועמדים" ("candidate(s)") collided
+      // with the political/electoral candidate sense ("מועמד לנשיאות"
+      // = presidential candidate, "מועמדים לכנסת" = Knesset candidates,
+      // "מועמד לראשות העיר" = mayoral candidate) and the academic sense
+      // ("מועמד לדוקטורט" = PhD candidate), with zero connection to a
+      // job applicant -- the same grammatical-polysemy shape round
+      // 2313's English "hiring" fix closed on this very entity, and the
+      // reason the English side deliberately only ever uses the phrase
+      // "candidate tracking", never bare "candidate" (see its own entry
+      // a few lines above). Confirmed live: a presidential-candidates
+      // tracker, a PhD-candidates-in-physics app, and a Knesset-
+      // candidates site each fabricated JobApplicant, losing or
+      // polluting the real domain. The lookahead excludes מועמד/
+      // מועمدים only when immediately followed by "ל" + a political-
+      // office or academic-candidacy noun; genuine recruiting phrasing
+      // ("מועמדים למשרות פתוחות", "מועמד/ת עם תואר ראשון בהנדסה") never
+      // has that immediate collocation, confirmed still matching. Also
+      // guards the feminine "מועמדת" form (a political candidate is
+      // just as often referred to in the feminine, e.g. "מועמדת
+      // לראשות העיר") -- the bare "מועמד" keyword already matched
+      // inside it as a substring, so it carried the identical bug.
+      /מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמד(?!ת)(?!ים)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))/,
       // Round 1536: bare "גיוס" is a substring of the equally ordinary
       // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
       // "raising donations") -- Hebrew overloads this root for both
