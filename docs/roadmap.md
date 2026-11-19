@@ -56150,3 +56150,94 @@ scope); Course's "אנחנו לא ניתן" (negation-interrupted) residual
 design (round 2357).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2358: Expense missing construct-state "הוצאת" ("expenditure of ..."), stale since round 912
+
+**Bug:** continuing round 2357's "stale entity" method, this round's
+survey agent identified `Expense` as a clean candidate: its only
+dedicated round-title audit was round 912 (~1445 rounds ago), with
+all later mentions (rounds 2283-2317) being only generic sweep
+check-offs for a different bug class, never a ground-up audit of this
+entity's own construct-state inflection coverage -- the exact angle
+that has found roughly ten confirmed bugs on other entities. Expense's
+keyword list only ever covered the absolute singular/plural "הוצאה"/
+"הוצאות", never the construct-state (סמיכות) singular "הוצאת" ("the
+expenditure/outlay of ..."), used in ordinary phrasing like "הוצאת
+הכספים"/"הוצאת התקציב"/"הוצאת המשכורות".
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה למעקב אחר הוצאת הכספים של העסק שלנו.", "המערכת עוזרת לנו לתעד את הוצאת התקציב החודשי של הארגון.", and
+"כלי לניהול הוצאת המשכורות של העובדים בחברה." all lost the Expense entity entirely (the first two fell
+through to the generic Item fallback; the third fabricated only
+Employee, with no Expense at all).
+
+**Why a bare "הוצאת" literal is unsafe:** this root (י-צ-א, "to go/take
+out") is unusually polysemous, and "הוצאת X" very commonly means
+something unrelated to a business expense -- "הוצאת ספרים" (publishing
+house, the construct-form sibling of the already-excluded "הוצאה
+לאור" idiom from round 912), "הוצאת דיבה"/"הוצאת לשון הרע" (defamation/
+slander), "הוצאת צו" (issuance of a court order), "הוצאת רישיון"
+(issuance of a license), "הוצאת ילד מהבית" (child-protective-services
+removal). A naive bare addition would reopen round 912's exact bug
+class in a new shape -- confirmed live that the bare literal matches
+all five idiom examples.
+
+**Fix** (`domainEntities.ts`, Expense's `keywords` array):
+```js
+/הוצאת\s+(?:ה)?(?:כספים|כסף|תקציב|משכורות|משכורת)/
+```
+Allowlists only the specific money/budget/payroll nouns that actually
+co-occur with the expense sense, with an optional definite article
+"ה" on the second noun in the construct chain.
+
+**Verification (own adversarial cases beyond the agent's own set):**
+confirmed live that all 5 idiom collisions (publishing, defamation,
+court order, license issuance, child removal) stay correctly
+excluded, as do round 912's own existing tests ("הוצאה לאור"/"הוצאה
+לפועל" and the bare-plural control), and that the fix also correctly
+catches the bare forms without a definite article ("הוצאת כסף",
+"הוצאת משכורת") via the regex's optional "ה".
+
+**Test added** (`heuristic.test.ts`): confirms all 3 bug sentences now
+match Expense; confirms all 5 idiom-collision sentences and round
+912's own existing non-regression cases stay unaffected.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 269 (the new test), as predicted; pass-after showed 269/269 --
+no regression. Full `@forge/spec-engine` suite: 465/465 (up from 464).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "stale entity" method (rounds 2357-
+2358) has now found two real bugs in a row. This round's survey agent
+also ran a mechanical consistency check across all ~31 entities'
+`fields`/`fieldLabelsHe`/`enumValues`/`enumLabelsHe` definitions and
+found zero issues file-wide, and re-confirmed WorkOrder/Case (also
+lacking a literal round-title match) have in fact been extensively
+audited under generic sweep rounds, with clean field definitions --
+not pursued further this round. Standing deferred/unsafe gaps,
+unchanged this round: Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course military-topic-vs-
+squad-unit ambiguity (round 2316); Course "courses"-vs-restaurant-
+meal-courses sub-case (round 2318); Order's forward-only "הזמנה"
+exclusion-lookahead directionality gap (round 2331, accepted
+trade-off); pre-existing roadmap.md script-substitution corruption
+from rounds 2316/2324/2325 (round 2332, deferred to a dedicated future
+round); Donation's "צדקה" guard's residual unlisted-stance-noun leak
+(round 2334, accepted trade-off); Patient's "מטופל" guard's residual
+leaks (round 2336, accepted trade-off); Deal's "הזדמנות" guard's
+residual leak (round 2337, accepted trade-off); Customer's "לקוח"
+guard's residual leak (round 2338, accepted trade-off); Appointment's
+"מספרת" guard's residual leak (round 2339, accepted trade-off);
+Shipment's "שילוח" guard's residual leaks (round 2340, accepted
+trade-off); PAYMENT_KEYWORDS' "נשלם" gap, permanently deferred (rounds
+2349-2350); Course's "תתני" alternative's residual leak on the
+unrelated "להתנות" verb sense (round 2353, accepted trade-off);
+PAYMENT_KEYWORDS' "sells digital courses" gap (round 2354, out of
+scope); Course's "אנחנו לא ניתן" (negation-interrupted) residual
+(round 2355, accepted trade-off); Volunteer's "every"/"each"/"all"/
+"no" determiner gap (round 2357, accepted trade-off).
+
+Live: https://forge-ai-m7p7.onrender.com
