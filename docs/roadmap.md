@@ -57068,3 +57068,67 @@ angle on heuristic.ts (tried twice already, rounds 2367/2368, with no
 findings) or an entirely new 5th bug-finding method.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2371: Service's "service" keyword missing past-tense/gerund forms
+
+**Bug:** `domainEntities.ts`'s Service entity keyword already matched
+the bare noun/verb forms "service"/"services", but never the equally
+natural past tense "serviced" or gerund "servicing" -- "equipment we
+serviced last month", "scheduling servicing appointments". Since
+neither form shares a substring with "service(s)", the Service entity
+was lost entirely for descriptions phrased in either tense -- the
+fourth instance of the "English verb-tense/plural completeness gap"
+method (rounds 2368-2370), and the first of the two candidates round
+2370 deferred for needing a dedicated guard rather than a bare
+widening.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "An app to track equipment we serviced last month." and "A CRM for scheduling servicing appointments for our clients." (plus two
+more similar sentences) all matched zero Service entity on the
+unmodified code.
+
+**Fix** (`domainEntities.ts`, Service entity):
+```js
+keywords: [/\bservic(?:e|es|ed|ing)\b(?!\s+apartments?\b)/, /\btreatment(s)?\b/, /(?<!כ)שירות/, /(?<!כ)שירותים/, /טיפול(?!וג)/, "טיפולים"]
+```
+Widens the character class (`e|es` to `e|es|ed|ing`) and adds a single
+negative lookahead excluding the real-estate idiom "serviced
+apartment(s)" -- a rental/property business, not a generic service
+business. Confirmed live that "A booking site for serviced apartments in the city center." does not spuriously
+gain a Service match before or after the fix (it continues to match
+only via its own unrelated keywords), and that the existing round-453
+"disservice" substring guard still holds (the `\b` boundary before
+"servic" in "disservice" is unaffected by widening the suffix
+alternation).
+
+**Test added** (`heuristic.test.ts`, immediately after the existing
+round-453 "disservice" test): confirms the 4 new tense/gerund
+sentences now match Service; confirms the 2 existing bare-noun
+controls still match; confirms the 2 "serviced apartments" collision
+sentences still exclude Service; confirms "disservice" still does not
+spuriously match.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 281 (the new test), as predicted; pass-after showed 281/281 --
+no regression. Full `@forge/spec-engine` suite: 477/477 (up from 476).
+Full `@forge/api` suite: 1782/1782 clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0). Service is not in
+`BILLING_ENTITY_NAMES`, so there is no `PAYMENT_KEYWORDS` mirror to
+sync -- no mirror-drift risk for this fix.
+
+**Standing notes update:** the "English verb-tense/plural completeness
+gap" method has now found 4 bugs in 4 rounds (2368-2371), with this
+round resolving the first of round 2370's two deferred candidates via
+a proper exclusion-list guard rather than skipping it (the "bound,
+don't skip" discipline from round 2364). One candidate remains:
+Product's "stock(s)" is missing "stocked"/"stocking" but collides
+with the clothing/hosiery noun "stocking(s)"/"Christmas stockings".
+Next round should either resolve that last candidate the same way, or
+-- once it's resolved or correctly deferred with documented reasoning
+-- treat all four known bug-finding methods as exhausted file-wide and
+pivot to either a fresh structural-logic angle on heuristic.ts (tried
+twice already, rounds 2367/2368, with no findings) or an entirely new
+5th method.
+
+Live: https://forge-ai-m7p7.onrender.com
