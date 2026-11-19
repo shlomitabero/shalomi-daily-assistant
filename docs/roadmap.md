@@ -56065,3 +56065,88 @@ scope); Course's "אנחנו לא ניתן" (negation-interrupted) residual
 (round 2355, accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2357: Volunteer guard missing "the"/"some"/"any" determiner exclusions -- a stale entity, never a round-title subject
+
+**Bug:** this round's survey agent first systematically searched
+docs/roadmap.md for entities never named in any round title, settling
+on `Volunteer` (last touched incidentally by rounds 2108/2131/2242,
+never since) as a clean, stale candidate. Volunteer's determiner-
+exclusion guard (`domainEntities.ts`) -- built to exclude the everyday
+verb sense of "volunteer" ("offer something unprompted," e.g.
+"volunteer a phone number") from the nonprofit `Volunteer` entity, and
+incrementally extended across those three rounds -- still missed the
+three single most common English determiners that introduce the exact
+same direct-object-complement construction: **"the"**, **"some"**,
+**"any"**.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "An emergency-shelter coordination app. During emergencies, hosts volunteer the building as a shelter for displaced residents.", "A community events app. We volunteer some office space for local community events.", and
+"A disaster-relief logistics app. We volunteer any extra desks for the pop-up clinic." all wrongly fabricated a Volunteer entity with zero
+nonprofit-volunteering content.
+
+**Fix** (`domainEntities.ts`, Volunteer's `keywords` array):
+```js
+/\bvolunteers?\b(?!\s+(?:a|an|the|our|their|his|her|its|my|your|some|any)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/
+```
+Adds "the"/"some"/"any" to the determiner alternation.
+
+**Deliberately deferred (same "accepted trade-off" convention as other
+rounds):** `every`/`each`/`all`/`no` were NOT added. Unlike
+a/an/the/our/some/any, those commonly introduce a genuine time-
+adverbial in authentic nonprofit-volunteering sentences (e.g. "they
+volunteer each weekend at the soup kitchen"), not a direct object --
+confirmed live that adding them would newly false-exclude such
+sentences. These remain a residual, real gap needing its own
+disambiguation design, not fixed this round.
+
+**Test added** (`heuristic.test.ts`): confirms all 3 bug sentences no
+longer match Volunteer; non-regression checks confirm genuine
+nonprofit-volunteer sentences, every pre-existing excluded case
+(rounds 2108/2131/2242's own), and sentences where a determiner
+precedes "volunteer(s)" as the sentence's subject rather than
+following it as the idiom's object (e.g. "the volunteers arrived
+early") all stay correctly matched -- the lookahead only checks what
+follows "volunteer(s)", never what precedes it.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 268 (the new test), as predicted; pass-after showed 268/268 --
+no regression. Full `@forge/spec-engine` suite: 464/464 (up from 463).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** this round's pivot to "stale entities never
+named in a round title" (angle (a) from this round's survey prompt)
+paid off immediately, after the Hebrew idiom-guard grammatical-
+completeness vein (rounds 2320-2356) showed diminishing returns. Also
+investigated and ruled out this round: InsuranceClaim (another
+never-round-title entity) -- its construct-state plural coverage and
+deliberate bare-"תביעה" removal (rounds 572/579) both checked out
+correct and complete, no bug found. This "stale entity" method is a
+promising candidate to continue in future rounds. Standing deferred/
+unsafe gaps, unchanged this round: Ticket bare-noun gap (rounds
+2282-2283); Courier license/insurance/traffic-ticket sub-case (round
+2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course "courses"-
+vs-restaurant-meal-courses sub-case (round 2318); Order's forward-only
+"הזמנה" exclusion-lookahead directionality gap (round 2331, accepted
+trade-off); pre-existing roadmap.md script-substitution corruption
+from rounds 2316/2324/2325 (round 2332, deferred to a dedicated future
+round); Donation's "צדקה" guard's residual unlisted-stance-noun leak
+(round 2334, accepted trade-off); Patient's "מטופל" guard's residual
+leaks (round 2336, accepted trade-off); Deal's "הזדמנות" guard's
+residual leak (round 2337, accepted trade-off); Customer's "לקוח"
+guard's residual leak (round 2338, accepted trade-off); Appointment's
+"מספרת" guard's residual leak (round 2339, accepted trade-off);
+Shipment's "שילוח" guard's residual leaks (round 2340, accepted
+trade-off); PAYMENT_KEYWORDS' "נשלם" gap, permanently deferred (rounds
+2349-2350); Course's "תתני" alternative's residual leak on the
+unrelated "להתנות" verb sense (round 2353, accepted trade-off);
+PAYMENT_KEYWORDS' "sells digital courses" gap (round 2354, out of
+scope); Course's "אנחנו לא ניתן" (negation-interrupted) residual
+(round 2355, accepted trade-off); Volunteer's "every"/"each"/"all"/
+"no" determiner gap, deferred pending a time-adverbial disambiguation
+design (round 2357).
+
+Live: https://forge-ai-m7p7.onrender.com
