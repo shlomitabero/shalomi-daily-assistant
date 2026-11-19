@@ -6268,6 +6268,36 @@ test("Course's Hebrew 'כיתה' keyword doesn't spuriously match the military '
 });
 
 /**
+ * Round 2317: Course's bare "curriculum" collided with the Latin
+ * phrase "curriculum vitae" (a CV/resume) -- a job-application/HR/
+ * recruiting document, with zero connection to lessons or classes.
+ * The twenty-first confirmed instance of the bare-overly-broad-keyword
+ * shape rounds 2297/2300-2316 fixed. No Hebrew-side equivalent exists
+ * (checked, not assumed) -- "curriculum" has no Hebrew keyword entry.
+ */
+test("Course's 'curriculum' keyword doesn't spuriously match the 'curriculum vitae' (CV/resume) phrase", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const recruiterSearch = await provider.generate("An app for recruiters to upload and search candidates' curriculum vitae and track hiring status.");
+  assert.ok(!recruiterSearch.entities.some((e) => e.name === "Course"), "'curriculum vitae' must not spuriously match Course");
+
+  const jobBoard = await provider.generate("A job board where applicants submit their curriculum vitae for open positions.");
+  assert.ok(!jobBoard.entities.some((e) => e.name === "Course"), "'curriculum vitae' (sole occurrence, job board) must not spuriously match Course");
+
+  const hyphenated = await provider.generate("Upload your curriculum-vitae to apply for this role.");
+  assert.ok(!hyphenated.entities.some((e) => e.name === "Course"), "the hyphenated 'curriculum-vitae' form must not spuriously match Course");
+
+  // Non-regression: genuine curriculum descriptions, including the
+  // compound adjective "curriculum-based" (which has a hyphen but
+  // never "vitae" after it), must still match.
+  const schoolCurriculum = await provider.generate("An app for a school to manage its curriculum and track which courses each teacher offers.");
+  assert.ok(schoolCurriculum.entities.some((e) => e.name === "Course"), "a genuine school-curriculum description must still match Course");
+
+  const curriculumBased = await provider.generate("A curriculum-based learning platform for schools.");
+  assert.ok(curriculumBased.entities.some((e) => e.name === "Course"), "'curriculum-based' (compound adjective, not 'curriculum vitae') must still match Course");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

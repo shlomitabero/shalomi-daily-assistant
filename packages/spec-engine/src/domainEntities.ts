@@ -1344,7 +1344,20 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // would collide with "of course" and "golf course", both far more
     // common than any real education-app phrasing that needs it.
     keywords: [
-      /\bcourses\b/, "curriculum", "שיעורים",
+      /\bcourses\b/,
+      // Round 2317: bare "curriculum" collided with the Latin phrase
+      // "curriculum vitae" (a CV/resume) -- a job-application/HR/
+      // recruiting document, with zero connection to lessons or
+      // classes. Confirmed live: a recruiter CV-search app, a job
+      // board's CV-submission flow, and an HR system storing employee
+      // CVs each fabricated Course (in one case losing the real
+      // JobApplicant domain entirely). The lookahead excludes only the
+      // "vitae" collocation (optionally hyphenated or with extra
+      // whitespace, as in "curriculum-vitae"/"curriculum   vitae");
+      // genuine curriculum phrasing, including the compound adjective
+      // "curriculum-based" (which has a hyphen but never "vitae" after
+      // it), still matches.
+      /curriculum(?!\s*-?\s*vitae)/, "שיעורים",
       // Round 2316: bare "קורס"/"קורסים" (the one keyword pair in this
       // entity's whole array with no guard at all) collided with three
       // unrelated senses with zero connection to a course: the ordinary
