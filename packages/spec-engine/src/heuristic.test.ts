@@ -1049,6 +1049,56 @@ test("asks about payments (recommending Stripe) for a hotel, motel, bed and brea
 });
 
 /**
+ * Round 2277: the same drift once more, for event/show/concert ticket
+ * sales. A description like "A platform for selling tickets to concerts
+ * and events." matches only the generic Item entity (or Event, in Hebrew
+ * phrasing), neither of which is in BILLING_ENTITY_NAMES, and hits none of
+ * this file's existing PAYMENT_KEYWORDS phrases, so it got recommended "No
+ * payments" despite selling admission being definitionally a paid
+ * transaction. Distinct from domainEntities.ts's own Ticket entity (a
+ * help-desk/support-request concept) -- a plain support-ticketing
+ * description must stay unaffected.
+ */
+test("asks about payments (recommending Stripe) for a description about selling event/concert/movie tickets, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES, while a plain help-desk ticketing description stays unaffected", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const concertTickets = await provider.generate("A platform for selling tickets to concerts and events.");
+  const concertTicketsPaymentQuestion = concertTickets.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(concertTicketsPaymentQuestion);
+  assert.equal(concertTicketsPaymentQuestion!.recommendation, "Stripe");
+
+  const boxOffice = await provider.generate("A box office system for selling tickets to movies.");
+  const boxOfficePaymentQuestion = boxOffice.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(boxOfficePaymentQuestion);
+  assert.equal(boxOfficePaymentQuestion!.recommendation, "Stripe");
+
+  const ticketSales = await provider.generate("We track ticket sales for our upcoming theater show.");
+  const ticketSalesPaymentQuestion = ticketSales.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(ticketSalesPaymentQuestion);
+  assert.equal(ticketSalesPaymentQuestion!.recommendation, "Stripe");
+
+  const ticketsHe = await provider.generate("אפליקציה למכירת כרטיסים להופעות ולאירועים.");
+  const ticketsHePaymentQuestion = ticketsHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(ticketsHePaymentQuestion);
+  assert.equal(ticketsHePaymentQuestion!.recommendation, "Stripe");
+
+  // Non-regression: a plain support-ticketing description must stay "No
+  // payments" -- it's an unrelated concept (domainEntities.ts's own Ticket
+  // entity), and must never collide with this fix's new phrases.
+  const helpDesk = await provider.generate("A support ticketing system for our IT helpdesk.");
+  const helpDeskPaymentQuestion = helpDesk.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(helpDeskPaymentQuestion);
+  assert.equal(helpDeskPaymentQuestion!.recommendation, "No payments");
+
+  // Non-regression: distributing free tickets has no "sell"/"selling"
+  // wording and must stay unaffected.
+  const freeTickets = await provider.generate("A system for distributing free tickets to our community festival.");
+  const freeTicketsPaymentQuestion = freeTickets.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeTicketsPaymentQuestion);
+  assert.equal(freeTicketsPaymentQuestion!.recommendation, "No payments");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/

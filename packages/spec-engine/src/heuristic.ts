@@ -344,6 +344,28 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // no such collision and are added instead.
   "hotel", "motel", "bed and breakfast", "hostel", "guesthouse", "guest house",
   "צימר", "אכסניה", "בית הארחה",
+  // Round 2277: the same drift once more, for event/show/concert ticket
+  // sales. "A platform for selling tickets to concerts and events." matches
+  // only the generic Item entity (or Event, in Hebrew phrasing), neither of
+  // which is in BILLING_ENTITY_NAMES below, and hits none of this array's
+  // existing phrases, so it got recommended "No payments" despite selling
+  // admission being definitionally a paid transaction. This is NOT the same
+  // concept as domainEntities.ts's own Ticket entity (a help-desk/support-
+  // request concept, keyed on "support ticket"/"help desk"/"ticketing
+  // system") -- bare "ticket(s)" is deliberately never added here, the same
+  // over-broad-signal reasoning this file already applies to bare "sell"/
+  // "selling" (round 893's own comment: "selling striped shirts" must stay
+  // "No payments"), scoped instead to "sell/selling + ticket(s)" and the
+  // noun phrase "ticket sales"/"box office", mirroring round 1700's
+  // identical "sell(ing) + course(s)" shape. Confirmed live that "A system
+  // for distributing free tickets to our community festival." and "A
+  // support ticketing system for our IT helpdesk." both still correctly
+  // stay "No payments" -- neither contains "sell"/"selling" immediately
+  // before "ticket(s)", nor "ticket sales"/"box office", nor collides with
+  // Ticket's own "כרטיסי תמיכה" (support tickets) Hebrew keyword.
+  /\bsell(?:ing)?\s+tickets?\b/,
+  "ticket sales", "box office",
+  "מכירת כרטיסים", "למכור כרטיסים", "כרטיסים בתשלום",
 ];
 
 /**
