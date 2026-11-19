@@ -52223,3 +52223,19 @@ Live: https://forge-ai-m7p7.onrender.com
 **Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a FIFTEENTH round running (2274-2288, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred. The Hebrew construct-state/definite-article inflection pattern has now found bugs in 3 rounds running (2286-2288) -- this round's survey agent flagged that the ~370 Hebrew keyword literals in domainEntities.ts were only spot-checked, not exhaustively verified, so more instances of this exact gap likely remain for future rounds to find, possibly even adjacent to fixes already made (as this round's own finding, sitting right next to round 2287's, demonstrates).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+## Round 2289 (2026-11-19): Task entity's Hebrew keywords also missed the construct-state "משימת"
+
+**Bug:** the exact same construct-state gap rounds 2287-2288 fixed for Appointment's "פגישה"/"מספרה", found this round in a different entity's keyword array: Task's `DomainEntityRule` keywords list "משימה"/"משימות" (bare singular and plain plural), but never the construct-state form "משימת". "משימת ניקיון" ("cleaning task") and "משימת פיתוח" ("development task") are everyday, idiomatic ways to describe exactly the to-do item this entity exists for, and "משימת" is not a substring of either bare form, so it silently escaped this hint.
+
+**Confirmed empirically** via the real `matchEntities`: "אפליקציה לניהול משימת ניקיון לעובדים" (an app to manage employees' cleaning tasks) matched only `Employee`, with the real Task domain entirely lost, while the bare-plural twin ("...משימות לעובדים") already matched both `Employee` and `Task`. A second case, "אפליקציה למעקב אחרי משימת פיתוח של הצוות" (tracking the team's development task), also matched only `Employee`.
+
+**Fix:** added "משימת" alongside "משימה"/"משימות", the same convention used for Appointment's "פגישת"/"מספרת" one and two commits ago.
+
+**How it was found:** this round's survey agent continued the Hebrew construct-state inflection line from the last two rounds, this time checking a different entity's keyword array (Task) rather than digging further into Appointment's own list, and found a fourth consecutive instance of the same gap. The agent also checked Invoice's "חשבונית" and ruled it out correctly -- that noun's construct form is identical to its base form in Hebrew ("חשבונית מס"/"חשבונית עסקה" both use the unchanged "חשבונית"), so no inflection gap exists there.
+
+**Verification:** fail-before/pass-after via `git stash push --keep-index` on `domainEntities.ts` alone: the new test's assertions failed exactly as predicted against the pre-fix keyword list, then passed cleanly after restoring the fix. Full `heuristic.test.ts` (197/197), full `@forge/spec-engine` suite (393/393), and full `@forge/api` suite (the dependent package, 1782/1782) all clean. The `@forge/api` production build is also clean.
+
+**Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a SIXTEENTH round running (2274-2289, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred. The Hebrew construct-state/definite-article inflection pattern has now found bugs in 4 rounds running (2286-2289), across 3 different entities (lodging keywords, Appointment, Task) -- domainEntities.ts's remaining ~370 Hebrew keyword literals (Customer, Employee, Order, Product, Deal, MenuItem, Courier, Property, Student, Course, Patient, Project, Vehicle, Event, Pet, Rental, Subscription, JobApplicant, Shipment, LegalCase, and others) are still only spot-checked, not exhaustively verified -- this remains the single best lead for future rounds.
+
+Live: https://forge-ai-m7p7.onrender.com
