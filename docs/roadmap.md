@@ -52800,3 +52800,80 @@ ambiguity (round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
 (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2320: Vendor's רכש/רכשה idiom guard didn't cover the plural רכשו form
+
+**Bug:** Round 2309 guarded Vendor's bare Hebrew keyword "רכש" against its
+extremely common "acquired-X" idiom collision ("רכש ניסיון" = acquired
+experience, "רכש מיומנויות" = acquired skills, etc.), explicitly handling
+both the masc. singular "רכש" and fem. singular "רכשה" forms. It never
+considered the 3rd-person-PLURAL past-tense form "רכשו" ("they acquired").
+Since "רכש" is a 3-letter prefix of "רכשו" too, the masc. branch's `(?!ה)`
+lookahead only ruled out the feminine ending -- it said nothing about a
+following "ו" -- so the regex silently matched just the first 3 letters of
+"רכשו" as if it were the lone singular verb, ran its idiom-exclusion
+lookahead starting right after those 3 letters (where the next character is
+"ו", not whitespace), never saw the idiom object, and let the match through
+wrongly. This is the same "re-examine a fixed entity's guard for every
+grammatical variant" shape as round 2318's two bugs and round 2319's
+MenuItem bug (Strategy B), found by this round's survey agent explicitly
+briefed to apply that strategy alongside the general "re-scan a fixed
+entity's full keyword array" strategy (A).
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): a training/HR app description --
+"המתמחים רכשו מיומנויות ניהול חדשות לאחר התוכנית." -- fabricated Vendor as the SOLE entity, with zero
+procurement content. A second sentence, "העובדים רכשו ניסיון רב בתחום השירות במהלך השנה.", also
+fabricated Vendor. Both the genuine singular masc. idiom exclusion
+("העובד רכש ניסיון רב בתפקיד החדש.") and genuine fem. idiom exclusion ("העובדת רכשה מיומנויות ניהול חדשות.")
+still correctly excluded Vendor, and genuine procurement text
+("אפליקציה לניהול רכש וספקים לחברה.") still correctly matched it.
+
+**Backtracking pitfall, reconfirmed:** a naive fix adding the plural suffix
+as a shared optional group outside the masc. branch's existing lookahead
+(`רכש(?:ו)?(?!ה)(?!...)`) was directly tested and still wrongly matches
+both plural false-positive sentences, because the engine backtracks to the
+suffix's zero-width alternative once the idiom lookahead fails to find the
+object right after "ו", trivially satisfying the masc. branch's
+now-irrelevant lookahead instead. This is the same pitfall first identified
+in round 2315 and reconfirmed in rounds 2318 and 2319.
+
+**Fix** (`domainEntities.ts`, Vendor's Hebrew keyword list) -- "רכשו" gets
+its own independent branch with its own full idiom lookahead, and the
+masc. branch now also excludes a following "ו" directly so it can never
+again mistake the plural's prefix for itself:
+```js
+/רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/
+```
+
+**Test added** (`heuristic.test.ts`): confirms both plural false-positive
+sentences no longer match Vendor, while both genuine singular idiom
+exclusions (round 2309's own cases) and the genuine procurement case all
+still behave correctly.
+
+**BILLING_ENTITY_NAMES:** Vendor is not in `BILLING_ENTITY_NAMES`
+(`["Invoice","Order","Donation","Subscription","Rental","Property","MenuItem","WorkOrder","InsuranceClaim"]`),
+so unlike round 2319's MenuItem bug, this one is limited to entity-list
+corruption and doesn't touch the payment-recommendation `openQuestions`
+field.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 231 (the new test), as predicted; pass-after showed 231/231. Full
+`@forge/spec-engine` suite: 427/427 (up from 426). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background`. Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 26 confirmed instances total. The refined "audit whether a
+prior fix's guard covers every grammatical variant" strategy is now
+validated across three consecutive rounds (2318's two bugs, 2319's MenuItem
+bug, and this round's Vendor bug), confirming it as a standing, high-value
+angle for future rounds, not a one-off. Standing deferred/unsafe gaps,
+unchanged this round: Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course military-topic-vs-squad-unit
+ambiguity (round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
