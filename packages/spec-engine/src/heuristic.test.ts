@@ -999,6 +999,56 @@ test("asks about payments (recommending Stripe) for a dry cleaner, car wash, lau
 });
 
 /**
+ * Round 2276: the exact same drift rounds 1819/1831/1841/1872/1879/1928/1934
+ * already fixed for every other vertical above, this time for lodging --
+ * hotels, motels, B&Bs, hostels, and guesthouses. A description like "A
+ * hotel booking system to manage room reservations and guests." matches
+ * only the generic Appointment entity (via its "booking"/"reservation"
+ * keywords), which is deliberately excluded from BILLING_ENTITY_NAMES, and
+ * hits none of this file's existing PAYMENT_KEYWORDS phrases, so it got
+ * recommended "No payments" despite taking paid room bookings being the
+ * entire business.
+ */
+test("asks about payments (recommending Stripe) for a hotel, motel, bed and breakfast, hostel, or guesthouse description, even though it names none of PAYMENT_KEYWORDS or BILLING_ENTITY_NAMES", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const hotel = await provider.generate("A hotel booking system to manage room reservations and guests.");
+  const hotelPaymentQuestion = hotel.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(hotelPaymentQuestion);
+  assert.equal(hotelPaymentQuestion!.recommendation, "Stripe");
+
+  const motel = await provider.generate("A motel managing room bookings for travelers.");
+  const motelPaymentQuestion = motel.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(motelPaymentQuestion);
+  assert.equal(motelPaymentQuestion!.recommendation, "Stripe");
+
+  const bnb = await provider.generate("A bed and breakfast taking room bookings from guests.");
+  const bnbPaymentQuestion = bnb.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(bnbPaymentQuestion);
+  assert.equal(bnbPaymentQuestion!.recommendation, "Stripe");
+
+  const hostel = await provider.generate("A hostel managing dorm bed bookings for backpackers.");
+  const hostelPaymentQuestion = hostel.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(hostelPaymentQuestion);
+  assert.equal(hostelPaymentQuestion!.recommendation, "Stripe");
+
+  const guesthouse = await provider.generate("A guesthouse booking system for travelers.");
+  const guesthousePaymentQuestion = guesthouse.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(guesthousePaymentQuestion);
+  assert.equal(guesthousePaymentQuestion!.recommendation, "Stripe");
+
+  const tzimmerHe = await provider.generate("צימר המנהל הזמנות אירוח של אורחים.");
+  const tzimmerHePaymentQuestion = tzimmerHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(tzimmerHePaymentQuestion);
+  assert.equal(tzimmerHePaymentQuestion!.recommendation, "Stripe");
+
+  const achsaniaHe = await provider.generate("אכסניה המנהלת הזמנות מיטות למטיילים.");
+  const achsaniaHePaymentQuestion = achsaniaHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(achsaniaHePaymentQuestion);
+  assert.equal(achsaniaHePaymentQuestion!.recommendation, "Stripe");
+});
+
+/**
  * Round 893: an ordinary online-store/retail description matches only
  * Customer/Product -- neither of which is in BILLING_ENTITY_NAMES (Product
  * was deliberately never added there, since -- unlike Rental/Property/

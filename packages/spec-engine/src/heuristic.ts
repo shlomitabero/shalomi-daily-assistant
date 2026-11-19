@@ -319,6 +319,31 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "dry cleaning", "dry cleaner", "dry cleaners", "car wash", "laundromat",
   "notary public", "auto detailing", "driving school",
   "ניקוי יבש", "מכבסה אוטומטית", "נוטריון", "בית ספר לנהיגה",
+  // Round 2276: the exact same drift rounds 1819/1831/1841/1872/1879/1928/
+  // 1934 already fixed for every vertical above, this time for lodging --
+  // hotels, motels, B&Bs, hostels, and guesthouses. A description like "A
+  // bed and breakfast taking room bookings from guests." matches only the
+  // generic Appointment entity (via its "booking"/"reservation" keywords),
+  // which is deliberately excluded from BILLING_ENTITY_NAMES below for the
+  // same bare-word ambiguity documented there, and hits none of this
+  // array's existing phrases, so it got recommended "No payments" despite
+  // taking paid room bookings being the entire business. Confirmed live
+  // via the real HeuristicSpecProvider that "hotel"/"motel"/"bed and
+  // breakfast"/"hostel"/"guesthouse" each reproduce "No payments" before
+  // this fix and "Stripe" after, with no realistic free/non-commercial
+  // counterpart using that exact phrasing (unlike bare "gym"/"clinic",
+  // which this file deliberately excludes for that reason). Hebrew "מלון"
+  // (hotel) is deliberately NOT added here despite being the obvious
+  // translation: it's also the ordinary word for the melon fruit, and
+  // unlike this file's other exclusions (a genuinely non-commercial use)
+  // this is a different-business false positive risk, the same substring-
+  // collision discipline "stripe"/"stripes" above is excluded for -- a
+  // produce-shop description selling melons has nothing to do with lodging
+  // or payments via this phrase. "צימר"/"אכסניה"/"בית הארחה" (the
+  // unambiguous Hebrew terms for a vacation cabin/hostel/guesthouse) carry
+  // no such collision and are added instead.
+  "hotel", "motel", "bed and breakfast", "hostel", "guesthouse", "guest house",
+  "צימר", "אכסניה", "בית הארחה",
 ];
 
 /**
