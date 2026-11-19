@@ -2283,6 +2283,94 @@ test("generated server.js rejects a boolean value for a required number field", 
 });
 
 /**
+ * Regression test (round 2254): the same copy-pasted coerce() -- and its
+ * live-app twin, packages/db/src/repository.ts's coerceValue -- had a
+ * hex/octal/binary-notation-string sibling to round 604/1303's own
+ * array/boolean gaps above: Number("0x10")/Number("0b101")/Number("0o17")
+ * are 16/5/15, all finite, so each slipped through Number.isFinite and
+ * was silently stored as the wrong decimal value instead of being
+ * rejected -- unlike the live preview's own coerceValue (fixed round
+ * 2252), this exported app's standalone server has no other validation
+ * layer backing up coerce(), so this was a real, user-facing data
+ * corruption bug in every exported app's own API, not just the live
+ * preview's import parsers (fixed round 2253). Reproduced here against a
+ * real spawned server, mirroring round 604/1303's own tests exactly.
+ */
+test("generated server.js rejects a hex/octal/binary-notation string for a required number field, instead of silently storing the unrelated decimal value Number() coerces it to", async () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          fields: [
+            { name: "client", type: "text", required: true },
+            { name: "amount", type: "number", required: true },
+          ],
+        },
+      ],
+    },
+  };
+  const files = generateExportFiles(invoiceProject);
+  const serverJs = files.find((f) => f.path === "server.js")!.content;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-hex-octal-binary-number-test-"));
+  const repoRoot = path.resolve(import.meta.dirname, "../../..");
+  symlinkSync(path.join(repoRoot, "node_modules"), path.join(dir, "node_modules"));
+  writeFileSync(path.join(dir, "server.js"), serverJs);
+
+  const port = 44000 + Math.floor(Math.random() * 5000);
+  const child = spawn(process.execPath, ["--experimental-sqlite", "server.js"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const deadline = Date.now() + 5000;
+    let lastErr: unknown;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(`server.js exited early (code ${child.exitCode}):\n${stderr}`);
+      }
+      try {
+        await fetch(`http://localhost:${port}/api/entities`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (child.exitCode !== null) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+
+    const validRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: "Gamma Inc", amount: "500" }),
+    });
+    assert.equal(validRes.status, 201);
+    assert.equal((await validRes.json()).record.amount, 500);
+
+    for (const bad of ["0x10", "0b101", "0o17"]) {
+      const badRes = await fetch(`http://localhost:${port}/api/Invoice`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client: "Acme Corp", amount: bad }),
+      });
+      assert.equal(badRes.status, 400, `expected ${JSON.stringify(bad)} to be rejected, not coerced via Number()`);
+    }
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * Regression test (round 1320): the same copy-pasted coerce() -- and its
  * live-app twin, packages/db/src/repository.ts's coerceValue -- had an
  * enum/date/file-shaped sibling to round 604's own array-value gap: JS's
@@ -4935,6 +5023,31 @@ test("generated server.js's DELETE route rejects a delete whose expectedRecord s
   } finally {
     child.kill();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Round 2254: mirrors the server's own coerce() (see the spawned-server
+ * tests above) -- invalidNumberField's own Number(trimmed) had the
+ * identical hex/octal/binary-notation-string gap: Number("0x10") is 16,
+ * not NaN, so this pre-submit check passed a value it exists specifically
+ * to catch, silently letting a request through this check with no
+ * warning, right before the server's own now-fixed coerce() rejects it
+ * anyway -- unlabeled/unfriendly, the exact failure shape this check's own
+ * round-984 doc comment says it exists to avoid.
+ */
+test("the exported EntityView's own generated invalidNumberField flags a hex/octal/binary-notation string as invalid, instead of letting Number() coerce it to an unrelated real number", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(invalidNumberFieldSrc, "expected to find invalidNumberField in generated output");
+  const invalidNumberField = new Function(`${invalidNumberFieldSrc}\nreturn invalidNumberField;`)();
+
+  const field = { type: "number" };
+  for (const bad of ["0x10", "0b101", "0o17"]) {
+    assert.equal(invalidNumberField(field, bad), true, `expected ${JSON.stringify(bad)} to be flagged invalid`);
+  }
+  for (const good of ["42", "-3.5", "1e3", ""]) {
+    assert.equal(invalidNumberField(field, good), false, `expected ${JSON.stringify(good)} to still be accepted`);
   }
 });
 

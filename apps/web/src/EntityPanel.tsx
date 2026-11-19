@@ -165,6 +165,18 @@ function invalidNumberField(field: Field, value: unknown): boolean {
   if (field.type !== "number") return false;
   const trimmed = String(value ?? "").trim();
   if (trimmed === "") return false;
+  // Round 2254: mirrors packages/db/src/repository.ts's own round-2252
+  // PLAIN_NUMERIC_STRING fix -- inlined, rather than a separate top-level
+  // constant, so every existing extraction of this function's own source
+  // text (several tests in EntityPanel.test.ts grab only this function,
+  // not the whole module) keeps working unchanged. Without it, a
+  // hex/octal/binary-notation string ("0x10"/"0b101"/"0o17") passed this
+  // check as "valid" (Number() parses each into 16/5/15, not NaN),
+  // silently losing this check's whole point above: the server's own
+  // now-fixed coerceValue still rejects the value, but as the generic
+  // "check the form" banner instead of the real, field-specific message
+  // this check exists to surface in its place.
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return true;
   return !Number.isFinite(Number(trimmed));
 }
 

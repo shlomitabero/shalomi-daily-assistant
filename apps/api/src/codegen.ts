@@ -505,6 +505,22 @@ function isValidDate(value) {
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
+// Round 2254: this copy-pasted coerce() -- and its live-app twin,
+// packages/db/src/repository.ts's coerceValue -- already had dedicated
+// fixes rejecting other Number() coercion quirks on its number/relation
+// branch (an array, round 604; a boolean, round 1303) but a
+// hex/octal/binary-notation string ("0x10"/"0b101"/"0o17") was never
+// covered here: Number() parses each into an unrelated real number
+// (16/5/15), not NaN, so it slipped past Number.isFinite below and
+// stored the wrong value with zero error, on both a "number" and a
+// "relation" field (the latter silently resolving to an unrelated real
+// foreign-key id). repository.ts's own round-2252 fix for the same gap
+// was ported to the CSV/JSON import parsers already (round 2253), but
+// never to this actual record-create/update validation path -- a
+// different function entirely, and the one every POST/PATCH to this
+// exported app's own API ultimately runs through.
+const PLAIN_NUMERIC_STRING = /^[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?$/;
+
 function coerce(field, value) {
   const isEmpty = value === undefined || value === null || value === "" || (typeof value === "string" && value.trim() === "");
   if (isEmpty) {
@@ -513,6 +529,7 @@ function coerce(field, value) {
   }
   if (field.type === "number" || field.type === "relation") {
     if (Array.isArray(value) || typeof value === "boolean") throw new Error(\`Field "\${field.name}" must be a number\`);
+    if (typeof value === "string" && !PLAIN_NUMERIC_STRING.test(value.trim())) throw new Error(\`Field "\${field.name}" must be a number\`);
     const n = Number(value);
     if (!Number.isFinite(n)) throw new Error(\`Field "\${field.name}" must be a number\`);
     return n;
@@ -6134,6 +6151,18 @@ function invalidNumberField(field, value) {
   if (field.type !== "number") return false;
   const trimmed = String(value ?? "").trim();
   if (trimmed === "") return false;
+  // Round 2254: mirrors the server's own coerce()'s identical round-2254
+  // fix (see renderServerJs) -- inlined, rather than a separate top-level
+  // constant, so every existing extraction of this function's own source
+  // text (several tests elsewhere in this file grab only this function,
+  // not the whole generated file) keeps working unchanged. Without it, a
+  // hex/octal/binary-notation string ("0x10"/"0b101"/"0o17") passed this
+  // pre-submit check as "valid" (Number() parses each into 16/5/15, not
+  // NaN), so the request reached the server with no client-side warning
+  // at all, right before the server's own now-fixed coerce() rejects it
+  // anyway -- this check existing specifically so that rejection isn't
+  // silent/unlabeled.
+  if (!/^[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?$/.test(trimmed)) return true;
   return !Number.isFinite(Number(trimmed));
 }
 

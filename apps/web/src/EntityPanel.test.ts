@@ -2598,6 +2598,29 @@ test("EntityPanel's bulk-actions-bar Delete/Duplicate buttons use the Hebrew fem
 });
 
 /**
+ * Round 2254: mirrors packages/db/src/repository.ts's own round-2252 fix
+ * and apps/api/src/codegen.ts's identical round-2254 fix to its own
+ * coerce()/invalidNumberField() -- this helper's own Number(trimmed) had
+ * the identical hex/octal/binary-notation-string gap: Number("0x10") is
+ * 16, not NaN, so this check passed a value it exists specifically to
+ * catch.
+ */
+test("EntityPanel's own invalidNumberField flags a hex/octal/binary-notation string as invalid, instead of letting Number() coerce it to an unrelated real number", () => {
+  const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(helperMatch, "expected to find invalidNumberField in EntityPanel.tsx");
+  const { code } = transformSync(helperMatch![0], { loader: "ts" });
+  const invalidNumberField = new Function(`${code}\nreturn invalidNumberField;`)();
+
+  const field = { type: "number" };
+  for (const bad of ["0x10", "0b101", "0o17"]) {
+    assert.equal(invalidNumberField(field, bad), true, `expected ${JSON.stringify(bad)} to be flagged invalid`);
+  }
+  for (const good of ["42", "-3.5", "1e3", ""]) {
+    assert.equal(invalidNumberField(field, good), false, `expected ${JSON.stringify(good)} to still be accepted`);
+  }
+});
+
+/**
  * New in this round: bulk delete/duplicate already existed, but there was
  * no way to change a single shared field's value across several selected
  * records at once (e.g. marking 15 selected orders "Shipped") without
