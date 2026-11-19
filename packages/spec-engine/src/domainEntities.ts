@@ -2415,7 +2415,39 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // that this specific guard rewards an unusually thorough
       // grammatical-variant audit; future rounds finding yet another
       // uncovered form here should not be surprising.
-      /מועמדות(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!ות)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/,
+      //
+      // Round 2325: a FIFTH gap, this time not a new inflected form of
+      // "מועמד" itself but a structural one -- every branch's "ל"
+      // lookahead assumed "ל" is immediately followed by the office
+      // noun (e.g. "לראש העיר"), but ordinary Hebrew political
+      // journalism routinely inserts "תפקיד" (position) or "כהונת"
+      // (term/tenure) between them: "מועמד לתפקיד ראש העיר" (candidate
+      // for the POSITION OF mayor), "מועמדת לתפקיד נשיאות" (candidate
+      // for the POSITION OF the presidency). Confirmed live: a news
+      // site following a mayoral-position candidate, an article about
+      // a prime-ministerial-position candidate, a site following a
+      // female presidential-position candidate, and an article about
+      // plural mayoral-position candidates each fabricated
+      // JobApplicant. Genuine recruiting phrasing that also happens to
+      // contain "לתפקיד" for an ORDINARY job role (e.g. "מועמדים
+      // לתפקיד מפתח תוכנה" = candidates for the software-developer
+      // position) still correctly matches JobApplicant, since "תפקיד"
+      // is immediately followed there by a job title, not one of this
+      // guard's political/academic office nouns. Fixed by inserting an
+      // optional "(?:תפקיד\s*|כהונת\s*)?" group right after "ל" and
+      // before the office-noun list, independently in EACH of the four
+      // "ל"-lookahead copies (the construct-state lookaheads, which
+      // never use "ל", are untouched). Verified that patching only one
+      // branch (e.g. only the plural) while leaving the others
+      // unpatched still lets sentences matching those other branches
+      // slip through -- each branch's lookahead needs its own copy of
+      // the fix, continuing the exact independent-branch discipline
+      // established in rounds 2315/2321/2323/2324. Genuine recruiting,
+      // the "לתפקיד"-for-an-ordinary-job control, and every prior
+      // round's own exclusions all confirmed still correct. This is
+      // the FIFTH fix to this one collision across five consecutive
+      // rounds (2315/2321/2323/2324/2325).
+      /מועמדות(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!ות)(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/,
       // Round 1536: bare "גיוס" is a substring of the equally ordinary
       // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
       // "raising donations") -- Hebrew overloads this root for both

@@ -6525,6 +6525,39 @@ test("JobApplicant's political guard also excludes the feminine-plural 'מועמ
   assert.ok(!alreadyFixedPluralConstruct.entities.some((e) => e.name === "JobApplicant"), "'מועמדי הנשיאות' (round 2321's own plural-construct exclusion) must still not match JobApplicant");
 });
 
+test("JobApplicant's political guard also excludes 'לתפקיד'/'כהונת' inserted between ל and the office noun (fifth variant of this recurring collision)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mascMayoralPosition = await provider.generate("אתר חדשות המסקר את מי שהוא מועמד לתפקיד ראש העיר בבחירות הקרובות.");
+  assert.ok(!mascMayoralPosition.entities.some((e) => e.name === "JobApplicant"), "'מועמד לתפקיד ראש העיר' (candidate for the position of mayor) must not spuriously match JobApplicant");
+
+  const mascPMPosition = await provider.generate("העיתון מפרסם כתבה על מי שהוא מועמד לתפקיד ראש הממשלה הבא.");
+  assert.ok(!mascPMPosition.entities.some((e) => e.name === "JobApplicant"), "'מועמד לתפקיד ראש הממשלה' (candidate for the position of prime minister) must not spuriously match JobApplicant");
+
+  const femPresidencyPosition = await provider.generate("האתר עוקב אחרי מי שהיא מועמדת לתפקיד נשיאות ארצות הברית.");
+  assert.ok(!femPresidencyPosition.entities.some((e) => e.name === "JobApplicant"), "'מועמדת לתפקיד נשיאות' (candidate for the position of presidency, fem.) must not spuriously match JobApplicant");
+
+  const pluralMayoralPosition = await provider.generate("כתבה על מועמדים לתפקיד ראש העיר בבחירות המקומיות הקרובות.");
+  assert.ok(!pluralMayoralPosition.entities.some((e) => e.name === "JobApplicant"), "'מועמדים לתפקיד ראש העיר' (candidates for the position of mayor, plural) must not spuriously match JobApplicant");
+
+  // Non-regression: genuine recruiting, including the tricky case where "לתפקיד" precedes an ORDINARY job title,
+  // and every prior round's own exclusions (2315/2321/2323/2324) must still hold.
+  const genuinePluralRecruiting = await provider.generate("אנו מחפשים מועמדים למשרות פתוחות בחברה.");
+  assert.ok(genuinePluralRecruiting.entities.some((e) => e.name === "JobApplicant"), "'מועמדים למשרות פתוחות' (candidates for open positions) must still match JobApplicant");
+
+  const genuineOrdinaryJobPosition = await provider.generate("אפליקציה לניהול תהליך הגיוס של מועמדים לתפקיד מפתח תוכנה בחברה.");
+  assert.ok(genuineOrdinaryJobPosition.entities.some((e) => e.name === "JobApplicant"), "'מועמדים לתפקיד מפתח תוכנה' (candidates for the software-developer position) must still match JobApplicant");
+
+  const alreadyFixedBarePolitical = await provider.generate("מועמד לנשיאות ארצות הברית נואם הערב באירוע מיוחד.");
+  assert.ok(!alreadyFixedBarePolitical.entities.some((e) => e.name === "JobApplicant"), "'מועמד לנשיאות' (round 2315's own ל-political exclusion) must still not match JobApplicant");
+
+  const alreadyFixedConstructPlural = await provider.generate("אתר המציג את מועמדי הנשיאות ואת תוצאות הסקרים העדכניים שלהם לפני יום הבחירות.");
+  assert.ok(!alreadyFixedConstructPlural.entities.some((e) => e.name === "JobApplicant"), "'מועמדי הנשיאות' (round 2321's own construct-plural exclusion) must still not match JobApplicant");
+
+  const alreadyFixedFemPlural = await provider.generate("אתר חדשות המסקר את מועמדות הנשיאות המובילות בסקרים לפני הבחירות הקרובות.");
+  assert.ok(!alreadyFixedFemPlural.entities.some((e) => e.name === "JobApplicant"), "'מועמדות הנשיאות' (round 2324's own feminine-plural exclusion) must still not match JobApplicant");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
