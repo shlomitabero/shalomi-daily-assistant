@@ -3328,7 +3328,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // fem. singular and round 2320's plural) -- the same
       // backtracking pitfall this file keeps rediscovering, this time
       // shown to be even more damaging than previously documented.
-      /רכשתם(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתן(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשנו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשת(?!ם)(?!ן)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!ת)(?!נ)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
+      //
+      // Round 2342: even after round 2326 covered all 8 person/number/
+      // gender combinations of the PAST tense, one form was still
+      // missing: 2nd-person-feminine-singular with the "י" suffix,
+      // which covers BOTH the imperative ("רכשי!" = "acquire!") and the
+      // future ("תרכשי" = "you[f] will acquire") when read without the
+      // future-tense "ת" prefix stripped. Confirmed live: "רכשי ניסיון
+      // רב בתפקיד הקודם..." (imperative: acquire experience) and
+      // "...תרכשי ניסיון רב בתחום השירות..." (future: you[f] will
+      // acquire experience) both fabricated Vendor with zero
+      // procurement content. The gap existed because the bare "רכש"
+      // branch's lookahead chain excluded "ה"/"ו"/"ת"/"נ" (to avoid
+      // mistaking a longer form's prefix for itself) but never added
+      // "י" -- and there was no dedicated "רכשי" branch the way every
+      // other person/number form already had one. Fixed the same way
+      // as round 2326: an independent "רכשי" branch with its own full
+      // idiom lookahead, plus "(?!י)" added to the bare "רכש" branch's
+      // existing lookahead chain so it still can't mistake "רכשי"'s
+      // prefix for itself. This is the SAME guard being re-patched a
+      // second time in this file's history (rounds 2309, 2320, 2326,
+      // now 2342) -- reinforcing round 2341's lesson that even a guard
+      // already fixed more than once is not guaranteed to have its full
+      // grammatical paradigm covered.
+      /רכשתם(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתן(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשנו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשת(?!ם)(?!ן)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!ת)(?!נ)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",

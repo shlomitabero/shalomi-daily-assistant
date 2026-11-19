@@ -7654,3 +7654,20 @@ test("Vendor's 'ספק' (doubt) idiom-exclusion guard also needed to cover the P
   const genuineVendor2 = await provider.generate("קיים ספק אחד בלבד שמייצר את הרכיב הזה");
   assert.ok(genuineVendor2.entities.some((e) => e.name === "Vendor"), "'קיים ספק אחד בלבד' (only one supplier exists) must still match Vendor");
 });
+
+test("Vendor's 'רכש' idiom-exclusion guard also needed the 2nd-person-feminine-singular 'י'-suffixed forms 'רכשי'/'תרכשי'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const imperativeFem = await provider.generate("רכשי ניסיון רב בתפקיד הקודם ותשתמשי בו כאן, ואני רוצה אפליקציה לניהול משימות.");
+  assert.ok(!imperativeFem.entities.some((e) => e.name === "Vendor"), "'רכשי ניסיון' (imperative, acquire experience!) must not spuriously match Vendor");
+
+  const futureFem = await provider.generate("במהלך ההכשרה החדשה תרכשי ניסיון רב בתחום השירות, ואני רוצה אפליקציה לניהול משימות.");
+  assert.ok(!futureFem.entities.some((e) => e.name === "Vendor"), "'תרכשי ניסיון' (future, you[f] will acquire experience) must not spuriously match Vendor");
+
+  // Non-regression: genuine vendor usage with the same 2fs verb forms must still match.
+  const genuineVendorImperative = await provider.generate("רכשי ציוד חדש מהספק המקומי");
+  assert.ok(genuineVendorImperative.entities.some((e) => e.name === "Vendor"), "'רכשי ציוד... מהספק' (acquire equipment from the supplier) must still match Vendor");
+
+  const genuineVendorFuture = await provider.generate("תרכשי סחורה נוספת מהספק");
+  assert.ok(genuineVendorFuture.entities.some((e) => e.name === "Vendor"), "'תרכשי סחורה... מהספק' (you[f] will acquire goods from the supplier) must still match Vendor");
+});
