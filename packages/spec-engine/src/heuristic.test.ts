@@ -3363,6 +3363,41 @@ test("round 2357: 'volunteer the building'/'volunteer some office space'/'volunt
   assert.ok(anyVolunteersAvailable.entities.some((e) => e.name === "Volunteer"), "'any volunteers available this weekend' must still match Volunteer");
 });
 
+// Round 2370: the bare noun/verb forms "volunteer"/"volunteers" were
+// already guarded (rounds 2108/2131/2242/2357 above), but the equally
+// natural past tense "volunteered" and gerund "volunteering" -- e.g.
+// "hours people volunteered at the shelter", "coordinating volunteering
+// opportunities" -- shared no substring with "volunteer" and were never
+// covered, losing the entity entirely for those tenses.
+test("Volunteer's 'volunteer(s)' keyword also matches the past-tense 'volunteered' and gerund 'volunteering' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const hoursTracked = await provider.generate("An app to track hours people volunteered at the animal shelter last month.");
+  assert.ok(hoursTracked.entities.some((e) => e.name === "Volunteer"), "'volunteered' (past tense) must match Volunteer");
+
+  const cleanupLog = await provider.generate("A system to log who volunteered for the weekend cleanup event.");
+  assert.ok(cleanupLog.entities.some((e) => e.name === "Volunteer"), "'volunteered' (past tense) must match Volunteer");
+
+  const coordinating = await provider.generate("A nonprofit platform for coordinating volunteering opportunities at the food bank.");
+  assert.ok(coordinating.entities.some((e) => e.name === "Volunteer"), "'volunteering' (gerund) must match Volunteer");
+
+  // Non-regression: the existing bare-noun controls still work.
+  const bareNoun = await provider.generate("A platform to let people volunteer for the food bank.");
+  assert.ok(bareNoun.entities.some((e) => e.name === "Volunteer"), "bare 'volunteer' must still match Volunteer");
+
+  const barePlural = await provider.generate("A system to manage our volunteers and their shifts.");
+  assert.ok(barePlural.entities.some((e) => e.name === "Volunteer"), "bare 'volunteers' must still match Volunteer");
+
+  // Non-regression: the existing determiner-exclusion and information-exclusion
+  // guards (rounds 2108/2131/2242/2357) must still exclude Volunteer, now extended
+  // to the "-ing" form as well.
+  const determinerIng = await provider.generate("During the meeting he was volunteering his opinion on everything.");
+  assert.ok(!determinerIng.entities.some((e) => e.name === "Volunteer"), "'volunteering his opinion' (determiner idiom) must not match Volunteer");
+
+  const informationIng = await provider.generate("She kept volunteering information nobody asked for during the interview.");
+  assert.ok(!informationIng.entities.some((e) => e.name === "Volunteer"), "'volunteering information' (information idiom) must not match Volunteer");
+});
+
 test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
   const provider = new HeuristicSpecProvider();
   const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");

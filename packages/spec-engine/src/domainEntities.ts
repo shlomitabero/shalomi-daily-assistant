@@ -4204,7 +4204,16 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // volunteers available this weekend") -- the lookahead only checks
     // what follows "volunteer(s)", never what precedes it.
     keywords: [
-      /\bvolunteers?\b(?!\s+(?:a|an|the|our|their|his|her|its|my|your|some|any)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/,
+      // Round 2370: the bare noun/verb forms "volunteer"/"volunteers" were
+      // already guarded (rounds 2108/2131/2242/2357), but the equally
+      // natural past tense "volunteered" and gerund "volunteering" -- e.g.
+      // "hours people volunteered at the shelter", "coordinating
+      // volunteering opportunities" -- shared no substring with "volunteer"
+      // and were never covered, losing the entity entirely for those
+      // tenses. Widened the character class only; both existing
+      // idiom-exclusion guards (determiner, "volunteering information")
+      // apply identically to the new forms, confirmed live.
+      /\bvolunteer(?:s|ed|ing)?\b(?!\s+(?:a|an|the|our|their|his|her|its|my|your|some|any)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/,
       "volunteer management", "volunteer shift",
       "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
     ],
