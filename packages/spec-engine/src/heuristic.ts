@@ -295,6 +295,32 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   "סטודיו לאימונים אישיים", "מאמן/ת אישי/ת",
   "שירותי הנהלת חשבונות",
   "סוכנות ביטוח",
+  // Round 2296: round 1879's own comment above already explains why bare
+  // "lawyer"/"attorney" stay deliberately excluded here (a public
+  // defender's office has zero commercial intent) -- that reasoning is
+  // sound and confirmed still correct empirically ("a volunteer lawyer
+  // network..." and "a nonprofit connecting pro bono attorneys..." both
+  // correctly stay "No payments"). But "law firm" alone doesn't cover
+  // the single most natural way a real solo lawyer/attorney describes
+  // their own practice by its specialty -- domainEntities.ts's own
+  // round-1813 comment calls this "the single most natural phrasing a
+  // real solo lawyer/attorney would type" and gives these exact two
+  // examples. Confirmed live: "An app for a divorce lawyer to track
+  // cases and clients." and "A personal injury attorney wants to track
+  // settlements and clients." both matched the identical Customer/Case
+  // entities as the already-working "law firm" phrasing, yet both still
+  // got "No payments". These four phrases are specific enough to stay
+  // safe without a bare-word exclusion -- "divorce"/"personal injury"
+  // name a paid litigation practice area, never a flat non-commercial
+  // programme -- but a pro-bono/free/volunteer/legal-aid/nonprofit
+  // qualifier directly in front of the phrase (confirmed as a real
+  // phrasing risk: "a pro bono divorce lawyer clinic...", "a volunteer
+  // personal injury lawyer...") is excluded via lookbehind, the same way
+  // this file guards other specific-but-not-bulletproof phrases.
+  /(?<!(?:pro bono |free |volunteer |legal aid |non-?profit )\s*)divorce lawyer/,
+  /(?<!(?:pro bono |free |volunteer |legal aid |non-?profit )\s*)divorce attorney/,
+  /(?<!(?:pro bono |free |volunteer |legal aid |non-?profit )\s*)personal injury lawyer/,
+  /(?<!(?:pro bono |free |volunteer |legal aid |non-?profit )\s*)personal injury attorney/,
   // Round 1928: the exact same drift rounds 1819/1831/1841/1872/1879
   // already fixed for salons/spas, pet care, medical/dental clinics,
   // photography/tattoo/catering, and law/bookkeeping/personal-training/

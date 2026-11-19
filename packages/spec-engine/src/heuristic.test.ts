@@ -1030,6 +1030,49 @@ test("still recommends 'No payments' for a free legal aid clinic, a volunteer fi
 });
 
 /**
+ * Round 2296: round 1879's own PAYMENT_KEYWORDS fix for law firms only
+ * ever covered "law firm"/"legal services"/"legal practice" -- but
+ * domainEntities.ts's own round-1813 comment calls "an app for a
+ * divorce lawyer"/"a personal injury attorney" the single most natural
+ * way a real solo lawyer/attorney describes their own practice, and
+ * that phrasing matched the identical Customer/Case entities as "law
+ * firm" yet still got "No payments". Bare "lawyer"/"attorney" stay
+ * deliberately excluded (round 1879's own public-defender reasoning is
+ * still correct, confirmed by the non-commercial test above), but these
+ * four specific practice-area phrases are safe additions, guarded by a
+ * lookbehind against a pro-bono/free/volunteer/legal-aid/nonprofit
+ * qualifier directly in front of them.
+ */
+test("asks about payments (recommending Stripe) for a 'divorce lawyer'/'personal injury attorney' description, even though it doesn't name 'law firm'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const divorceLawyer = await provider.generate("An app for a divorce lawyer to track cases and clients.");
+  assert.ok(divorceLawyer.entities.some((e) => e.name === "Case"));
+  const divorceLawyerPaymentQuestion = divorceLawyer.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(divorceLawyerPaymentQuestion);
+  assert.equal(divorceLawyerPaymentQuestion!.recommendation, "Stripe");
+
+  const personalInjuryAttorney = await provider.generate("A personal injury attorney wants to track settlements and clients.");
+  assert.ok(personalInjuryAttorney.entities.some((e) => e.name === "Case"));
+  const personalInjuryAttorneyPaymentQuestion = personalInjuryAttorney.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(personalInjuryAttorneyPaymentQuestion);
+  assert.equal(personalInjuryAttorneyPaymentQuestion!.recommendation, "Stripe");
+
+  // Non-regression: a pro-bono/free/volunteer qualifier directly in
+  // front of the same phrase must still correctly stay "No payments" --
+  // the exact risk the lookbehind guard exists to cover.
+  const proBonoClinic = await provider.generate("A pro bono divorce lawyer clinic for domestic violence survivors.");
+  const proBonoClinicPaymentQuestion = proBonoClinic.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(proBonoClinicPaymentQuestion);
+  assert.equal(proBonoClinicPaymentQuestion!.recommendation, "No payments", "'pro bono divorce lawyer' must not spuriously recommend Stripe");
+
+  const freeHotline = await provider.generate("A free personal injury legal aid hotline for uninsured workers.");
+  const freeHotlinePaymentQuestion = freeHotline.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freeHotlinePaymentQuestion);
+  assert.equal(freeHotlinePaymentQuestion!.recommendation, "No payments", "'free personal injury legal aid' must not spuriously recommend Stripe");
+});
+
+/**
  * Round 1928: the exact same drift rounds 1819/1831/1841/1872/1879 already
  * fixed for salons/spas, pet care, medical/dental clinics, photography/
  * tattoo/catering, and law/bookkeeping/personal-training/insurance, this
