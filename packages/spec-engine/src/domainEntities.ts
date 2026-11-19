@@ -2545,7 +2545,40 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // plural-inflection coverage via the bidirectional regex below.
       /\bdonat(?:e|es|ed|ing)\b/,
       /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
-      "תרם", "תרמה", "תרמו", "לתרום",
+      // Round 2322: round 2293's bare verb forms "תרם"/"תרמה"/"תרמו"/
+      // "לתרום" only checked that they weren't a substring of unrelated
+      // NOUNS (תרמיל "backpack", תרמית "fraud") -- it never checked the
+      // verb's own primary, extremely common Hebrew sense: these forms
+      // equally mean ordinary "contributed" (to a project's success, to
+      // an app improvement, to finishing a task), with no money or
+      // charity involved at all. Confirmed live: "העובד החדש תרם רבות
+      // להצלחת הפרויקט..." (contributed to the project's success),
+      // "התכונה החדשה תרמה רבות לשיפור חווית המשתמש..." (the feature
+      // contributed to improving UX), "כל חברי הצוות תרמו מאמץ רב
+      // להשלמת המשימה..." (the team contributed effort to finishing the
+      // task), and the infinitive "כולם מתבקשים לתרום להצלחת האירוע"
+      // (asked to contribute to the event's success) each fabricated a
+      // Donation entity with zero charitable content -- and since
+      // Donation is in BILLING_ENTITY_NAMES, each also wrongly flipped
+      // the payment-provider openQuestion's recommendation to "Stripe".
+      // Guarded each form with its own independent, self-contained
+      // lookahead excluding "ל" + an abstract success/improvement noun,
+      // allowing 0-2 intervening words for the adverbial phrase ("רבות",
+      // "מאמץ רב", etc.) -- each form is a separate regex entry (not a
+      // shared alternation under one outer lookahead), avoiding the
+      // backtracking pitfall rounds 2315/2318-2321 already hit, and
+      // matching round 2293's own finding that these forms are mutually
+      // exclusive literal strings (sofit mem vs. regular mem) with no
+      // risk of one swallowing another's prefix. Genuine donation
+      // wording for every form (masc. "העובד תרם כסף רב לעמותה...", fem.
+      // "התורמת תרמה תרומה נכבדה...", plural "התורמים תרמו בגדים
+      // ישנים...", and infinitive "...לתרום כסף למטרות שונות" -- round
+      // 2293's own original motivating sentence) confirmed still
+      // matches Donation correctly.
+      /תרם(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמה(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמו(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /לתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",

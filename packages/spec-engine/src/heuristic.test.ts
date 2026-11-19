@@ -6435,6 +6435,37 @@ test("JobApplicant's political/academic 'מועמד' guard also excludes the con
   assert.ok(!feminineMayoralCandidate.entities.some((e) => e.name === "JobApplicant"), "'מועמדת לראשות העיר' (she is a mayoral candidate) must still not match JobApplicant");
 });
 
+test("Donation's 'תרם'/'תרמה'/'תרמו'/'לתרום' keywords don't spuriously match the ordinary 'contributed to' idiom", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mascContributedToProject = await provider.generate("העובד החדש תרם רבות להצלחת הפרויקט במהלך השנה האחרונה.");
+  assert.ok(!mascContributedToProject.entities.some((e) => e.name === "Donation"), "'תרם רבות להצלחת הפרויקט' (contributed to the project's success) must not spuriously match Donation");
+  const mascStripeQ = mascContributedToProject.openQuestions?.find((q) => q.options.includes("Stripe"));
+  assert.ok(!mascStripeQ || mascStripeQ.recommendation !== "Stripe", "'תרם רבות להצלחת הפרויקט' must not wrongly recommend Stripe");
+
+  const femContributedToAppUpdate = await provider.generate("התכונה החדשה תרמה רבות לשיפור חווית המשתמש באפליקציה.");
+  assert.ok(!femContributedToAppUpdate.entities.some((e) => e.name === "Donation"), "'תרמה רבות לשיפור חווית המשתמש' (contributed to improving UX) must not spuriously match Donation");
+
+  const pluralContributedEffort = await provider.generate("כל חברי הצוות תרמו מאמץ רב להשלמת המשימה בזמן.");
+  assert.ok(!pluralContributedEffort.entities.some((e) => e.name === "Donation"), "'תרמו מאמץ רב להשלמת המשימה' (contributed effort to finishing the task) must not spuriously match Donation");
+
+  const infinitiveIdiom = await provider.generate("כולם מתבקשים לתרום להצלחת האירוע.");
+  assert.ok(!infinitiveIdiom.entities.some((e) => e.name === "Donation"), "'לתרום להצלחת האירוע' (contribute to the event's success) must not spuriously match Donation");
+
+  // Non-regression: genuine donation wording for every form must still match.
+  const genuineMascDonation = await provider.generate("העובד תרם כסף רב לעמותה המקומית.");
+  assert.ok(genuineMascDonation.entities.some((e) => e.name === "Donation"), "'תרם כסף רב לעמותה' (donated money to the local nonprofit) must still match Donation");
+
+  const genuineFemDonation = await provider.generate("התורמת תרמה תרומה נכבדה לקרן המחלה.");
+  assert.ok(genuineFemDonation.entities.some((e) => e.name === "Donation"), "'תרמה תרומה נכבדה' (donated a generous donation) must still match Donation");
+
+  const genuinePluralDonation = await provider.generate("התורמים תרמו בגדים ישנים לעמותה.");
+  assert.ok(genuinePluralDonation.entities.some((e) => e.name === "Donation"), "'תרמו בגדים ישנים לעמותה' (donated old clothes to the nonprofit) must still match Donation");
+
+  const genuineInfinitiveDonation = await provider.generate("אפליקציה שמאפשרת למשתמשים לתרום כסף למטרות שונות.");
+  assert.ok(genuineInfinitiveDonation.entities.some((e) => e.name === "Donation"), "round 2293's own motivating sentence ('לתרום כסף למטרות שונות') must still match Donation");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
