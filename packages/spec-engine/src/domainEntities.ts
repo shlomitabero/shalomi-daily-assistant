@@ -373,7 +373,13 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // כדורגל בקבוצה" matched only the generic Item fallback, with the
       // real Employee/staff domain entirely lost, while the bare-plural
       // twin ("...מאמנים בקבוצה") already matched Employee correctly.
-      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני",
+      // Round 2362: the same reasoning applies to the fourth inflection,
+      // feminine plural "מאמנות" ("female trainers/coaches") -- the bare
+      // "מאמן" ends in sofit-nun "ן", never a substring of "מאמנות"'s
+      // regular "נ" + "ות", so it was never covered either. Confirmed no
+      // collision with "מתאמנות" (trainees/practicing women) or
+      // "מאמינות" (believers) -- "מאמנות" is not a substring of either.
+      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני", "מאמנות",
       // Bare "עובד"/"עובדת"/"עובדים" (round 565) are substrings of the
       // pu'al passive-participle adjective "מעובד"/"מעובדת"/"מעובדים"/
       // "מעובדות" ("processed", as in processed food/data/materials), an
@@ -4303,7 +4309,10 @@ export const ROLE_RULES: Record<string, RoleRule> = {
       //
       // Round 2290: kept in sync with that same entity rule's own
       // construct-state "מאמני" addition (see its comment above).
-      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני",
+      //
+      // Round 2362: kept in sync with that same entity rule's own
+      // feminine-plural "מאמנות" addition (see its comment above).
+      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני", "מאמנות",
       /(?<!מ)עובד(?!ה)(?!ות\s*(?:על|מעניינ|מרתק|מדהימ|משעשע|סקרני|אקראי))/,
       /(?<!מ)עובדת/, /(?<!מ)עובדים/, /(?<!מ)צוות/,
     ],

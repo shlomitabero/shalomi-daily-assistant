@@ -623,6 +623,40 @@ test("recognizes the Hebrew construct-state 'מאמני' form (e.g. 'מאמני 
   assert.ok(barePlural.entities.some((e) => e.name === "Employee"), "the bare 'מאמנים' form must still match (no regression)");
 });
 
+/**
+ * Round 2362: the same construct-state/inflection-gap bug class rounds
+ * 2287-2290 already found applies to a fourth inflection of this same
+ * "מאמן" trainer keyword family (and its mirror in ROLE_RULES.Employee):
+ * the feminine plural "מאמנות" ("female trainers/coaches"). The bare
+ * "מאמן" ends in word-final sofit nun (ן), which is never a substring of
+ * "מאמנות"'s regular nun (נ) + "ות" suffix, the identical orthographic
+ * reason round 2290 already documented for the construct-plural "מאמני".
+ * Confirmed live before this fix: "אפליקציה לניהול מאמנות יוגה בסטודיו"
+ * matched only the generic MenuItem fallback entity and omitted the
+ * Employee role entirely, while the other three inflections (bare
+ * singular/plural, construct-plural) already matched correctly.
+ */
+test("round 2362: recognizes the Hebrew feminine-plural 'מאמנות' form (e.g. 'מאמנות יוגה') as Employee staff/role, not just the other three 'מאמן' inflections", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const yogaCoaches = await provider.generate("אפליקציה לניהול מאמנות יוגה בסטודיו", true);
+  assert.ok(yogaCoaches.entities.some((e) => e.name === "Employee"), "Hebrew 'מאמנות יוגה' must match the Employee entity rule");
+  assert.ok(yogaCoaches.roles.includes("עובד/ת"), "Hebrew 'מאמנות יוגה' must include the Employee role ('עובד/ת')");
+
+  const pilatesCoaches = await provider.generate("המערכת עוזרת לתזמן את מאמנות הפילאטיס שמלמדות בסטודיו", true);
+  assert.ok(pilatesCoaches.entities.some((e) => e.name === "Employee"), "Hebrew 'מאמנות הפילאטיס' must match the Employee entity rule");
+  assert.ok(pilatesCoaches.roles.includes("עובד/ת"), "Hebrew 'מאמנות הפילאטיס' must include the Employee role ('עובד/ת')");
+
+  // Non-regression: the collision with the unrelated "מתאמנות" (trainees/
+  // practicing women) must stay excluded -- "מאמנות" is not a substring of it.
+  const traineesNotCoaches = await provider.generate("יש לנו הרבה נשים מתאמנות בסטודיו שלנו", true);
+  assert.ok(!traineesNotCoaches.roles.includes("עובד/ת"), "'מתאמנות' (trainees, unrelated word) must NOT spuriously match the Employee role");
+
+  // Non-regression: the already-working bare/plural/construct-plural forms must still match.
+  const barePlural = await provider.generate("אפליקציה לניהול מאמנים בקבוצה", true);
+  assert.ok(barePlural.entities.some((e) => e.name === "Employee"), "the bare 'מאמנים' form must still match (no regression)");
+});
+
 test("recognizes 'classes'/'class schedule' as the Course entity, in both the English and Hebrew built-in 'Fitness studio' example descriptions", async () => {
   // Round 1727: the Course entity's own description reads "A course or
   // class the business teaches," but the keyword array had no English
