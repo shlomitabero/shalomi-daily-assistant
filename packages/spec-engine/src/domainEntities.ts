@@ -1886,6 +1886,37 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /(?<!\bvideo\s)\bconference(s)?\b(?!\s*(?:calls?|rooms?)\b)/,
       "wedding", "weddings", "trade show",
       "אירוע", "אירועים",
+      // Round 2331: Order's own "הזמנה" exclusion guard a few hundred
+      // lines above already names "מסיבה"/"מסיבת"/"מסיבות" (party) and
+      // "יום הולדת" (birthday) by name -- the same discovery method as
+      // round 2330's "חתונת" fix -- but neither word existed as a
+      // positive keyword for Event (or any other entity) at all.
+      // Confirmed live: "אפליקציה לתכנון מסיבת יום הולדת עם רשימת
+      // אורחים ותקציב" and four similar party/birthday-planning
+      // sentences all fell through to the generic `Item` entity with
+      // Event entirely missing.
+      //
+      // Unlike round 2330's "חתונת", bare "מסיבה" is NOT safe to add as
+      // a plain string: it's also the common "for a[n] ... reason"
+      // idiom (מ + סיבה, "reason"), e.g. "ההזמנה בוטלה מסיבה לא ידועה"
+      // (the order was cancelled for an unknown reason), "התפטר מסיבה
+      // אישית" (resigned for personal reasons) -- confirmed live this
+      // idiom is extremely common in ordinary business-app descriptions
+      // and would have been a brand-new false positive. "מסיבה"/
+      // "מסיבות" each get their own lookahead excluding the specific
+      // reason-qualifying words empirically confirmed to follow the
+      // "reason" sense; a naive merged "מסיב(?:ה|ות|ת)" variant sharing
+      // ONE lookahead was tested and confirmed to reintroduce the
+      // classic backtracking pitfall (the plural "שונות"/"אישיות"
+      // reason-continuations aren't in the singular-only shared
+      // lookahead, so the engine backtracks past the "ות" suffix and
+      // vacuously matches) -- independent branches are required here,
+      // not just stylistic. "מסיבת" (construct state, e.g. "מסיבת יום
+      // הולדת") and bare "יום הולדת" have no equivalent "reason"
+      // collision and need no guard.
+      /מסיבה(?!\s*(?:לא\s*ידועה|אישית|טכנית|כלכלית|זו|כלשהי|מסוימת|שונה|אחרת|בלתי\s*ידועה))/,
+      /מסיבות(?!\s*(?:שונות|אישיות|טכניות|כלכליות|כלשהן|מסוימות|שלא\s*לשליטתנו))/,
+      "מסיבת", "יום הולדת",
       // Bare "כנס" (round 562) is a substring of common כ.נ.ס
       // ("to enter"/"to log in") verb conjugations -- "להיכנס" (to log
       // in), "נכנס" (enters/logs in), "תיכנס"/"מתכנס"/"התכנסות" -- so a

@@ -6697,6 +6697,40 @@ test("Event's 'חתונה' (wedding) keyword also covers the construct-state (ס
   assert.ok(!underwearPlural.entities.some((e) => e.name === "Event"), "'תחתונות' (underwear, plural) must not spuriously match Event");
 });
 
+test("Event's keywords also cover 'מסיבה'/'מסיבות'/'מסיבת' (party) and 'יום הולדת' (birthday), already named in Order's own exclusion guard but never added as Event's own positive keyword", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const partyBare = await provider.generate("אפליקציה לניהול מסיבה בחצר הבית, עם רשימת אורחים ותקציב.");
+  assert.ok(partyBare.entities.some((e) => e.name === "Event"), "'מסיבה' (bare party) must match Event");
+
+  const partyPlural = await provider.generate("מערכת לניהול מסיבות לילדים במתנ״ס, עם רשימת אורחים לכל מסיבה.");
+  assert.ok(partyPlural.entities.some((e) => e.name === "Event"), "'מסיבות' (plural party) must match Event");
+
+  const partyConstruct = await provider.generate("אתר לתכנון מסיבת רווקות עם רשימת אורחים ותקציב.");
+  assert.ok(partyConstruct.entities.some((e) => e.name === "Event"), "'מסיבת רווקות' (party, construct state) must match Event");
+
+  const birthday = await provider.generate("אפליקציה לניהול יום הולדת מפתיע לחברה, עם רשימת אורחים ותקציב.");
+  assert.ok(birthday.entities.some((e) => e.name === "Event"), "'יום הולדת' (birthday) must match Event");
+
+  // Non-regression: the "for a[n] ... reason" idiom (מ + סיבה, a homograph
+  // of "party") must NOT spuriously match Event -- confirmed this idiom is
+  // extremely common in ordinary business-app descriptions.
+  const reasonUnknown = await provider.generate("ההזמנה בוטלה מסיבה לא ידועה ואני רוצה אפליקציה למעקב אחרי הזמנות.");
+  assert.ok(!reasonUnknown.entities.some((e) => e.name === "Event"), "'מסיבה לא ידועה' (for an unknown reason) must not spuriously match Event");
+
+  const reasonPersonal = await provider.generate("העובד התפטר מסיבה אישית ואני רוצה אפליקציה לניהול עובדים.");
+  assert.ok(!reasonPersonal.entities.some((e) => e.name === "Event"), "'מסיבה אישית' (for a personal reason) must not spuriously match Event");
+
+  const reasonTechnical = await provider.generate("המשלוח התעכב מסיבה טכנית ואני רוצה אפליקציה למעקב אחרי משלוחים.");
+  assert.ok(!reasonTechnical.entities.some((e) => e.name === "Event"), "'מסיבה טכנית' (for a technical reason) must not spuriously match Event");
+
+  const reasonsVarious = await provider.generate("הפרויקט נדחה מסיבות שונות ואני רוצה אפליקציה לניהול פרויקטים.");
+  assert.ok(!reasonsVarious.entities.some((e) => e.name === "Event"), "'מסיבות שונות' (for various reasons) must not spuriously match Event");
+
+  const reasonsPersonal = await provider.generate("הם התפטרו מסיבות אישיות ואני רוצה אפליקציה לניהול עובדים.");
+  assert.ok(!reasonsPersonal.entities.some((e) => e.name === "Event"), "'מסיבות אישיות' (for personal reasons) must not spuriously match Event");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
