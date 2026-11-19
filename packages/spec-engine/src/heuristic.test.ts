@@ -7891,6 +7891,39 @@ test("Appointment's bare 'מספרת' keyword doesn't spuriously match the unrel
   assert.ok(womensSalon.entities.some((e) => e.name === "Appointment"), "'מספרת נשים' (women's hair salon) must still match Appointment");
 });
 
+test("Round 2366: PAYMENT_KEYWORDS' own 'מספרת' mirror doesn't spuriously recommend Stripe for the unrelated 'tells/narrates' verb", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  // Bug sentences: bare storytelling-verb "מספרת", no hair-salon business at
+  // all. The entity side already correctly excludes Appointment (round
+  // 2339), but PAYMENT_KEYWORDS' own unguarded "מספרת" mirror still fired.
+  const secretaryTellsStory = await provider.generate("המזכירה מספרת סיפור קצר לילדים בכל יום.", true);
+  assert.ok(!secretaryTellsStory.entities.some((e) => e.name === "Appointment"), "'המזכירה מספרת סיפור' must not spuriously match Appointment");
+  const secretaryPaymentQuestion = secretaryTellsStory.openQuestions.find((q) => q.question.toLowerCase().includes("payment") || q.question.includes("תשלו"));
+  assert.ok(secretaryPaymentQuestion);
+  assert.equal(secretaryPaymentQuestion!.recommendation, "בלי תשלומים", "a storytelling-verb sentence must not spuriously recommend Stripe");
+
+  const grandmaTellsBedtimeStory = await provider.generate("הסבתא מספרת סיפור לפני השינה.", true);
+  assert.ok(!grandmaTellsBedtimeStory.entities.some((e) => e.name === "Appointment"), "'הסבתא מספרת סיפור' must not spuriously match Appointment");
+  const grandmaPaymentQuestion = grandmaTellsBedtimeStory.openQuestions.find((q) => q.question.toLowerCase().includes("payment") || q.question.includes("תשלו"));
+  assert.ok(grandmaPaymentQuestion);
+  assert.equal(grandmaPaymentQuestion!.recommendation, "בלי תשלומים", "a storytelling-verb sentence must not spuriously recommend Stripe");
+
+  // Non-regression: genuine salon forms (bare, both construct-state
+  // singulars, and the round-2365 plural) must still recommend Stripe.
+  const bareForm = await provider.generate("אפליקציה למספרה לניהול תורים ולקוחות", true);
+  const barePaymentQuestion = bareForm.openQuestions.find((q) => q.question.toLowerCase().includes("payment") || q.question.includes("תשלו"));
+  assert.equal(barePaymentQuestion!.recommendation, "Stripe", "the bare 'מספרה' form must still recommend Stripe");
+
+  const mensBarbershopPayment = await provider.generate("אפליקציה למספרת גברים לניהול לוח הזמנים והלקוחות שלנו", true);
+  const mensPaymentQuestion = mensBarbershopPayment.openQuestions.find((q) => q.question.toLowerCase().includes("payment") || q.question.includes("תשלו"));
+  assert.equal(mensPaymentQuestion!.recommendation, "Stripe", "'מספרת גברים' must still recommend Stripe");
+
+  const womensSalonPayment = await provider.generate("מערכת לניהול לקוחות במספרת נשים בעיר", true);
+  const womensPaymentQuestion = womensSalonPayment.openQuestions.find((q) => q.question.toLowerCase().includes("payment") || q.question.includes("תשלו"));
+  assert.equal(womensPaymentQuestion!.recommendation, "Stripe", "'מספרת נשים' must still recommend Stripe");
+});
+
 test("Shipment's bare 'שילוח' keyword doesn't spuriously match the unrelated 'deportation/expulsion' sense", async () => {
   const provider = new HeuristicSpecProvider();
 

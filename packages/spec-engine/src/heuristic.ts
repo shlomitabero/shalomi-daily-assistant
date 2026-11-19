@@ -301,7 +301,25 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // Round 2365: kept in sync with domainEntities.ts's own Appointment
   // entity rule's "מספרות" (plain plural "hair salons") addition, guarded
   // identically against the unrelated "tell/narrate" verb sense.
-  "מספרה", "מספרת", /מספרות(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/, "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
+  //
+  // Round 2366: the round-2294 "מספרת" addition above was a bare,
+  // completely unguarded string -- unlike domainEntities.ts's own
+  // "מספרת" keyword, which round 2339 guarded against the unrelated
+  // ordinary feminine-singular present-tense verb "tells/narrates"
+  // (e.g. "מספרת סיפור" = "tells a story"). Since matchesKeyword() uses
+  // plain `.includes()` for a string keyword, any storytelling sentence
+  // using bare "מספרת" spuriously hit this array and got recommended
+  // Stripe, even though round 2339 already fixed the entity-match side
+  // so the same sentence correctly does NOT match Appointment. Confirmed
+  // live (with a per-keyword match dump to rule out any other keyword
+  // accounting for it): "המזכירה מספרת סיפור קצר לילדים בכל יום." and
+  // "הסבתא מספרת סיפור לפני השינה." -- both naming only the storytelling
+  // verb, no hair-salon business at all -- matched only the Item entity
+  // (no Appointment) yet still got "Stripe" recommended, solely via this
+  // bare "מספרת" string. Fixed by replacing it with the identical
+  // negative-lookahead guard already used by domainEntities.ts's own
+  // "מספרת" keyword and by this array's own "מספרות" entry just added.
+  "מספרה", /מספרת(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/, /מספרות(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/, "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
   // Round 1831: the exact same drift round 1819 fixed for salons/spas,
   // this time for pet care. A dog/cat grooming, pet sitting/boarding/
   // walking, or veterinary business matches only Pet (rounds 1752/1817's
