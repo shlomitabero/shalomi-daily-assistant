@@ -1018,7 +1018,25 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // matched both Service AND Property.
       /\b(?<!job\s)(?<!product\s)(?<!business\s)(?<!event\s)(?<!episode\s)(?<!market\s)(?<!recruiter\s)(?<!service\s)listing(s)?\b/,
       "apartment for rent",
-      /נכס(?:ים)?(?![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))(?<![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))/,
+      // Round 2282: the lookbehind half of this bidirectional exclusion
+      // (`(?<![\s\S]*?marker)`) never actually worked -- a JS lookbehind
+      // only matches when its own pattern ends EXACTLY at the assertion
+      // point, so `[\s\S]*?` followed by the marker can only succeed when
+      // the marker itself is the literal text immediately preceding "נכס"
+      // (no gap), not "the marker appears anywhere earlier in the text"
+      // the way the lookahead's `(?!marker[\s\S]*?)`-style check on the
+      // FORWARD side correctly does. Confirmed live: "מערכת לדיווחים
+      // פיננסיים על נכסי החברה" (a financial-reporting app, "פיננסיים"
+      // one word before "נכסי") still spuriously matched ONLY Property --
+      // the real financial/accounting domain entirely lost, exactly the
+      // failure mode this exclusion was written to prevent, just for the
+      // "marker before" word order instead of "marker after". The correct
+      // shape for "marker anywhere before the match" is `marker[\s\S]*`
+      // (marker THEN wildcard, ending at the assertion point) -- the same
+      // order this file's own courier/font exclusion (above, in this same
+      // file) and menu/burger exclusion already use correctly; this entry
+      // had the two reversed.
+      /נכס(?:ים)?(?![\s\S]*?(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים))(?<!(?:פיננסי|מוחשי|התחייבויות|מאזן|דוחות\s*כספיים)[\s\S]*)/,
       "נדל\"ן", "דירה למכירה", "דירה להשכרה",
       // "דירה למכירה"/"דירה להשכרה" (apartment for sale/rent) had no plural
       // entries (round 580). Their plurals "דירות למכירה"/"דירות להשכרה"
@@ -1618,7 +1636,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // same round adds to the verb-conjugation regex just below (for the
       // identical underlying ambiguity), applying it here too closes the
       // noun-form sibling of that same gap.
-      /\brental(s)?\b(?![\s\S]*?\b(?:apartments?|landlords?)\b)(?<![\s\S]*?\b(?:apartments?|landlords?)\b)/,
+      //
+      // Round 2282: the lookbehind half of that round-2280 exclusion
+      // (`(?<![\s\S]*?marker)`) never actually excluded anything -- a JS
+      // lookbehind only matches when its own pattern ends EXACTLY at the
+      // assertion point, so this only ever caught "apartment(s)"/
+      // "landlord(s)" appearing with literally nothing between it and
+      // "rental", not "anywhere earlier in the text" the way the comment
+      // above claimed and the way the forward lookahead correctly checks.
+      // Confirmed live: "A landlord with several apartments rents them
+      // out to tenants every year." (word order the round-2280 test never
+      // happened to exercise) still spuriously matched only Rental, the
+      // exact regression round 2280 believed it had closed. Corrected to
+      // `marker[\s\S]*` (marker THEN wildcard, ending at the assertion
+      // point) -- the same order this file's own courier/font exclusion
+      // and menu/burger exclusion already use correctly elsewhere.
+      /\brental(s)?\b(?![\s\S]*?\b(?:apartments?|landlords?)\b)(?<!\b(?:apartments?|landlords?)\b[\s\S]*)/,
       // Round 2279: round 1812's own fix just above closed the gap for
       // generic NOUN phrasing ("bike rental"/"party rental") but never
       // covered ordinary verb conjugations of "rent" itself -- the only
@@ -1671,7 +1704,15 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // this fix closes, just for a different phrasing. Confirmed live
       // that fixture, and the other three round-2279 positive fixtures,
       // still correctly match Rental after this additional exclusion.
-      /\brent(?:s|ed|ing)\b(?![\s\S]*?\b(?:apartments?|landlords?)\b)(?<![\s\S]*?\b(?:apartments?|landlords?)\b)/,
+      //
+      // Round 2282: same lookbehind-direction bug as the noun regex's own
+      // identical fix just above -- `(?<![\s\S]*?marker)` never actually
+      // excludes anything, since the lookbehind only matches when its own
+      // pattern ends EXACTLY at the assertion point. Corrected to
+      // `marker[\s\S]*`. Confirmed live: "A landlord with several
+      // apartments rents them out to tenants every year." still
+      // spuriously matched only Rental before this fix.
+      /\brent(?:s|ed|ing)\b(?![\s\S]*?\b(?:apartments?|landlords?)\b)(?<!\b(?:apartments?|landlords?)\b[\s\S]*)/,
     ],
     labelHe: "השכרות",
     descriptionHe: "פריט שהושכר ללקוח לתקופה מוגדרת.",

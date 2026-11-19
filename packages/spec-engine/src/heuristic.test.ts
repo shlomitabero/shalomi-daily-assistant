@@ -1856,6 +1856,14 @@ test("the round-2279 'rents'/'renting'/'rented' regex doesn't spuriously match R
     "I own a few rental apartments and rent them out to tenants every year.",
     "A small business renting out apartments to long-term tenants.",
     "An app for a landlord renting out apartments to tenants.",
+    // Round 2282: every case above has "apartment(s)"/"landlord(s)"
+    // appearing AFTER the "rent(s)"/"renting" match, which only ever
+    // exercised this exclusion's forward lookahead half -- the lookbehind
+    // half (meant to catch the marker appearing BEFORE the match) had a
+    // real bug (see domainEntities.ts's own round-2282 comment) that no
+    // existing test happened to catch, since none put the marker first.
+    "A landlord with several apartments rents them out to tenants every year.",
+    "Our apartment-management company rents units to tenants across the city.",
   ]) {
     const spec = await provider.generate(desc);
     assert.ok(
@@ -5319,6 +5327,18 @@ test("Property's 'נכס'/'נכסים' keyword doesn't spuriously match the gene
   assert.ok(
     !ipAssets.entities.some((e) => e.name === "Property"),
     "'נכסים לא מוחשיים' (intangible IP assets) must not spuriously match Property",
+  );
+
+  // Round 2282: both cases above have the financial marker AFTER "נכס",
+  // which the forward lookahead half of this exclusion already caught --
+  // neither ever exercised the marker appearing BEFORE "נכס" instead, the
+  // direction the lookbehind half is specifically meant to cover.
+  const financialMarkerFirst = await provider.generate(
+    "מערכת לדיווחים פיננסיים על נכסי החברה",
+  );
+  assert.ok(
+    !financialMarkerFirst.entities.some((e) => e.name === "Property"),
+    "'פיננסיים' appearing BEFORE 'נכסי' must also exclude Property, not just appearing after",
   );
 
   // The real word still works on its own (these descriptions avoid this
