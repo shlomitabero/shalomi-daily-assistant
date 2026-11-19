@@ -56241,3 +56241,75 @@ scope); Course's "אנחנו לא ניתן" (negation-interrupted) residual
 "no" determiner gap (round 2357, accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2359: Donation's nonprofit cue-word list missing construct-state "עמותת"
+
+**Bug:** continuing the "stale entity" method (rounds 2357-2358), this
+round's survey agent checked the fully-stale candidates with zero
+round-title mentions ever (Service, Student, Product) and found them
+genuinely clean -- all three use masculine Hebrew noun stems whose
+construct/plural inflections are already superstrings of the bare
+stem, so substring matching silently covers every form. With that
+avenue exhausted, the agent widened the construct-state grep to the
+whole file and found a real bug in a different family: a cue word
+named in a disambiguation guard but never kept in sync with a later
+construct-state fix (the same family as rounds 2330/2331/2333/2334,
+just not caught there). Donation's "עמותה"/"עמותות" cue-word
+alternation (added round 2111, tightened round 2306 to stop firing on
+bare nonprofit mentions with zero donation wording) only ever listed
+the absolute forms, never the construct-state (סמיכות) singular
+"עמותת" ("the nonprofit of...", e.g. "עמותת הילדים" = "the children's
+nonprofit"). Since "עמותת" ends in ת rather than ה, it is not a
+substring of "עמותה" and the cue search never recognized it.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לאיסוף תרומות עבור עמותת הילדים באזורנו.", "המערכת מנהלת תרומות כספיות עבור עמותת הנכים המקומית.", and
+"אנחנו אוספים תרומות למען עמותת בעלי חיים." -- each containing genuine תרומה/תרומות (donation)
+wording plus a construct-state-only nonprofit cue -- all lost the
+Donation entity entirely (fell through to the generic Item default),
+which also flipped the payment recommendation from Stripe to "No
+payments" (Donation is in `BILLING_ENTITY_NAMES`).
+
+**Fix** (`domainEntities.ts`, Donation's bidirectional lookaround):
+```js
+/תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/
+```
+Adds "עמותת" to both occurrences of the cue alternation.
+
+**Verification (regression/collision checks run live):** confirmed
+round 2306's own no-donation-wording guard is not reopened -- the
+construct-state cue still only ever unlocks the תרומה/תרומות
+lookaround, never matches alone (two fresh sentences with "עמותת" but
+zero donation wording stayed correctly excluded, matching Volunteer
+and Course respectively instead); confirmed the existing "תרם"
+idiom-exclusion guard (round 2322, ordinary "contributed to") still
+excludes Donation even when "עמותת X" is merely the idiom's object;
+confirmed the existing combined-cue test sentence (already containing
+both the construct form and "תורמים") is unaffected; confirmed no
+substring collision with unrelated words such as "התעמתות"
+(confrontation, different letter order).
+
+**Test added** (`heuristic.test.ts`): confirms all 3 bug sentences now
+match Donation; confirms the bare-form control, both no-donation-
+wording non-regression cases, and the idiom-exclusion non-regression
+case all stay correct.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 270 (the new test), as predicted; pass-after showed 270/270 --
+no regression. Full `@forge/spec-engine` suite: 466/466 (up from 465).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "stale entity" method (rounds
+2357-2358) found two bugs in a row on genuinely stale entities; this
+round found the fully-stale candidates (Service, Student, Product)
+clean, and instead found a bug via a related-but-distinct angle
+(cue-word lists in disambiguation guards not kept in sync with later
+construct-state fixes elsewhere in the file) -- worth checking other
+multi-entity disambiguation guards' cue-word lists next. Ticket's bare-
+noun gap remains deferred per rounds 2282-2283 (not a fresh find, not
+pursued). All standing deferred/unsafe gaps from round 2358's entry
+remain unchanged and are not repeated here.
+
+Live: https://forge-ai-m7p7.onrender.com
