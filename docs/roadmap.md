@@ -52125,3 +52125,23 @@ Live: https://forge-ai-m7p7.onrender.com
 **Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a TENTH round running (2274-2283, no browser/computer-use tooling available).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+## Round 2284 (2026-11-19): SENSITIVE_FIELD_HINTS' "pin" hint silently missed the all-caps PIN acronym
+
+**Bug:** the "pin" hint added in round 2278 (`apps/api/src/pipeline.ts`) claims in its own doc comment to "mirror the ssn regex's exact shape," but it actually dropped one of the three alternatives that shape has. The pre-existing "ssn" hint handles three forms: lowercase `ssn` at a word start, capitalized `Ssn` anywhere, AND the bare all-caps acronym `SSN` anywhere in the name -- `/(?:(?<![a-zA-Z])ssn|SSN)s?(?![a-z])/`. The "pin" hint only ever had the first two: `/(?:(?<![a-zA-Z])pin|Pin)s?(?![a-z])/` -- no `|PIN` alternative at all.
+
+**Concrete failure scenario (confirmed empirically, both via direct regex testing and by running the real `runSecurityScan`):** "PIN" (Personal Identification Number) is just as commonly written fully uppercase as "SSN" is. A `PaymentMethod` entity with fields `PIN`, `securityPIN`, `cardPIN`, and `pinCode` scored only `pinCode` as a warning -- the three all-caps forms silently escaped the scan entirely and contributed nothing to the security-score deduction, exactly the "do not put a real secret in it" hazard this whole mechanism (round 2278) exists to catch.
+
+**Fix:** added the missing `|PIN` alternative, bringing the regex to the exact three-form shape the ssn hint already has and the doc comment already (incorrectly) claimed: `/(?:(?<![a-zA-Z])pin|Pin|PIN)s?(?![a-z])/`.
+
+**Collision note (same shape the "ssn" hint already accepted):** the all-caps alternative has no word-start lookbehind, matching anywhere in the name (same design as "SSN"), so a hypothetical ALL-CAPS field literally named "PINNACLE" or "PINPOINT" would also match. This is the identical theoretical tradeoff the pre-existing "ssn" hint already carries (e.g. a field named "SSNAPSHOT"), and this app's actual field-naming convention observed throughout the codebase is camelCase/PascalCase, not bare ALL-CAPS English words, so the real-world risk is negligible -- deliberately not over-engineered beyond matching the ssn precedent.
+
+**How it was found:** this round's survey agent noticed the hint's own doc comment claimed parity with "ssn" that the code didn't actually have -- the same "one documented special case implies an untested sibling case" shape round 2283 found in `fieldDraftUnchanged`, just surfaced by comparing a hint's claimed behavior against its actual regex rather than by comparing two directions of one function.
+
+**Verification:** independently re-derived the bug from the regex itself and confirmed the live gap via Node and via a direct `runSecurityScan` call before touching any code. Extended the existing round-2278 regression test with `PIN`/`securityPIN`/`cardPIN` fields (now 13 expected warnings, up from 10). Fail-before/pass-after via `git stash push --keep-index` on `pipeline.ts` alone: the new assertions failed exactly as predicted against the pre-fix regex, then passed cleanly after restoring it. Full `@forge/api` suite (1782/1782) and its production build both clean.
+
+**Investigated and ruled out as NOT bugs this round (per this round's survey agent, no need to re-check):** `fieldDraftUnchanged` and its codegen.ts mirror (confirmed already fixed, round 2283); `coerceValue` (repository.ts, extremely well-hardened across many rounds, no gap found); `checkpointDiff.ts`'s enum-label/checkpoint-currency helpers; `entityPreferenceCleanup.ts` + `App.tsx`'s dropped/renamed-entity handling; `idempotency.ts`; `displayField.ts`'s type-fallback branches; a spot-check of several `heuristic.ts` `PAYMENT_KEYWORDS` Hebrew lookahead regexes (not exhaustive).
+
+**Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for an ELEVENTH round running (2274-2284, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred.
+
+Live: https://forge-ai-m7p7.onrender.com
