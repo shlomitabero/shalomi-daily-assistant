@@ -1646,7 +1646,47 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       /\bpatients\b/,
       /(?<!\b(?:be|being|been|stay|staying|remain|remaining|very|so|quite|extremely|incredibly|too)\s)\bpatient\b(?!\s+with\b)(?!\s+(?:\S+\s+){0,3}(?:tutor|teacher|coach|instructor|mentor|driver|employee|manager|rep|staff|team)\b)(?!,\s*\S+\s+(?:approach|process|method|strategy|way)\b)/,
-      "outpatient", "clinic patient", "מטופל", "מטופלת", "מטופלים",
+      "outpatient", "clinic patient",
+      // Round 2336: unlike nearly every other Hebrew keyword in this file,
+      // "מטופל"/"מטופלת"/"מטופלים" were listed completely unguarded. This
+      // is the exact same grammatical-polysemy shape round 888 already
+      // fixed for the ENGLISH "patient" (adjective "calm" vs. noun
+      // "patient"), never applied to the Hebrew side: "מטופל"/"מטופלת"/
+      // "מטופלים" is the passive-participle adjective of טיפל ("to
+      // handle/deal with/take care of"), routinely used in ordinary
+      // administrative "this request/complaint/case is being handled"
+      // phrasing with zero medical connection -- e.g. "הפנייה מטופלת",
+      // "התלונה מטופלת", "התיק מטופל", "הבקשה מטופלת", "הנושא מטופל".
+      // Confirmed live: a customer-support ticketing app ("כל פנייה
+      // מטופלת על ידי נציג שירות..."), a complaints-tracking system
+      // ("כל תלונה מטופלת תוך 24 שעות..."), and a legal case-management
+      // app ("כל תיק מטופל על ידי עורך דין אחד...") each fabricated a
+      // bogus Patient entity (fields name/email/phone/dateOfBirth/notes)
+      // with zero medical content.
+      //
+      // Hebrew has no \b (same reason this file's other guards need
+      // lookbehind/lookahead instead), so this excludes the specific
+      // administrative cue nouns -- bare or with the ה-definite-article
+      // prefix -- immediately before "מטופל"/"מטופלת"/"מטופלים". A
+      // genuine medical "מטופל"/"מטופלת" occurrence is unaffected,
+      // confirmed including the SAME adjective used in its medical sense
+      // ("המטופל מטופל על ידי הרופא לאחר הניתוח" -- the patient is being
+      // treated by the doctor after the surgery -- still matches via the
+      // leading "המטופל" noun occurrence) and a case where the cue noun
+      // follows rather than precedes the keyword ("כל מטופל מקבל תיק
+      // רפואי אישי" -- unaffected, since the guard only excludes the cue
+      // noun immediately BEFORE the keyword).
+      //
+      // Deliberately a leaky denylist, not an exhaustive fix, same class
+      // as this file's other narrow cue-list guards (e.g. round 2027's
+      // ספק guard, round 2334's צדקה guard): confirmed two residual gaps
+      // that still leak, both accepted trade-offs for the confirmed-live
+      // common cases this closes -- (1) a ב-prefix variant of the cue
+      // noun ("בנושא מטופל כרגע") isn't excluded, since the lookbehind
+      // only checks for a bare or ה-prefixed cue noun; (2) a cue noun
+      // outside this curated list (e.g. "הבעיה מטופלת", problem, rather
+      // than case/complaint/request/ticket/topic) also isn't excluded.
+      /(?<!(?:^|\s)(?:תיק|תלונה|פנייה|בקשה|נושא|התיק|התלונה|הפנייה|הבקשה|הנושא)\s)מטופל(?:ת|ים)?/,
     ],
     labelHe: "מטופלים",
     descriptionHe: "מי שמקבל טיפול רפואי מהעסק.",

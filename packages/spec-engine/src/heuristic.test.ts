@@ -7435,3 +7435,38 @@ test("Ticket's 'תמיכה'/'תמיכת' keywords don't spuriously trigger on '�
   const realTicket = await provider.generate("אפליקציית תמיכת לקוחות לניהול פניות");
   assert.ok(realTicket.entities.some((e) => e.name === "Ticket"), "'תמיכת לקוחות' must still match Ticket");
 });
+
+test("Patient's 'מטופל'/'מטופלת'/'מטופלים' keywords don't spuriously match the unrelated administrative adjective 'being handled/dealt with'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const ticketApp = await provider.generate("אפליקציה לתמיכת לקוחות שמנהלת פניות - כל פנייה מטופלת על ידי נציג שירות ומתועדת במערכת.");
+  assert.ok(!ticketApp.entities.some((e) => e.name === "Patient"), "'כל פנייה מטופלת' (every ticket is being handled) must not spuriously match Patient");
+
+  const complaintsApp = await provider.generate("מערכת לניהול תלונות לקוחות - כל תלונה מטופלת תוך 24 שעות על ידי הצוות.");
+  assert.ok(!complaintsApp.entities.some((e) => e.name === "Patient"), "'כל תלונה מטופלת' (every complaint is handled) must not spuriously match Patient");
+
+  const legalCaseApp = await provider.generate("אפליקציה למעקב אחרי תיקים משפטיים - כל תיק מטופל על ידי עורך דין אחד.");
+  assert.ok(!legalCaseApp.entities.some((e) => e.name === "Patient"), "'כל תיק מטופל' (every legal case is handled) must not spuriously match Patient");
+
+  const requestHandled = await provider.generate("הבקשה מטופלת בוואטסאפ בין הצוות לנציג.");
+  assert.ok(!requestHandled.entities.some((e) => e.name === "Patient"), "'הבקשה מטופלת' (the request is being handled) must not spuriously match Patient");
+
+  const topicHandled = await provider.generate("הנושא מטופל בבדיקה פנימית של החברה.");
+  assert.ok(!topicHandled.entities.some((e) => e.name === "Patient"), "'הנושא מטופל' (the topic is being handled) must not spuriously match Patient");
+
+  // Non-regression: genuine medical usage must still match Patient.
+  const genuineClinic = await provider.generate("מרפאה המנהלת מטופלים ותיקי טיפול רפואי.");
+  assert.ok(genuineClinic.entities.some((e) => e.name === "Patient"), "a genuine clinic description must still match Patient");
+
+  const sameAdjectiveMedicalSense = await provider.generate("המטופל מטופל על ידי הרופא לאחר הניתוח.");
+  assert.ok(
+    sameAdjectiveMedicalSense.entities.some((e) => e.name === "Patient"),
+    "'המטופל מטופל' (the patient is being treated), the same adjective used in its genuine medical sense, must still match Patient",
+  );
+
+  const cueWordAfterKeyword = await provider.generate("כל מטופל מקבל תיק רפואי אישי.");
+  assert.ok(
+    cueWordAfterKeyword.entities.some((e) => e.name === "Patient"),
+    "a cue noun appearing AFTER the keyword, rather than immediately before it, must not be wrongly excluded",
+  );
+});
