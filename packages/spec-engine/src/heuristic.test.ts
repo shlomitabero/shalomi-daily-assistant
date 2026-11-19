@@ -7707,3 +7707,45 @@ test("Donation's 'תרם' keyword was never given its FUTURE-tense or IMPERATIVE
   const paymentSpec = await provider.generate("אפליקציית גיוס כספים. אני אתרום כסף רב למען הילדים החולים בבית החולים.");
   assert.strictEqual(paymentSpec.openQuestions?.[0]?.recommendation, "Stripe", "a genuine future-tense donation description must recommend Stripe, not 'בלי תשלומים'");
 });
+
+test("Course's 'שיעור' give-verb idiom guard was never given PRESENT-tense or IMPERATIVE-mood forms, so genuine 'teach X a lesson' idiom sentences in those forms wrongly fabricated Course", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const presentMasc = await provider.generate("הוא נותן לשכן שלו שיעור שהוא לא ישכח.");
+  assert.ok(!presentMasc.entities.some((e) => e.name === "Course"), "'הוא נותן לשכן שלו שיעור' (present tense: he's teaching his neighbor a lesson) must not spuriously match Course");
+
+  const presentFem = await provider.generate("היא נותנת לשכנה שלה שיעור שהיא לא תשכח.");
+  assert.ok(!presentFem.entities.some((e) => e.name === "Course"), "'היא נותנת לשכנה שלה שיעור' (present tense fem.) must not spuriously match Course");
+
+  const presentPlural = await provider.generate("הם נותנים לשכנים שלהם שיעור שהם לא ישכחו.");
+  assert.ok(!presentPlural.entities.some((e) => e.name === "Course"), "'הם נותנים לשכנים שלהם שיעור' (present tense plural) must not spuriously match Course");
+
+  const imperativeMasc = await provider.generate("תן לשכן שלך שיעור שהוא לא ישכח כל החיים!");
+  assert.ok(!imperativeMasc.entities.some((e) => e.name === "Course"), "'תן לשכן שלך שיעור' (imperative masc.: teach him a lesson!) must not spuriously match Course");
+
+  const imperativeFem = await provider.generate("תני לה שיעור שהיא לא תשכח!");
+  assert.ok(!imperativeFem.entities.some((e) => e.name === "Course"), "'תני לה שיעור' (imperative fem.) must not spuriously match Course");
+
+  const imperativePlural = await provider.generate("תנו להם שיעור שהם לא ישכחו!");
+  assert.ok(!imperativePlural.entities.some((e) => e.name === "Course"), "'תנו להם שיעור' (imperative plural) must not spuriously match Course");
+
+  // Non-regression: genuine present-tense lesson usage must still match.
+  const genuinePresent = await provider.generate("המורה נותן שיעור יוגה בבוקר.");
+  assert.ok(genuinePresent.entities.some((e) => e.name === "Course"), "'המורה נותן שיעור יוגה' (the teacher gives a yoga lesson, present tense) must still match Course");
+
+  // Non-regression: the common words "ניתן"/"מתן"/"אתנו"/"תנור" must not be mistaken for the new imperative "תן"/"תני"/"תנו" branches.
+  const nitanControl1 = await provider.generate("ניתן לקבל שיעור פרטי בבית בכל יום.");
+  assert.ok(nitanControl1.entities.some((e) => e.name === "Course"), "'ניתן לקבל שיעור פרטי' (it is possible to get a private lesson) must still match Course, not be swallowed by the new 'תן' guard");
+
+  const nitanControl2 = await provider.generate("ניתן להזמין שיעור יוגה אונליין בכל שעה.");
+  assert.ok(nitanControl2.entities.some((e) => e.name === "Course"), "'ניתן להזמין שיעור יוגה' (one can book a yoga lesson online) must still match Course");
+
+  const matanControl = await provider.generate("מתן לתלמיד שיעור פרטי בכל יום שלישי.");
+  assert.ok(matanControl.entities.some((e) => e.name === "Course"), "'מתן לתלמיד שיעור פרטי' (giving a student a private lesson, noun 'מתן') must still match Course");
+
+  const itanuControl = await provider.generate("בואו אתנו ללמוד שיעור פרטי בבית.");
+  assert.ok(itanuControl.entities.some((e) => e.name === "Course"), "'בואו אתנו ללמוד שיעור פרטי' ('with us', 'אתנו') must still match Course, not be mistaken for imperative 'תנו'");
+
+  const tanurControl = await provider.generate("יש לנו תנור לבישול לפני השיעור.");
+  assert.ok(tanurControl.entities.some((e) => e.name === "Course"), "'יש לנו תנור לבישול' (oven, 'תנור') must still match Course via the unrelated 'שיעור' mention, not be mistaken for imperative 'תנו'");
+});

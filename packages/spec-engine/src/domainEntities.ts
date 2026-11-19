@@ -1662,7 +1662,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // skipped optional suffix (ם/ן/י) can never itself satisfy that
       // mandatory ל/whitespace gate. Independent alternatives are kept
       // anyway to match this file's established defensive convention.
-      /(?<!(?:לתת|אתן|תיתן|ייתן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
+      //
+      // Round 2344: round 2328's give-verb alternation still only ever
+      // covered the infinitive, future, and past tense -- PRESENT
+      // tense (נותן/נותנת/נותנים/נותנות) and the IMPERATIVE mood
+      // (תן/תני/תנו) were never added at all, the same "entire tense/
+      // mood missing outright" shape round 2343 just found on
+      // Donation's תרם guard. Confirmed live: "הוא נותן לשכן שלו
+      // שיעור..." (he's teaching his neighbor a lesson, present tense)
+      // and "תן לשכן שלך שיעור..." (teach your neighbor a lesson!,
+      // imperative) both fabricated Course via this same comeuppance
+      // idiom. The present-tense forms are safe as bare literals the
+      // same way נתן/נתנה/נתנו already are: "נותן" ends in the sofit
+      // nun (ן) while "נותנת"/"נותנים"/"נותנות" all continue with the
+      // ordinary nun (נ), so no branch can prefix-match a longer one.
+      // The imperative forms needed their own extra guard, though:
+      // bare "תן"/"תני"/"תנו" are each themselves a substring of
+      // unrelated, far more common words ("ניתן" = possible/given,
+      // "מתן" = giving (noun), "אתנו" = with us, "נתנו" = they gave,
+      // "תנור" = oven) whenever a Hebrew letter sits directly before
+      // them. Each is gated with "(?<![א-ת])" so it only fires when it
+      // actually starts a word, confirmed empirically this excludes
+      // all of the above collisions while still catching every "תן/
+      // תני/תנו ל-X ... שיעור" idiom sentence.
+      /(?<!(?:לתת|אתן|תיתן|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
