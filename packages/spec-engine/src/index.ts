@@ -213,6 +213,19 @@ function registerAliasAwareEntity(map: Map<string, Entity>, ambiguousAliasKeys: 
   }
   map.set(key, entity);
 }
+// Round 2257: a one-shot sibling of registerAliasAwareEntity above, for
+// callers (entityNameMatchesAcrossRefine's two callers below) that only
+// ever need the finished ambiguous-key SET over a fixed entity list, not
+// the live map mergeRefinedSpec itself builds incrementally as it adds new
+// entities mid-merge. Reuses registerAliasAwareEntity against a throwaway
+// map purely to get its ambiguity bookkeeping for free, one true source of
+// "what counts as ambiguous" shared with mergeRefinedSpec.
+function computeAmbiguousAliasKeys(entities: Entity[]): Set<string> {
+  const ambiguousAliasKeys = new Set<string>();
+  const throwawayMap = new Map<string, Entity>();
+  for (const entity of entities) registerAliasAwareEntity(throwawayMap, ambiguousAliasKeys, entity);
+  return ambiguousAliasKeys;
+}
 /**
  * Round 2162: the directional restriction round 2161 gave mergeRefinedSpec
  * (isGenericAliasName, above) never made it into detectLikelyEntityRenames
@@ -241,12 +254,35 @@ function registerAliasAwareEntity(map: Map<string, Entity>, ambiguousAliasKeys: 
  * own entityByExactName/entityByAliasAwareName split above, just phrased
  * as a single pairwise predicate since both callers below need to test it
  * against every entity on the OTHER side, not do a single map lookup).
+ *
+ * Round 2257: takes an optional `ambiguousAliasKeys` set (see
+ * `computeAmbiguousAliasKeys` below) -- mergeRefinedSpec's own round-2256
+ * fix stopped it from ever guessing which of TWO coexisting non-generic
+ * alias siblings (e.g. both "TeamMember" and "Staff") a regenerated
+ * generic candidate ("Employee") actually meant, but that fix only ever
+ * reached mergeRefinedSpec itself, never this shared predicate -- so
+ * detectLikelyFieldRenames/detectLikelyEntityRenames below kept matching
+ * the generic candidate against BOTH siblings pairwise and silently
+ * picking whichever happened to come first in array order, fabricating a
+ * bogus rename warning between two fields that were never actually
+ * related (pipeline.ts's describeImpactHazards streams that warning
+ * straight to the user, who could act on it by deleting a real, still-
+ * untouched field in the belief it's a stale duplicate). Confirmed live:
+ * current TeamMember{name,role} + Staff{name,shift}, candidate
+ * Employee{name,department} -- detectLikelyFieldRenames reported
+ * "role" -> "department", even though the real merge adds Employee as a
+ * brand-new entity, touching neither TeamMember nor Staff at all; swapping
+ * the two siblings' array order changed the reported "from" field to
+ * "shift" instead, confirming the pick was arbitrary, not a real signal.
  */
-function entityNameMatchesAcrossRefine(currentName: string, candidateName: string): boolean {
+function entityNameMatchesAcrossRefine(currentName: string, candidateName: string, ambiguousAliasKeys?: Set<string>): boolean {
   const currentLower = currentName.toLowerCase();
   const candidateLower = candidateName.toLowerCase();
   if (currentLower === candidateLower) return true;
-  return isGenericAliasName(candidateLower) && entityMergeKey(candidateLower) === entityMergeKey(currentLower);
+  if (!isGenericAliasName(candidateLower)) return false;
+  const key = entityMergeKey(candidateLower);
+  if (ambiguousAliasKeys?.has(key)) return false;
+  return key === entityMergeKey(currentLower);
 }
 
 /**
@@ -588,11 +624,12 @@ export function mergeRefinedSpec(current: ProductSpec, candidate: ProductSpec): 
  * dropped or added.
  */
 export function detectLikelyEntityRenames(current: ProductSpec, candidate: ProductSpec): { from: string; to: string }[] {
+  const ambiguousAliasKeys = computeAmbiguousAliasKeys(current.entities);
   const droppedEntities = current.entities.filter(
-    (entity) => !candidate.entities.some((candidateEntity) => entityNameMatchesAcrossRefine(entity.name, candidateEntity.name)),
+    (entity) => !candidate.entities.some((candidateEntity) => entityNameMatchesAcrossRefine(entity.name, candidateEntity.name, ambiguousAliasKeys)),
   );
   const addedEntities = candidate.entities.filter(
-    (entity) => !current.entities.some((currentEntity) => entityNameMatchesAcrossRefine(currentEntity.name, entity.name)),
+    (entity) => !current.entities.some((currentEntity) => entityNameMatchesAcrossRefine(currentEntity.name, entity.name, ambiguousAliasKeys)),
   );
   const fieldSignature = (entity: Entity) =>
     [...new Set(entity.fields.map((field) => field.name.toLowerCase()))].sort().join(",");
@@ -666,9 +703,10 @@ export function detectLikelyEntityRenames(current: ProductSpec, candidate: Produ
  * or candidateEntity's own name is the alias group's generic member.
  */
 export function detectLikelyFieldRenames(current: ProductSpec, candidate: ProductSpec): { entity: string; from: string; to: string }[] {
+  const ambiguousAliasKeys = computeAmbiguousAliasKeys(current.entities);
   const renames: { entity: string; from: string; to: string }[] = [];
   for (const candidateEntity of candidate.entities) {
-    const currentEntity = current.entities.find((entity) => entityNameMatchesAcrossRefine(entity.name, candidateEntity.name));
+    const currentEntity = current.entities.find((entity) => entityNameMatchesAcrossRefine(entity.name, candidateEntity.name, ambiguousAliasKeys));
     if (!currentEntity) continue;
     const candidateFieldNames = new Set(candidateEntity.fields.map((field) => field.name.toLowerCase()));
     const currentFieldNames = new Set(currentEntity.fields.map((field) => field.name.toLowerCase()));

@@ -1159,6 +1159,38 @@ test("detectLikelyFieldRenames does NOT fabricate a rename between an unrelated 
   );
 });
 
+/**
+ * Round 2257: a third collision shape in this same alias-matching logic,
+ * distinct from the two already fixed above -- when current already has
+ * TWO non-generic siblings of the same alias group alive at once (both
+ * "TeamMember" and "Staff", the exact coexistence mergeRefinedSpec's own
+ * round-2256 fix exists to handle correctly), a regenerated generic
+ * "Employee" candidate used to match BOTH siblings pairwise, and this
+ * function silently compared it against whichever one happened to come
+ * first in current.entities -- fabricating a "rename" between two fields
+ * that were never related at all, even though the real merge (correctly)
+ * adds Employee as its own new, untouched-sibling entity. Confirmed live
+ * before this fix: swapping TeamMember/Staff's array order changed which
+ * field got reported as the (bogus) "from" side.
+ */
+test("detectLikelyFieldRenames does NOT fabricate a rename when current has TWO coexisting alias siblings (TeamMember and Staff) that a generic Employee candidate would otherwise match ambiguously", () => {
+  const current = baseSpec({
+    entities: [
+      { name: "TeamMember", label: "Team Member", fields: [{ name: "name", type: "text", required: true }, { name: "role", type: "text", required: false }] },
+      { name: "Staff", label: "Staff", fields: [{ name: "name", type: "text", required: true }, { name: "shift", type: "text", required: false }] },
+    ],
+  });
+  const candidate = baseSpec({
+    entities: [{ name: "Employee", label: "Employee", fields: [{ name: "name", type: "text", required: true }, { name: "department", type: "text", required: false }] }],
+  });
+  assert.deepEqual(detectLikelyFieldRenames(current, candidate), [], "neither TeamMember nor Staff can be assumed to be the one Employee's own fields are being compared against");
+  // Swapping which sibling comes first must not change the (empty) result --
+  // confirming the fix isn't just coincidentally silent for one particular
+  // array order.
+  const swapped = baseSpec({ entities: [current.entities[1], current.entities[0]] });
+  assert.deepEqual(detectLikelyFieldRenames(swapped, candidate), [], "the result must stay empty regardless of which alias sibling happens to come first");
+});
+
 test("detectLikelyFieldRenames finds nothing when the candidate genuinely just adds a new, unrelated field (current field survives untouched)", () => {
   const current = baseSpec({ entities: [{ name: "Ticket", fields: [{ name: "subject", type: "text", required: true }] }] });
   const candidate = baseSpec({
