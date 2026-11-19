@@ -52877,3 +52877,93 @@ ambiguity (round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
 (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2321: JobApplicant's מועמד political guard didn't cover the construct-state plural מועמדי
+
+**Bug:** Round 2315 guarded bare/plural/feminine "מועמד" ("candidate(s)")
+against the political-office and academic-candidacy sense, but only when
+immediately followed by the preposition "ל" + a noun (e.g. "מועמדים
+לכנסת" = Knesset candidates). It never covered Hebrew's construct-state
+plural "מועמדי" ("candidates-of"), which drops the "ל" preposition
+entirely -- e.g. "מועמדי הנשיאות" (the presidential candidates) or
+"מועמדי המפלגה" (the party's candidates). "מועמדי" is a 6-letter
+substring prefix sitting inside both the bare "מועמד" branch (whose
+"(?!ת)(?!ים)" checks never considered a following "י") and the "מועמדים"
+branch, so it slipped through both existing lookaheads, which all expect
+"ל" + a noun rather than the construct state's bare noun. This is the same
+"audit a prior guard for every grammatical variant" shape as round 2318's
+two bugs, round 2319's MenuItem bug, and round 2320's Vendor bug (Strategy
+B), now validated across four consecutive rounds.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אתר המציג את מועמדי הנשיאות ואת תוצאות הסקרים העדכניים שלהם לפני יום הבחירות." and "מועמדי המפלגה לקראת הבחירות מתכננים סיבוב הופעות ברחבי הארץ." both
+fabricated JobApplicant with zero recruiting content. Genuine recruiting
+phrasing ("אנו מחפשים מועמדים למשרות פתוחות בחברה.", "כל מועמדי המשרה הפתוחה יעברו ראיון טלפוני.",
+"אנחנו מעוניינים במועמד/ת עם תואר ראשון בהנדסה.") and round 2315's own feminine political exclusion
+("היא מועמדת לראשות העיר בבחירות הקרובות.") all still correctly behaved as before.
+
+**Backtracking pitfall, reconfirmed:** a naive fix adding the construct
+suffix as a shared optional group outside a single lookahead
+(`מועמד(?:ים|ת|י)?(?!\s*ל<list>)`) was directly tested and confirmed to
+still wrongly match both construct false positives, AND to additionally
+reintroduce round 2315's own feminine-political regression (it wrongly
+matched "היא מועמדת לראשות העיר בבחירות הקרובות." too, which the current buggy code already
+excludes correctly) -- a double regression from the naive fix, not just a
+failure to fix the new bug. This is the same pitfall first identified in
+round 2315 and reconfirmed in rounds 2318, 2319, and 2320.
+
+**Fix** (`domainEntities.ts`, JobApplicant's Hebrew keyword list):
+"מועמדי" gets its own independent branch with its own full lookahead
+(construct nouns with the definite article "ה-", no "ל", unlike the other
+branches' "ל"+bare-noun lists), plus a "(?!ם)" guard so it can't be
+mistaken for "מועמדים"'s own prefix, and "(?!י)" added to the bare branch
+so it stops swallowing the construct form instead:
+```js
+/מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמד(?!ת)(?!ים)(?!י)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))/
+```
+
+**Incidental fix:** while scanning the edited region for stray non-Hebrew
+codepoints (the standing verification step from round 2316 onward), found
+and fixed a pre-existing corruption in one of round 2315's own doc
+comments -- a stray "מועמדים" that had two of its characters replaced
+with visually-similar Arabic code points instead of Hebrew ones. Harmless
+(comment text only, not executable regex), but exactly the class of
+corruption this verification step exists to catch, so fixed it while here.
+
+**Test added** (`heuristic.test.ts`): confirms both construct-state false
+positives no longer match JobApplicant, while round 2315's own plural+ל
+recruiting case, construct-state recruiting case, bare-degree case, and
+feminine political exclusion all still behave correctly.
+
+**BILLING_ENTITY_NAMES:** JobApplicant is not in `BILLING_ENTITY_NAMES`, so
+this bug is limited to entity-list corruption and doesn't touch the
+payment-recommendation `openQuestions` field.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 232 (the new test), as predicted; pass-after showed 232/232. Full
+`@forge/spec-engine` suite: 428/428 (up from 427). Full `@forge/api` suite:
+1782/1782 -- the first run of this suite this round failed with exit code 1
+purely due to the scratchpad volume's temp directory filling up (`/tmp/tsx-0`,
+tsx's compile cache, had grown to 23GB from the cumulative rounds of `npx
+tsx` repros in this bug-hunt), not a test regression; cleared the cache and
+old per-round scratch logs, freeing the disk, and the suite then passed
+cleanly on an immediate re-run. Production build: clean (`dist/server.js
+1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 27 confirmed instances total. The refined "audit whether a
+prior fix's guard covers every grammatical variant" strategy is now
+validated across four consecutive rounds (2318's two bugs, 2319's MenuItem
+bug, 2320's Vendor bug, and this round's JobApplicant bug) -- a standing,
+high-value search angle for future rounds. New operational note: `npx tsx`'s
+compile cache at `/tmp/tsx-0` should be watched or periodically cleared in
+long-running sessions that run many `npx tsx` scratch repros, since it does
+not self-prune and can exhaust the scratchpad volume's disk. Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap (rounds
+2282-2283); Courier license/insurance/traffic-ticket sub-case (round 2311);
+Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
