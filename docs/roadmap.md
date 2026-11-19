@@ -53414,3 +53414,83 @@ Course military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2328: Course's שיעור comeuppance-idiom guard was also missing the 1st/2nd-person forms
+
+**Bug:** Round 2314 added a lookbehind excluding "שיעור" (lesson) when it
+appears as part of the Hebrew idiom "לתת ל-X שיעור" (to teach X a lesson/
+comeuppance, nothing educational). The give-verb alternation it used
+(לתת|אתן|תיתן|ייתן|נתן|נתנה|נתנו) covers the infinitive, future
+(1st/2nd/3rd singular), and 3rd-person past (he/she/they-or-we gave) --
+but never 1st-person-singular past ("נתתי" = I gave), 2nd-person-
+singular past ("נתת" = you gave), or 2nd-person-plural past
+("נתתם"/"נתתן" = you-pl gave). This round's survey
+agent was explicitly briefed to check BILLING_ENTITY_NAMES members and
+Vendor/JobApplicant's other guards for the same "missing grammatical
+person" shape already confirmed in rounds 2326/2327; it found none of
+those but, continuing the Strategy B grammatical-variant audit more
+broadly, found the identical gap shape on Course's unrelated idiom guard
+instead -- now 3-for-3 across Vendor, Donation, and Course.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "נתתי לשכן שלי שיעור שהוא לא ישכח כל החיים שלו." (I gave my neighbor a lesson
+he won't forget), "אתה נתת לו שיעור שהוא לא ישכח לעולם." (you gave him a lesson), and
+"אתם נתתם לצוות היריב שיעור בטקטיקה." (you-pl gave the rival team a lesson) all
+fabricated a spurious Course entity via this comeuppance idiom, which has
+nothing to do with teaching. Round 2314's own 3rd-person/future controls
+("הוא נתן לשכן שלו שיעור שהוא לא ישכח.", "אני אתן לו שיעור שהוא לא ישכח.") and a genuine standalone lesson
+("אני מציע שיעור יוגה פרטי בבית הלקוח.") all still behaved correctly.
+
+**Fix** (`domainEntities.ts`, Course's "שיעור" keyword): the three missing
+forms were added as their own alternatives in the same lookbehind
+alternation:
+```js
+/(?<!(?:לתת|אתן|תיתן|ייתן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/
+```
+
+**BILLING_ENTITY_NAMES:** Course is deliberately NOT a member (a course
+can genuinely be free), so unlike rounds 2326/2327 this bug's impact is
+limited to the fabricated Course entity/screen -- no payment-
+recommendation `openQuestions` side effect.
+
+**Backtracking pitfall, checked and found NOT to apply here:** unlike the
+רכש/תרם lookahead-gated idioms (where a shared optional-suffix group lets
+the engine backtrack to a vacuous zero-width alternative and vacuously
+satisfy the lookahead), this guard is a *lookbehind* gated by a mandatory,
+non-optional "ל"+whitespace continuation immediately after the verb. A
+naive merged "נתת(?:י|ם|ן)?" variant was tested and does NOT reintroduce
+the pitfall here: the letter left over after a skipped optional suffix
+(ם/ן/י) can never itself satisfy that mandatory ל/whitespace gate, so the
+engine is always forced back to the correct, longer alternative.
+Independent alternatives were kept anyway, matching this file's
+established defensive convention. This is a useful negative result: the
+backtracking pitfall is real elsewhere in this file, but doesn't apply to
+every idiom-guard shape -- specifically not to lookbehind guards gated by
+a mandatory connector token right after the verb.
+
+**Test added** (`heuristic.test.ts`): confirms all three new idiom forms
+no longer fabricate Course, while round 2314's own exclusions and a
+genuine standalone lesson all still behave correctly.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 239 (the new test), as predicted; pass-after showed 239/239. Full
+`@forge/spec-engine` suite: 435/435 (up from 434). Full `@forge/api`
+suite: 1782/1782, unchanged, run via Bash's native `run_in_background`
+(disk space checked healthy beforehand). Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 34 confirmed instances total. The "missing
+grammatical person" gap shape is now confirmed 3-for-3 across Vendor
+(round 2326), Donation (round 2327), and Course (this round) -- it isn't
+limited to BILLING_ENTITY_NAMES members or even to verb-idiom guards tied
+to payments; any Hebrew idiom-exclusion guard built from a give/verb
+alternation is worth auditing for missing persons. Standing deferred/
+unsafe gaps, unchanged this round: Ticket bare-noun gap (rounds
+2282-2283); Courier license/insurance/traffic-ticket sub-case (round
+2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
