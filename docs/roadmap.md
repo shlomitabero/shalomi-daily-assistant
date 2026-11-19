@@ -54410,3 +54410,101 @@ trade-off, same leaky-denylist class); Volunteer's bare unguarded
 no plausible collision found yet).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2339: Appointment's bare 'מספרת' collided with the Hebrew 'tells/narrates' verb
+
+**Bug:** Appointment's Hebrew "מספרת" -- added in round 2288 as the
+construct-state form of "מספרה" (hair salon/barbershop), covering
+idiomatic business names like "מספרת גברים" (men's barbershop) -- was
+listed completely unguarded, unlike almost every other Hebrew keyword
+in this file. "מספרת" is also the ordinary Hebrew feminine-singular
+present-tense verb "tells/narrates" (Piel binyan of the root ס-פ-ר,
+e.g. "היא מספרת סיפור" = "she tells a story"), with zero connection to
+a hair salon.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): a kids' storytelling app
+("אפליקציה לילדים שבה דמות מספרת סיפור לפני השינה כל ערב.") fabricated `Appointment` as its ONLY entity
+for a pure storytelling app with zero scheduling content, and
+"פלטפורמה חינוכית שבה המורה מספרת סיפורים קצרים לתלמידים בכיתה." bolted a bogus Appointment entity onto an
+otherwise-correct Student/Course spec.
+
+**Fix** (`domainEntities.ts`, Appointment's keyword array):
+```js
+/מספרת(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/
+```
+Hebrew has no `\b`, so this excludes the specific narrative-verb
+direct objects the "tells" sense takes immediately after it (same
+leaky-denylist convention as round 2338's לקוח guard). Confirmed
+against both existing round-2288 test fixtures --
+"אפליקציה למספרת גברים לניהול לוח הזמנים והלקוחות שלנו" and "מערכת לניהול לקוחות במספרת נשים בעיר" -- that genuine
+salon-naming usage still matches, since neither "גברים" (men) nor
+"נשים" (women) is a narrative-object noun.
+
+**BILLING_ENTITY_NAMES:** Appointment is NOT a member (deliberately
+excluded per rounds 1345/1346, since appointments aren't inherently
+paid), so this bug is entity-fabrication only.
+
+**Deliberately a leaky denylist, not an exhaustive fix**, same class
+as round 2334's צדקה guard, round 2337's הזדמנות guard, and round
+2338's לקוח guard: a narrative object outside the curated list (e.g.
+"מספרת שיר"/tells a poem, "מספרת חידה"/tells a riddle) would still
+slip through, an accepted trade-off for the confirmed-live common
+cases this closes.
+
+**Test added** (`heuristic.test.ts`): confirms four bug sentences no
+longer match Appointment, while both existing round-2288 salon-naming
+fixtures still do.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 251 (the new test), as predicted; pass-after showed 251/251.
+Full `@forge/spec-engine` suite: 447/447 (up from 446). Full
+`@forge/api` suite: 1781/1782 on the first run, with the one failure
+(`codegen.test.ts`'s vite-build static-file-serving test, unrelated to
+this diff) confirmed a flake by re-running it in isolation, where it
+passed cleanly -- the SECOND consecutive round with an unrelated flake
+on a DIFFERENT test (round 2338 flaked on a file-upload-descriptor
+test), suggesting environment-level flakiness under the full suite's
+resource pressure rather than anything caused by either round's
+changes. Production build: clean (`dist/server.js 1.5mb`, exit code
+0).
+
+**Standing notes update:** this round used discovery method (C), now
+validated 4-for-4 (round 2336 Patient/מטופל, round 2337 Deal/
+הזדמנות, round 2338 Customer/לקוח, round 2339 Appointment/מספרת) --
+all four found on either the first Hebrew keyword in an entity's
+array, or (this round) a keyword added in a single later round
+(2288) without the file's by-then-standard guard convention being
+applied to it. A systematic sweep of every entity's keyword array this
+round found no further unguarded bare Hebrew keyword with a plausible
+collision -- see the survey agent's own detailed per-entity checklist
+(Customer/Appointment/Employee/Product/Service/Student/Course/
+Patient/Project/Task/Vehicle/Pet/Rental/Ticket/Subscription/
+JobApplicant/Donation/Shipment/InsuranceClaim/Vendor/Expense/Review/
+WorkOrder/Volunteer/Case/ROLE_RULES all checked, mostly already
+guarded or no plausible collision found) now recorded for the next
+round not to repeat. One soft lead flagged but unconfirmed: Shipment's
+bare "שילוח" has a plausible biblical/idiomatic reading but no live
+repro was found demonstrating it in ordinary modern usage -- worth a
+future round's fresh attempt rather than a closed dead end. Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap
+(rounds 2282-2283); Courier license/insurance/traffic-ticket sub-case
+(round 2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318); Order's
+forward-only "הזמנה" exclusion-lookahead directionality gap (round
+2331, accepted trade-off); pre-existing roadmap.md script-substitution
+corruption from rounds 2316/2324/2325 (round 2332, deferred to a
+dedicated future round); Donation's "צדקה" guard's residual
+unlisted-stance-noun leak (round 2334, accepted trade-off); Patient's
+"מטופל" guard's residual leaks (round 2336, accepted trade-off);
+Deal's "הזדמנות" guard's residual leak (round 2337, accepted
+trade-off); Customer's "לקוח" guard's residual leak (round 2338,
+accepted trade-off); Appointment's "מספרת" guard's residual
+unlisted-narrative-object leak (round 2339, accepted trade-off);
+Volunteer's bare unguarded "מתנדב"/"מתנדבת"/"מתנדבים"
+(checked-but-inconclusive across three rounds now, no plausible
+collision found).
+
+Live: https://forge-ai-m7p7.onrender.com
