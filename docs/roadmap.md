@@ -52967,3 +52967,78 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2322: Donation's bare תרם/תרמה/תרמו/לתרום verb forms collided with the ordinary "contributed to" idiom
+
+**Bug:** Round 2293 added these bare verb forms after checking they weren't
+a substring of unrelated NOUNS (תרמיל "backpack", תרמית
+"fraud") via the sofit-mem-vs-regular-mem Unicode distinction -- but never checked the
+verb's own primary, extremely common Hebrew sense: these forms equally mean
+ordinary "contributed" (to a project's success, to an app improvement, to
+finishing a task), with no money or charity involved at all. This is the
+same "re-examine a fixed entity's full keyword array for additional,
+different collisions" shape (Strategy A) that found rounds 2314, 2316,
+2317, 2318, 2320, and 2321's bugs.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "העובד החדש תרם רבות להצלחת הפרויקט במהלך השנה האחרונה." (contributed to the project's
+success), "התכונה החדשה תרמה רבות לשיפור חווית המשתמש באפליקציה." (contributed to improving UX), "כל חברי הצוות תרמו מאמץ רב להשלמת המשימה בזמן."
+(contributed effort to finishing the task), and the infinitive
+"כולם מתבקשים לתרום להצלחת האירוע." (asked to contribute to the event's success) each fabricated
+a Donation entity with zero charitable content. Since Donation is in
+`BILLING_ENTITY_NAMES`, each also wrongly flipped the payment-provider
+openQuestion's `recommendation` field to "Stripe" -- the same dual severity
+(entity fabrication AND payment-recommendation corruption) round 2319's
+MenuItem bug first flagged for this file's BILLING_ENTITY_NAMES entities.
+
+**Fix** (`domainEntities.ts`, Donation's Hebrew keyword list) -- each form
+gets its own independent, self-contained lookahead excluding "ל" + an
+abstract success/improvement noun, with 0-2 intervening words allowed for
+an adverbial phrase:
+```js
+/תרם(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+/תרמה(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+/תרמו(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+/לתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+```
+Each form is its own separate regex entry rather than a shared alternation
+under one outer lookahead, avoiding the backtracking pitfall rounds
+2315/2318-2321 already hit -- and matching round 2293's own finding that
+these forms are mutually exclusive literal strings (sofit mem vs. regular
+mem), so there is no risk of one form's optional suffix swallowing
+another's prefix the way rounds 2319-2321's bugs did.
+
+**Non-regression confirmed:** genuine donation wording for every form --
+masc. "העובד תרם כסף רב לעמותה המקומית.", fem. "התורמת תרמה תרומה נכבדה לקרן המחלה.", plural
+"התורמים תרמו בגדים ישנים לעמותה.", and the infinitive "אפליקציה שמאפשרת למשתמשים לתרום כסף למטרות שונות." (round
+2293's own original motivating sentence) -- all still correctly match
+Donation.
+
+**Test added** (`heuristic.test.ts`): confirms all four idiom
+false-positive sentences no longer match Donation (and the masc. case's
+payment recommendation is no longer corrupted to "Stripe"), while all four
+genuine donation sentences still match correctly.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 233 (the new test), as predicted; pass-after showed 233/233. Full
+`@forge/spec-engine` suite: 429/429 (up from 428). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background` (disk space
+checked healthy beforehand, following up on round 2321's `/tmp/tsx-0`
+disk-full incident -- no recurrence this round). Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 28 confirmed instances total. This round was found via
+Strategy A (re-examining an already-fixed entity's complete keyword array)
+rather than Strategy B (grammatical-variant-coverage audit) -- a reminder
+that both strategies remain productive in parallel and future rounds
+should keep applying both, not favor one over the other just because
+Strategy B has had a longer recent streak. Standing deferred/unsafe gaps,
+unchanged this round: Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
