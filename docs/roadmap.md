@@ -56600,3 +56600,76 @@ not a quick single-line fix) or pivot to heuristic.ts structural logic
 bugs per the standing fallback.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2364: Order's "רכישה"/"רכישות" missing construct-state "רכישת"
+
+**Bug:** taking on the candidate round 2363 flagged but deliberately
+set aside: Order's absolute keywords "רכישה"/"רכישות" ("purchase"/
+"purchases") never covered the construct-state singular "רכישת"
+(e.g. "רכישת ציוד" = "equipment purchase", "רכישת לקוח" = "customer
+purchase/acquisition") -- the identical construct-state gap shape
+round 2363 fixed for Donation's "תרומת". Unlike "תרומת" though, round
+2363 warned that "רכישת" phrasing is the natural way to express an
+unrelated, pre-existing "acquisition of X" idiom (gaining knowledge/
+experience/citizenship/trust/status, e.g. "רכישת ניסיון מקצועי" =
+"gaining professional experience") that already collides with the
+bare absolute "רכישה" form. This round's survey agent confirmed live
+that a naive, unguarded "רכישת" addition turns every one of several
+such idiom sentences (none of which match Order today) into a
+spurious Order match -- strictly worse than the status quo -- so the
+fix needed a bounded exclusion list, not a bare literal.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול רכישת ציוד למחסן.", "מערכת למעקב אחרי רכישת לקוח בחנות המקוונת.", and
+"מערכת למעקב אחרי רכישת רכב משומש." all lost the Order entity entirely (falling through to
+whichever other entity matched instead -- Item, Customer, or
+Vehicle). Separately confirmed the idiom-collision risk: construct-
+state sentences using "רכישת ניסיון"/"רכישת אזרחות"/"רכישת ידע"/
+"רכישת זמן" all currently match nothing (`Item`), and a naive
+unguarded "רכישת" addition flips every one of them to a spurious
+Order match.
+
+**Fix** (`domainEntities.ts`, Order's keyword array):
+```js
+/רכישת(?!\s*(?:ניסיון|זמן|אזרחות|ידע|השכלה|מוניטין|ביטחון|אמון|כוח|השפעה|מעמד|חברים))/
+```
+Adds the construct-state "רכישת" with a negative lookahead excluding
+the specific idiom nouns (ניסיון/זמן/אזרחות/ידע/השכלה/מוניטין/ביטחון/
+אמון/כוח/השפעה/מעמד/חברים) that follow it in the unrelated
+"acquiring X" sense, mirroring this file's other "common word +
+excluded noun list" guards (e.g. `ROLE_RULES.Manager`'s
+"מנהל(?!...מערכת)").
+
+**Verification (regression/collision checks run live):** confirmed
+all 3 bug sentences now correctly match Order; confirmed all 4 idiom-
+collision sentences stay correctly excluded, identical to baseline;
+confirmed the already-working absolute singular/plural forms are
+unaffected. The pre-existing absolute-form idiom collision ("רכישה
+של ניסיון מקצועי" already spuriously matching Order today) is a
+separate, broader, pre-existing bug this round does not attempt to
+fix -- confirmed unchanged by this fix either way.
+
+**Test added** (`heuristic.test.ts`, immediately after round 2363's
+existing test): confirms all 3 bug sentences now match Order;
+confirms both absolute-form non-regression cases still pass;
+confirms all 4 idiom-collision sentences stay excluded.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 275 (the new test), as predicted; pass-after showed 275/275 --
+no regression. Full `@forge/spec-engine` suite: 471/471 (up from 470).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "4th Hebrew inflection missing from an
+incrementally-built keyword/guard" lens has now found bugs in 6
+consecutive rounds (2359-2364). This round also demonstrates that
+when a bare construct-state addition would worsen a pre-existing
+collision, the right fix is a bounded exclusion-list guard rather
+than skipping the round or forcing an unsafe literal -- a reusable
+pattern for any future similar candidate. Next round should continue
+applying this lens to other multi-round Hebrew keyword families in
+`DOMAIN_ENTITY_RULES`, or pivot to heuristic.ts structural logic bugs
+per the standing fallback if that angle is exhausted.
+
+Live: https://forge-ai-m7p7.onrender.com
