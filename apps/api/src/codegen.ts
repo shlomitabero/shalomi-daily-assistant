@@ -7681,7 +7681,17 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
       if (!failed.includes(entry)) removePinnedRecord(entity.name, entry.id);
     }
     if (failed.length === 0) return;
-    setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
+    // Round 2261: see the live preview's own commitPendingDelete comment --
+    // each failed entry's restore position must shift left by however many
+    // OTHER selected entries before it in the batch genuinely succeeded (or
+    // were notFound), since those slots are gone for good.
+    const removedIndices = pending.entries.filter((e) => !failed.includes(e)).map((e) => e.index);
+    setRecords((prev) =>
+      failed.reduce(
+        (acc, e) => restoreRecordAt(acc, e.record, e.index - removedIndices.filter((idx) => idx < e.index).length),
+        prev,
+      ),
+    );
     const firstFailure = results.find((r, i) => r.status === "rejected" && !notFound.has(pending.entries[i]));
     setError(
       failed.length === pending.entries.length

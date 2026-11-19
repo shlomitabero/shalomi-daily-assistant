@@ -4799,6 +4799,62 @@ test("the exported EntityView's commitPendingDelete treats a NOT_FOUND entry as 
 });
 
 /**
+ * Round 2261: mirrors the live Forge AI preview's own identical
+ * EntityPanel.test.ts round-2261 regression test. A 3+-entry batch where
+ * the record whose real delete genuinely succeeds (id 3, "C") sits
+ * BETWEEN two records whose real deletes fail (id 2 "B" and id 4 "D") --
+ * commitPendingDelete used to restore each failed entry at its raw
+ * pre-delete index, with no way to account for C's slot being gone for
+ * good, so D landed one position too far right.
+ */
+test("the exported EntityView's commitPendingDelete restores failed entries in their correct relative order even when a successfully-deleted entry was sandwiched between them", async () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const commitPendingDeleteSrc = entityViewJsx.match(/async function commitPendingDelete\(pending\) \{[\s\S]*?\n  \}\n/)?.[0];
+  assert.ok(commitPendingDeleteSrc, "expected to find an async commitPendingDelete in generated output");
+
+  let capturedRecords: unknown;
+  const fn = new Function(
+    "entity",
+    "restoreRecordAt",
+    "setRecords",
+    "setError",
+    "deleteRecord",
+    "removePinnedRecord",
+    `${commitPendingDeleteSrc}\nreturn commitPendingDelete;`,
+  )(
+    { name: "Courier" },
+    (records: unknown[], record: unknown, index: number) => {
+      const copy = records.slice();
+      copy.splice(index, 0, record);
+      return copy;
+    },
+    (updater: (prev: unknown[]) => unknown[]) => {
+      capturedRecords = updater(["A", "E"]);
+    },
+    () => {},
+    async (_entityName: string, id: number) => {
+      if (id === 3) return;
+      throw new Error("Cannot delete this record -- another record still references it through a relation field");
+    },
+    () => {},
+  );
+
+  await fn({
+    entries: [
+      { id: 2, record: "B", index: 1 },
+      { id: 3, record: "C", index: 2 },
+      { id: 4, record: "D", index: 3 },
+    ],
+  });
+
+  assert.deepEqual(
+    capturedRecords,
+    ["A", "B", "D", "E"],
+    "B and D (both genuinely failed) must be restored in their correct relative order -- C's vacated slot (it genuinely succeeded) must not push D past E",
+  );
+});
+
+/**
  * Round 2208: mirrors the live Forge AI preview's own identical
  * EntityPanel.test.ts round-2208 regression test. handleDelete/
  * handleBulkDelete's own deferred setTimeout used to call

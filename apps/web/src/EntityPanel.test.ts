@@ -2266,6 +2266,79 @@ test("EntityPanel restores only the records whose real delete actually failed on
 });
 
 /**
+ * Round 2261: a 3+-entry batch where the record whose real delete
+ * genuinely succeeds sits BETWEEN two records whose real deletes fail --
+ * the sibling test above only ever has one failed entry, so it can never
+ * catch a restore position computed from the wrong, un-shifted original
+ * index. Records A(1) B(2) C(3) D(4) E(5); select B, C, D; C's delete
+ * succeeds (so it must stay gone for good) while B and D's both fail (so
+ * both must come back) -- the only correct final order is A, B, D, E.
+ */
+test("EntityPanel restores a 3+-entry bulk delete's failed records in their correct relative order even when a successfully-deleted record was sandwiched between them", async (t) => {
+  await withJsdom(async () => {
+    const store: EntityRecord[] = [
+      { id: 1, name: "A", status: "new" },
+      { id: 2, name: "B", status: "new" },
+      { id: 3, name: "C", status: "new" },
+      { id: 4, name: "D", status: "new" },
+      { id: 5, name: "E", status: "new" },
+    ];
+    const deletedIds: number[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalConfirm = globalThis.window.confirm;
+    globalThis.fetch = (async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/entities/Deal") {
+        return new Response(JSON.stringify({ records: store }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "DELETE" && input === "/api/projects/proj1/entities/Deal/3") {
+        deletedIds.push(3);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "DELETE" && (input === "/api/projects/proj1/entities/Deal/2" || input === "/api/projects/proj1/entities/Deal/4")) {
+        return new Response(
+          JSON.stringify({ error: "another record still refers to it", code: "RECORD_HAS_DEPENDENT_RECORDS" }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    globalThis.window.confirm = (() => true) as typeof window.confirm;
+    try {
+      renderEntityPanel();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 5);
+
+      // Round names B, C, D sit at rows 1, 2, 3 (A is row 0, E is row 4) --
+      // selecting by row POSITION rather than matching row text for "B"/
+      // "C"/"D": every row's own Duplicate/Delete action buttons already
+      // contain a "D", which would otherwise match every row.
+      const checkboxes = Array.from(document.querySelectorAll('td.select-col input[type="checkbox"]')) as HTMLInputElement[];
+      [1, 2, 3].forEach((i) => fireEvent.click(checkboxes[i]));
+      await waitForCondition(() => document.querySelector(".bulk-actions-bar") !== null);
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      fireEvent.click(document.querySelector(".bulk-actions-bar .danger") as HTMLButtonElement);
+
+      act(() => {
+        t.mock.timers.tick(5000);
+      });
+      t.mock.timers.reset();
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 4);
+
+      assert.deepEqual(deletedIds, [3], "only C's real delete must have gone through");
+      const names = Array.from(document.querySelectorAll("table tbody tr")).map((r) => r.textContent ?? "");
+      assert.ok(names[0].startsWith("A"), "A must come first");
+      assert.ok(names[1].startsWith("B"), "B must be restored right after A");
+      assert.ok(names[2].startsWith("D"), "D must be restored right after B, not after E -- C's vacated slot must not push D past E");
+      assert.ok(names[3].startsWith("E"), "E must stay last");
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.window.confirm = originalConfirm;
+    }
+  });
+});
+
+/**
  * Round 1891: the bulk counterpart of the sibling single-delete NOT_FOUND
  * test below -- one selected record (id 1) was already deleted by another
  * tab/collaborator before this tab's own deferred bulk DELETE reached the

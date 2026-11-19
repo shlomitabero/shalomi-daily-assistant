@@ -4527,7 +4527,27 @@ export function EntityPanel({
       if (!failed.includes(entry)) removePinnedRecord(projectId, entity.name, userId, entry.id);
     }
     if (failed.length === 0) return;
-    setRecords((prev) => failed.reduce((acc, e) => restoreRecordAt(acc, e.record, e.index), prev));
+    // Round 2261: each failed entry's own pre-delete index assumes no
+    // OTHER selected record strictly before it in the batch was ever
+    // removed for good. True for a 2-entry batch (the only shape the
+    // existing test above covers), but once a batch has 3+ entries and
+    // a record sandwiched between two failed ones genuinely succeeded,
+    // its vacated slot must shift every later failed entry's restore
+    // position left by one -- restoreRecordAt's own clamp (against the
+    // ALREADY-shrunk current array) can't tell "this record never comes
+    // back" apart from "this slot is still open," so it kept inserting
+    // later failed entries one slot too far right. Subtract, for each
+    // failed entry, the count of genuinely-removed (succeeded or
+    // notFound -- both permanently gone, mirroring the removePinnedRecord
+    // loop's own !failed.includes(entry) check above) entries whose own
+    // original index came before it.
+    const removedIndices = pending.entries.filter((e) => !failed.includes(e)).map((e) => e.index);
+    setRecords((prev) =>
+      failed.reduce(
+        (acc, e) => restoreRecordAt(acc, e.record, e.index - removedIndices.filter((idx) => idx < e.index).length),
+        prev,
+      ),
+    );
     const firstFailure = results.find(
       (r, i): r is PromiseRejectedResult => r.status === "rejected" && !notFound.has(pending.entries[i]),
     )!;
