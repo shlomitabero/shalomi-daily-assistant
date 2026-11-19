@@ -53265,3 +53265,76 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2326: Vendor's רכש idiom guard was missing the 1st/2nd-person forms of the same idiom
+
+**Bug:** Round 2309 guarded masc./fem. 3rd-person singular against the
+"acquired-X" idiom; round 2320 added the 3rd-person plural. Neither round
+checked the OTHER grammatical persons of the same verb paradigm:
+1st-person singular/plural ("רכשתי"/"רכשנו" = I/we acquired) and
+2nd-person singular/plural ("רכשת"/"רכשתם"/"רכשתן" = you
+acquired). This is Strategy B applied to Vendor rather than JobApplicant --
+after five consecutive rounds (2315/2321/2323/2324/2325) on JobApplicant's
+political מועמד guard, this round's survey agent was explicitly briefed to
+move to a different entity, and found the identical "missing grammatical
+person" shape one guard over.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אנחנו רכשנו ניסיון רב בניהול פרויקטים מורכבים ובעבודה בצוות, ונרצה לתעד את הלקוחות ואת המשימות שלנו." (we acquired experience),
+"במהלך העבודה רכשתי ניסיון רב בתחום שירות הלקוחות, ואני רוצה אפליקציה לניהול לקוחות ומשימות." (I acquired experience), "אתה רכשת ניסיון רב בתפקיד הקודם שלך בחברה." (you
+acquired experience), and "אתם רכשתם ניסיון רב בעבודת הצוות במהלך השנה." (you-pl acquired experience)
+all fabricated Vendor with zero procurement content. Genuine procurement
+for the same persons ("אנחנו רכשנו ציוד חדש מהספק המקומי.", "אתה רכשת ציוד חדש למשרד.")
+and every prior round's own exclusions (2309's masc./fem. singular, 2320's
+plural) all still behaved correctly.
+
+**Fix** (`domainEntities.ts`, Vendor's Hebrew keyword list): each person
+gets its own independent branch with its own full idiom lookahead
+(longest/most-specific literal first, so e.g. "רכשתם" is tried
+before the bare "רכשת" prefix matches it):
+```js
+/רכשתם(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתן(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשנו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשת(?!ם)(?!ן)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!ת)(?!נ)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/
+```
+The masc.-singular "רכש" branch now also excludes "ת" and "נ" directly
+after it (in addition to the existing "ה"/"ו") so it can never mistake any
+longer inflected form's prefix for itself, and "רכשת" excludes
+"ם"/"ן"/"י" directly after it for the same reason relative to
+"רכשתם"/"רכשתן"/"רכשתי".
+
+**Backtracking pitfall, reconfirmed and found MORE damaging than
+previously documented:** a shared merged regex using one optional suffix
+group ("רכש(?:תי|תם|תן|נו|ת|ה|ו)?(?!\s*idiom)") was tested and confirmed
+to not only fail on all four new idiom sentences, but ALSO reintroduce TWO
+already-fixed regressions from rounds 2309 and 2320 (the fem. singular and
+3rd-person-plural exclusions) -- the shared-group backtracking pitfall
+this file keeps rediscovering, this time shown to corrupt prior fixes too,
+not just fail to cover the new case.
+
+**Test added** (`heuristic.test.ts`): confirms all four new idiom
+false-positives no longer match Vendor, while genuine procurement for the
+same persons and rounds 2309's/2320's own exclusions all still match/don't
+match correctly.
+
+**BILLING_ENTITY_NAMES:** Vendor is not in `BILLING_ENTITY_NAMES`, so this
+bug is limited to entity-list corruption.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 237 (the new test), as predicted; pass-after showed 237/237. Full
+`@forge/spec-engine` suite: 433/433 (up from 432). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background` (disk space
+checked healthy beforehand). Production build: clean (`dist/server.js
+1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 32 confirmed instances total. This round confirms the
+"missing grammatical person" gap shape generalizes beyond JobApplicant's
+מועמד guard -- any Hebrew verb-idiom guard that only covers 3rd-person
+forms should be checked for 1st/2nd-person gaps too. Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap (rounds
+2282-2283); Courier license/insurance/traffic-ticket sub-case (round
+2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
