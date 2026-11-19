@@ -7470,3 +7470,71 @@ test("Patient's 'מטופל'/'מטופלת'/'מטופלים' keywords don't spur
     "a cue noun appearing AFTER the keyword, rather than immediately before it, must not be wrongly excluded",
   );
 });
+
+test("Deal's Hebrew 'הזדמנות'/'הזדמנויות' keywords don't spuriously match the unrelated 'chance/opportunity to do X' idiom", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const vacationOpportunity = await provider.generate("זו הזדמנות פז לנסוע לחופשה בחינם לפני שהמקומות נגמרים.");
+  assert.ok(!vacationOpportunity.entities.some((e) => e.name === "Deal"), "'הזדמנות פז לנסוע' (a golden opportunity to travel) must not spuriously match Deal");
+
+  const learnLanguageOpportunity = await provider.generate("לא לפספס את ההזדמנות הזו ללמוד שפה חדשה בקיץ.");
+  assert.ok(!learnLanguageOpportunity.entities.some((e) => e.name === "Deal"), "'ההזדמנות הזו ללמוד' (this opportunity to learn) must not spuriously match Deal");
+
+  const onceInALifetime = await provider.generate("הזדמנות של פעם בחיים לטייל בעולם.");
+  assert.ok(!onceInALifetime.entities.some((e) => e.name === "Deal"), "'הזדמנות... לטייל' (an opportunity to travel) must not spuriously match Deal");
+
+  const developOpportunity = await provider.generate("זו הזדמנות מצוינת להתפתח בתחום חדש.");
+  assert.ok(!developOpportunity.entities.some((e) => e.name === "Deal"), "'הזדמנות מצוינת להתפתח' (an excellent opportunity to develop) must not spuriously match Deal");
+
+  // Non-regression: genuine CRM usage must still match Deal.
+  const crm1 = await provider.generate("מערכת CRM לניהול לידים ולקוחות, עם שלבי מכירה, פגישות ומעקב הזדמנויות.");
+  assert.ok(crm1.entities.some((e) => e.name === "Deal"), "a genuine CRM description mentioning 'הזדמנויות' must still match Deal");
+
+  const crm2 = await provider.generate("מערכת CRM למעקב אחר עסקאות מכירה והזדמנויות.");
+  assert.ok(crm2.entities.some((e) => e.name === "Deal"), "a genuine CRM description mentioning 'והזדמנויות' must still match Deal");
+
+  const crm3 = await provider.generate("הזדמנות עסקית חדשה עם לקוח פוטנציאלי.");
+  assert.ok(crm3.entities.some((e) => e.name === "Deal"), "a genuine business-opportunity sentence with the bare singular 'הזדמנות' must still match Deal");
+
+  // Non-regression: Hebrew "ל" marks both infinitives and dative nouns, so phrasing
+  // like "opportunity for X" (a noun, not a verb) must not be wrongly excluded.
+  const opportunityForCustomers = await provider.generate("הזדמנות ללקוחות חדשים לקבל הצעה מיוחדת.");
+  assert.ok(opportunityForCustomers.entities.some((e) => e.name === "Deal"), "'הזדמנות ללקוחות' (opportunity for customers) must still match Deal");
+
+  const opportunityForSale = await provider.generate("הזדמנות למכירה של נכס מניב.");
+  assert.ok(opportunityForSale.entities.some((e) => e.name === "Deal"), "'הזדמנות למכירה' (opportunity for a sale) must still match Deal");
+});
+
+test("MenuItem's 'מנות' keyword's existing 'הזמנות' (orders) lookbehind exclusion also needed to cover 'הזדמנות' (opportunity)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const vacationOpportunity = await provider.generate("זו הזדמנות פז לנסוע לחופשה בחינם לפני שהמקומות נגמרים.");
+  assert.ok(
+    !vacationOpportunity.entities.some((e) => e.name === "MenuItem"),
+    "'הזדמנות' (opportunity) must not spuriously match MenuItem via the 'מנות' substring",
+  );
+
+  const genuineCrmWithOpportunity = await provider.generate("הזדמנות עסקית חדשה עם לקוח פוטנציאלי.");
+  assert.ok(
+    !genuineCrmWithOpportunity.entities.some((e) => e.name === "MenuItem"),
+    "a genuine CRM sentence mentioning the bare singular 'הזדמנות' must not spuriously match MenuItem",
+  );
+  const stripeQ = genuineCrmWithOpportunity.openQuestions?.find((q) => q.options.includes("Stripe"));
+  assert.ok(
+    !stripeQ || stripeQ.recommendation !== "Stripe",
+    "a plain CRM 'opportunity' sentence with no menu/billing content must not wrongly recommend Stripe via the spurious MenuItem match",
+  );
+
+  // Non-regression: the plural "הזדמנויות" never had this problem (its extra
+  // "וי" infix already breaks the "מנות" substring), and the pre-existing
+  // "הזמנות" (orders) and dosage exclusions, plus genuine MenuItem matches,
+  // must all still behave exactly as before.
+  const pluralOpportunity = await provider.generate("אלו הזדמנויות נהדרות לנסוע ולטייל.");
+  assert.ok(!pluralOpportunity.entities.some((e) => e.name === "MenuItem"), "'הזדמנויות' (plural) must still not spuriously match MenuItem");
+
+  const ordersOnly = await provider.generate("אפליקציה לניהול הזמנות של חנות בגדים אונליין");
+  assert.ok(!ordersOnly.entities.some((e) => e.name === "MenuItem"), "'הזמנות' (orders) must still not spuriously match MenuItem via 'מנות'");
+
+  const realMenu = await provider.generate("אפליקציה לניהול מנות של בית אוכל קטן");
+  assert.ok(realMenu.entities.some((e) => e.name === "MenuItem"), "a standalone 'מנות' must still match MenuItem");
+});

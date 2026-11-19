@@ -809,8 +809,41 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // nearly any description mentioning something being near something
       // else as a sales CRM.
       "לידים",
-      "הזדמנות",
-      "הזדמנויות",
+      // Round 2337: unlike every other Hebrew keyword in this array
+      // (עסקה/עסקאות and לידים both have their own collision writeup,
+      // or an explicit note on why none is needed), bare "הזדמנות"/
+      // "הזדמנויות" were listed completely unguarded -- the exact Hebrew
+      // counterpart of the ENGLISH "opportunity"/"opportunities"
+      // collision already fixed a few lines above (round 2105's
+      // (?<!\bequal\s)\bopportunit(?:y|ies)\b(?!\s+to\b) guard), but that
+      // fix was never mirrored onto the Hebrew side. "הזדמנות" is
+      // routinely used in the ordinary, non-CRM "chance/opportunity to
+      // do X" idiom -- confirmed live: "זו הזדמנות פז לנסוע לחופשה
+      // בחינם..." (a golden opportunity to go on a free vacation),
+      // "...ההזדמנות הזו ללמוד שפה חדשה..." (this opportunity to learn a
+      // new language), and "הזדמנות של פעם בחיים לטייל בעולם" (a
+      // once-in-a-lifetime opportunity to travel the world) each
+      // fabricated a bogus Deal entity (fields title/value/stage/owner)
+      // for a plain vacation/learning sentence with zero CRM content.
+      //
+      // Mirrors round 2105's "opportunity to VERB" exclusion shape, but
+      // Hebrew's "ל" prefix marks both an infinitive verb AND a dative
+      // noun (unlike English "to"), so a bare "ל" exclusion would be
+      // unsafe -- it would wrongly exclude genuine CRM phrasing like
+      // "הזדמנות ללקוחות חדשים" (opportunity for new customers) or
+      // "הזדמנות למכירה" (opportunity for a sale), both confirmed still
+      // matching correctly since "לקוחות"/"מכירה" aren't infinitives.
+      // Instead this excludes a specific, deliberately leaky denylist of
+      // common infinitives that follow the noun in this idiom (same
+      // "leaky denylist" convention as round 2027's ספק guard and round
+      // 2334's צדקה guard), allowing up to 3 intervening words
+      // (adjectives like "פז"/"מצוינת", demonstrative "הזו") between the
+      // noun and the verb -- confirmed empirically this bound doesn't
+      // regress any of this entity's existing genuine-CRM test fixtures.
+      // A verb outside this list (e.g. "ההזדמנות הזו היא לפתוח עסק
+      // חדש") can still slip through unfixed, an accepted trade-off for
+      // the confirmed-live common cases this closes.
+      /הזדמנ(?:ות|ויות)(?!(?:\s+\S+){0,3}\s*ל(?:נסוע|למוד|התפתח|גלות|חוות|השתתף|הרוויח|חסוך|התנסות|קחת\s*חלק|הנות|ראות|בקר|חיות|גדול|היות|עבוד|בלות|טייל|הכיר)\S*)/,
     ],
     labelHe: "עסקאות",
     descriptionHe: "עסקת מכירה פוטנציאלית.",
@@ -944,7 +977,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // (mirroring the property-נכס approach) is used instead, only
       // when an unambiguous dosage-cue word co-occurs ANYWHERE in the
       // text, in either order relative to "מנות".
-      /(?<!ז)מנות(?![\s\S]*?(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות))(?<!(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות)[\s\S]*)/,
+      //
+      // Round 2337: the (?<!ז) lookbehind only catches "מנות" preceded
+      // by "ז" (for "הזמנות", orders) -- it missed that bare singular
+      // "הזדמנות" (opportunity, fixed as its own Deal-entity false
+      // positive just above in this file) is ALSO a literal superstring
+      // of "מנות": ה-ז-ד-מ-נ-ו-ת, where the character immediately before
+      // "מנות" is "ד", not "ז". Since MenuItem is in BILLING_ENTITY_NAMES,
+      // this corrupted even GENUINE Deal/CRM sentences mentioning the
+      // singular "הזדמנות" -- confirmed live: "הזדמנות עסקית חדשה עם
+      // לקוח פוטנציאלי" (a new business opportunity with a potential
+      // client), a plain, correctly-classified CRM sentence, also
+      // fabricated a bogus MenuItem entity and wrongly flipped the
+      // payment recommendation to Stripe. (The PLURAL "הזדמנויות" does
+      // NOT have this problem -- its extra "וי" infix breaks the "מנות"
+      // substring, confirmed empirically.) Extended the lookbehind to
+      // also exclude a preceding "ד", confirmed no other common Hebrew
+      // word ends in "...דמנות".
+      /(?<![זד])מנות(?![\s\S]*?(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות))(?<!(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות)[\s\S]*)/,
       "בית קפה",
       // "בית קפה" (café) had no plural entry (round 582). Unlike this
       // file's other missing-plural fixes (576-581, all a ה→ות swap or a
