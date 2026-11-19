@@ -53190,3 +53190,78 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2325: JobApplicant's political guard had a FIFTH gap -- לתפקיד/כהונת inserted between ל and the office noun
+
+**Bug:** The fifth fix to this one recurring collision across five
+consecutive rounds (2315, 2321, 2323, 2324, 2325) -- this time a
+structural gap rather than a new inflected form of "מועמד" itself. Every
+branch's "ל" lookahead assumed "ל" is immediately followed by the office
+noun (e.g. "לראש העיר"), but ordinary Hebrew political journalism
+routinely inserts "תפקיד" (position) or "כהונת" (term/tenure)
+between them: "מועמד לתפקיד ראש העיר" (candidate for the POSITION OF
+mayor), "מועמדת לתפקיד נשיאות" (candidate for the POSITION OF the
+presidency) -- breaking every branch's adjacency assumption at once. This
+round's survey agent was briefed to do a bounded first check on this exact
+guard (given its four-round history) before moving to other entities, and
+found this within budget.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אתר חדשות המסקר את מי שהוא מועמד לתפקיד ראש העיר בבחירות הקרובות." (masc., mayoral),
+"העיתון מפרסם כתבה על מי שהוא מועמד לתפקיד ראש הממשלה הבא." (masc., prime-ministerial), "האתר עוקב אחרי מי שהיא מועמדת לתפקיד נשיאות ארצות הברית." (fem.,
+presidential), and "כתבה על מועמדים לתפקיד ראש העיר בבחירות המקומיות הקרובות." (plural, mayoral) each fabricated
+JobApplicant with zero recruiting content. Genuine recruiting
+("אנו מחפשים מועמדים למשרות פתוחות בחברה."), including the deliberately tricky case where
+"תפקיד" precedes an ORDINARY job title ("אפליקציה לניהול תהליך הגיוס של מועמדים לתפקיד מפתח תוכנה בחברה."), and
+every one of rounds 2315's, 2321's, 2323's, and 2324's own exclusions all
+still behaved correctly.
+
+**Fix** (`domainEntities.ts`, JobApplicant's Hebrew keyword list): inserted
+an optional "(?:תפקיד\s*|כהונת\s*)?" group right after "ל" and
+before the office-noun list, independently in EACH of the four
+"ל"-lookahead copies (the construct-state lookaheads, which never use "ל",
+are untouched):
+```js
+/מועמדות(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!ות)(?!\s*ל(?:תפקיד\s*|כהונת\s*)?(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/
+```
+Verified that patching only one branch (e.g. only the plural "מועמדים")
+while leaving the others unpatched still lets sentences matching those
+other branches slip through -- confirming each branch needs its own
+independent copy of the fix, continuing the exact discipline established
+across all four prior fixes to this guard.
+
+**Test added** (`heuristic.test.ts`): confirms all four new false
+positives no longer match JobApplicant, while genuine recruiting
+(including the "תפקיד"-for-an-ordinary-job control) and every prior
+round's own exclusions still behave correctly.
+
+**BILLING_ENTITY_NAMES:** JobApplicant is not in `BILLING_ENTITY_NAMES`,
+so this bug is limited to entity-list corruption.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 236 (the new test), as predicted; pass-after showed 236/236. Full
+`@forge/spec-engine` suite: 432/432 (up from 431). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background` (disk space
+checked healthy beforehand). Production build: clean (`dist/server.js
+1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 31 confirmed instances total. JobApplicant's political-
+candidate guard has now needed FIVE separate fixes across five consecutive
+rounds (2315/2321/2323/2324/2325) -- the first four each a different
+inflected form of "מועמד" itself, this fifth one a structural gap in how
+the "ל" relates to the office noun rather than a new form of the word.
+This diversifies the pattern: grammatical-variant audits should check not
+only inflected forms of a keyword but also structural assumptions baked
+into a guard's lookahead (what comes immediately after a marker like "ל",
+versus what can legitimately be inserted in between). Future rounds
+checking this guard again should look for structural gaps of this shape,
+not just inflectional ones. Standing deferred/unsafe gaps, unchanged this
+round: Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
