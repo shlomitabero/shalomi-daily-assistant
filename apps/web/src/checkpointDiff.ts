@@ -45,6 +45,38 @@ function wouldRestoreChangeEnumLabels(current: Field, inCheckpoint: Field): bool
 }
 
 /**
+ * Round 2259: wouldRestoreChangeEnumLabels above hard-codes the assumption
+ * that its first argument really is the live current spec a real Restore
+ * would run against -- correct when computeCheckpointDiff's baseline is
+ * genuinely currentSpec (HistoryPanel's "Compare with" left at its
+ * default), but computeCheckpointDiff is also explicitly designed to diff
+ * two ARBITRARY historical checkpoints against each other (via
+ * resolveCompareSpec, when the user picks a different "Compare with"
+ * entry) -- there, no restore is happening at all, so simulating
+ * carryForwardLabels is the wrong model entirely: it reads "the baseline
+ * checkpoint already has *some* label for this value" as "nothing
+ * changed", regardless of what the other checkpoint's own label actually
+ * says. Confirmed live: two checkpoints whose Order.status enum labels
+ * were completely different text ("Pending (A)"/"Shipped (A)" vs
+ * "Pending (B)"/"Shipped (B)") diffed as zero changes. This is the plain,
+ * symmetric "do these two checkpoints' own rendered labels actually
+ * differ" check used for that non-default comparison instead -- no
+ * simulation, just content equality (falling back to the raw value exactly
+ * like wouldRestoreChangeEnumLabels/the UI's own display does, so neither
+ * side ever being labeled is correctly "no difference").
+ */
+function enumLabelsDiffer(a: Field, b: Field): boolean {
+  if (a.type !== "enum" || b.type !== "enum") return false;
+  const aLabels = a.enumLabels ?? {};
+  const bLabels = b.enumLabels ?? {};
+  const values = new Set([...(a.enumValues ?? []), ...(b.enumValues ?? [])]);
+  for (const value of values) {
+    if ((aLabels[value] ?? value) !== (bLabels[value] ?? value)) return true;
+  }
+  return false;
+}
+
+/**
  * Round 2071: the identical "what would Restore actually do" question as
  * wouldRestoreChangeEnumLabels just above, for a plain entity/field label
  * instead of an enum value's label. carryForwardLabels keeps the LIVE
@@ -225,8 +257,15 @@ export function checkpointDisplayLabel(checkpoint: Checkpoint, occurrences: Map<
  * own doc comment) -- e.g. "what did refine #3 add that refine #1 didn't
  * have yet?" is exactly an addedEntities/addedFieldNames question, not a
  * removal one, even though it's asked through this same function.
+ *
+ * Round 2259: `isBaselineCurrent` tells this function whether `currentSpec`
+ * really is the live current spec (default, matching every call site
+ * before this parameter existed) or an arbitrary older checkpoint
+ * resolveCompareSpec handed the caller instead -- see enumLabelsDiffer's
+ * own doc comment above for why that distinction changes which enum-label
+ * comparison is correct.
  */
-export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: ProductSpec): CheckpointDiff {
+export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: ProductSpec, isBaselineCurrent = true): CheckpointDiff {
   const checkpointEntities = new Map(checkpointSpec.entities.map((e) => [e.name, e]));
   const currentEntities = new Map(currentSpec.entities.map((e) => [e.name, e]));
   // Round 954: the entity-level counterpart of round 946's own
@@ -316,7 +355,8 @@ export function computeCheckpointDiff(currentSpec: ProductSpec, checkpointSpec: 
       .filter((f) => {
         const inCheckpointField = checkpointFieldsByName.get(f.name) ?? checkpointFieldsByLowerName.get(f.name.toLowerCase());
         if (inCheckpointField === undefined) return false;
-        return fieldSignature(f) !== fieldSignature(inCheckpointField) || wouldRestoreChangeEnumLabels(f, inCheckpointField);
+        if (fieldSignature(f) !== fieldSignature(inCheckpointField)) return true;
+        return isBaselineCurrent ? wouldRestoreChangeEnumLabels(f, inCheckpointField) : enumLabelsDiffer(f, inCheckpointField);
       })
       .map((f) => fieldDisplayLabel(f, labelOccurrences));
     // Real, user-rendered content (EntityPanel.tsx: {entity.description &&

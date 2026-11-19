@@ -491,7 +491,12 @@ export function HistoryPanel({
             {visibleCheckpoints.map((checkpoint) => {
               const isOpen = expandedId === checkpoint.id;
               const compareSpec = isOpen ? resolveCompareSpec(checkpoints, compareTargetId, currentSpec) : currentSpec;
-              const diff = computeCheckpointDiff(compareSpec, checkpoint.spec);
+              // Round 2259: computeCheckpointDiff's own enum-label comparison
+              // only simulates a real Restore correctly when compareSpec IS
+              // the live current spec -- not when "Compare with" picked a
+              // different, arbitrary older checkpoint instead (resolveCompareSpec's
+              // non-null branch), where no restore is happening at all.
+              const diff = computeCheckpointDiff(compareSpec, checkpoint.spec, !isOpen || compareTargetId === null);
               const hasChanges = diff.removedEntities.length > 0 || diff.addedEntities.length > 0 || diff.changedEntities.length > 0;
               const isCurrent = isCheckpointCurrent(currentSpec, checkpoint.spec);
               return (

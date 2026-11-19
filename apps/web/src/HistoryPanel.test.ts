@@ -1596,6 +1596,92 @@ test("HistoryPanel's 'Compare with' dropdown lets you diff one checkpoint agains
 });
 
 /**
+ * Round 2259: computeCheckpointDiff's enum-label comparison simulates a
+ * real Restore (carryForwardLabels, apps/api/src/pipeline.ts) -- correct
+ * only when the baseline really is the live current spec. When the
+ * "Compare with" dropdown instead picks a different, OLDER checkpoint
+ * (no restore happening in that comparison at all), that simulation
+ * wrongly read "the baseline checkpoint already has some label for this
+ * value" as "nothing changed", hiding a genuine enum-label difference
+ * between the two historical checkpoints being compared. Builds two
+ * checkpoints whose shared "status" enum field has completely different
+ * label text for every value, and confirms switching "Compare with" from
+ * the live current state to the OTHER checkpoint surfaces the change.
+ */
+test("HistoryPanel's 'Compare with' dropdown surfaces a genuine enum-label difference between two checkpoints, not just against the live current state", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    const older = makeCheckpoint("cp-older", "Initial build");
+    older.spec = {
+      ...older.spec,
+      entities: [{ name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["pending", "shipped"], enumLabels: { pending: "Pending (old)", shipped: "Shipped (old)" } }] }],
+    };
+    const middle = makeCheckpoint("cp-middle", "Refine: relabel status");
+    middle.spec = {
+      ...middle.spec,
+      entities: [{ name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["pending", "shipped"], enumLabels: { pending: "Pending (new)", shipped: "Shipped (new)" } }] }],
+    };
+    const currentSpec: ProductSpec = { ...middle.spec };
+
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/checkpoints") {
+        return new Response(JSON.stringify({ checkpoints: [older, middle] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            LanguageProvider,
+            null,
+            React.createElement(HistoryPanel, {
+              projectId: "proj1",
+              userId: "user1",
+              projectName: "Test Project",
+              currentSpec,
+              onRestored: () => {},
+              onClose: () => {},
+            }),
+          ),
+        ),
+      );
+      await waitForCondition(() => document.querySelectorAll(".checkpoint-list li").length === 2);
+
+      const items = document.querySelectorAll(".checkpoint-list li");
+      const olderItem = items[0];
+      fireEvent.click(olderItem.querySelector(".detail-toggle") as HTMLButtonElement);
+      await waitForCondition(() => olderItem.querySelector(".checkpoint-compare-row select") !== null);
+
+      // Default (vs current, which already labels every value) -- restoring
+      // "older" would change nothing rendered, since carryForwardLabels
+      // always keeps the live label. Status must NOT be reported as changed.
+      assert.doesNotMatch(olderItem.textContent ?? "", /Status/);
+
+      const select = olderItem.querySelector(".checkpoint-compare-row select") as HTMLSelectElement;
+      const middleOption = Array.from(select.options).find((o) => /relabel status/.test(o.textContent ?? ""));
+      assert.ok(middleOption, "expected the 'middle' checkpoint to be a selectable compare target");
+      fireEvent.change(select, { target: { value: middleOption!.value } });
+
+      // Now comparing "older" against "middle" directly -- no restore is
+      // happening in this comparison, so the genuinely different label text
+      // on both enum values must be surfaced as a real change.
+      await waitForCondition(() => /relabel status/.test(olderItem.textContent ?? ""));
+      assert.match(olderItem.textContent ?? "", /Status/, "the genuinely different enum labels between these two checkpoints must be reported as a change");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 927: checkpoint labels are freely renamable (CheckpointLabelEditor)
  * with no uniqueness check anywhere in the save path, so two checkpoints
  * can legally end up sharing the exact same label -- before this round's

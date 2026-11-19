@@ -490,6 +490,54 @@ test("computeCheckpointDiff does not flag an enum field as changed when enumLabe
 });
 
 /**
+ * Round 2259: computeCheckpointDiff's third argument, HistoryPanel's own
+ * "Compare with" dropdown can point `currentSpec` at an arbitrary OLDER
+ * checkpoint instead of the live spec (resolveCompareSpec's non-null
+ * branch) -- there is no restore happening in that comparison at all, so
+ * wouldRestoreChangeEnumLabels' restore simulation is the wrong model: it
+ * read "the baseline checkpoint already has *some* label for this value"
+ * as "nothing changed", regardless of what the other checkpoint's own
+ * label actually says. Confirmed live before this fix: two checkpoints
+ * with completely different enum label text diffed as zero changes.
+ */
+test("computeCheckpointDiff(..., false) detects a genuine enum-label difference between two arbitrary checkpoints, which the restore-simulating default would have missed", () => {
+  const checkpointA = makeSpec([
+    {
+      name: "Order",
+      fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["pending", "shipped"], enumLabels: { pending: "Pending (A)", shipped: "Shipped (A)" } }],
+    },
+  ]);
+  const checkpointB = makeSpec([
+    {
+      name: "Order",
+      fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["pending", "shipped"], enumLabels: { pending: "Pending (B)", shipped: "Shipped (B)" } }],
+    },
+  ]);
+
+  // The restore-simulating default (as if checkpointA were the live spec)
+  // wrongly reports no change, since checkpointA already has SOME label
+  // for each value -- this is the documented, correct behavior for the
+  // real default comparison (checkpoint vs. live current), kept here only
+  // to show the contrast with the fix below.
+  assert.deepEqual(computeCheckpointDiff(checkpointA, checkpointB).changedEntities, []);
+
+  const diff = computeCheckpointDiff(checkpointA, checkpointB, false);
+  assert.deepEqual(diff.changedEntities, [
+    { name: "Order", label: "Order", removedFieldNames: [], addedFieldNames: [], changedFieldNames: ["Status"], descriptionChanged: false },
+  ]);
+});
+
+test("computeCheckpointDiff(..., false) does not flag an enum field when both checkpoints render the exact same labels", () => {
+  const checkpointA = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"], enumLabels: { New: "חדש", Done: "בוצע" } }] },
+  ]);
+  const checkpointB = makeSpec([
+    { name: "Order", fields: [{ name: "status", label: "Status", type: "enum", required: true, enumValues: ["New", "Done"], enumLabels: { New: "חדש", Done: "בוצע" } }] },
+  ]);
+  assert.deepEqual(computeCheckpointDiff(checkpointA, checkpointB, false).changedEntities, []);
+});
+
+/**
  * Round 2071: this used to assert `false` here, on the same now-corrected
  * premise as the computeCheckpointDiff test above -- but restoring this
  * checkpoint, which has no enumLabels at all, can never actually change
