@@ -6364,6 +6364,34 @@ test("Course's Hebrew 'כיתות' (plural) keyword doesn't spuriously match the
 });
 
 /**
+ * Round 2319: round 880's own UI-chrome guard on MenuItem's bare
+ * "תפריט" (menu) excluded the collision only for the SINGULAR form --
+ * it was never extended to the construct-plural "תפריטי" or absolute
+ * plural "תפריטים" forms, a separate substring relationship since
+ * Hebrew's plural suffix isn't part of the singular word. The
+ * twenty-fourth confirmed instance of the bare-overly-broad-keyword
+ * shape rounds 2297/2300-2318 fixed, and -- since MenuItem is in
+ * BILLING_ENTITY_NAMES -- also the first instance this round to
+ * independently confirm the payment-recommendation side effect (a
+ * wrong "Stripe" recommendation) alongside the entity fabrication.
+ */
+test("MenuItem's 'תפריט' keyword doesn't spuriously match the plural/construct 'תפריטי'/'תפריטים' forms of 'navigation menu'/'side menu'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const navMenusPlural = await provider.generate("אפליקציה עם כמה תפריטי ניווט בצד המסך לצפייה בהגדרות ובפרופיל");
+  assert.ok(!navMenusPlural.entities.some((e) => e.name === "MenuItem"), "'תפריטי ניווט' (navigation menus, plural construct) must not spuriously match MenuItem");
+  const navMenusStripeQ = navMenusPlural.openQuestions?.find((q) => q.options.includes("Stripe"));
+  assert.ok(navMenusStripeQ && navMenusStripeQ.recommendation !== "Stripe", "'תפריטי ניווט' must not wrongly recommend Stripe");
+
+  const sideMenusPlural = await provider.generate("אפליקציה עם תפריטי צד שונים לניווט בין המסכים");
+  assert.ok(!sideMenusPlural.entities.some((e) => e.name === "MenuItem"), "'תפריטי צד' (side menus, plural construct) must not spuriously match MenuItem");
+
+  // Non-regression: the genuine restaurant plural must still match.
+  const chefsMenus = await provider.generate("המסעדה מעדכנת את תפריטי השף כל שבוע עם מנות חדשות ומחירים");
+  assert.ok(chefsMenus.entities.some((e) => e.name === "MenuItem"), "a genuine 'תפריטי השף' (chef's menus) description must still match MenuItem");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

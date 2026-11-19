@@ -907,7 +907,26 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       /(?<!\b(?:navigation|nav|hamburger|dropdown|drop-down|side|context|settings)\s)(?<!\bburger\s(?=[\s\S]*?\b(?:navigation|icon|sidebar|profile|settings|tap|click|link)\b))(?<!\b(?:navigation|icon|sidebar|profile|settings|tap|click|link)\b[\s\S]*?\bburger\s)\bmenu\b(?!\s*bar\b)/i,
       /(?<!\bsatellite\s)\bdish(es)?\b(?!\s*(soap|racks?|towels?|network)\b)/, "food item", "restaurant", "cafe", "מסעדה", "מסעדות",
-      /תפריט(?!\s*(ניווט|נפתח|צד))/,
+      // Round 2319: round 880's own UI-chrome guard above excluded bare
+      // "תפריט" (menu) only when the cue word (ניווט/נפתח/צד) appeared
+      // immediately after the SINGULAR form -- it was never extended to
+      // the construct-plural "תפריטי" or absolute plural "תפריטים"
+      // forms, a separate substring relationship since Hebrew's plural
+      // suffix isn't part of the singular word. Confirmed live: "כמה
+      // תפריטי ניווט בצד המסך..." (several navigation menus on the side
+      // of the screen) and "תפריטי צד שונים לניווט..." (various side
+      // menus for navigating) both fabricated MenuItem -- and, since
+      // MenuItem is in BILLING_ENTITY_NAMES, also wrongly flipped the
+      // payment recommendation to Stripe for a plain settings/profile
+      // app. The optional plural suffix is placed INSIDE the lookahead
+      // itself (not as a separate optional group before it) -- placing
+      // it outside lets the regex engine backtrack to the zero-length
+      // alternative and still pass the now-trivially-satisfied
+      // lookahead, silently reintroducing the exact bug (confirmed by
+      // testing that naive structure directly). The genuine restaurant
+      // plural ("תפריטי השף" = the chef's menus) still matches,
+      // confirmed empirically.
+      /תפריט(?!(ים|י)?\s*(ניווט|נפתח|צד))/,
       // Round 2304: bare "מנות" (plural of "מנה") already excluded the
       // "הזמנות" (orders) collision via the (?<!ז) lookbehind, but had no
       // guard against its equally common medical/clinical "dose(s)"
