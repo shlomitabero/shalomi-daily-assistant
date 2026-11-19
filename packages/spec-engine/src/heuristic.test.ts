@@ -6795,6 +6795,36 @@ test("Donation's keywords also cover the PRESENT-tense 'תורם'/'תורמת'/'
   assert.ok(!idiomEvent.entities.some((e) => e.name === "Donation"), "'תורמים להצלחת האירוע' (contribute to the event's success, masc. plur.) must not spuriously match Donation");
 });
 
+test("Donation's keywords also cover 'צדקה' (charity), already named in the entity's own 'תרומה'/'תרומות' disambiguation cue list but never added as its own positive keyword", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const charityCollect = await provider.generate("אנחנו אוספים צדקה למשפחות נזקקות בקהילה שלנו.");
+  assert.ok(charityCollect.entities.some((e) => e.name === "Donation"), "'אוספים צדקה למשפחות נזקקות' (we collect charity for needy families) must match Donation");
+  const charityCollectStripeQ = charityCollect.openQuestions?.find((q) => q.options.includes("Stripe"));
+  assert.ok(charityCollectStripeQ && charityCollectStripeQ.recommendation === "Stripe", "'אוספים צדקה למשפחות נזקקות' must correctly recommend Stripe, not 'no payments'");
+
+  const charityFund = await provider.generate("האפליקציה מנהלת קופת צדקה עבור יתומים ומשפחות עניות.");
+  assert.ok(charityFund.entities.some((e) => e.name === "Donation"), "'קופת צדקה עבור יתומים' (a charity fund for orphans) must match Donation");
+
+  const charityWithUnrelatedBet = await provider.generate("אנחנו תורמים כספים לצדקה בכל חודש בעירייה.");
+  assert.ok(charityWithUnrelatedBet.entities.some((e) => e.name === "Donation"), "'לצדקה בכל חודש' (to charity every month, an unrelated 'ב'-word happens to follow) must still match Donation");
+
+  // Non-regression: the "was right in/about X" idiom (feminine 3rd-person past tense of
+  // צדק, unrelated to charity) must not spuriously match Donation.
+  const idiomWasRightClaim = await provider.generate("הלקוחה צדקה בטענתה שהמוצר היה פגום.");
+  assert.ok(!idiomWasRightClaim.entities.some((e) => e.name === "Donation"), "'צדקה בטענתה' (she was right in her claim) must not spuriously match Donation");
+
+  const idiomWasRightSuspicion = await provider.generate("היא צדקה בחשדה שהעובד גנב כסף.");
+  assert.ok(!idiomWasRightSuspicion.entities.some((e) => e.name === "Donation"), "'צדקה בחשדה' (she was right in her suspicion) must not spuriously match Donation");
+
+  const idiomWasRightKsheVariant = await provider.generate("היא צדקה כשטענה שהפרויקט יתעכב.");
+  assert.ok(!idiomWasRightKsheVariant.entities.some((e) => e.name === "Donation"), "'צדקה כשטענה' (she was right when she claimed) must not spuriously match Donation");
+
+  // Non-regression: "כשיטת" (as a method of) must not be wrongly excluded by a blunt "כש" guard.
+  const charityAsWayOfLife = await provider.generate("הארגון נותן צדקה כשיטת חיים לכל העובדים.");
+  assert.ok(charityAsWayOfLife.entities.some((e) => e.name === "Donation"), "'צדקה כשיטת חיים' (charity as a way of life) must still match Donation");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the

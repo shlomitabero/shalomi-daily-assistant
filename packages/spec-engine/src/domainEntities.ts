@@ -2834,6 +2834,39 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /תורמת(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תורמים(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תורמות(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      // Round 2334: "צדקה" (charity) is named as a cue word inside this
+      // entity's own "תרומה"/"תרומות" disambiguation regex above (used
+      // only to help disambiguate THAT keyword) but was never itself
+      // promoted to a standalone keyword -- the same "named but missing
+      // as its own positive keyword" shape rounds 2330/2331/2333 already
+      // found elsewhere. Confirmed live: "אנחנו אוספים צדקה למשפחות
+      // נזקקות..." (we collect charity for needy families) and "...קופת
+      // צדקה עבור יתומים..." (a charity fund for orphans) both fell
+      // through to the generic Item fallback, losing Donation entirely
+      // and -- since Donation is in BILLING_ENTITY_NAMES -- flipping the
+      // payment recommendation from Stripe to "no payments".
+      //
+      // "צדקה" is NOT safe as a bare substring: it's also the ordinary
+      // feminine 3rd-person-singular PAST TENSE of צדק ("to be right"),
+      // e.g. "הלקוחה צדקה בטענתה שהמוצר היה פגום" (the customer WAS
+      // RIGHT in her claim that the product was defective) -- confirmed
+      // live this idiom is unrelated to charity. A blanket "(?!\s*ב)"
+      // exclusion is too broad: it would wrongly exclude genuine charity
+      // phrasing where an unrelated "ב"-word happens to follow (e.g.
+      // "...לצדקה בכל חודש..." = to charity every month), and a blanket
+      // "(?!\s*כש)" exclusion would wrongly exclude "...צדקה כשיטת
+      // חיים..." (charity as a way of life) -- confirmed both empirically
+      // before choosing this fix. Instead, this excludes only the
+      // specific "was right in/about X" and "was right when X claimed/
+      // feared/..." continuations, naming the claim/stance/suspicion-type
+      // nouns the idiom actually takes (same shape as this file's other
+      // idiom-exclusion guards, e.g. Donation's own תרם/תורם fixes
+      // above). Like round 2027's own ספק guard, this is a deliberately
+      // leaky denylist for an idiom with many possible continuations,
+      // not an exhaustive fix -- a stance noun outside this list (e.g.
+      // "...צדקה בניחושה...") can still slip through; the common,
+      // confirmed-live repro cases are what this closes.
+      /צדקה(?!\s*ב(?:טענת|טענתה|טענתו|תלונת|תלונתה|תלונתו|עמדת|עמדתה|עמדתו|תביעת|תביעתה|תביעתו|דרישת|דרישתה|דרישתו|חשד|חשדה|חשדו|הערכת|הערכתה|הערכתו|תחזית|תחזיתה|תחזיתו|הנחת|הנחתה|הנחתו|החלטת|החלטתה|החלטתו|גישת|גישתה|גישתו|ניתוח|ניתוחה|ניתוחו|פרשנות|פרשנותה|פרשנותו|קביעת|קביעתה|קביעתו|דעת|דעתה|דעתו|חששות|חששותיה|חששותיו|ציפיית|ציפייתה|ציפייתו)\S*)(?!\s*כ(?:ש|אשר)\s*(?:טענ|אמר|חשש|הזהיר|ציפ|דאג)\S*)/,
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",
