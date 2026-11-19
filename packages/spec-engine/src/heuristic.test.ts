@@ -2579,6 +2579,47 @@ test("recognizes 'donate'/'donates'/'donated'/'donating' (the bare verb form) as
   assert.ok(!compliance.entities.some((e) => e.name === "Donation"), "'condonation' must not spuriously match Donation via the new verb keyword");
 });
 
+/**
+ * Round 2293: round 2281 fixed the bare-verb gap on the English side but
+ * deliberately deferred the Hebrew counterpart ("לתרום"/the infinitive,
+ * and the past-tense "תרם"/"תרמה"/"תרמו"), pending its own verification
+ * pass. That pass: a Hebrew description using only the donate VERB (no
+ * noun like תרומה/עמותה) matched no entity at all via the real
+ * matchEntities/generate(), confirming the deferred gap was real.
+ *
+ * The fix turned out to need no lookahead/exclusion at all, once the
+ * actual Unicode forms were checked: the bare 3rd-person masc. past
+ * "תרם" ends in the SOFIT mem ם (U+05DD), while "תרמה"/"תרמו" and the
+ * unrelated words "תרמיל" (backpack) and "תרמית" (fraud/deception) all
+ * use the ordinary mem מ (U+05DE) since a letter follows it there -- a
+ * genuine character difference, not just a missing suffix, so the plain
+ * literal "תרם" is not a substring of any of them.
+ */
+test("recognizes the Hebrew donate verb forms ('תרם'/'תרמה'/'תרמו'/'לתרום') as the Donation entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const infinitive = await provider.generate("אפליקציה שמאפשרת למשתמשים לתרום כסף למטרות שונות.", true);
+  assert.ok(infinitive.entities.some((e) => e.name === "Donation"), "'לתרום' alone must match Donation, not fall through to Item");
+
+  const feminine = await provider.generate("היא תרמה בגדים ישנים לנזקקים.", true);
+  assert.ok(feminine.entities.some((e) => e.name === "Donation"), "'תרמה' alone must match Donation, not fall through to Item");
+
+  const plural = await provider.generate("הם תרמו ציוד רפואי לבית החולים.", true);
+  assert.ok(plural.entities.some((e) => e.name === "Donation"), "'תרמו' alone must match Donation, not fall through to Item");
+
+  const bare = await provider.generate("המערכת שומרת תיעוד על כל מי שתרם לעמותה.", true);
+  assert.ok(bare.entities.some((e) => e.name === "Donation"), "'תרם' alone must match Donation, not fall through to Item");
+
+  // Non-regression / collision guards: the same sofit-vs-regular-mem
+  // distinction that makes the fix safe must hold against the two real
+  // unrelated words this round identified sharing the same root letters.
+  const backpack = await provider.generate("אפליקציה לניהול מלאי תרמילים לקמפינג");
+  assert.ok(!backpack.entities.some((e) => e.name === "Donation"), "'תרמילים' (backpacks) must not spuriously match Donation via the new verb keywords");
+
+  const fraud = await provider.generate("מערכת לזיהוי תרמית פיננסית בעסקאות אשראי");
+  assert.ok(!fraud.entities.some((e) => e.name === "Donation"), "'תרמית' (fraud) must not spuriously match Donation via the new verb keywords");
+});
+
 test("recognizes vendor/supplier, business-expense, and customer-review descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 

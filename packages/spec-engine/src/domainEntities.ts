@@ -2101,23 +2101,40 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // collision this file's own comment above already documents for the
     // sibling noun ("condonation of delay"): "condonation" has no word
     // boundary immediately before its own embedded "donat", so \b already
-    // rejects it without any extra lookaround. The Hebrew counterpart
-    // ("לתרום"/the infinitive, and the past-tense "תרם"/"תרמה"/"תרמו")
-    // is deliberately NOT added here in the same round: "תרם" alone is a
-    // substring of the unrelated word "תרמיל" (backpack/cartridge), and
-    // the present-tense/noun form "תורם" is the exact donor word this
-    // rule's own comment above already excludes for its Appointment-root
-    // collision -- closing the Hebrew side safely needs its own careful,
-    // dedicated verification pass rather than a rushed addition in the
-    // same round as the English fix (the same discipline round 2280 had
-    // to apply after round 2279's own verb-conjugation fix introduced a
-    // real regression elsewhere in this file by not checking every
-    // sibling form carefully enough).
+    // rejects it without any extra lookaround. The Hebrew counterpart was
+    // deliberately NOT added in that same round, pending its own careful
+    // verification pass (the same discipline round 2280 had to apply
+    // after round 2279's own verb-conjugation fix introduced a real
+    // regression elsewhere in this file by not checking every sibling
+    // form carefully enough).
+    //
+    // Round 2293: that pass, done. "אפליקציה שמאפשרת למשתמשים לתרום כסף
+    // למטרות שונות" (an app that lets users donate money to various
+    // causes) matched no entity at all via the real matchEntities/
+    // generate() -- confirming the deferred gap was real and still open.
+    // The fix turned out simpler than it first looked, once the actual
+    // Unicode forms were checked rather than assumed: the bare 3rd-person
+    // masc. past "תרם" ends in the SOFIT mem ם (U+05DD), but the fem./
+    // plural past forms "תרמה"/"תרמו" and the unrelated words "תרמיל"
+    // (backpack) and "תרמית" (fraud/deception -- a real risk in this
+    // business-app domain, given this very file's Fraud-adjacent
+    // entities) all use the ordinary mem מ (U+05DE) instead, since a
+    // letter follows it there. That's a genuine character difference, not
+    // just a missing suffix, so the plain literal "תרם" (sofit mem) is
+    // NOT a substring of any of them -- confirmed empirically, no
+    // lookahead/exclusion needed at all. The infinitive "לתרום" also ends
+    // in the sofit mem (nothing follows it) but isn't a substring of the
+    // bare past-tense form either (it has a vav before the mem), so it
+    // needs its own separate literal. "תורם"/"תורמים" (donor, already
+    // excluded above for the Appointment-root collision) are also
+    // unaffected: their own plain "תרם" substring check already fails
+    // for the same sofit-vs-regular-mem reason ("תורם" has a vav between
+    // the resh and mem, same shape as the infinitive).
     keywords: [
       /\bdonations?\b/, "donor", "nonprofit", "fundraising campaign",
       /\bdonat(?:e|es|ed|ing)\b/,
       /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
-      "עמותה", "עמותות",
+      "עמותה", "עמותות", "תרם", "תרמה", "תרמו", "לתרום",
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",
