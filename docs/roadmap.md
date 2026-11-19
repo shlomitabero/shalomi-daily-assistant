@@ -51801,3 +51801,15 @@ Live: https://forge-ai-m7p7.onrender.com
 **Verification:** New jsdom integration test in `apps/web/src/AutomationsPanel.test.ts` renders two failed runs in one rule's History list, clicks run1's Retry, confirms run2's Retry button is ALSO disabled while run1's request is still pending, and confirms clicking it anyway fires no second request. Fail-before via `git stash` (stashing only `AutomationsPanel.tsx`, keeping the new test): exactly 1 predicted failure (112 pass / 1 fail). Pass-after (stash restored): 113/113. Full `@forge/web` suite: 2211/2211 (was 2210). Build clean.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+## Round 2261: bulk delete restored a sandwiched surviving record in the wrong position when 3+ records were deleted together
+
+**Bug:** In `apps/web/src/EntityPanel.tsx`'s `commitPendingDelete`, a partial bulk-delete failure restores each failed entry at its raw pre-delete index via `restoreRecordAt` (`entityFormatting.ts`), which clamps only against the CURRENT (already-shrunk) `records` array -- it has no way to know that some OTHER selected record was permanently removed for good. With a 3+-entry batch, once the record whose real delete genuinely succeeds sits between two records whose deletes fail, the later failed entry's raw index no longer points to its correct position: its restore lands one slot too far right.
+
+Concrete repro: records `[A,B,C,D,E]`, select B/C/D for bulk delete. C's real delete succeeds (gone for good); B and D's both fail (a foreign-key constraint, say). The old restore reduces the failed entries in ascending original-index order against the already-shrunk `[A,E]`, producing `[A,B,E,D]` instead of the correct `[A,B,D,E]` -- D renders after E even though it's still really there and E was never touched. The existing partial-failure test only ever covered a 2-entry batch (one succeeds, one fails), where this gap can never show up, so it went unnoticed.
+
+**Fix:** Before restoring, subtract from each failed entry's original index the count of genuinely-removed (succeeded or NOT_FOUND -- both permanently gone) entries whose own original index came before it. Ported the identical fix into the exported app's own generated `EntityView.jsx` (`apps/api/src/codegen.ts`), which carries the same restore logic byte-for-byte, so every self-hosted Forge AI export inherits the fix too.
+
+**Verification:** New integration test in `EntityPanel.test.ts` (5 records, 3 selected, middle one succeeds) and a matching `new Function`-extracted unit test in `codegen.test.ts`. Fail-before via `git stash` (stashing only the two source fixes, keeping both new tests): confirmed the predicted wrong order before the fix, clean after. Caught one of my own test bugs along the way (checkbox selection accidentally matched every row's "Delete"/"Duplicate" action-button text instead of the 3 intended rows) and fixed that before trusting the result. Full `@forge/web` suite: 2212/2212 (was 2211). Full `@forge/api` suite: 1776/1776. Both builds clean.
+
+Live: https://forge-ai-m7p7.onrender.com
