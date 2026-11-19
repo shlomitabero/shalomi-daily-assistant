@@ -761,11 +761,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // closed the store at 9pm. The app deals with inventory tracking."
     // still correctly gets no Deal entity.
     keywords: [
-      /\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+[^\s.!?]+){0,6}\s)\bdeals\b(?=\s+with\b)/,
+      // Round 2307: bare "deals" had no guard against the ordinary
+      // criminal/diplomatic sense of "deal" -- "drug deals", "illegal
+      // deals", "hostage-exchange deals" are all common, genuinely
+      // unrelated phrasings with zero sales-CRM content. Confirmed
+      // live: "A system for police to track drug deals exposed during
+      // investigations..." and two similar sentences all fabricated a
+      // Deal entity (and, for the police/investigation case, lost the
+      // app's real domain entirely). Guarded with lookbehinds excluding
+      // the specific drug/illegal qualifiers immediately before "deals"
+      // and a document-wide exclusion for "hostage" (which can precede
+      // "deals" at any distance, e.g. "hostage-exchange deals"),
+      // mirroring this file's other bare-overly-broad-word fixes.
+      /(?<!\bdrug\s)(?<!\billegal\s)(?<!hostage[\s\S]*)\bdeals\b(?!\s+with\b)|(?<=\b(?:close|closing|closed)\b(?:\s+[^\s.!?]+){0,6}\s)\bdeals\b(?=\s+with\b)/,
       "negotiation",
       /(?<!\bequal\s)\bopportunit(?:y|ies)\b(?!\s+to\b)/,
-      "עסקה",
-      "עסקאות",
+      // Round 2307: the Hebrew sibling had the identical collision --
+      // "עסקה לא חוקית" (illegal deal), "עסקאות סמים" (drug deals), and
+      // "עסקאות החזרת חטופים" (hostage-exchange deals) all fabricated a
+      // Deal entity too. Guarded with a lookahead excluding the same
+      // three qualifiers (which follow the noun in Hebrew).
+      /עסק(?:ה|אות)(?!\s*(?:לא\s*חוקית|סמים|החזרת\s*חטופים))/,
       "משא ומתן",
       // "לידים" (plural "leads", round 1722): the Hebrew half of the same
       // CRM example gap above -- unlike the English noun, this Hebrew

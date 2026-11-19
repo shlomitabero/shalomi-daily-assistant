@@ -5845,6 +5845,45 @@ test("bare Hebrew 'עמותה'/'עמותות' (no donor/donation/fundraising wor
 });
 
 /**
+ * Round 2307: Deal's bare "deals" (and Hebrew sibling "עסקה"/"עסקאות")
+ * had no guard against the ordinary criminal/diplomatic sense of "deal"
+ * -- "drug deals", "illegal deals", "hostage-exchange deals" are all
+ * common, genuinely unrelated phrasings with zero sales-CRM content.
+ * The tenth confirmed instance of the bare-overly-broad-keyword shape
+ * rounds 2297/2300-2306 fixed, and the first in a non-billing entity
+ * (Deal isn't in BILLING_ENTITY_NAMES, so this doesn't affect a payment
+ * recommendation, only the entity match itself).
+ */
+test("'deals'/'עסקה' in a criminal/diplomatic sense (drug/illegal/hostage) does not spuriously match Deal", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const drugsHe = await provider.generate("מערכת לניהול עסקאות סמים שנחשפו במשטרה במהלך החקירה.");
+  assert.ok(!drugsHe.entities.some((e) => e.name === "Deal"), "Hebrew 'עסקאות סמים' (drug deals) must not spuriously match Deal");
+
+  const illegalHe = await provider.generate("התובע טען שהייתה עסקה לא חוקית בין הצדדים במהלך המשפט.");
+  assert.ok(!illegalHe.entities.some((e) => e.name === "Deal"), "Hebrew 'עסקה לא חוקית' (illegal deal) must not spuriously match Deal");
+
+  const hostageHe = await provider.generate("אפליקציה לתיעוד עסקאות החזרת חטופים בין המדינות.");
+  assert.ok(!hostageHe.entities.some((e) => e.name === "Deal"), "Hebrew hostage-exchange 'עסקאות' must not spuriously match Deal");
+
+  const drugs = await provider.generate("A system for police to track drug deals exposed during investigations and build case files.");
+  assert.ok(!drugs.entities.some((e) => e.name === "Deal"), "'drug deals' must not spuriously match Deal");
+
+  const illegal = await provider.generate("An app to log illegal deals discovered by investigators during a fraud probe.");
+  assert.ok(!illegal.entities.some((e) => e.name === "Deal"), "'illegal deals' must not spuriously match Deal");
+
+  const hostage = await provider.generate("A diplomatic app to track hostage-exchange deals between countries.");
+  assert.ok(!hostage.entities.some((e) => e.name === "Deal"), "'hostage-exchange deals' must not spuriously match Deal");
+
+  // Non-regression: genuine sales-CRM descriptions must still match.
+  const realDealHe = await provider.generate("מערכת CRM למעקב אחר עסקאות מכירה והזדמנויות.");
+  assert.ok(realDealHe.entities.some((e) => e.name === "Deal"), "a genuine Hebrew sales-deal description must still match Deal");
+
+  const realDeal = await provider.generate("A CRM with customers and deals.");
+  assert.ok(realDeal.entities.some((e) => e.name === "Deal"), "a genuine English sales-deal description must still match Deal");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different
