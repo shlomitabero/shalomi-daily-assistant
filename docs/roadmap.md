@@ -54213,3 +54213,110 @@ own "מטופל" guard's residual ב-prefix and unlisted-cue-noun leaks
 (round 2336, accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2337: Deal's bare 'הזדמנות' idiom collision, plus a compounding MenuItem substring bug it surfaced
+
+**Bug 1 (Deal):** Deal's Hebrew "הזדמנות"/"הזדמנויות" were listed
+completely unguarded (`domainEntities.ts`, Deal's keyword array) --
+the Hebrew counterpart of the ENGLISH "opportunity"/"opportunities"
+collision round 2105 already fixed on the sibling keyword a few lines
+above, never mirrored onto the Hebrew side. "הזדמנות" is routinely
+used in the ordinary, non-CRM "chance/opportunity to do X" idiom.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "זו הזדמנות פז לנסוע לחופשה בחינם לפני שהמקומות נגמרים." (a golden opportunity to
+go on a free vacation), "לא לפספס את ההזדמנות הזו ללמוד שפה חדשה בקיץ." (this opportunity to learn
+a new language), and "הזדמנות של פעם בחיים לטייל בעולם." (a once-in-a-lifetime
+opportunity to travel the world) each fabricated a bogus Deal entity
+(fields title/value/stage/owner) for a plain vacation/learning
+sentence with zero CRM content.
+
+**Fix 1** (`domainEntities.ts`, Deal's keyword array):
+```js
+/הזדמנ(?:ות|ויות)(?!(?:\s+\S+){0,3}\s*ל(?:נסוע|למוד|התפתח|גלות|חוות|השתתף|הרוויח|חסוך|התנסות|קחת\s*חלק|הנות|ראות|בקר|חיות|גדול|היות|עבוד|בלות|טייל|הכיר)\S*)/
+```
+Hebrew's "ל" prefix marks both an infinitive verb AND a dative noun
+(unlike English "to"), so a bare "ל" exclusion would be unsafe -- it
+would wrongly exclude genuine CRM phrasing like "הזדמנות ללקוחות חדשים לקבל הצעה מיוחדת."
+(opportunity for new customers) or "הזדמנות למכירה של נכס מניב." (opportunity for
+a sale), both confirmed still matching correctly. Instead this
+excludes a specific, deliberately leaky denylist of common infinitives
+that follow the noun in this idiom (same convention as round 2027's
+ספק guard and round 2334's צדקה guard), allowing up to 3 intervening
+words between the noun and the verb. The genuine CRM baseline
+("הזדמנות עסקית חדשה עם לקוח פוטנציאלי.") still matches as before.
+
+**Bug 2 (MenuItem), surfaced by the same repro:** MenuItem's "מנות"
+keyword's existing `(?<!ז)` lookbehind only excludes the "הזמנות"
+(orders) collision (round 2304/660) -- it missed that the bare
+singular "הזדמנות" (opportunity) is ALSO a literal superstring of
+"מנות": ה-ז-ד-מ-נ-ו-ת, where the character immediately before "מנות"
+is "ד", not "ז". Since MenuItem is in BILLING_ENTITY_NAMES, this
+corrupted even GENUINE Deal/CRM sentences mentioning the singular
+"הזדמנות" -- confirmed live: "הזדמנות עסקית חדשה עם לקוח פוטנציאלי." (a plain,
+correctly-classified CRM sentence) also fabricated a bogus MenuItem
+entity and wrongly flipped the payment recommendation to Stripe. The
+PLURAL "הזדמנויות" never had this problem (its extra "וי" infix breaks
+the substring).
+
+**Fix 2** (`domainEntities.ts`, MenuItem's keyword array):
+```js
+/(?<![זד])מנות(?![\s\S]*?(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות))(?<!(?:תרופה|תרופות|ויטמין|ויטמינים|קרינה|אנטיביוטיקה|כימותרפיה|אינסולין|זריקות)[\s\S]*)/
+```
+Extended the lookbehind to also exclude a preceding "ד"; confirmed no
+other common Hebrew word ends in "...דמנות".
+
+**BILLING_ENTITY_NAMES:** Deal is NOT a member (entity-fabrication
+only for bug 1 in isolation); MenuItem IS a member, so bug 2 also
+corrupted the payment recommendation -- and since bug 2 fires on
+GENUINE Deal sentences too (not just the idiom case), it was the more
+severe of the two, silently wrong on correctly-classified CRM text
+even before bug 1's idiom collision was considered.
+
+**Tests added** (`heuristic.test.ts`): one test confirms the Deal
+idiom-collision sentences no longer match Deal while genuine CRM
+sentences (including the "ל"+noun, non-infinitive phrasings) still
+do; a second test confirms the MenuItem substring fix on both the
+idiom case and the genuine-CRM case, including that the wrongly-
+flipped Stripe recommendation is also corrected, plus non-regression
+on the plural, the pre-existing orders exclusion, and genuine MenuItem
+matches.
+
+**Verification:** fail-before via `git stash` showed exactly 2 failures
+out of 249 (the two new tests), as predicted; pass-after showed
+249/249. Full `@forge/spec-engine` suite: 445/445 (up from 443). Full
+`@forge/api` suite: 1782/1782, unchanged, run via Bash's native
+`run_in_background` from `apps/api` (disk space checked healthy
+beforehand: ~1.2GB tsx cache, 21G free). Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round used discovery method (C) from
+round 2336 (completely unguarded Hebrew keyword with grammatical-
+polysemy collision), now validated a second time, and additionally
+demonstrates that fixing one such bug can surface a SEPARATE,
+previously-undetected substring-collision bug on a different entity's
+keyword via the exact same confirmed-live repro text -- worth
+remembering that a fix's own regression-test sentences are themselves
+a rich source of adjacent bugs to check for, not just confirmation of
+the one targeted fix. The survey agent also re-verified, without
+finding any new gap, Employee/Case/Service/Appointment/Property/
+Vehicle/Student's Hebrew keywords (all already fully guarded), and
+flagged Volunteer's bare unguarded "מתנדב"/"מתנדבת"/"מתנדבים" as
+checked-but-inconclusive (no plausible collision found, not a
+confirmed bug). Standing deferred/unsafe gaps, unchanged this round:
+Ticket bare-noun gap (rounds 2282-2283); Courier license/insurance/
+traffic-ticket sub-case (round 2311); Course bare-price-crashing
+sub-case (round 2316); Course military-topic-vs-squad-unit ambiguity
+(round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318); Order's forward-only "הזמנה" exclusion-lookahead
+directionality gap (round 2331, accepted trade-off); pre-existing
+roadmap.md script-substitution corruption from rounds 2316/2324/2325
+(round 2332, deferred to a dedicated future round); Donation's "צדקה"
+guard's residual unlisted-stance-noun leak (round 2334, accepted
+trade-off); Patient's "מטופל" guard's residual ב-prefix and
+unlisted-cue-noun leaks (round 2336, accepted trade-off); Deal's
+"הזדמנות" guard's residual unlisted-infinitive leak (round 2337,
+accepted trade-off, same leaky-denylist class).
+
+Live: https://forge-ai-m7p7.onrender.com
