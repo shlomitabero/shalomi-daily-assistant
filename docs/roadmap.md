@@ -55789,3 +55789,106 @@ Course's new "תתני" alternative's residual leak on the unrelated
 "להתנות" (to stipulate) verb sense, accepted trade-off (round 2353).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2354: PAYMENT_KEYWORDS "sell...course(s)/ticket(s)" proximity gap, closed narrowly after a rejected broad fix
+
+**Bug:** round 2351's own flagged open item -- the "sell(ing)/sells/
+sold + (online) course(s)/class(es)" and "+ ticket(s)" phrases in
+`PAYMENT_KEYWORDS` (`heuristic.ts`) only matched when the verb was
+immediately adjacent to the noun phrase. Real sentences often have a
+quantity phrase or type adjective in between.
+
+**Method-exhaustion note:** before reaching this fallback, this
+round's survey agent re-checked every idiom-exclusion guard in
+`domainEntities.ts` of the shape rounds 2352/2353 found gaps in
+(a bare noun excluded via a lookbehind chain of verb-conjugation
+forms, extended across many prior rounds) for a missing 2nd-person-
+feminine-singular FUTURE "-י" form. All are now fully covered:
+Vendor's "ספק" (round 2352), Course's "שיעור" (round 2353), Donation's
+"תרם" (already had "תתרמי" since round 2343), Vendor's "רכש" (its own
+round-2346 comment already documents the "-י"/"-ו" future forms as
+coincidental substring matches of existing branches), and Event's
+"כנס" (round 2335's bare `(?<!ת)` already covers it indiscriminately).
+This specific bug-finding method is now exhausted across the file.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "A platform that already sold thousands of online courses to students." and "A site that sells event tickets online for concerts."
+both wrongly recommended "No payments" despite describing an
+unambiguous course/ticket-selling business.
+
+**Rejected first fix (important negative finding):** a generic
+bounded-distance pattern (`(?:\S+\s+){0,3}` between the verb and the
+noun) passed the full 264-test suite but introduced a real new false
+positive, confirmed live: "A boutique selling scarves and free online courses." flipped to Stripe, because a
+generic word-gap happily bridges from an unrelated commercial
+"selling X" to an unrelated, explicitly-FREE course mention a few
+words later. This is exactly the "too broad a signal" risk this
+file's own round-460/893 comments already warn about for bare
+"sell"/"selling".
+
+**Fix actually applied** (`heuristic.ts`, `PAYMENT_KEYWORDS` array,
+narrow and scoped -- no `\S+` wildcard):
+```js
+/\b(?:sells?|selling|sold)\s+(?:(?:thousands?|hundreds?|dozens?)\s+of\s+)?(?:online\s+)?(?:courses?|classes?)\b/
+/\b(?:sells?|selling|sold)\s+(?:(?:event|concert|movie|show|theater|theatre)\s+)?tickets?\b/
+```
+Only the two specific, confirmed-real filler shapes are allowed: a
+quantity phrase ("thousands/hundreds/dozens of") before "(online)
+course(s)/class(es)", and a ticket-type adjective ("event/concert/
+movie/show/theater(re)") before "ticket(s)".
+
+**Verification (own adversarial cases beyond the agent's own set):**
+confirmed live that the fix does NOT flip "A film festival sold
+hundreds of free movie tickets at the festival" (quantity+free filler
+not covered for tickets, by design), "A used bookstore sells thousands
+of used books and also offers free online courses" (quantity phrase
+precedes an unrelated noun, not "course(s)"), "A clothing brand sold
+thousands of t-shirts and hosts free online courses for fun", or "The
+school sold dozens of raffle tickets for the fundraiser" (a
+genuinely-paid scenario that stays outside this narrow fix's
+deliberately limited scope, not a regression).
+
+**Known pre-existing residual, not introduced or worsened:** "sells
+digital courses" (no filler, no "online") still doesn't match --
+this phrase has only ever recognized the adjective "online", a
+separate, narrower gap, out of scope for this round.
+
+**Test added** (`heuristic.test.ts`): confirms both bug sentences now
+recommend Stripe; confirms the rejected-fix's exact false-positive
+case and three similar free-course/free-ticket sentences all stay "No
+payments"; re-confirms all round 2351 adjacent-form and inventory/
+oversold non-regression cases.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 265 (the new test), as predicted; pass-after showed 265/265 --
+no regression. Full `@forge/spec-engine` suite: 461/461 (up from 460).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** both of this window's active bug-finding
+methods -- the Hebrew idiom-guard 2fs-future audit (rounds 2352-2353)
+and the PAYMENT_KEYWORDS proximity gap (rounds 2351/2354) -- are now
+closed out. Standing deferred/unsafe gaps, unchanged this round:
+Ticket bare-noun gap (rounds 2282-2283); Courier license/insurance/
+traffic-ticket sub-case (round 2311); Course bare-price-crashing
+sub-case (round 2316); Course military-topic-vs-squad-unit ambiguity
+(round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318); Order's forward-only "הזמנה" exclusion-lookahead
+directionality gap (round 2331, accepted trade-off); pre-existing
+roadmap.md script-substitution corruption from rounds 2316/2324/2325
+(round 2332, deferred to a dedicated future round); Donation's "צדקה"
+guard's residual unlisted-stance-noun leak (round 2334, accepted
+trade-off); Patient's "מטופל" guard's residual leaks (round 2336,
+accepted trade-off); Deal's "הזדמנות" guard's residual leak (round
+2337, accepted trade-off); Customer's "לקוח" guard's residual leak
+(round 2338, accepted trade-off); Appointment's "מספרת" guard's
+residual leak (round 2339, accepted trade-off); Shipment's "שילוח"
+guard's residual leaks (round 2340, accepted trade-off);
+PAYMENT_KEYWORDS' "נשלם" gap, permanently deferred (rounds 2349-2350);
+Course's "תתני" alternative's residual leak on the unrelated "להתנות"
+verb sense, accepted trade-off (round 2353); PAYMENT_KEYWORDS' "sells
+digital courses" gap (never recognized "digital", only "online"),
+newly noted, out of scope this round.
+
+Live: https://forge-ai-m7p7.onrender.com
