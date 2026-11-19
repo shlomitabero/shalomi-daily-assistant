@@ -1958,8 +1958,35 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // the common unrelated word "אדם" (person) and would otherwise fire
     // on any description mentioning a person alongside unrelated
     // "contribution" phrasing.
+    // Round 2281: every keyword above (donor, donation(s), nonprofit,
+    // fundraising campaign, תרומה/תרומות, עמותה/עמותות) is a NOUN form --
+    // there was no keyword anywhere matching the bare VERB "donate"/
+    // "donates"/"donated"/"donating" itself. "Our charity lets visitors
+    // donate money to help animals in need." matched no domain entity at
+    // all and fell through to the generic Item fallback, even though
+    // donating money/clothes/blood/time to a cause is exactly what this
+    // entity exists for. Unlike "rent" (ambiguous with the unrelated
+    // real-estate noun) or "class"/"service" (ambiguous bare words this
+    // file excludes elsewhere), "donate" has no ordinary unrelated English
+    // sense -- confirmed \b-bounded against the one real substring
+    // collision this file's own comment above already documents for the
+    // sibling noun ("condonation of delay"): "condonation" has no word
+    // boundary immediately before its own embedded "donat", so \b already
+    // rejects it without any extra lookaround. The Hebrew counterpart
+    // ("לתרום"/the infinitive, and the past-tense "תרם"/"תרמה"/"תרמו")
+    // is deliberately NOT added here in the same round: "תרם" alone is a
+    // substring of the unrelated word "תרמיל" (backpack/cartridge), and
+    // the present-tense/noun form "תורם" is the exact donor word this
+    // rule's own comment above already excludes for its Appointment-root
+    // collision -- closing the Hebrew side safely needs its own careful,
+    // dedicated verification pass rather than a rushed addition in the
+    // same round as the English fix (the same discipline round 2280 had
+    // to apply after round 2279's own verb-conjugation fix introduced a
+    // real regression elsewhere in this file by not checking every
+    // sibling form carefully enough).
     keywords: [
       /\bdonations?\b/, "donor", "nonprofit", "fundraising campaign",
+      /\bdonat(?:e|es|ed|ing)\b/,
       /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
       "עמותה", "עמותות",
     ],

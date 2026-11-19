@@ -2341,6 +2341,38 @@ test("Donation's 'תרומה'/'תרומות' keyword doesn't spuriously match th
   assert.ok(organDonation.entities.some((e) => e.name === "Donation"), "'תרומות איברים' (organ donations) must still match Donation");
 });
 
+/**
+ * Round 2281: every keyword in this entity's own list before this fix
+ * (donor, donation(s), nonprofit, fundraising campaign, תרומה/תרומות,
+ * עמותה/עמותות) is a NOUN form -- there was no keyword anywhere matching
+ * the bare VERB "donate"/"donates"/"donated"/"donating" itself, so a
+ * charity-app description using only the verb fell all the way through
+ * to the generic Item fallback.
+ */
+test("recognizes 'donate'/'donates'/'donated'/'donating' (the bare verb form) as the Donation entity, not the generic Item fallback", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const charity = await provider.generate("Our charity lets visitors donate money to help animals in need.");
+  assert.ok(charity.entities.some((e) => e.name === "Donation"), "'donate' alone must match Donation, not fall through to Item");
+
+  const platform = await provider.generate("A platform where people can donate to support local shelters.");
+  assert.ok(platform.entities.some((e) => e.name === "Donation"), "'donate' alone must match Donation, not fall through to Item");
+
+  const tracker = await provider.generate("An app that tracks how much each person donated this year.");
+  assert.ok(tracker.entities.some((e) => e.name === "Donation"), "'donated' alone must match Donation, not fall through to Item");
+
+  const monthly = await provider.generate("Track who donates and how much each month.");
+  assert.ok(monthly.entities.some((e) => e.name === "Donation"), "'donates' alone must match Donation, not fall through to Item");
+
+  const blood = await provider.generate("We let people donate blood at our clinic.");
+  assert.ok(blood.entities.some((e) => e.name === "Donation"), "'donate' alone must match Donation, not fall through to Item");
+
+  // Non-regression: the sibling noun's own documented substring collision
+  // ("condonation of delay") must stay unaffected by the new verb keyword.
+  const compliance = await provider.generate("A compliance tool tracking condonation of delay requests for our law firm.");
+  assert.ok(!compliance.entities.some((e) => e.name === "Donation"), "'condonation' must not spuriously match Donation via the new verb keyword");
+});
+
 test("recognizes vendor/supplier, business-expense, and customer-review descriptions with tailored entities", async () => {
   const provider = new HeuristicSpecProvider();
 
