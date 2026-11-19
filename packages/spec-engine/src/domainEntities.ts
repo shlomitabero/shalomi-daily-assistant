@@ -2363,7 +2363,32 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // phrasing ("מועמדים למשרות פתוחות", "מועמדי המשרה הפתוחה",
       // "מועמד/ת עם תואר ראשון") and round 2315's own political/
       // academic exclusions all confirmed still correct.
-      /מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמד(?!ת)(?!ים)(?!י)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))/,
+      //
+      // Round 2323: round 2321's "מועמדי" branch fixed the construct-
+      // state PLURAL ("מועמדי הנשיאות"), but the "מועמד"/"מועמדת"
+      // branches themselves still only ever check for "ל"+noun -- they
+      // never got the construct-state SINGULAR case, which drops "ל"
+      // the exact same way the plural does: "מועמד הנשיאות" (the
+      // presidential candidate), "מועמד ראשות העיר" (the mayoral
+      // candidate, masc.), "מועמדת ראשות העיר" (the mayoral candidate,
+      // fem.) -- ordinary political-journalism phrasing. Confirmed
+      // live: a news site following a presidential candidate's
+      // campaign, an app tracking a leading mayoral candidate (masc.),
+      // and a news site covering a leading mayoral candidate (fem.)
+      // each fabricated JobApplicant. Fixed by giving the "מועמדת" and
+      // "מועמד" branches each their OWN second, fully self-contained
+      // lookahead -- a full copy of "מועמדי"'s own construct-noun list
+      // -- appended after their existing "ל"-lookahead, rather than
+      // merging the "ל" and construct checks into one shared lookahead
+      // (tested and confirmed a merged/shared version misses some
+      // construct cases while still passing others, an unreliable
+      // partial fix) -- the same backtracking-adjacent pitfall rounds
+      // 2315/2318-2322 keep surfacing: each guard needs its own
+      // complete, independent check, not a shared/merged one. Genuine
+      // recruiting phrasing, round 2315's feminine political
+      // exclusion, and round 2321's plural-construct exclusion all
+      // confirmed still correct.
+      /מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/,
       // Round 1536: bare "גיוס" is a substring of the equally ordinary
       // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
       // "raising donations") -- Hebrew overloads this root for both
