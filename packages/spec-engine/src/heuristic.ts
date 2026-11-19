@@ -50,21 +50,41 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // (the customers paid for the products, past tense) both wrongly
   // recommended "בלי תשלומים" (no payments) despite explicitly
   // stating customers pay. Adds the present/past/infinitive forms
-  // (משלם/משלמת/משלמים/משלמות, שילם/שילמה/שילמו, לשלם). Deliberately
-  // EXCLUDES the future-tense forms (ישלם/תשלם/ישלמו/תשלמו) and the
-  // 1st-person/passive "נשלם": at this spelling (no niqqud, informal
-  // Hebrew often drops a doubled yod) these collide with the Hifil
-  // "to complete" (ישלים/תשלים) and Nifal "was completed"
-  // (נשלם/יישלם/תישלם) forms of a DIFFERENT root -- confirmed live
-  // that genuine idiom/unrelated sentences using "ישתלם" (will be
-  // worthwhile), "להשלים"/"ישלים" (to complete a task), "נשלם" (was
-  // completed), "השתלמות" (training workshop, a common noun), and
-  // "משלים" (complementary) all correctly do NOT trigger this list's
-  // new entries, since each differs by an extra letter (י/ת/ה) this
-  // list's 8 new literals don't contain. Left as a documented,
-  // deferred gap for a future round rather than risking a new false
-  // positive without a safe disambiguating guard.
+  // (משלם/משלמת/משלמים/משלמות, שילם/שילמה/שילמו, לשלם).
   "לשלם", "משלם", "משלמת", "משלמים", "משלמות", "שילם", "שילמה", "שילמו",
+  // Round 2350: closes most of round 2349's own deferred future-
+  // tense gap. "תשלם"/"תשלמו" are safe bare literals -- confirmed
+  // via direct string checks that neither is ever a substring of the
+  // colliding Hifil "to complete" forms "תשלים"/"תשלימו" (the extra
+  // Hifil "י" sits between ת and ש, breaking the sequence) or any
+  // Nifal "will be completed" form (whose four person-prefixes are
+  // א/ת/י/נ, none of which produce "תשלם"/"תשלמו" as a substring
+  // either). "ישלם"/"ישלמו" needed more care than round 2349's own
+  // comment suggested: round 2349 named only the double-yod 3rd-
+  // person Nifal forms (יישלם) as the risk, but EVERY Nifal future
+  // person-prefix (א/ת/י/נ, not just י) produces "ישלם"/"ישלמו" as a
+  // literal substring (e.g. "אישלם"/"תישלם"/"נישלם" all contain
+  // "ישלם") -- confirmed via direct string checks. A lookbehind
+  // excluding only a preceding "י" would therefore still false-match
+  // inside "אישלם"/"תישלם"/"נישלם". Fixed with "(?<![אתינ])" instead,
+  // excluding all four Nifal prefixes; none of א/ת/י/נ is a
+  // legitimate one-letter clitic on an already-conjugated Piel future
+  // verb, so this cannot exclude a genuine "ישלם"/"ישלמו" occurrence.
+  // Confirmed live this closes "...הלקוח ישלם באשראי..." (the
+  // customer will pay by credit card) and "...אתם תשלמו..."/
+  // "...תשלמו..." (you-pl will pay) without any of the Nifal-future
+  // "will be completed" adversarial sentences (אישלם/תישלם/יישלם/
+  // נישלם/תישלמו/יישלמו, all persons) spuriously triggering Stripe.
+  // The 1st-person/passive "נשלם" remains deferred: unlike
+  // ישלם/תשלם, it is a genuine SAME-SPELLING homograph (not just an
+  // informal-spelling risk) between "we will/do pay" and "was
+  // completed" with no reliable local disambiguator -- tested an
+  // adverb-based guard (excluding נשלם followed by בהצלחה/בזמן/
+  // לאחרונה/כבר) and confirmed it incorrectly rejects genuine payment
+  // sentences that naturally pair with those same adverbs ("נשלם
+  // בזמן" = we'll pay on time, "נשלם כבר היום" = we'll already pay
+  // today), so no safe fix was found; left deferred.
+  "תשלם", "תשלמו", /(?<![אתינ])ישלם/, /(?<![אתינ])ישלמו/,
   // Bare "חיוב" ("charge") is a substring of the ordinary, unrelated
   // adjective/noun "חיובי"/"חיובית"/"חיוביות" ("positive"/"positivity") --
   // extremely natural phrasing for a feedback/review/survey app ("משוב

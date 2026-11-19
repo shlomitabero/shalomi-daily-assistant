@@ -7877,3 +7877,47 @@ test("PAYMENT_KEYWORDS only ever carried the noun 'תשלום'/'תשלומים',
   const noPaymentLanguage = await provider.generate("אפליקציה לניהול משימות יומיות לצוות.");
   assert.strictEqual(noPaymentLanguage.openQuestions?.[0]?.recommendation, "בלי תשלומים", "a plain task-management description with no payment language must still recommend 'בלי תשלומים'");
 });
+
+test("PAYMENT_KEYWORDS round 2350: future-tense שילם forms (תשלם/תשלמו/ישלם/ישלמו) now trigger Stripe, with a lookbehind guard against all four Nifal person-prefixes", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const future2ms = await provider.generate("אפליקציה למנהל חשבונות. את תשלם על השירות בכרטיס אשראי.");
+  assert.strictEqual(future2ms.openQuestions?.[0]?.recommendation, "Stripe", "'את תשלם על השירות' (future tense, 2nd person) must recommend Stripe, not 'בלי תשלומים'");
+
+  const future2pl = await provider.generate("אפליקציה לניהול קבוצות. אתם תשלמו בכרטיס אשראי בתחילת החודש.");
+  assert.strictEqual(future2pl.openQuestions?.[0]?.recommendation, "Stripe", "'אתם תשלמו בכרטיס אשראי' (future tense plural) must recommend Stripe, not 'בלי תשלומים'");
+
+  const future3ms = await provider.generate("אפליקציה כללית. המשתמש ישלם באשראי כל חודש.");
+  assert.strictEqual(future3ms.openQuestions?.[0]?.recommendation, "Stripe", "'המשתמש ישלם באשראי' (future tense, 3rd person, no prefix collision) must recommend Stripe, not 'בלי תשלומים'");
+
+  const future3pl = await provider.generate("אפליקציה לחנות. הלקוחות ישלמו על המוצרים באתר.");
+  assert.strictEqual(future3pl.openQuestions?.[0]?.recommendation, "Stripe", "'הלקוחות ישלמו על המוצרים' (future tense plural, 3rd person) must recommend Stripe, not 'בלי תשלומים'");
+
+  // Non-regression: all four Nifal ("will be completed") future person-prefixes (א/ת/י/נ) must not
+  // be swallowed by the new bare "ישלם"/"ישלמו" literals -- round 2349 only flagged the double-yod
+  // 3rd-person form as a risk, but every prefix produces the same literal substring.
+  const nifal1sg = await provider.generate("אפליקציה לניהול פרויקטים. אני בטוח שהפרויקט אישלם בקרוב.");
+  assert.strictEqual(nifal1sg.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'הפרויקט אישלם בקרוב' (nifal future, 1st person) must not spuriously trigger Stripe");
+
+  const nifal2ms = await provider.generate("אפליקציה לניהול משימות. המשימה תישלם עד סוף השבוע.");
+  assert.strictEqual(nifal2ms.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'המשימה תישלם עד סוף השבוע' (nifal future, with-yod prefix) must not spuriously trigger Stripe");
+
+  const nifal3ms = await provider.generate("אפליקציה לניהול עבודות. הפרויקט יישלם בהצלחה.");
+  assert.strictEqual(nifal3ms.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'הפרויקט יישלם בהצלחה' (nifal future, double-yod 3rd person) must not spuriously trigger Stripe");
+
+  const nifal1pl = await provider.generate("אפליקציה לניהול יעדים. אנחנו נישלם עם המטרה בזמן.");
+  assert.strictEqual(nifal1pl.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'אנחנו נישלם עם המטרה בזמן' (nifal future, 1st person plural) must not spuriously trigger Stripe");
+
+  const nifal2pl = await provider.generate("אפליקציה לניהול לקוחות. המשימות שלכם תישלמו בקרוב.");
+  assert.strictEqual(nifal2pl.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'המשימות שלכם תישלמו בקרוב' (nifal future plural, with-yod prefix) must not spuriously trigger Stripe");
+
+  const nifal3pl = await provider.generate("אפליקציה לניהול פרויקטים. הפרויקטים יישלמו בהצלחה.");
+  assert.strictEqual(nifal3pl.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'הפרויקטים יישלמו בהצלחה' (nifal future plural, double-yod 3rd person) must not spuriously trigger Stripe");
+
+  const hifilFuture = await provider.generate("אפליקציה לניהול לימודים. הסטודנט תשלים את הקורס בזמן.");
+  assert.strictEqual(hifilFuture.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'הסטודנט תשלים את הקורס' (hifil future, to complete) must not spuriously trigger Stripe");
+
+  // נשלם (1st-person-plural future OR nifal passive "was/will be completed") remains a genuine,
+  // unresolved homograph at this spelling with no safe local-adverb disambiguator -- deliberately
+  // NOT added to PAYMENT_KEYWORDS. This mirrors the existing wasCompleted non-regression case above.
+});
