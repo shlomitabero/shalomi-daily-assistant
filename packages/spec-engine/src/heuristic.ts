@@ -231,7 +231,29 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // narrow adjacency the existing "sell"/"selling" forms already required
   // -- a sentence with words wedged in between (e.g. "sold thousands of
   // online courses") is a separate, broader-proximity gap, not this one.
-  /\b(?:sells?|selling|sold)\s+(?:online\s+)?(?:courses?|classes?)\b/,
+  //
+  // Round 2354: closes the round-2351 proximity gap above, narrowly. A
+  // generic bounded-distance gap (e.g. "sold {0,3} words courses") was
+  // tried and REJECTED: it passed the full test suite but introduced a
+  // real new false positive, confirmed live -- "A boutique selling
+  // scarves and free online courses" flipped to Stripe, because a
+  // generic word-gap happily bridges from an unrelated commercial
+  // "selling X" to an unrelated, explicitly-FREE course mention a few
+  // words later. Instead, only the two specific, confirmed-real filler
+  // shapes from the round-2351 bug reports are allowed: a quantity
+  // phrase ("thousands/hundreds/dozens of") before "(online) course(s)/
+  // class(es)". Confirmed live: "A platform that already sold thousands
+  // of online courses to students" now correctly recommends Stripe,
+  // while "A boutique selling scarves and free online courses", "A gym
+  // selling supplements and running free online courses", and "A
+  // nonprofit sold dozens of free online courses to refugees" all still
+  // correctly stay "No payments" (the quantity phrase here precedes
+  // "free", not the course noun itself, so it doesn't match this
+  // narrow pattern). Known pre-existing residual, not introduced or
+  // worsened here: "sells digital courses" (no filler, no "online")
+  // still doesn't match, since this phrase has only ever recognized the
+  // adjective "online" -- a separate, narrower gap, out of scope.
+  /\b(?:sells?|selling|sold)\s+(?:(?:thousands?|hundreds?|dozens?)\s+of\s+)?(?:online\s+)?(?:courses?|classes?)\b/,
   /\bpaid\s+(?:online\s+)?(?:courses?|classes?)\b/,
   "למכור קורסים", "מכירת קורסים", "קורסים בתשלום", "קורס בתשלום",
   // Round 1989: same "course"/"class" synonym gap as the two regexes just
@@ -523,7 +545,17 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // immediately before "sold" inside either word), as does the
   // free-tickets-distribution and IT-ticketing
   // non-regression cases above.
-  /\b(?:sells?|selling|sold)\s+tickets?\b/,
+  //
+  // Round 2354: closes the round-2351 proximity gap for tickets, the
+  // same narrow way as the course/class fix above. Only a specific
+  // ticket-type adjective is allowed between the verb and "ticket(s)",
+  // not a generic word-gap (rejected for the same false-positive risk
+  // documented above). Confirmed live: "A site that sells event
+  // tickets online for concerts" now correctly recommends Stripe,
+  // while "A theater sold dozens of free tickets to the gala" still
+  // correctly stays "No payments" (the quantity phrase here precedes
+  // "free", not "ticket(s)" itself, so it doesn't match this pattern).
+  /\b(?:sells?|selling|sold)\s+(?:(?:event|concert|movie|show|theater|theatre)\s+)?tickets?\b/,
   "ticket sales", "box office",
   "מכירת כרטיסים", "למכור כרטיסים", "כרטיסים בתשלום",
 ];

@@ -8018,3 +8018,43 @@ test("PAYMENT_KEYWORDS round 2351: the 'sell(ing) + course(s)/class(es)' and 'se
   const resoldTickets = await provider.generate("A marketplace where fans can list resold tickets for sporting events.");
   assert.strictEqual(resoldTickets.openQuestions?.[0]?.recommendation, "No payments", "'resold tickets' (no word boundary before 'sold') must not trigger the new sold+tickets pattern");
 });
+
+test("PAYMENT_KEYWORDS round 2354: closes the round-2351 proximity gap for 'sell...course(s)/ticket(s)' with specific quantity/type filler words, without matching a generic word-gap", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const soldThousandsOfCourses = await provider.generate("A platform that already sold thousands of online courses to students.");
+  assert.strictEqual(soldThousandsOfCourses.openQuestions?.[0]?.recommendation, "Stripe", "'sold thousands of online courses' (quantity phrase filler) must recommend Stripe, not 'No payments'");
+
+  const sellsEventTickets = await provider.generate("A site that sells event tickets online for concerts.");
+  assert.strictEqual(sellsEventTickets.openQuestions?.[0]?.recommendation, "Stripe", "'sells event tickets' (ticket-type adjective filler) must recommend Stripe, not 'No payments'");
+
+  // Non-regression: the already-working adjacent forms (round 2351) must still work.
+  const sellsOnlineCourses = await provider.generate("An online academy that sells online courses to working professionals.");
+  assert.strictEqual(sellsOnlineCourses.openQuestions?.[0]?.recommendation, "Stripe", "'sells online courses' (adjacent, round 2351) must still recommend Stripe");
+
+  const sellsTicketsForShows = await provider.generate("A box office app that sells tickets for local theater shows.");
+  assert.strictEqual(sellsTicketsForShows.openQuestions?.[0]?.recommendation, "Stripe", "'sells tickets for local theater shows' (adjacent, round 2351) must still recommend Stripe");
+
+  // Non-regression: a generic word-gap must NOT be bridged -- a naive bounded-distance fix was
+  // tried and rejected because it let an unrelated "selling X" bridge to an unrelated, explicitly
+  // FREE course/ticket mention a few words later. Only the specific quantity/type filler shapes
+  // above are allowed, nothing else.
+  const boutiqueFreeCourses = await provider.generate("A boutique selling scarves and free online courses.");
+  assert.strictEqual(boutiqueFreeCourses.openQuestions?.[0]?.recommendation, "No payments", "'selling scarves and free online courses' must not spuriously trigger Stripe via a generic word-gap");
+
+  const gymFreeCourses = await provider.generate("A gym selling supplements and running free online courses.");
+  assert.strictEqual(gymFreeCourses.openQuestions?.[0]?.recommendation, "No payments", "'selling supplements and running free online courses' must not spuriously trigger Stripe");
+
+  const nonprofitFreeCourses = await provider.generate("A nonprofit sold dozens of free online courses to refugees last year.");
+  assert.strictEqual(nonprofitFreeCourses.openQuestions?.[0]?.recommendation, "No payments", "'sold dozens of free online courses' (quantity phrase precedes 'free', not the course noun) must not spuriously trigger Stripe");
+
+  const theaterFreeTickets = await provider.generate("A theater sold dozens of free tickets to the gala.");
+  assert.strictEqual(theaterFreeTickets.openQuestions?.[0]?.recommendation, "No payments", "'sold dozens of free tickets' must not spuriously trigger Stripe");
+
+  // Non-regression: pre-existing round 460/893/2351 non-regression cases must still hold.
+  const stripedShirts = await provider.generate("An inventory tracker for a small shop selling striped shirts and accessories.");
+  assert.strictEqual(stripedShirts.openQuestions?.[0]?.recommendation, "No payments", "'selling striped shirts' (round 460, unrelated inventory) must not trigger Stripe");
+
+  const oversold = await provider.generate("The popular course got oversold and now there's a waitlist for online courses.");
+  assert.strictEqual(oversold.openQuestions?.[0]?.recommendation, "No payments", "'oversold' (no word boundary before 'sold') must not trigger the sold+courses pattern");
+});
