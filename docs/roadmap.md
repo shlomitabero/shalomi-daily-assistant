@@ -53739,3 +53739,100 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2332: Event's כנס (conference) login-verb exclusion guard was also missing 1st-person-singular future 'אכנס'
+
+**Bug:** Round 1918 added lookbehinds excluding "כנס" when preceded by
+common כ.נ.ס ("to enter"/"to log in") verb-conjugation prefixes, closing
+a gap where ordinary login-flow descriptions spuriously fabricated an
+Event entity. That fix covered every OTHER grammatical person of the
+future tense -- "ניכנס"/"תיכנס"/"יכנס"/
+"ייכנס" all happen to have "י" immediately before "כנס" -- but
+missed 1st-person-singular future "אכנס" ("I will log in"),
+whose immediately-preceding character is "א" instead. This round's
+survey agent found it via Strategy B (grammatical-person coverage)
+applied to a guard not on the already-exhausted denylist.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול משימות שבה המשתמש אכנס למערכת עם שם משתמש וסיסמה בכל בוקר." (an app to manage tasks where
+the user will log in to the system with a username and password every
+morning) and "המשתמש אכנס למערכת כדי לבדוק את המלאי שלו." (the user will log in to the system to
+check their inventory) both fabricated Event. Round 1918's own 3rd-
+person-future control ("המשתמש יכנס למערכת עם שם משתמש וסיסמה.") and round 562's own present-tense
+control ("המשתמש נכנס למערכת בבוקר.") still correctly excluded Event.
+
+**Fix** (`domainEntities.ts`, Event's "כנס" keyword): added a seventh
+single-character lookbehind, same style as the existing ones:
+```js
+/(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)(?<!א)כנס/
+```
+"א" is never itself a prefix of a genuine standalone "כנס"/"הכנס"
+(conference) usage (the noun only ever takes ב/ל/ה/מ-type prefixes),
+confirmed empirically including a composite sentence containing both
+the login verb and a real conference mention ("אני אכנס למערכת ואחר כך אירשם לכנס הבינלאומי." still
+correctly matched Event).
+
+**BILLING_ENTITY_NAMES:** Event is not a member, so this bug's impact is
+limited to the fabricated entity, no payment-recommendation
+`openQuestions` side effect.
+
+**Backtracking pitfall, checked and found NOT to apply here:** this
+guard is a flat chain of same-position, fixed-length negative
+lookbehinds, not an optional-suffix-plus-lookahead shape (the pattern
+that caused real backtracking bugs on other guards in this file). A
+naive merged single-lookbehind variant combining all seven exclusions
+was tested and behaves identically to the independent chain in every
+case -- no pitfall here, consistent with the lookbehind-with-mandatory-
+exclusion shape already confirmed safe on several other guards fixed
+earlier this window.
+
+**Test added** (`heuristic.test.ts`): confirms both new 1st-person-
+future sentences no longer fabricate Event, while round 1918's and round
+562's own controls and genuine conference mentions (including the
+composite sentence: "אנחנו מתכננים כנס שנתי גדול למפתחים.", "נרשמתי לכנס המפתחים שיתקיים בתל אביב.") all still
+behave correctly.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 243 (the new test), as predicted; pass-after showed 243/243. Full
+`@forge/spec-engine` suite: 439/439 (up from 438). Full `@forge/api`
+suite: 1782/1782, unchanged, run via Bash's native `run_in_background`
+from `apps/api` (disk space checked healthy beforehand). Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 38 confirmed instances total. The "missing
+grammatical person" vein, previously declared exhausted after an
+explicit audit in round 2329, has resurfaced once more on a DIFFERENT
+guard -- the lesson is that "exhausted" audits are scoped to the
+specific guards checked at the time, not a permanent guarantee across
+the whole file. Separately, this entry's own first draft hand-typed a
+Hebrew word and accidentally substituted a visually-identical letter
+from a different script, caught only by the standing codepoint scan,
+and a careless first attempt to fix it in place risked touching
+unrelated already-committed text before being reverted cleanly via
+`git checkout` and redone as a clean re-append. Two standing practices
+follow: (1) never hand-type a Hebrew word in roadmap prose when it can
+instead be pulled verbatim, via plain ASCII-only regex anchors, from
+already-committed and already-codepoint-verified source text (this
+entry's every Hebrew word comes from the committed domainEntities.ts
+comment and heuristic.test.ts sentences this way); (2) when a codepoint
+scan does catch a mistake, fix it by discarding the uncommitted draft
+and re-appending cleanly rather than editing the bad character in
+place, since a hand-typed correction can reproduce the identical error
+instead of fixing it. A separate, unrelated observation from this same
+scan -- some already-committed roadmap prose from earlier rounds
+contains a small number of substituted-script characters predating this
+session's visible window -- is left for a dedicated future round rather
+than risked here. Standing deferred/unsafe gaps, unchanged this round:
+Ticket bare-noun gap (rounds 2282-2283); Courier license/insurance/
+traffic-ticket sub-case (round 2311); Course bare-price-crashing
+sub-case (round 2316); Course military-topic-vs-squad-unit ambiguity
+(round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318); Order's forward-only "הזמנה" exclusion-lookahead
+directionality gap (round 2331, accepted trade-off, not required to
+fix); some already-committed roadmap text from earlier rounds containing
+substituted-script characters (noticed this round, deferred to a
+dedicated future round).
+
+Live: https://forge-ai-m7p7.onrender.com
