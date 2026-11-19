@@ -4813,9 +4813,14 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
         }
         let n = Number(raw);
         if (!Number.isFinite(n)) {
-          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
-          const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
-          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
+          // Round 2272: mirrors the live preview's own identical fix --
+          // strip currency/%/whitespace BEFORE testing the parenthesized-
+          // negative anchor, not after, so a currency symbol placed before
+          // the opening paren (e.g. "$(1,234.56)") doesn't fail the anchor.
+          const stripped = raw.replace(CSV_NUMBER_FORMATTING, "");
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(stripped);
+          const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : stripped;
+          const cleaned = normalizeDecimalSeparator(unwrapped);
           // Round 2255: mirrors the live preview's own identical fix -- see
           // entityFormatting.ts's buildImportRecords -- re-running
           // HEX_OCTAL_BINARY_PREFIX against the CLEANED string too, not
@@ -5121,9 +5126,14 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
         let n = numberIsCoercible ? Number(raw) : NaN;
         if (!Number.isFinite(n) && typeof raw === "string") {
-          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
-          const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
-          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
+          // Round 2272: see buildImportRecords' own identical fix above --
+          // strip currency/%/whitespace BEFORE testing the parenthesized-
+          // negative anchor, not after, so a currency symbol placed before
+          // the opening paren (e.g. "$(1,234.56)") doesn't fail the anchor.
+          const stripped = raw.replace(CSV_NUMBER_FORMATTING, "");
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(stripped);
+          const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : stripped;
+          const cleaned = normalizeDecimalSeparator(unwrapped);
           // Round 2255: see buildImportRecords' own identical fix above --
           // currency-symbol stripping can re-expose a bare hex/octal/binary
           // prefix ("$0x10" -> "0x10") that the earlier raw-string check

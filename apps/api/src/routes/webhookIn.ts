@@ -294,6 +294,18 @@ function normalizeDecimalSeparator(s: string): string {
 // record gets hard-rejected -- the same "a real value was sent, just not in
 // the exact shape this route expected" gap the currency/thousands-separator
 // leniency above (round 1584-era) already closed for the positive case.
+//
+// Round 2272: this anchor is only ever tested against the value BELOW
+// after WEBHOOK_NUMBER_FORMATTING has already stripped currency/%/
+// whitespace from it, never against the raw value -- a currency symbol
+// placed BEFORE the opening paren (Excel's own "Accounting" number format
+// literally renders a negative this way: the currency glyph flush left,
+// parentheses around the digits, e.g. "$(1,234.56)" or "$ (1,234.56)") used
+// to fail this same anchor when it was tested too early, against the raw,
+// still-un-stripped value -- `Number("$(1,234.56)")` stayed NaN and the
+// whole record was hard-rejected, identical in shape and severity to the
+// gap this same round fixed, just with the currency symbol outside the
+// parens instead of inside them.
 const WEBHOOK_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
 
 function normalizeBodyValues(
@@ -464,9 +476,18 @@ function normalizeBodyValues(
     } else if (field.type === "number") {
       normalized[field.name] = value;
       if (!Number.isFinite(Number(value))) {
-        const parenMatch = WEBHOOK_PARENTHESIZED_NEGATIVE.exec(value);
-        const unwrapped = parenMatch ? `-${parenMatch[1]}` : value;
-        const cleaned = normalizeDecimalSeparator(unwrapped.replace(WEBHOOK_NUMBER_FORMATTING, ""));
+        // Round 2272: strip currency/%/whitespace BEFORE testing the
+        // parenthesized-negative anchor, not after -- see
+        // WEBHOOK_PARENTHESIZED_NEGATIVE's own doc comment above. Stripping
+        // first never changes where the parens themselves land (that
+        // character class contains no "(" or ")"), so every previously-
+        // passing shape (currency/%/whitespace strictly inside the parens,
+        // or absent entirely) parses identically; it only ALSO tolerates
+        // one strictly outside them.
+        const stripped = value.replace(WEBHOOK_NUMBER_FORMATTING, "");
+        const parenMatch = WEBHOOK_PARENTHESIZED_NEGATIVE.exec(stripped);
+        const unwrapped = parenMatch ? `-${parenMatch[1]}` : stripped;
+        const cleaned = normalizeDecimalSeparator(unwrapped);
         if (cleaned !== "" && cleaned !== "-" && Number.isFinite(Number(cleaned))) normalized[field.name] = cleaned;
       }
     } else if (field.type === "enum" && field.enumValues) {

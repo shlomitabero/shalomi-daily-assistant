@@ -27509,6 +27509,55 @@ test("POST /public/webhook-in/:projectId/:entityName accepts accounting-style pa
   });
 });
 
+/**
+ * Regression test (round 2272): mirrors the test above exactly, but with
+ * the currency symbol OUTSIDE the parens ("$(1,234.56)") -- the literal
+ * shape Excel's own "Accounting" number format renders a negative in
+ * (currency glyph flush left, parens around the digits). Before this fix,
+ * WEBHOOK_PARENTHESIZED_NEGATIVE was tested against the raw value, before
+ * WEBHOOK_NUMBER_FORMATTING ever stripped the "$", so its `^\(...\)$`
+ * anchor failed and the whole record was hard-rejected -- the same
+ * severity as the already-fixed "($1,234.56)" case above, just with the
+ * symbol on the other side of the opening paren.
+ */
+test("POST /public/webhook-in/:projectId/:entityName accepts an accounting-style parenthesized negative number with the currency symbol OUTSIDE the parens", async () => {
+  await withServer(async (baseUrl, db) => {
+    const email = `webhook-in-number-paren-negative-outer-currency-${randomUUID()}@example.com`;
+    const authToken = await signup(baseUrl, email);
+    const user = findUserByEmail(db, email)!;
+    const spec: ProductSpec = {
+      summary: "test",
+      personas: [],
+      roles: ["Admin"],
+      entities: [{ name: "Lead", fields: [{ name: "name", type: "text", required: true }, { name: "amount", type: "number", required: false }] }],
+      screens: [],
+      assumptions: [],
+      openQuestions: [],
+    };
+    const projectId = randomUUID();
+    insertProject(db, { id: projectId, ownerId: user.id, name: "CRM", description: "test", spec });
+    diffAndMigrate(db, projectId, undefined, spec);
+    markProjectBuilt(db, projectId);
+
+    const tokenRes = await fetch(`${baseUrl}/api/projects/${projectId}/inbound-webhook-token`, { headers: authHeaders(authToken) });
+    const { token: webhookToken } = (await tokenRes.json()) as { token: string };
+
+    const webhookRes = await fetch(`${baseUrl}/api/public/webhook-in/${projectId}/Lead?token=${webhookToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Lee", amount: "$(1,234.56)" }),
+    });
+    assert.equal(webhookRes.status, 201, "a currency symbol outside the parens must not be rejected as an invalid number -- it's semantically the same value as the already-accepted \"($1,234.56)\"");
+    const { id: recordId } = (await webhookRes.json()) as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/api/projects/${projectId}/entities/Lead`, { headers: authHeaders(authToken) });
+    const { records } = (await listRes.json()) as { records: { id: string; name: string; amount: number }[] };
+    const created = records.find((r) => r.id === recordId);
+    assert.ok(created, "expected the record the route reported creating to actually exist");
+    assert.equal(created!.amount, -1234.56, "the stored value must be the negated cleaned numeric amount, not the raw string or a positive number");
+  });
+});
+
 test("POST /public/webhook-in/:projectId/:entityName still rejects a bare pair of parentheses with no digits inside for a number field", async () => {
   await withServer(async (baseUrl, db) => {
     const email = `webhook-in-number-paren-empty-${randomUUID()}@example.com`;

@@ -2372,6 +2372,13 @@ function normalizeDecimalSeparator(s: string): string {
  * whitespace inside, but not the parens themselves, so a CSV cell in this
  * exact shape -- the same input round 1627 already made the inbound-
  * webhook route tolerate -- still hard-rejected the whole import row here.
+ *
+ * Round 2272: mirrors webhookIn.ts's own identical round-2272 fix -- this
+ * anchor is only ever tested AFTER currency/%/whitespace stripping below,
+ * never against the raw cell, so a currency symbol placed BEFORE the
+ * opening paren (Excel's own "Accounting" number format literally renders
+ * a negative this way, e.g. "$(1,234.56)") used to fail the anchor when it
+ * was tested too early.
  */
 const CSV_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
 
@@ -2673,9 +2680,17 @@ export function buildImportRecords(
         }
         let n = Number(raw);
         if (!Number.isFinite(n)) {
-          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
-          const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
-          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
+          // Round 2272: strip currency/%/whitespace BEFORE testing the
+          // parenthesized-negative anchor, not after -- see
+          // CSV_PARENTHESIZED_NEGATIVE's own doc comment above. A currency
+          // symbol placed BEFORE the opening paren (Excel's own
+          // "Accounting" number format literally renders a negative this
+          // way, e.g. "$(1,234.56)") used to fail this anchor when it was
+          // tested too early, against the raw, still-un-stripped cell.
+          const stripped = raw.replace(CSV_NUMBER_FORMATTING, "");
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(stripped);
+          const unwrapped = parenMatch ? `-${parenMatch[1]}` : stripped;
+          const cleaned = normalizeDecimalSeparator(unwrapped);
           // Guard against a cell that's nothing but currency
           // symbols/whitespace (e.g. a bare "$") -- Number("") is 0, not
           // NaN, which would otherwise silently import as a real zero. The
@@ -3003,9 +3018,14 @@ export function buildImportRecordsFromJson(
         const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
         let n = numberIsCoercible ? Number(raw) : NaN;
         if (!Number.isFinite(n) && typeof raw === "string") {
-          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
-          const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
-          const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
+          // Round 2272: see buildImportRecords' own identical fix above --
+          // strip currency/%/whitespace BEFORE testing the parenthesized-
+          // negative anchor, not after, so a currency symbol placed before
+          // the opening paren (e.g. "$(1,234.56)") doesn't fail the anchor.
+          const stripped = raw.replace(CSV_NUMBER_FORMATTING, "");
+          const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(stripped);
+          const unwrapped = parenMatch ? `-${parenMatch[1]}` : stripped;
+          const cleaned = normalizeDecimalSeparator(unwrapped);
           // Round 2255: see buildImportRecords' own identical fix above --
           // currency-symbol stripping can re-expose a bare hex/octal/binary
           // prefix ("$0x10" -> "0x10") that the earlier raw-string check

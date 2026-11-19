@@ -2968,6 +2968,15 @@ test("buildImportRecords accepts a percent sign for a number cell, not just curr
  * so this exact cell shape still hard-rejected the row. A bare "()" with
  * nothing inside must still be rejected, not silently coerced to 0 (or a
  * lone "-").
+ *
+ * Round 2272: also covers the currency symbol sitting OUTSIDE the parens
+ * ("$(1,234.56)") -- the literal shape Excel's own "Accounting" number
+ * format renders a negative in (currency glyph flush left, parens around
+ * the digits). CSV_PARENTHESIZED_NEGATIVE used to be tested against the
+ * raw cell, before CSV_NUMBER_FORMATTING ever stripped the "$", so its
+ * `^\(...\)$` anchor failed and this shape fell through to a hard
+ * rejection -- the same severity as the already-fixed "($1,234.56)" case,
+ * just with the symbol on the other side of the opening paren.
  */
 test("buildImportRecords accepts an accounting-style parenthesized-negative number cell, but still rejects an empty pair of parentheses", () => {
   const fields: Field[] = [
@@ -2977,16 +2986,18 @@ test("buildImportRecords accepts an accounting-style parenthesized-negative numb
   const rows = [
     ["client", "amount"],
     ["Acme Corp", "($1,234.56)"],
+    ["Delta Co", "$(1,234.56)"],
     ["Beta LLC", "(500)"],
     ["Gamma Inc", "()"],
   ];
   const result = buildImportRecords(fields, rows);
   assert.deepEqual(result.records, [
     { client: "Acme Corp", amount: -1234.56 },
+    { client: "Delta Co", amount: -1234.56 },
     { client: "Beta LLC", amount: -500 },
   ]);
   assert.equal(result.errors.length, 1);
-  assert.match(result.errors[0], /Row 3.*Amount/);
+  assert.match(result.errors[0], /Row 4.*Amount/);
 });
 
 test("buildImportRecords rejects a hex/octal/binary-notation number cell instead of silently importing it as the unrelated decimal value Number() coerces it to", () => {
@@ -4134,6 +4145,22 @@ test("buildImportRecordsFromJson accepts a hand-typed comma/currency-formatted n
   const result = buildImportRecordsFromJson(fields, rows);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [{ amount: 1234.56 }, { amount: -42 }]);
+});
+
+/**
+ * Regression test (round 2272): mirrors entityFormatting.ts's own
+ * buildImportRecords identical fix (see its own doc comment there) -- a
+ * currency symbol sitting OUTSIDE the parens ("$(1,234.56)", Excel's own
+ * "Accounting" number format) used to fail CSV_PARENTHESIZED_NEGATIVE's
+ * anchor, since it was tested before CSV_NUMBER_FORMATTING ever stripped
+ * the "$".
+ */
+test("buildImportRecordsFromJson accepts a parenthesized-negative numeral string with the currency symbol OUTSIDE the parens", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: "$(1,234.56)" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.records, [{ amount: -1234.56 }]);
 });
 
 test("buildImportRecordsFromJson rejects a hex/octal/binary-notation number string, instead of silently importing it as the unrelated decimal value Number() coerces it to", () => {
