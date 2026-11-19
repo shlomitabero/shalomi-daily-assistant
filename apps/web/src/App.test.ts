@@ -5148,7 +5148,13 @@ test("App's HistoryPanel onRestored callback clears a stale build-warning banner
     `return ${code}`,
   )(
     (p: unknown) => (state.project = p),
-    (e: string | null) => (state.activeEntity = e),
+    // Round 2274: setActiveEntity now also takes the updater-function form
+    // (see the sibling handleBuildComplete test's own identical mock above),
+    // so this mock must call it with the current value rather than just
+    // assigning whatever's passed, same as React's real setState does.
+    (updater: string | null | ((prev: string | null) => string | null)) => {
+      state.activeEntity = typeof updater === "function" ? (updater as (prev: string | null) => string | null)(state.activeEntity) : updater;
+    },
     (w: string | null) => (state.buildWarning = w),
     (v: boolean) => (state.showHistory = v),
     makeProject([makeEntity("Customer")]),
@@ -5279,6 +5285,73 @@ test("App's HistoryPanel onRestored callback tolerates a pure letter-casing enti
     migratedEntities,
     [[restoredWithRenamedCustomer.id, "Customer", "customer"]],
     "migrateEntityPreferencesForCaseRename must be called once for the renamed entity, with its old and new spelling",
+  );
+});
+
+/**
+ * Round 2274: onRestored's own activeEntity update unconditionally jumped to
+ * the restored spec's first entity, unlike handleBuildComplete's own
+ * identical-shaped case above (round 988) which keeps whatever tab is
+ * currently open as long as that entity is still present (or carries it
+ * forward under its renamed spelling for a pure case rename), only falling
+ * back to the first entity when the active one was genuinely dropped. A
+ * Time Machine restore drops entities just as routinely as a refine does, so
+ * the same tab-jumping bug this round found applies here too.
+ */
+test("App's HistoryPanel onRestored callback keeps the active entity tab when it survives the restore, falling back to the first entity only when it was actually dropped", () => {
+  const appSrc = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const handlerMatch = appSrc.match(/ {14}onRestored=\{\((restored\) => \{[\s\S]*?\n {14}\})\}\n/);
+  assert.ok(handlerMatch, "expected to find the HistoryPanel onRestored callback in App.tsx");
+  const { code } = transformSync(`(${handlerMatch![1]}`, { loader: "ts" });
+
+  function runOnRestored(initialActiveEntity: string | null, restored: { id: string; spec: { entities: { name: string }[] } }) {
+    let activeEntity: string | null = initialActiveEntity;
+    const fn = new Function(
+      "setProject",
+      "setActiveEntity",
+      "setBuildWarning",
+      "setShowHistory",
+      "project",
+      "purgeEntityPreferences",
+      "migrateEntityPreferencesForCaseRename",
+      `return ${code}`,
+    )(
+      () => {},
+      (updater: string | null | ((prev: string | null) => string | null)) => {
+        activeEntity = typeof updater === "function" ? (updater as (prev: string | null) => string | null)(activeEntity) : updater;
+      },
+      () => {},
+      () => {},
+      // null: this test is scoped to the activeEntity fallback logic itself,
+      // same as the sibling handleBuildComplete test above -- the purge/
+      // migrate calls this closes over have their own dedicated tests.
+      null,
+      () => {},
+      () => {},
+    ) as (restored: { id: string; spec: { entities: { name: string }[] } }) => void;
+    fn(restored);
+    return activeEntity;
+  }
+
+  const restoredWithoutPayment = { id: "proj1", spec: { entities: [{ name: "Customer" }, { name: "Invoice" }] } };
+  assert.equal(
+    runOnRestored("Payment", restoredWithoutPayment),
+    "Customer",
+    "a dropped active entity must fall back to the restored spec's first entity, not stay stale",
+  );
+
+  const restoredWithInvoice = { id: "proj1", spec: { entities: [{ name: "Customer" }, { name: "Invoice" }] } };
+  assert.equal(
+    runOnRestored("Invoice", restoredWithInvoice),
+    "Invoice",
+    "an active entity that's still present in the restored checkpoint must be kept, not reset to the first one",
+  );
+
+  const restoredWithRenamedInvoice = { id: "proj1", spec: { entities: [{ name: "Customer" }, { name: "invoice" }] } };
+  assert.equal(
+    runOnRestored("Invoice", restoredWithRenamedInvoice),
+    "invoice",
+    "a pure case rename of the active entity must carry it forward under its new spelling, not treat it as dropped",
   );
 });
 

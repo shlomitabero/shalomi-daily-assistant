@@ -3776,7 +3776,20 @@ function AppContent() {
                   .filter((e) => !restored.spec.entities.some((re) => re.name === e.name) && !restoredEntityNamesLower.has(e.name.toLowerCase()))
                   .map((e) => e.name);
                 setProject(restored);
-                setActiveEntity(restored.spec.entities[0]?.name ?? null);
+                // Round 2274: this unconditionally jumped to the restored
+                // spec's first entity even when the tab the user had open is
+                // untouched by the restore -- unlike handleBuildComplete's own
+                // identical-shaped case above (round 988), which only falls
+                // back when the previously-active entity was actually dropped
+                // (or keeps it under its renamed spelling for a case-only
+                // rename). Mirrors that same logic here.
+                setActiveEntity((prev) => {
+                  if (!prev) return restored.spec.entities[0]?.name ?? null;
+                  const exact = restored.spec.entities.find((re) => re.name === prev);
+                  if (exact) return prev;
+                  const renamed = restored.spec.entities.find((re) => re.name.toLowerCase() === prev.toLowerCase());
+                  return renamed ? renamed.name : (restored.spec.entities[0]?.name ?? null);
+                });
                 setBuildWarning(null);
                 setShowHistory(false);
                 // Round 866: the same per-entity-keyed localStorage sweep
