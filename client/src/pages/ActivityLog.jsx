@@ -124,6 +124,19 @@ export default function ActivityLog() {
                 the owner nothing about what actually broke or where - just
                 that something, somewhere, once did. That defeats most of
                 the point of surfacing it here at all. */}
+            {/* routes/opportunities.js's own comment confirms detail.error
+                here is already clean Hebrew (engine/productDraft.js never
+                throws raw English) - unlike autonomous_scan's own equivalent
+                failure, which deliberately stays generic because ITS error
+                is raw English. Without this, a failed manual "מוצר דיגיטלי
+                חדש" draft attempt showed only "יצירת טיוטת מוצר - נכשל" with
+                no way to tell why, directly undercutting this app's own
+                stated "the log shows every action the system tried,
+                including failures" promise (Guide.jsx) for the one failure
+                type that was actually safe to explain in full. */}
+            {a.type === 'draft_product' && a.result === 'failed' && a.detail?.error && (
+              <p className="hint log-reason">{a.detail.topic ? `"${a.detail.topic}" · ` : ''}{a.detail.error}</p>
+            )}
             {a.type === 'client_error' && a.detail?.message && (
               <p className="hint log-reason">{a.detail.message}{a.detail.path ? ` (${a.detail.path})` : ''}</p>
             )}
