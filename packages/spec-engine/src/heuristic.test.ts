@@ -3183,6 +3183,47 @@ test("'volunteer email addresses'/'volunteer contact details'/'volunteer feedbac
   assert.ok(nonprofit.entities.some((e) => e.name === "Volunteer"), "a real nonprofit-volunteer description must still get a Volunteer entity");
 });
 
+test("round 2357: 'volunteer the building'/'volunteer some office space'/'volunteer any extra desks' never match the Volunteer entity either -- the determiner-exclusion list was still missing 'the'/'some'/'any'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const shelterApp = await provider.generate(
+    "An emergency-shelter coordination app. During emergencies, hosts volunteer the building as a shelter for displaced residents.",
+  );
+  assert.ok(!shelterApp.entities.some((e) => e.name === "Volunteer"), "'volunteer the building' must never match Volunteer");
+
+  const communityEventsApp = await provider.generate(
+    "A community events app. We volunteer some office space for local community events.",
+  );
+  assert.ok(!communityEventsApp.entities.some((e) => e.name === "Volunteer"), "'volunteer some office space' must never match Volunteer");
+
+  const disasterReliefApp = await provider.generate(
+    "A disaster-relief logistics app. We volunteer any extra desks for the pop-up clinic.",
+  );
+  assert.ok(!disasterReliefApp.entities.some((e) => e.name === "Volunteer"), "'volunteer any extra desks' must never match Volunteer");
+
+  // Non-regression: genuine nonprofit-volunteer sentences must still match.
+  const nonprofit2 = await provider.generate("An app to manage our volunteers and their shifts.");
+  assert.ok(nonprofit2.entities.some((e) => e.name === "Volunteer"), "a real nonprofit-volunteer description must still get a Volunteer entity");
+
+  const signupForFoodBank = await provider.generate("People who want to volunteer for the food bank can sign up here.");
+  assert.ok(signupForFoodBank.entities.some((e) => e.name === "Volunteer"), "'volunteer for the food bank' must still match Volunteer");
+
+  const volunteerHours = await provider.generate("Track volunteer hours and volunteer shift assignments.");
+  assert.ok(volunteerHours.entities.some((e) => e.name === "Volunteer"), "'volunteer hours and volunteer shift assignments' must still match Volunteer");
+
+  // Non-regression: a determiner preceding "volunteer(s)" as the sentence's subject (rather than
+  // following it as the idiom's object) must still match -- the lookahead only checks what
+  // follows "volunteer(s)", never what precedes it.
+  const theVolunteersArrived = await provider.generate("The volunteers arrived early for the shift.");
+  assert.ok(theVolunteersArrived.entities.some((e) => e.name === "Volunteer"), "'the volunteers arrived early' must still match Volunteer");
+
+  const someVolunteersPrefer = await provider.generate("Some volunteers prefer morning shifts at the shelter.");
+  assert.ok(someVolunteersPrefer.entities.some((e) => e.name === "Volunteer"), "'some volunteers prefer morning shifts' must still match Volunteer");
+
+  const anyVolunteersAvailable = await provider.generate("Are there any volunteers available this weekend for the food bank?");
+  assert.ok(anyVolunteersAvailable.entities.some((e) => e.name === "Volunteer"), "'any volunteers available this weekend' must still match Volunteer");
+});
+
 test("WorkOrder deliberately avoids Vehicle's own 'מוסך'/'מכונאי'/'garage'/'mechanic' keywords, so a garage idea doesn't ambiguously pick up an unrelated WorkOrder match from those words alone", async () => {
   const provider = new HeuristicSpecProvider();
   const garage = await provider.generate("An app for our garage to track vehicles our mechanics service.");

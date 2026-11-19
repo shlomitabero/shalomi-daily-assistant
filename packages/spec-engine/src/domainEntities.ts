@@ -4051,8 +4051,36 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // shift", "volunteer coordinators") and the plain subject usage
     // ("volunteers and their shifts") unaffected, since none of those are
     // in this short, deliberately narrow list.
+    //
+    // Round 2357: this determiner-exclusion list, incrementally extended
+    // across rounds 2108/2131/2242, still missed the three single most
+    // common English determiners that introduce the exact same
+    // direct-object-complement construction -- "the", "some", "any".
+    // Confirmed live: "During emergencies, hosts volunteer the building
+    // as a shelter for displaced residents" (emergency-shelter app),
+    // "We volunteer some office space for local community events"
+    // (community events app), and "We volunteer any extra desks for the
+    // pop-up clinic" (disaster-relief logistics app) all wrongly
+    // fabricated a Volunteer entity with zero nonprofit-volunteering
+    // content. Adds "the"/"some"/"any" to the determiner alternation.
+    // Deliberately does NOT add "every"/"each"/"all"/"no" -- unlike
+    // a/an/the/our/some/any, those commonly introduce a genuine
+    // time-adverbial in authentic volunteering sentences (e.g. "they
+    // volunteer each weekend at the soup kitchen"), not a direct object,
+    // so adding them risks a different regression (false-excluding
+    // genuine sentences); left as a residual gap needing its own
+    // disambiguation design. Confirmed live this doesn't affect any
+    // existing excluded case (rounds 2108/2131/2242's own) or any
+    // genuine match ("manage our volunteers and their shifts",
+    // "volunteers sign up for shifts", "volunteer for the food bank",
+    // "volunteer hours and shift assignments"), nor sentences where the
+    // determiner precedes "volunteer(s)" as the sentence's subject
+    // rather than following it as an idiom trigger ("the volunteers
+    // arrived early", "some volunteers prefer morning shifts", "any
+    // volunteers available this weekend") -- the lookahead only checks
+    // what follows "volunteer(s)", never what precedes it.
     keywords: [
-      /\bvolunteers?\b(?!\s+(?:a|an|our|their|his|her|its|my|your)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/,
+      /\bvolunteers?\b(?!\s+(?:a|an|the|our|their|his|her|its|my|your|some|any)\s+\S+)(?!\s+(?:\S+\s+)*(?:information|info|details?|feedback|suggestions?|comments?|addresses?|numbers?|contacts?)\b)/,
       "volunteer management", "volunteer shift",
       "מתנדב", "מתנדבת", "מתנדבים", "התנדבות",
     ],
