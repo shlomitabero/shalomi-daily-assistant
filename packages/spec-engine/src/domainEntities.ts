@@ -94,7 +94,36 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       "customer", "sales lead",
       /(?<!\b(?:email|mail|api|database|db|web|mobile|desktop|git|ssh|ftp|rest|graphql|http|thick|thin)[\s-])\bclient(s)?\b(?![\s-](?:side|library|libraries|app|apps|connection|connections|server|sdk))/i,
-      "לקוח", "לקוחה", "לקוחות",
+      // Round 2338: bare "לקוח"/"לקוחה" were listed completely unguarded
+      // -- unlike the ENGLISH "client" a few lines above (and קליינט just
+      // below), neither had any collision guard at all. "לקוח"/"לקוחה" is
+      // not only the noun "customer": it's also the ordinary Pa'al
+      // passive-participle adjective of the root ל-ק-ח ("to take"),
+      // meaning "derived/taken from" -- e.g. "הציטוט לקוח מתוך הספר" (the
+      // quote is taken from the book). Confirmed live: "הציטוט הזה לקוח
+      // מתוך הספר הקדוש..." (this quote is taken from the holy book),
+      // "הקטע לקוח מתוך נאום היסטורי..." (the passage is taken from a
+      // historic speech), and a realistic quotes-app description ("כל
+      // ציטוט לקוח מתוך ספר מסוים...") each fabricated a bogus Customer
+      // entity for a plain content/quotes app with zero CRM content.
+      //
+      // Hebrew has no \b, so this excludes the specific "excerpt/content/
+      // name"-type cue nouns (bare or ה-prefixed) that precede the
+      // adjective in this idiom, allowing up to 3 intervening words (same
+      // bounded-window convention as this file's other leaky-denylist
+      // guards, e.g. round 2337's הזדמנות guard) -- confirmed empirically
+      // against every existing "לקוח"/"לקוחה" fixture in heuristic.test.ts
+      // (none has a cue noun within the window) that this doesn't
+      // regress any genuine-customer test. The plural "לקוחות" is left
+      // unguarded, same as before: its adjective-plural counterpart would
+      // be "לקוחים", a distinct word, so "לקוחות" has no equivalent
+      // collision. Deliberately a leaky denylist, not an exhaustive fix,
+      // same class as round 2334's צדקה guard: a cue noun outside this
+      // list (e.g. "כתבה"/article, "פתגם"/proverb) or more than 3 words
+      // before the target still isn't excluded.
+      /(?<!(?:^|[\s.,!?])(?:ה)?(?:ציטוט|ציטוטים|קטע|קטעים|מידע|שם|שמות|מילה|מילים|סיפור|סיפורים|תוכן|נתון|נתונים|תרגום|רעיון|כתובה|משפט|משפטים|פסוק|פסוקים|תיאור|קביעה)(?:\s+\S+){0,3}\s)לקוח(?!ה|ות)/,
+      /(?<!(?:^|[\s.,!?])(?:ה)?(?:ציטוט|ציטוטים|קטע|קטעים|מידע|שם|שמות|מילה|מילים|סיפור|סיפורים|תוכן|נתון|נתונים|תרגום|רעיון|כתובה|משפט|משפטים|פסוק|פסוקים|תיאור|קביעה)(?:\s+\S+){0,3}\s)לקוחה/,
+      "לקוחות",
       /(?<!צד\s)קליינט(ים)?(?!\s*(?:ה)?(?:אימייל|מייל|api|דאטהבייס|מובייל|שרת)|-שרת)/,
     ],
     labelHe: "לקוחות",

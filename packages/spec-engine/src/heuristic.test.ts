@@ -7538,3 +7538,32 @@ test("MenuItem's 'מנות' keyword's existing 'הזמנות' (orders) lookbehin
   const realMenu = await provider.generate("אפליקציה לניהול מנות של בית אוכל קטן");
   assert.ok(realMenu.entities.some((e) => e.name === "MenuItem"), "a standalone 'מנות' must still match MenuItem");
 });
+
+test("Customer's bare 'לקוח'/'לקוחה' keywords don't spuriously match the unrelated 'derived/taken from' passive-participle idiom", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const quoteFromBook = await provider.generate("הציטוט הזה לקוח מתוך הספר הקדוש ומופיע גם באתר שלנו.");
+  assert.ok(!quoteFromBook.entities.some((e) => e.name === "Customer"), "'הציטוט... לקוח מתוך' (the quote is taken from) must not spuriously match Customer");
+
+  const passageFromSpeech = await provider.generate("הקטע לקוח מתוך נאום היסטורי מפורסם ומוצג באתר החדשות שלנו.");
+  assert.ok(!passageFromSpeech.entities.some((e) => e.name === "Customer"), "'הקטע לקוח מתוך' (the passage is taken from) must not spuriously match Customer");
+
+  const infoFromMinistry = await provider.generate("המידע באתר לקוח ממקורות רשמיים של משרד הבריאות.");
+  assert.ok(!infoFromMinistry.entities.some((e) => e.name === "Customer"), "'המידע... לקוח ממקורות' (the info is taken from sources) must not spuriously match Customer");
+
+  const feminineInscription = await provider.generate("הכתובה לקוחה מתוך מגילת העצמאות ומוצגת באתר ההיסטוריה שלנו.");
+  assert.ok(!feminineInscription.entities.some((e) => e.name === "Customer"), "'הכתובה לקוחה מתוך' (fem. 'is taken from') must not spuriously match Customer");
+
+  const quotesAppRealistic = await provider.generate("אפליקציה לניהול ציטוטים יומיים, כל ציטוט לקוח מתוך ספר מסוים ומוצג למשתמשים כל בוקר.");
+  assert.ok(!quotesAppRealistic.entities.some((e) => e.name === "Customer"), "a realistic daily-quotes app description must not spuriously match Customer");
+
+  // Non-regression: genuine customer/CRM usage must still match.
+  const basicCrm = await provider.generate("אנחנו מנהלים לקוחות ומוכרים להם מוצרים.");
+  assert.ok(basicCrm.entities.some((e) => e.name === "Customer"), "a basic CRM description must still match Customer");
+
+  const satisfiedCustomer = await provider.generate("לקוח מרוצה חוזר לרכוש שוב.");
+  assert.ok(satisfiedCustomer.entities.some((e) => e.name === "Customer"), "'לקוח מרוצה' (a satisfied customer) must still match Customer");
+
+  const feminineCustomer = await provider.generate("הלקוחה שלנו מרוצה מהשירות.");
+  assert.ok(feminineCustomer.entities.some((e) => e.name === "Customer"), "'הלקוחה שלנו' (our fem. customer) must still match Customer");
+});
