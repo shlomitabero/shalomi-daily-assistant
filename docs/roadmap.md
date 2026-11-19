@@ -56809,3 +56809,61 @@ mirror never caught up) -- the same mirror-drift class rounds
 mind alongside the construct-state/inflection lens for future rounds.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2367: negative result -- "mirror-array drift" angle exhausted, no new bug found
+
+**What was checked:** continuing the two methods that found bugs in
+rounds 2359-2366, this round's survey agent first swept the new
+"mirror-array drift" angle round 2366 opened: every `BILLING_ENTITY_NAMES`
+entity (`Invoice`/`Order`/`Donation`/`Subscription`/`Rental`/`Property`/
+`MenuItem`/`WorkOrder`/`InsuranceClaim`) was checked for guarded Hebrew
+RegExp keywords (negative-lookahead idiom guards) in `domainEntities.ts`,
+then cross-referenced against `PAYMENT_KEYWORDS` in `heuristic.ts` for a
+drifted/missing mirror. Independently re-verified: `BILLING_ENTITY_NAMES`
+matches exactly as claimed, and the two keywords that do have a
+`PAYMENT_KEYWORDS` mirror ("חיוב" and "מנוי") are confirmed byte-for-byte
+identical between both files (diffed programmatically, not eyeballed).
+The other guarded keywords (Order's "הזמנה"/"רכישת", MenuItem's
+"תפריט"/"מנות", Property's "נכס", Rental's "rental"/"rent") have no
+`PAYMENT_KEYWORDS` mirror at all to drift from -- confirmed these
+strings appear in that array's file only inside comments (incidental
+mentions in round-2365/2366's own prose), never as actual keyword
+entries, so no sync target exists and no drift is possible there. This
+angle is exhausted for the whole file as of this round.
+
+**Also checked:** the "4th Hebrew inflection missing" method was
+re-applied to every other multi-round Hebrew keyword family findable
+via roadmap round-title/comment frequency (JobApplicant's "מועמד",
+Vendor's "ספק"/"רכש", Course's "שיעור", Donation's "תרם"/"תורם" verb
+paradigm, Event's "כנס"/"חתונה"/"מסיבה", Task's "משימה", Order's
+"הזמנה", Review's "דירוג" cue list, Student's "תלמיד"/"סטודנט").
+Each was either already a grammatically-complete form set (no 4th
+form exists for feminine nouns whose construct plural equals the
+absolute plural), already safe via accidental substring coverage
+(masculine nouns with non-sofit endings), or too contrived/unnatural
+a phrasing to count as a genuine gap. A structural sweep of
+`matchEntities`/`matchRoles`/`buildScreens`/`buildOpenQuestions`/
+`summarize`/`withLabels`/`generate` also found no control-flow bug,
+and a targeted search for the one previously-real structural bug
+class in this file (a reversed-direction lookbehind `(?<![\s\S]*?x)`
+instead of the correct `(?<!x[\s\S]*)`) found only 3 instances, all
+already in the corrected order from round 2282.
+
+**Verification:** `git status --short` confirmed clean both by the
+survey agent and independently by this round's own spot-checks (no
+files were modified). No code change, no new test, no commit needed
+for this round -- a genuine, thoroughly-investigated negative result.
+
+**Standing notes update:** both the "4th Hebrew inflection missing"
+lens (8 consecutive hits, rounds 2359-2366) and the new "mirror-array
+drift" lens (1 hit, round 2366) are now independently confirmed
+exhausted for the entire file. Next round should pivot to the
+standing fallback: structural logic bugs in heuristic.ts, which has
+been deferred for 8 rounds. This round's own structural sweep found
+nothing, so the next round should look for subtler cases this pass
+may have missed (e.g. async/ordering issues, edge cases in array
+deduplication, boundary conditions in field-count or label-building
+logic) rather than re-walking the same six functions the same way.
+
+Live: https://forge-ai-m7p7.onrender.com
