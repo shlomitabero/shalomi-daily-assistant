@@ -42,6 +42,29 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // keeps rejecting "stripes" (the fabric pattern, plural).
   /\bstripe\b/,
   "תשלום", "תשלומים", "חשבונית",
+  // Round 2349: this array only ever carried the NOUN "תשלום"/
+  // "תשלומים" -- it never matched the verb "to pay" (root ש-ל-ם,
+  // Piel pattern) in any conjugation. Confirmed live: "...לקוחות
+  // שמשלמים על השירותים שלנו..." (customers who pay for our
+  // services, present tense) and "הלקוחות שילמו על המוצרים..."
+  // (the customers paid for the products, past tense) both wrongly
+  // recommended "בלי תשלומים" (no payments) despite explicitly
+  // stating customers pay. Adds the present/past/infinitive forms
+  // (משלם/משלמת/משלמים/משלמות, שילם/שילמה/שילמו, לשלם). Deliberately
+  // EXCLUDES the future-tense forms (ישלם/תשלם/ישלמו/תשלמו) and the
+  // 1st-person/passive "נשלם": at this spelling (no niqqud, informal
+  // Hebrew often drops a doubled yod) these collide with the Hifil
+  // "to complete" (ישלים/תשלים) and Nifal "was completed"
+  // (נשלם/יישלם/תישלם) forms of a DIFFERENT root -- confirmed live
+  // that genuine idiom/unrelated sentences using "ישתלם" (will be
+  // worthwhile), "להשלים"/"ישלים" (to complete a task), "נשלם" (was
+  // completed), "השתלמות" (training workshop, a common noun), and
+  // "משלים" (complementary) all correctly do NOT trigger this list's
+  // new entries, since each differs by an extra letter (י/ת/ה) this
+  // list's 8 new literals don't contain. Left as a documented,
+  // deferred gap for a future round rather than risking a new false
+  // positive without a safe disambiguating guard.
+  "לשלם", "משלם", "משלמת", "משלמים", "משלמות", "שילם", "שילמה", "שילמו",
   // Bare "חיוב" ("charge") is a substring of the ordinary, unrelated
   // adjective/noun "חיובי"/"חיובית"/"חיוביות" ("positive"/"positivity") --
   // extremely natural phrasing for a feedback/review/survey app ("משוב

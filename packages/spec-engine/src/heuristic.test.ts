@@ -7841,3 +7841,39 @@ test("Vendor's 'ספק' (doubt) idiom-exclusion guard was also missing the futur
   const genuineVendor = await provider.generate("אנחנו עובדים עם ספק סחורה חדש לניהול המלאי.");
   assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'עובדים עם ספק סחורה חדש' (we work with a new goods supplier) must still match Vendor");
 });
+
+test("PAYMENT_KEYWORDS only ever carried the noun 'תשלום'/'תשלומים', never the verb 'to pay' (שילם/משלם/לשלם) in any conjugation", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const presentPlural = await provider.generate("אפליקציה לניהול לקוחות שמשלמים על השירותים שלנו באתר.");
+  assert.strictEqual(presentPlural.openQuestions?.[0]?.recommendation, "Stripe", "'שמשלמים על השירותים' (who pay for our services, present tense) must recommend Stripe, not 'בלי תשלומים'");
+
+  const pastPlural = await provider.generate("הלקוחות שילמו על המוצרים שהזמינו מהחנות שלנו.");
+  assert.strictEqual(pastPlural.openQuestions?.[0]?.recommendation, "Stripe", "'הלקוחות שילמו על המוצרים' (the customers paid for the products, past tense) must recommend Stripe, not 'בלי תשלומים'");
+
+  const infinitive = await provider.generate("הלקוחות צריכים לשלם על השירות שקיבלו באתר.");
+  assert.strictEqual(infinitive.openQuestions?.[0]?.recommendation, "Stripe", "'צריכים לשלם על השירות' (customers need to pay for the service, infinitive) must recommend Stripe, not 'בלי תשלומים'");
+
+  // Non-regression: homograph collisions with the unrelated root "to complete"/"worthwhile" (ה-ש-ל-י-ם / נ-ש-ל-ם family) must not spuriously trigger Stripe.
+  const idiomWorthwhile = await provider.generate("אפליקציה לניהול השקעות. זה ישתלם לך לבדוק את ההצעה הזו.");
+  assert.strictEqual(idiomWorthwhile.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'ישתלם' (will be worthwhile, idiom) must not spuriously trigger Stripe");
+
+  const toComplete = await provider.generate("אפליקציה לניהול משימות. אני צריך להשלים את המשימה הזו היום.");
+  assert.strictEqual(toComplete.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'להשלים את המשימה' (to complete the task) must not spuriously trigger Stripe");
+
+  const wasCompleted = await provider.generate("אפליקציה לניהול פרויקטים. הפרויקט נשלם בהצלחה בזמן.");
+  assert.strictEqual(wasCompleted.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'נשלם בהצלחה' (was completed successfully, nifal) must not spuriously trigger Stripe");
+
+  const trainingNoun = await provider.generate("אפליקציה לניהול עובדים. אנחנו מציעים השתלמות מקצועית לעובדים.");
+  assert.strictEqual(trainingNoun.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'השתלמות מקצועית' (professional training workshop, noun) must not spuriously trigger Stripe");
+
+  const complementary = await provider.generate("אפליקציה לניהול מוצרים. המוצרים האלה משלימים אחד את השני.");
+  assert.strictEqual(complementary.openQuestions?.[0]?.recommendation, "בלי תשלומים", "'משלימים אחד את השני' (complementary products) must not spuriously trigger Stripe");
+
+  // Non-regression: the existing noun keyword and a plain no-payment description must still behave as before.
+  const existingNoun = await provider.generate("האפליקציה שולחת תשלום חודשי ללקוחות.");
+  assert.strictEqual(existingNoun.openQuestions?.[0]?.recommendation, "Stripe", "'תשלום חודשי' (monthly payment, existing noun keyword) must still recommend Stripe");
+
+  const noPaymentLanguage = await provider.generate("אפליקציה לניהול משימות יומיות לצוות.");
+  assert.strictEqual(noPaymentLanguage.openQuestions?.[0]?.recommendation, "בלי תשלומים", "a plain task-management description with no payment language must still recommend 'בלי תשלומים'");
+});
