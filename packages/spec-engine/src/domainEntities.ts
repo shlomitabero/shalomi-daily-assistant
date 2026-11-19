@@ -3588,9 +3588,35 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // Hebrew word characters at all, so this file's other Hebrew
     // exclusions -- e.g. "תפריט"/"שליח" above -- use a bare lookahead the
     // same way, not a `\b`-bounded one).
+    //
+    // Round 2358: this keyword list only ever covered the absolute
+    // singular/plural "הוצאה"/"הוצאות", never the construct-state
+    // (סמיכות) singular "הוצאת" ("the expenditure/outlay of ..."),
+    // used in ordinary phrasing like "הוצאת הכספים"/"הוצאת התקציב"/
+    // "הוצאת המשכורות" -- the same construct-suffix-inflection gap this
+    // file has found many times on other entities (עמותה, פוליסת
+    // ביטוח, and others). Confirmed live: "אפליקציה למעקב אחר הוצאת
+    // הכספים של העסק שלנו" and "המערכת עוזרת לנו לתעד את הוצאת התקציב
+    // החודשי" both lost the Expense entity entirely (fell through to
+    // the generic Item fallback). A bare "הוצאת" literal is NOT safe to
+    // add, though: this root (י-צ-א) is unusually polysemous, and
+    // "הוצאת X" very commonly means something unrelated to a business
+    // expense -- "הוצאת ספרים" (publishing house, the construct-form
+    // sibling of the already-excluded "הוצאה לאור" idiom), "הוצאת
+    // דיבה"/"הוצאת לשון הרע" (defamation/slander), "הוצאת צו" (issuance
+    // of a court order), "הוצאת רישיון" (issuance of a license), "הוצאת
+    // ילד מהבית" (child-protective-services removal). Fixed instead by
+    // allowlisting only the specific money/budget/payroll nouns that
+    // actually co-occur with the expense sense, with an optional
+    // definite-article "ה" on the second noun in the construct chain.
+    // Confirmed live this closes the 3 bug sentences above without
+    // reopening any of the 5 idiom collisions just listed, nor
+    // affecting the existing "הוצאה לאור"/"הוצאה לפועל" exclusions or
+    // the bare-plural control.
     keywords: [
       "expense", "expenses", "expense tracking", "business expenses",
       /הוצאה(?!\s*לאור|\s*לפועל)/, /הוצאות(?!\s*לאור|\s*לפועל)/, "מעקב הוצאות",
+      /הוצאת\s+(?:ה)?(?:כספים|כסף|תקציב|משכורות|משכורת)/,
     ],
     labelHe: "הוצאות",
     descriptionHe: "הוצאה עסקית שהעסק שילם.",

@@ -7428,6 +7428,44 @@ test("Expense's 'הוצאה'/'הוצאות' keywords don't spuriously trigger on
   assert.ok(realExpense.entities.some((e) => e.name === "Expense"), "'הוצאות עסקיות' alone must still match Expense");
 });
 
+test("round 2358: Expense's keywords were still missing the construct-state singular 'הוצאת' ('expenditure of ...'), safely allowlisted to the specific money/budget/payroll nouns to avoid reopening round 912's idiom-collision bug in a new shape", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const fundsExpenditure = await provider.generate("אפליקציה למעקב אחר הוצאת הכספים של העסק שלנו.");
+  assert.ok(fundsExpenditure.entities.some((e) => e.name === "Expense"), "'הוצאת הכספים' (expenditure of the funds) must match Expense");
+
+  const budgetExpenditure = await provider.generate("המערכת עוזרת לנו לתעד את הוצאת התקציב החודשי של הארגון.");
+  assert.ok(budgetExpenditure.entities.some((e) => e.name === "Expense"), "'הוצאת התקציב' (budget expenditure) must match Expense");
+
+  const payrollExpenditure = await provider.generate("כלי לניהול הוצאת המשכורות של העובדים בחברה.");
+  assert.ok(payrollExpenditure.entities.some((e) => e.name === "Expense"), "'הוצאת המשכורות' (payroll expenditure) must match Expense");
+
+  // Non-regression: the construct-state "הוצאת" must NOT reopen round 912's idiom-collision bug
+  // in a new shape -- this root is unusually polysemous, and "הוצאת X" very commonly means
+  // something entirely unrelated to a business expense.
+  const publishing = await provider.generate("מערכת לניהול הוצאת ספרים חדשים ומכירתם.");
+  assert.ok(!publishing.entities.some((e) => e.name === "Expense"), "'הוצאת ספרים' (publishing house, construct-form sibling of 'הוצאה לאור') must not spuriously match Expense");
+
+  const defamation = await provider.generate("תביעת הוצאת דיבה שהוגשה בבית המשפט אתמול.");
+  assert.ok(!defamation.entities.some((e) => e.name === "Expense"), "'הוצאת דיבה' (defamation) must not spuriously match Expense");
+
+  const courtOrder = await provider.generate("אפליקציה לניהול הוצאת צווי מניעה בבית המשפט.");
+  assert.ok(!courtOrder.entities.some((e) => e.name === "Expense"), "'הוצאת צו' (issuance of a court order) must not spuriously match Expense");
+
+  const licenseIssuance = await provider.generate("מערכת לניהול הוצאת רישיונות עסק חדשים לעסקים.");
+  assert.ok(!licenseIssuance.entities.some((e) => e.name === "Expense"), "'הוצאת רישיון' (license issuance) must not spuriously match Expense");
+
+  const childRemoval = await provider.generate("שירותי רווחה לניהול הוצאת ילדים מהבית בעקבות התעללות.");
+  assert.ok(!childRemoval.entities.some((e) => e.name === "Expense"), "'הוצאת ילד' (child-protective-services removal) must not spuriously match Expense");
+
+  // Non-regression: round 912's own existing tests must still hold.
+  const publishingHouse2 = await provider.generate("מערכת לניהול הוצאה לאור - קטלוג ספרים, סופרים וזכויות יוצרים");
+  assert.ok(!publishingHouse2.entities.some((e) => e.name === "Expense"), "'הוצאה לאור' (round 912) must still not spuriously match Expense");
+
+  const realExpense2 = await provider.generate("אפליקציה למעקב אחרי הוצאות עסקיות וקבלות");
+  assert.ok(realExpense2.entities.some((e) => e.name === "Expense"), "'הוצאות עסקיות' (round 912's own control) must still match Expense");
+});
+
 /**
  * Round 913's finding: Ticket's bare "תמיכה"/"תמיכת" keywords had the
  * same idiom-co-occurrence shape rounds 911/912 just fixed for Deal/
