@@ -53569,3 +53569,82 @@ Course military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2330: Event's חתונה (wedding) keyword was missing the construct-state (סמיכות) inflection "חתונת"
+
+**Bug:** Event's "wedding" Hebrew keyword list (round 575) only had the
+bare singular/plural forms "חתונה"/"חתונות". It never had the
+construct-state ("סמיכות") form "חתונת" -- the everyday way to name a
+specific wedding by what follows it, e.g. "חתונת החלומות" (dream
+wedding) or "חתונת האביב" (spring wedding). Unlike the bare forms,
+"חתונת" ends in "ת" rather than "ה", so it isn't a substring of either
+sibling and silently escaped matching entirely -- a pure false negative,
+distinct from the "missing grammatical person" shape found in rounds
+2326-2329 (this is a missing noun inflection, Strategy B, found by this
+round's survey agent after returning to broader hunting once that vein
+was confirmed exhausted). Order's own "הזמנה" exclusion guard a few
+lines above already lists "חתונת" by name in its own lookahead, showing
+the inflection was already known about elsewhere in the file -- just
+never applied to Event's own positive keyword.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול חתונת החלומות שלנו, כולל מוזמנים, ספקים ותקציב." (app for managing our
+dream wedding) and "אתר לתכנון חתונת האביב של הלקוחות שלנו." (site for planning the
+clients' spring wedding) both lost the Event entity entirely. The
+pre-existing bare forms ("אפליקציה לניהול חתונה שלנו, כולל מוזמנים, ספקים ותקציב.", "אני מתכנן חתונות ואירועים גדולים לאורך כל השנה.")
+and the unrelated "תחתונה"/"תחתונות" (underwear) substring-collision
+controls ("חנות אונליין למכירת הלבשה תחתונה ותחתוני נשים.", "אפליקציה לניהול מלאי של תחתונות וחזיות לחנות הלבשה.") all
+still behaved correctly.
+
+**Fix** (`domainEntities.ts`, Event's "חתונה" keyword): added the
+missing construct-state form with the same "(?<!ת)" lookbehind as its
+siblings (no "תחתונת" collision exists for the unrelated underwear word,
+confirmed empirically):
+```js
+/(?<!ת)חתונה/, /(?<!ת)חתונות/, /(?<!ת)חתונת/
+```
+
+**BILLING_ENTITY_NAMES:** Event is not a member, so this bug's impact is
+limited to the fabricated/missing entity, no payment-recommendation
+`openQuestions` side effect.
+
+**Backtracking pitfall, checked and found NOT to apply here:** same as
+rounds 2328/2329's lookbehind guards, a naive merged
+"(?<!ת)חתונ(?:ה|ות|ת)?" variant was tested and behaves identically to
+the independent fix across every case -- this guard's "(?<!ת)" sits
+before the matched word rather than gating a lookahead after an optional
+suffix, so there's no shared-optional-suffix backtracking path.
+Independent literals were kept anyway for consistency with this file's
+established defensive convention.
+
+**Test added** (`heuristic.test.ts`): confirms both new construct-state
+sentences now match Event, while the pre-existing bare forms and the
+underwear substring-collision controls all still behave correctly.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 241 (the new test), as predicted; pass-after showed 241/241. Full
+`@forge/spec-engine` suite: 437/437 (up from 436). Full `@forge/api`
+suite: 1782/1782, unchanged, run via Bash's native `run_in_background`
+from `apps/api` (disk space checked healthy beforehand). Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword
+array" pattern now has 36 confirmed instances total; the "missing
+inflection" pitfall this file's own header already warns about now has
+a confirmed instance on Event, after Order's own guard had already named
+the same inflected form in its own exclusion list without anyone porting
+it to Event's positive keyword -- worth remembering that a word's
+construct-state form sometimes surfaces first in an unrelated entity's
+exclusion list before anyone notices the entity it actually belongs to
+is missing it. Round 2330's survey agent confirmed the "missing
+grammatical person/number" vein (rounds 2326-2329) is exhausted and
+returned to broader Strategy A/B hunting, which is where this round's
+finding came from. Standing deferred/unsafe gaps, unchanged this round:
+Ticket bare-noun gap (rounds 2282-2283); Courier license/insurance/
+traffic-ticket sub-case (round 2311); Course bare-price-crashing
+sub-case (round 2316); Course military-topic-vs-squad-unit ambiguity
+(round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
