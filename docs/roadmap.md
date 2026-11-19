@@ -55444,3 +55444,97 @@ future-tense/נשלם gap (round 2349, deferred, candidate for a
 follow-up round).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2350: PAYMENT_KEYWORDS's future-tense gap, and correcting round 2349's own risk framing
+
+**Bug:** a second-order refinement, not a brand-new discovery -- an
+evidence-based audit of round 2349's own deferred-gap reasoning for
+`PAYMENT_KEYWORDS` (`heuristic.ts`). Round 2349 added present/past/
+infinitive forms of the verb "to pay" but deliberately deferred all
+future-tense forms, citing a collision risk with Hifil "to complete"
+(ישלים/תשלים) and attributing it to "informal Hebrew often drops a
+doubled yod." Direct string `.includes()` checks this round show that
+framing was imprecise on two counts: (a) Hifil is not actually a
+collision risk at all -- "ישלים".includes("ישלם") is `false`,
+structurally, not just "usually" safe; (b) the real risk round 2349
+missed is broader -- the Nifal future ("will be completed") produces
+"ישלם"/"ישלמו" as a literal substring under EVERY person-prefix
+(אתינ), not just the double-yod 3rd-person form round
+2349 singled out.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`, against the unmodified pre-fix file): future-
+tense sentences like "אפליקציה למנהל חשבונות. את תשלם על השירות בכרטיס אשראי." and "אפליקציה כללית. המשתמש ישלם באשראי כל חודש." wrongly
+recommended "בלי תשלומים" (no payments) despite stating a future
+payment; meanwhile all four Nifal-prefixed adversarial sentences (e.g.
+"אפליקציה לניהול עבודות. הפרויקט יישלם בהצלחה.") and the Hifil adversarial sentence
+("אפליקציה לניהול לימודים. הסטודנט תשלים את הקורס בזמן.") correctly stayed excluded pre-fix, confirming the new
+keywords don't yet exist to trigger them.
+
+**Fix** (`heuristic.ts`, `PAYMENT_KEYWORDS` array):
+```js
+"תשלם", "תשלמו", /(?<![אתינ])ישלם/, /(?<![אתינ])ישלמו/
+```
+"תשלם"/"תשלמו" are added as safe bare literals (neither is ever a
+substring of Hifil תשלים/תשלימו or any Nifal-prefixed form). "ישלם"/
+"ישלמו" are added as lookbehind-guarded regexes excluding all four
+Nifal prefixes (אתינ), not just a narrower single-letter
+guard -- justified because none of those four letters is a legitimate
+one-letter clitic on an already-conjugated Piel future verb.
+
+**Deliberately still deferred:** "נשלם" (1st-person-plural future, or
+Nifal passive "was/will be completed") remains a genuine same-spelling
+homograph with no safe local disambiguator. An adverb-exclusion guard
+was tested and rejected this round: natural payment phrasing like
+"נשלם בזמן" (we'll pay on time) uses the exact same adverbs as the
+completion sense ("הפרויקט נשלם בזמן" = the project was completed on
+time), so no local lookahead/lookbehind can tell them apart.
+
+**BILLING_ENTITY_NAMES / entity-detection impact:** none, same as round
+2349 -- this fix is entirely inside `PAYMENT_KEYWORDS`'s
+`mentionsPayments` check.
+
+**Test added** (`heuristic.test.ts`): confirms all 4 future-tense bug
+sentences (תשלם/תשלמו/ישלם/ישלמו across persons) now correctly
+recommend Stripe, and all 4 Nifal person-prefixes (singular and
+plural) plus the Hifil form stay correctly excluded with no new false
+positive.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 261 (the new test), as predicted; pass-after showed 261/261 --
+no regression. Full `@forge/spec-engine` suite: 457/457 (up from 456).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** method A-3 (keyword orthography break)
+remains exhausted per rounds 2347/2348's negative findings; this round
+continues round 2349's scope-widening into heuristic.ts's own
+file-level structure rather than domainEntities.ts. Standing
+deferred/unsafe gaps, unchanged this round except as noted: Ticket
+bare-noun gap (rounds 2282-2283); Courier license/insurance/traffic-
+ticket sub-case (round 2311); Course bare-price-crashing sub-case
+(round 2316); Course military-topic-vs-squad-unit ambiguity (round
+2316); Course "courses"-vs-restaurant-meal-courses sub-case (round
+2318); Order's forward-only "הזמנה" exclusion-lookahead directionality
+gap (round 2331, accepted trade-off); pre-existing roadmap.md script-
+substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+leaks (round 2340, accepted trade-off); Vendor's "רכש" guard's
+residual leak on any future-form negation phrasings not yet
+enumerated (round 2342, accepted trade-off); Donation's new future/
+imperative branches' residual leak on any idiom phrasing not matching
+the existing ל+noun lookahead list (round 2343, accepted trade-off);
+Course's new imperative branches' residual leak on any idiom phrasing
+using a give-verb form not yet enumerated (round 2344, accepted
+trade-off); PAYMENT_KEYWORDS' "נשלם" gap, now confirmed genuinely
+unfixable with a local regex guard and permanently deferred (rounds
+2349-2350).
+
+Live: https://forge-ai-m7p7.onrender.com
