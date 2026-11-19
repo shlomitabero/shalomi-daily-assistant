@@ -6101,6 +6101,50 @@ test("JobApplicant's 'hiring' keyword doesn't spuriously match the British/Austr
 });
 
 /**
+ * Round 2314: Course's bare "lesson"/"lessons" (English) and "שיעור"
+ * (Hebrew) collided with idioms with zero connection to education --
+ * "teach X a lesson" (moral comeuppance/revenge), "learn(ed) a hard/
+ * valuable/... lesson" (life-lesson-from-experience), "lessons learned"
+ * (retrospective business jargon), and the Hebrew "give X a lesson"
+ * idiom. The seventeenth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2313 fixed, of the
+ * grammatical-polysemy shape (like JobApplicant's "hiring") -- the
+ * idiom always has a person/object between the verb and "a lesson",
+ * which genuine literal use never has, distinguishing the two readings.
+ */
+test("Course's 'lesson(s)'/'שיעור' keywords don't spuriously match the 'teach/learn a lesson' idioms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const teachRival = await provider.generate("He wanted to teach his rival a lesson, so he worked twice as hard to beat him in the race.");
+  assert.ok(!teachRival.entities.some((e) => e.name === "Course"), "'teach X a lesson' (comeuppance) must not spuriously match Course");
+
+  const taughtNeighbor = await provider.generate("She finally taught her noisy neighbor a lesson by reporting him to the landlord.");
+  assert.ok(!taughtNeighbor.entities.some((e) => e.name === "Course"), "'taught X a lesson' (comeuppance) must not spuriously match Course");
+
+  const hardLesson = await provider.generate("He learned a hard lesson about trusting strangers online after losing his savings.");
+  assert.ok(!hardLesson.entities.some((e) => e.name === "Course"), "'learned a hard lesson' (life lesson) must not spuriously match Course");
+
+  const lessonsLearned = await provider.generate("Our startup documented the key lessons learned after the product launch failed.");
+  assert.ok(!lessonsLearned.entities.some((e) => e.name === "Course"), "'lessons learned' (postmortem jargon) must not spuriously match Course");
+
+  const teachNeighborHe = await provider.generate("הוא רצה לתת לשכן שלו שיעור אחרי שהוא העביר את המכונית שלו בלילה.");
+  assert.ok(!teachNeighborHe.entities.some((e) => e.name === "Course"), "Hebrew 'give X a lesson' (comeuppance) must not spuriously match Course");
+
+  const teachHimHe = await provider.generate("אני אתן לו שיעור הוא לא יעשה את זה שוב.");
+  assert.ok(!teachHimHe.entities.some((e) => e.name === "Course"), "Hebrew 'I'll give him a lesson' (comeuppance) must not spuriously match Course");
+
+  // Non-regression: genuine lesson-scheduling descriptions must still match.
+  const drivingSchool = await provider.generate("A driving school tracking students and lesson schedules.");
+  assert.ok(drivingSchool.entities.some((e) => e.name === "Course"), "a genuine 'lesson schedules' description must still match Course");
+
+  const noObject = await provider.generate("Our tutor will teach a quick lesson every Monday to beginners.");
+  assert.ok(noObject.entities.some((e) => e.name === "Course"), "'teach a lesson' with no object (literal) must still match Course");
+
+  const teacherGivesLessonHe = await provider.generate("המורה נתן שיעור מצוין היום בכיתה.");
+  assert.ok(teacherGivesLessonHe.entities.some((e) => e.name === "Course"), "Hebrew 'the teacher gave a lesson' (literal, no object) must still match Course");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

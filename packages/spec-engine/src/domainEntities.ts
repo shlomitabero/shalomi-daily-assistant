@@ -1344,7 +1344,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // would collide with "of course" and "golf course", both far more
     // common than any real education-app phrasing that needs it.
     keywords: [
-      /\bcourses\b/, "curriculum", "lesson", "lessons", "קורס", "קורסים", "שיעורים", "כיתה",
+      /\bcourses\b/, "curriculum", "קורס", "קורסים", "שיעורים", "כיתה",
+      // Round 2314: bare "lesson"/"lessons" collided with three common
+      // idioms with zero connection to education -- "teach X a lesson"
+      // (moral comeuppance/revenge), "learn(ed) a hard/valuable/...
+      // lesson" (life-lesson-from-experience), and "lessons learned"
+      // (retrospective/postmortem business jargon). Confirmed live:
+      // "He wanted to teach his rival a lesson..." and three similar
+      // descriptions each fabricated Course as a spurious entity
+      // (sometimes bolted onto a real Product entity, as with the
+      // postmortem case), with zero relation to lessons/classes.
+      // The idiom always has a person/object between the verb and "a
+      // lesson" ("teach HIM a lesson"); genuine literal use never does
+      // ("teach a lesson", "teach a quick lesson") -- this distinguishes
+      // the two readings without excluding real tutoring phrasing.
+      // Deliberately NOT guarding a bare "learn(ed) a lesson" with no
+      // evaluative adjective (e.g. "students learn a lesson every
+      // week") -- there's no reliable syntactic distinguisher between
+      // that and the idiom the way there is for "teach X a lesson" vs
+      // "teach a lesson", so the exclusion is scoped narrowly to the
+      // specific evaluative-adjective pattern the confirmed collision
+      // actually uses, left open rather than force-fixed with an unsafe
+      // blanket exclusion (same discipline as the deferred Courier
+      // license/insurance gap, round 2311).
+      /(?<!\b(?:teach|teaches|teaching|taught)\s+(?:\S+\s+){1,4}a\s)(?<!\b(?:learn|learns|learned|learning)\s+a\s+(?:hard|valuable|difficult|painful|tough|costly|bitter|important|harsh|humbling|good|real)\s)\blessons?\b(?!\s+learned\b)/i,
       // "כיתה" (classroom/class) had no plural entry (round 583). Its
       // plural "כיתות" swaps the word-final ה for ות mid-word, the same
       // construct-state gap shape rounds 576-582 already found elsewhere
@@ -1385,7 +1408,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // שיעור", a bare "שיעור בבית ספר" -- still matches, confirmed
       // empirically after fixing; "שיעורים" (plural) is a separate keyword
       // entry, untouched.
-      /שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
+      //
+      // Round 2314: this same "שיעור" keyword also collides with the
+      // Hebrew "give X a lesson" idiom ("לתת ל-X שיעור" = teach X a
+      // lesson/comeuppance, nothing to do with education), the exact
+      // same shape as the English "lesson"/"lessons" fix just above.
+      // Confirmed live: "הוא רצה לתת לשכן שלו שיעור..." (he wanted to
+      // teach his neighbor a lesson) and "אני אתן לו שיעור..." (I'll
+      // teach him a lesson) both fabricated Course. The added lookbehind
+      // excludes only "<give-verb> ל<object> ... שיעור" (an object
+      // between the verb and "שיעור"); a literal lesson always lacks
+      // that ל-object ("המורה נתן שיעור" = the teacher gave a lesson,
+      // confirmed still matching).
+      /(?<!(?:לתת|אתן|תיתן|ייתן|נתן|נתנה|נתנו)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
