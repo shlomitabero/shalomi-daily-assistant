@@ -55086,3 +55086,109 @@ phrasing using a give-verb form not yet enumerated (round 2344,
 accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2346: Vendor's 'רכש' keyword was structurally unable to detect vav-spelled future tense
+
+**Bug:** All 9 existing branches for Vendor's procurement keyword
+match the literal 3-letter contiguous substring "רכש". True Hebrew
+future tense of the same root inserts a vav between כ and ש --
+ארכוש (I will acquire), תרכוש (you m./she will acquire), ירכוש (he
+will acquire), נרכוש (we will acquire) -- so "רכוש" is never a
+substring of "רכש" and these four forms were structurally
+unreachable by ANY existing branch, no matter how many more
+person/number/tense lookbehinds got added to the existing pattern.
+Unlike every other finding this window (rounds 2343-2345's "missing
+tense category" on idiom-exclusion guards), this is a genuine
+KEYWORD-MATCHING gap: a false negative via orthography, not an
+idiom collision.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "נרכוש ציוד משרדי חדש לחברה" (we will acquire
+new office equipment for the company) and "אני ארכוש מכונות חדשות למפעל בחודש הבא"
+(I will acquire new machines for the factory next month), among two
+other person combinations, all produced zero Vendor entities despite
+being unambiguous future-tense procurement language with no "ספק"
+substring anywhere to confound the result.
+
+**Scope refinement found during verification:** the OTHER future-
+tense forms -- תרכשי/תרכשו/ירכשו, which drop the vav before a suffix
+-- already worked correctly by coincidence, since they contain the
+existing רכשי/רכשו literals as substrings. The real gap is narrower
+than it first looks: only the four vav-RETAINING, no-suffix singular
+forms were unreachable.
+
+**Fix** (`domainEntities.ts`, Vendor's keyword array), 4 new
+independent positive-keyword branches:
+```js
+/ארכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|תרכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|ירכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|נרכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/
+```
+Each needed its own idiom-exclusion lookahead: the same "acquire-X
+experience/knowledge/skills" idiom collision that motivated rounds
+2309/2320/2326/2342's lookaheads on the past-tense forms is equally
+natural in future tense, confirmed live with genuine Hebrew idiom
+sentences in all four persons.
+
+**Substring-collision check (critical for this fix, since these are
+NEW positive keywords rather than exclusion guards):** verified the
+new branches never bare-match inside the common standalone Hebrew
+noun "רכוש" (property/assets, e.g. "המערכת מנהלת רכוש רב של החברה" -- manages
+a lot of the company's property) or the existing infinitive "לרכוש"
+fixture, since none of those phrasings ever put א/ת/י/נ directly, with
+no space, before "רכוש".
+
+**BILLING_ENTITY_NAMES:** Vendor is NOT a member (re-confirmed again),
+so this bug is entity-fabrication/omission only.
+
+**Test added** (`heuristic.test.ts`): confirms all four future-tense
+procurement sentences now correctly match Vendor, the future-tense
+idiom collision stays excluded, the standalone noun and infinitive
+fixtures are unaffected, and the already-working vav-dropping forms
+still match.
+
+**Verification:** fail-before via `git stash` showed exactly 1
+failure out of 258 (the new test), as predicted; pass-after showed
+258/258 -- no regression, the third consecutive round with a clean
+first-attempt fix. Full `@forge/spec-engine` suite: 454/454 (up from
+453). Full `@forge/api` suite: 1782/1782, clean. Production build:
+clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this closes out the two leads round 2345's
+roadmap entry flagged as open. Discovery method taxonomy for this
+window now stands at: method A (missing person/number/gender within
+an already-covered tense, 6 instances), method A-2 (missing an entire
+tense/mood category outright, 3 instances: Donation 2343, Course
+2344, Vendor-ספק 2345), and now a THIRD distinct shape worth naming
+method A-3 ("keyword orthography break" -- a grammatical inflection
+that doesn't share a contiguous substring with the base keyword at
+all, making it unreachable regardless of how many lookbehind/lookahead
+branches get added) -- Vendor-רכש 2346. Worth checking other
+guards for this same orthography-break shape in future rounds: any
+Hebrew root where a vowel letter (ו/י/א) can be inserted mid-word for
+a different binyan/tense is a candidate. Standing deferred/unsafe
+gaps, unchanged this round: Ticket bare-noun gap (rounds 2282-2283);
+Courier license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course military-topic-vs-
+squad-unit ambiguity (round 2316); Course "courses"-vs-restaurant-
+meal-courses sub-case (round 2318); Order's forward-only "הזמנה"
+exclusion-lookahead directionality gap (round 2331, accepted
+trade-off); pre-existing roadmap.md script-substitution corruption
+from rounds 2316/2324/2325 (round 2332, deferred to a dedicated
+future round); Donation's "צדקה" guard's residual unlisted-stance-
+noun leak (round 2334, accepted trade-off); Patient's "מטופל" guard's
+residual leaks (round 2336, accepted trade-off); Deal's "הזדמנות"
+guard's residual leak (round 2337, accepted trade-off); Customer's
+"לקוח" guard's residual leak (round 2338, accepted trade-off);
+Appointment's "מספרת" guard's residual leak (round 2339, accepted
+trade-off); Shipment's "שילוח" guard's residual leaks (round 2340,
+accepted trade-off); Vendor's "ספק" guard's residual leak on
+future-PLURAL doubt-phrasings (round 2345, accepted trade-off);
+Vendor's "רכש" guard's residual leak on any future-form negation
+phrasings not yet enumerated (round 2342, accepted trade-off);
+Donation's new future/imperative branches' residual leak on any idiom
+phrasing not matching the existing ל+noun lookahead list (round 2343,
+accepted trade-off); Course's new imperative branches' residual leak
+on any idiom phrasing using a give-verb form not yet enumerated
+(round 2344, accepted trade-off).
+
+Live: https://forge-ai-m7p7.onrender.com
