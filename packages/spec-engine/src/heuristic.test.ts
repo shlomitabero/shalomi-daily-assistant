@@ -7781,3 +7781,40 @@ test("Vendor's 'ספק' (doubt) idiom-exclusion guard was ALSO missing an entire
   const genuineVendor = await provider.generate("יש לנו ספק טוב שמספק לנו חומרי גלם למפעל שלנו");
   assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'יש לנו ספק טוב' (we have a good supplier) must still match Vendor");
 });
+
+test("Vendor's 'רכש' keyword could never detect true vav-spelled future tense (ארכוש/תרכוש/ירכוש/נרכוש), structurally unreachable since 'רכוש' isn't a substring of 'רכש'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futurePlural1st = await provider.generate("נרכוש ציוד משרדי חדש לחברה");
+  assert.ok(futurePlural1st.entities.some((e) => e.name === "Vendor"), "'נרכוש ציוד משרדי חדש' (we will acquire new office equipment) must match Vendor");
+
+  const futureThirdMasc = await provider.generate("המנהל ירכוש חומרי גלם נוספים בשבוע הקרוב");
+  assert.ok(futureThirdMasc.entities.some((e) => e.name === "Vendor"), "'ירכוש חומרי גלם' (will acquire more raw materials) must match Vendor");
+
+  const futureSecondMasc = await provider.generate("אתה תרכוש את הציוד הדרוש בעצמך");
+  assert.ok(futureSecondMasc.entities.some((e) => e.name === "Vendor"), "'תרכוש את הציוד הדרוש' (will acquire the needed equipment) must match Vendor");
+
+  const futureFirstSg = await provider.generate("אני ארכוש מכונות חדשות למפעל בחודש הבא");
+  assert.ok(futureFirstSg.entities.some((e) => e.name === "Vendor"), "'ארכוש מכונות חדשות' (I will acquire new machines) must match Vendor");
+
+  // Non-regression: the same "acquire-X" idiom collision must still be excluded in the vav-spelled future tense.
+  const idiomFutureSg1st = await provider.generate("אני ארכוש ניסיון רב בתפקיד הזה");
+  assert.ok(!idiomFutureSg1st.entities.some((e) => e.name === "Vendor"), "'ארכוש ניסיון רב' (I will acquire a lot of experience, idiom) must not spuriously match Vendor");
+
+  const idiomFutureThird = await provider.generate("העובד ירכוש ניסיון רב בתפקיד החדש שהוא מקבל");
+  assert.ok(!idiomFutureThird.entities.some((e) => e.name === "Vendor"), "'ירכוש ניסיון רב' (will acquire a lot of experience, idiom) must not spuriously match Vendor");
+
+  // Non-regression: the standalone noun "רכוש" (property/assets) must never be mistaken for the new future-tense verb branches.
+  const standaloneNoun = await provider.generate("המערכת מנהלת רכוש רב של החברה");
+  assert.ok(!standaloneNoun.entities.some((e) => e.name === "Vendor"), "'מנהלת רכוש רב' (manages a lot of property, standalone noun) must not spuriously match Vendor");
+
+  const infinitiveFixture = await provider.generate("לקוח מרוצה חוזר לרכוש שוב.");
+  assert.ok(!infinitiveFixture.entities.some((e) => e.name === "Vendor"), "'לרכוש' (infinitive, existing fixture) must not spuriously match Vendor");
+
+  // Non-regression: the already-working vav-dropping future forms (which share a substring with existing branches) must still match.
+  const vavDroppingFem = await provider.generate("את תרכשי ציוד חדש למחלקה בשבוע הקרוב");
+  assert.ok(vavDroppingFem.entities.some((e) => e.name === "Vendor"), "'תרכשי ציוד חדש' (vav-dropping future, already worked) must still match Vendor");
+
+  const vavDroppingPlural = await provider.generate("הם ירכשו ציוד חדש למחלקה בשבוע הקרוב");
+  assert.ok(vavDroppingPlural.entities.some((e) => e.name === "Vendor"), "'ירכשו ציוד חדש' (vav-dropping future, already worked) must still match Vendor");
+});

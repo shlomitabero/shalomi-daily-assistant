@@ -3428,6 +3428,38 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // already fixed more than once is not guaranteed to have its full
       // grammatical paradigm covered.
       /רכשתם(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתן(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשנו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשת(?!ם)(?!ן)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!ת)(?!נ)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
+      // Round 2346: the 9 branches above only ever matched the literal
+      // 3-letter contiguous substring "רכש" (with various suffixes).
+      // True Hebrew future tense of the same root inserts a vav
+      // between כ and ש -- ארכוש (I will acquire), תרכוש (you m./she
+      // will acquire), ירכוש (he will acquire), נרכוש (we will
+      // acquire) -- so "רכוש" is never a substring of "רכש" and these
+      // four forms were structurally unreachable by any existing
+      // branch. Confirmed live: "נרכוש ציוד משרדי חדש לחברה..." (we
+      // will acquire new office equipment), "המנהל ירכוש חומרי גלם
+      // נוספים..." (the manager will acquire more raw materials),
+      // "אתה תרכוש את הציוד הדרוש בעצמך..." (you will acquire the
+      // needed equipment), and "אני ארכוש מכונות חדשות למפעל..." (I
+      // will acquire new machines) all matched no Vendor at all, with
+      // zero "ספק" substring anywhere, despite being unambiguous
+      // future-tense procurement language. (The OTHER future-tense
+      // forms -- תרכשי/תרכשו/ירכשו, which drop the vav before a
+      // suffix -- already worked by coincidence, since they contain
+      // the existing רכשי/רכשו literals as substrings.) The same
+      // "acquire-X" idiom collision that motivated rounds
+      // 2309/2320/2326/2342's lookaheads on the past-tense forms is
+      // equally natural in future tense -- confirmed live, "אני ארכוש
+      // ניסיון רב..."/"אתה תרכוש ניסיון רב..."/"העובד ירכוש ניסיון
+      // רב..."/"אנחנו נרכוש ניסיון רב..." all read as genuine Hebrew
+      // idiom sentences with zero procurement content -- so each new
+      // branch gets its own full idiom lookahead, same unmerged-
+      // branch convention as every other guard in this file.
+      // Substring-collision checked against the standalone noun
+      // "רכוש" (property/assets, e.g. "ניהול רכוש", "רכוש רב") and the
+      // existing "לרכוש" (infinitive) fixture -- no collision, since
+      // none of these phrasings ever put א/ת/י/נ directly, with no
+      // space, before "רכוש".
+      /ארכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|תרכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|ירכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|נרכוש(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",
