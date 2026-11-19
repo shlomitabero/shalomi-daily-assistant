@@ -6391,6 +6391,27 @@ test("MenuItem's 'תפריט' keyword doesn't spuriously match the plural/constr
   assert.ok(chefsMenus.entities.some((e) => e.name === "MenuItem"), "a genuine 'תפריטי השף' (chef's menus) description must still match MenuItem");
 });
 
+test("Vendor's 'רכש'/'רכשה' idiom guard also excludes the plural 'רכשו' (they acquired) form", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const pluralSkills = await provider.generate("המתמחים רכשו מיומנויות ניהול חדשות לאחר התוכנית.");
+  assert.ok(!pluralSkills.entities.some((e) => e.name === "Vendor"), "'רכשו מיומנויות' (they acquired skills) must not spuriously match Vendor");
+
+  const pluralExperience = await provider.generate("העובדים רכשו ניסיון רב בתחום השירות במהלך השנה.");
+  assert.ok(!pluralExperience.entities.some((e) => e.name === "Vendor"), "'רכשו ניסיון' (they acquired experience) must not spuriously match Vendor");
+
+  // Non-regression: the genuine singular masc./fem. idiom exclusions from round 2309 must still hold.
+  const singularMasc = await provider.generate("העובד רכש ניסיון רב בתפקיד החדש.");
+  assert.ok(!singularMasc.entities.some((e) => e.name === "Vendor"), "'רכש ניסיון' (he acquired experience) must not spuriously match Vendor");
+
+  const singularFem = await provider.generate("העובדת רכשה מיומנויות ניהול חדשות.");
+  assert.ok(!singularFem.entities.some((e) => e.name === "Vendor"), "'רכשה מיומנויות' (she acquired skills) must not spuriously match Vendor");
+
+  // Non-regression: genuine procurement usage must still match.
+  const genuineProcurement = await provider.generate("אפליקציה לניהול רכש וספקים לחברה.");
+  assert.ok(genuineProcurement.entities.some((e) => e.name === "Vendor"), "a genuine procurement ('ניהול רכש') description must still match Vendor");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the

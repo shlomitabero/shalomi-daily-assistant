@@ -2684,7 +2684,33 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // collide (handling both masc. "רכש" and fem. "רכשה" forms),
       // the same bare-overly-broad-word shape rounds 2297/2300-2308
       // already fixed elsewhere in this file.
-      /(?:רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון)))/,
+      //
+      // Round 2320: that fix never covered the 3rd-person-PLURAL past-
+      // tense form "רכשו" ("they acquired"), e.g. "המתמחים רכשו
+      // מיומנויות ניהול חדשות..." (the interns acquired new management
+      // skills) or "העובדים רכשו ניסיון רב..." (the employees acquired
+      // extensive experience) -- confirmed live, both fabricated Vendor
+      // with zero procurement content. Because "רכש" is a 3-letter
+      // prefix of "רכשו" too, the masc.-singular branch's "(?!ה)"
+      // lookahead only rules out the feminine ending; it says nothing
+      // about a following "ו", so it was matching the first 3 letters
+      // of "רכשו" as if it were the lone singular verb, with its idiom
+      // lookahead starting right after those 3 letters -- where the
+      // next character is "ו", not whitespace -- so the idiom object
+      // was never seen and the match wrongly went through.
+      //
+      // Fixed by giving "רכשו" its own independent branch with its own
+      // full idiom lookahead, rather than adding "(?:ו)?" as a shared
+      // optional group before/outside the masc. branch's lookahead --
+      // the same backtracking pitfall rounds 2315/2318/2319 already hit:
+      // a shared optional group can backtrack to its zero-width
+      // alternative and trivially satisfy the now-irrelevant lookahead,
+      // reintroducing the exact bug being fixed (confirmed empirically:
+      // "רכש(?:ו)?(?!ה)(?!\s*idiom)" still wrongly matches "רכשו
+      // ניסיון..."). The masc.-singular branch also now excludes "ו"
+      // directly after "רכש" so it can never again mistake the plural's
+      // prefix for itself.
+      /רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/,
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",
