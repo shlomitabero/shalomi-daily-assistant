@@ -205,11 +205,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // only Appointment too. A lookahead excluding "רי" and "ם" immediately
     // after "ספא" rejects both collisions while still matching every real
     // standalone use ("ספא לעיסויים", "מכון ספא", "חדר ספא").
+    //
+    // Round 2287: "פגישה"/"פגישות" above cover the bare noun and plain
+    // plural, but not Hebrew's own construct-state ("סמיכות") inflection
+    // -- exactly the pitfall #2 this file's own header warns about,
+    // applied here to an entry nobody had checked against it yet.
+    // "פגישה" (ending ה) becomes "פגישת" (ending ת) immediately before a
+    // following noun, e.g. "פגישת ייעוץ" ("consultation meeting") or
+    // "פגישת עבודה" ("work meeting") -- an everyday, idiomatic way to
+    // describe exactly the appointment this entity exists for, and
+    // "פגישת" is not a substring of either bare form, so it silently
+    // escaped this hint entirely. Confirmed via the real matchEntities:
+    // "אפליקציה לקביעת פגישת יעוץ ולשלוח תזכורת יום לפני" (an app for
+    // scheduling a consultation meeting and sending a reminder the day
+    // before) matched only the generic Item fallback, with the real
+    // Appointment domain entirely lost, while the bare-noun twin
+    // ("...פגישה עם רופא...") already matched correctly.
     keywords: [
       "appointment", /\bbookings?\b/, /\breservations?\b/,
       "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
       /\bspa\b/, "massage", "massage therapy",
-      "תורים", "פגישה", "פגישות", "מספרה", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
+      "תורים", "פגישה", "פגישות", "פגישת", "מספרה", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
     ],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",

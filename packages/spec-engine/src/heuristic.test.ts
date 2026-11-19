@@ -2027,6 +2027,36 @@ test("recognizes hair salon, barbershop, and nail salon descriptions as the Appo
 });
 
 /**
+ * Round 2287: the Appointment entity's own "פגישה"/"פגישות" keywords
+ * (bare noun and plain plural) don't tolerate Hebrew's construct-state
+ * ("סמיכות") inflection -- the exact pitfall domainEntities.ts's own file
+ * header warns about (pitfall #2). "פגישה" (ending ה) becomes "פגישת"
+ * (ending ת) immediately before a following noun, e.g. "פגישת ייעוץ"
+ * ("consultation meeting") or "פגישת עבודה" ("work meeting") -- an
+ * everyday, idiomatic way to describe exactly the appointment this entity
+ * exists for -- and "פגישת" is not a substring of either bare form, so
+ * it silently escaped this hint and fell through to the generic Item
+ * fallback. Confirmed live via the real HeuristicSpecProvider before this
+ * fix: a scheduling-app description using "פגישת ייעוץ" matched only
+ * Item, with the real Appointment domain entirely lost, while its
+ * bare-noun twin ("...פגישה עם רופא...") already matched correctly.
+ */
+test("recognizes the Hebrew construct-state 'פגישת' form (e.g. 'פגישת ייעוץ') as the Appointment entity, not just the bare 'פגישה'/'פגישות' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const consultMeeting = await provider.generate("אפליקציה לקביעת פגישת יעוץ ולשלוח תזכורת יום לפני", true);
+  assert.ok(consultMeeting.entities.some((e) => e.name === "Appointment"), "Hebrew 'פגישת יעוץ' must match the Appointment entity rule");
+  assert.ok(!consultMeeting.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  const workMeeting = await provider.generate("מערכת לניהול פגישת עבודה שבועית עם הצוות", true);
+  assert.ok(workMeeting.entities.some((e) => e.name === "Appointment"), "Hebrew 'פגישת עבודה' must match the Appointment entity rule");
+
+  // Non-regression: the already-working bare-noun form must still match.
+  const doctorMeeting = await provider.generate("אפליקציה לקביעת פגישה עם רופא ולשלוח תזכורת יום לפני", true);
+  assert.ok(doctorMeeting.entities.some((e) => e.name === "Appointment"), "the bare 'פגישה' form must still match (no regression)");
+});
+
+/**
  * Round 1800: a different vertical than round 1799's salon/barber fix, but
  * the same degenerate-fallback failure class -- a spa or massage business
  * had no keyword anywhere matching the Appointment entity rule either.
