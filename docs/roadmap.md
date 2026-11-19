@@ -56313,3 +56313,65 @@ pursued). All standing deferred/unsafe gaps from round 2358's entry
 remain unchanged and are not repeated here.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2360: Review's restaurant cue-word list missing construct-state/plural forms
+
+**Bug:** following up on round 2359's fix shape, this round's survey
+agent grepped the whole file for every bidirectional-lookaround
+disambiguation guard (pattern `(?=[\s\S]*...)`) and found exactly 4:
+two English-only guards (menu, membership -- not applicable), the
+Donation guard already fixed in round 2359, and Review's "דירוג"
+(rating) guard (added round 2109). Checking each of that guard's cue
+words by hand for Hebrew grammar, "לקוח"/"מוצר"/"שירות"/"כוכב" are all
+masculine with construct/plural forms that are already superstrings
+of the bare stem (safe), but "מסעדה" ("restaurant", feminine, ends in
+ה) was missing both its construct-state singular "מסעדת" (e.g. "מסעדת
+הדגים" = "the fish restaurant") and its plain plural "מסעדות" --
+"מסעדה" is a substring of neither (ה vs ת in construct state, ה vs ו
+in the plural), so the cue search never recognized them.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לדירוג מסעדת הבשרים הטובה בעיר." (construct-state singular) and
+"אפליקציה לדירוג מסעדות באזור." (plain plural), each containing genuine "דירוג" wording
+plus only the missing restaurant form, lost the Review entity
+entirely (fell through to the generic Item/MenuItem default). Three
+more construct-state sentences and one more plural sentence were also
+confirmed live with the same result.
+
+**Fix** (`domainEntities.ts`, Review's bidirectional lookaround):
+```js
+/דירוג(?=[\s\S]*(?:לקוח|מוצר|שירות|כוכב|מסעדה|מסעדות|מסעדת))|(?:לקוח|מוצר|שירות|כוכב|מסעדה|מסעדות|מסעדת)(?=[\s\S]*דירוג)/
+```
+Adds "מסעדות" and "מסעדת" to both occurrences of the cue alternation.
+
+**Verification (regression/collision checks run live):** confirmed
+round 2109's own no-cue exclusions (tournament leaderboard, credit
+rating, SEO ranking, employee ranking) all stay correctly excluded;
+confirmed the bare absolute-singular "מסעדה" control is unaffected;
+confirmed the construct-state cue still only unlocks Review alongside
+genuine "דירוג" wording, never on its own (a restaurant-menu sentence
+with "מסעדת" but no "דירוג" stayed correctly excluded).
+
+**Test added** (`heuristic.test.ts`, immediately after round 2109's
+own Review/דירוג test): confirms all 5 bug sentences (3 construct-
+state, 2 plural) now match Review; confirms the bare-form control,
+the tournament no-cue control, and the no-דירוג construct-state
+control all stay correct.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 271 (the new test), as predicted; pass-after showed 271/271 --
+no regression. Full `@forge/spec-engine` suite: 467/467 (up from 466).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** systematically swept every bidirectional-
+lookaround disambiguation guard in the file this round (there are
+only 4 total, 2 English-only); both Hebrew ones (Donation, Review) had
+the identical construct-state-cue-word gap and are now both fixed --
+this specific angle (bidirectional-lookaround cue-word lists) is now
+exhausted for the whole file. Next round should return to either the
+"stale entity" method (rounds 2357-2358) on any remaining candidates,
+or heuristic.ts structural logic bugs, per round 2359's standing note.
+
+Live: https://forge-ai-m7p7.onrender.com
