@@ -2328,7 +2328,7 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // tracker, a PhD-candidates-in-physics app, and a Knesset-
       // candidates site each fabricated JobApplicant, losing or
       // polluting the real domain. The lookahead excludes מועמד/
-      // מועمدים only when immediately followed by "ל" + a political-
+      // מועמדים only when immediately followed by "ל" + a political-
       // office or academic-candidacy noun; genuine recruiting phrasing
       // ("מועמדים למשרות פתוחות", "מועמד/ת עם תואר ראשון בהנדסה") never
       // has that immediate collocation, confirmed still matching. Also
@@ -2336,7 +2336,34 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // just as often referred to in the feminine, e.g. "מועמדת
       // לראשות העיר") -- the bare "מועמד" keyword already matched
       // inside it as a substring, so it carried the identical bug.
-      /מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמד(?!ת)(?!ים)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))/,
+      //
+      // Round 2321: that fix never covered Hebrew's construct-state
+      // plural "מועמדי" ("candidates-of"), which drops the "ל"
+      // preposition entirely -- e.g. "מועמדי הנשיאות" (the presidential
+      // candidates) or "מועמדי המפלגה" (the party's candidates).
+      // Confirmed live: a site tracking presidential poll results and a
+      // description of a party's election-campaign candidates each
+      // fabricated JobApplicant, both with zero recruiting content.
+      // "מועמדי" is a 6-letter substring prefix sitting inside both the
+      // bare "מועמד" branch (whose "(?!ת)(?!ים)" checks never
+      // considered a following "י") and the "מועמדים" branch, so it
+      // slipped through undetected by either lookahead, which all
+      // expect "ל" + a noun rather than the construct state's bare
+      // noun. Fixed with "מועמדי"'s own independent branch and its own
+      // full lookahead (construct nouns, with the definite article
+      // "ה-" and no "ל", unlike the other branches' "ל"+bare-noun
+      // lists), plus a "(?!ם)" guard so it can't be mistaken for
+      // "מועמדים"'s own prefix, and "(?!י)" added to the bare branch
+      // so it stops swallowing the construct form instead. A shared
+      // optional "(?:ים|ת|י)?" suffix group placed outside a single
+      // lookahead was tested and confirmed to still wrongly match the
+      // construct false positives AND reintroduce round 2315's own
+      // feminine-political regression -- the same backtracking pitfall
+      // rounds 2315/2318/2319/2320 already hit. Genuine recruiting
+      // phrasing ("מועמדים למשרות פתוחות", "מועמדי המשרה הפתוחה",
+      // "מועמד/ת עם תואר ראשון") and round 2315's own political/
+      // academic exclusions all confirmed still correct.
+      /מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמד(?!ת)(?!ים)(?!י)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))/,
       // Round 1536: bare "גיוס" is a substring of the equally ordinary
       // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
       // "raising donations") -- Hebrew overloads this root for both

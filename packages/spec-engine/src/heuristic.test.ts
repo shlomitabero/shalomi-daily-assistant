@@ -6412,6 +6412,29 @@ test("Vendor's 'רכש'/'רכשה' idiom guard also excludes the plural 'רכש�
   assert.ok(genuineProcurement.entities.some((e) => e.name === "Vendor"), "a genuine procurement ('ניהול רכש') description must still match Vendor");
 });
 
+test("JobApplicant's political/academic 'מועמד' guard also excludes the construct-state plural 'מועמדי'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const presidencyCandidates = await provider.generate("אתר המציג את מועמדי הנשיאות ואת תוצאות הסקרים העדכניים שלהם לפני יום הבחירות.");
+  assert.ok(!presidencyCandidates.entities.some((e) => e.name === "JobApplicant"), "'מועמדי הנשיאות' (the presidential candidates, construct state) must not spuriously match JobApplicant");
+
+  const partyCandidates = await provider.generate("מועמדי המפלגה לקראת הבחירות מתכננים סיבוב הופעות ברחבי הארץ.");
+  assert.ok(!partyCandidates.entities.some((e) => e.name === "JobApplicant"), "'מועמדי המפלגה' (the party's candidates, construct state) must not spuriously match JobApplicant");
+
+  // Non-regression: round 2315's own plural+ל and bare-degree recruiting cases, and its feminine political exclusion, must still hold.
+  const genuinePluralRecruiting = await provider.generate("אנו מחפשים מועמדים למשרות פתוחות בחברה.");
+  assert.ok(genuinePluralRecruiting.entities.some((e) => e.name === "JobApplicant"), "'מועמדים למשרות פתוחות' (candidates for open positions) must still match JobApplicant");
+
+  const genuineConstructRecruiting = await provider.generate("כל מועמדי המשרה הפתוחה יעברו ראיון טלפוני.");
+  assert.ok(genuineConstructRecruiting.entities.some((e) => e.name === "JobApplicant"), "'מועמדי המשרה הפתוחה' (candidates for the open position, construct state) must still match JobApplicant");
+
+  const genuineBareDegree = await provider.generate("אנחנו מעוניינים במועמד/ת עם תואר ראשון בהנדסה.");
+  assert.ok(genuineBareDegree.entities.some((e) => e.name === "JobApplicant"), "'מועמד/ת עם תואר ראשון' must still match JobApplicant");
+
+  const feminineMayoralCandidate = await provider.generate("היא מועמדת לראשות העיר בבחירות הקרובות.");
+  assert.ok(!feminineMayoralCandidate.entities.some((e) => e.name === "JobApplicant"), "'מועמדת לראשות העיר' (she is a mayoral candidate) must still not match JobApplicant");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
