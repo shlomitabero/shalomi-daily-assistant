@@ -221,11 +221,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // before) matched only the generic Item fallback, with the real
     // Appointment domain entirely lost, while the bare-noun twin
     // ("...פגישה עם רופא...") already matched correctly.
+    //
+    // Round 2288: the exact same construct-state gap round 2287 just
+    // fixed for "פגישה"/"פגישת", sitting two keywords later in this same
+    // array -- "מספרה" (barbershop/hair salon, below) never got its own
+    // construct form "מספרת" added. "מספרת גברים" ("men's barbershop")
+    // and "מספרת נשים" ("women's hair salon") are extremely common,
+    // idiomatic ways to name this exact business, and "מספרת" is not a
+    // substring of "מספרה", so it silently escaped this hint too.
+    // Confirmed via the real matchEntities: "אפליקציה למספרת גברים
+    // לניהול לוח הזמנים והלקוחות שלנו" matched only Customer, with the
+    // real Appointment domain lost, while the bare-noun twin ("...
+    // במספרה...") already matched both Customer and Appointment.
     keywords: [
       "appointment", /\bbookings?\b/, /\breservations?\b/,
       "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
       /\bspa\b/, "massage", "massage therapy",
-      "תורים", "פגישה", "פגישות", "פגישת", "מספרה", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
+      "תורים", "פגישה", "פגישות", "פגישת", "מספרה", "מספרת", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
     ],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",

@@ -2057,6 +2057,33 @@ test("recognizes the Hebrew construct-state 'פגישת' form (e.g. 'פגישת 
 });
 
 /**
+ * Round 2288: the exact same construct-state gap round 2287 fixed for
+ * "פגישה"/"פגישת", sitting two keywords later in the identical
+ * Appointment keyword array -- "מספרה" (barbershop/hair salon) never got
+ * its own construct form "מספרת" added. "מספרת גברים" ("men's
+ * barbershop") and "מספרת נשים" ("women's hair salon") are extremely
+ * common, idiomatic ways to name this exact business, and "מספרת" is not
+ * a substring of "מספרה", so it silently escaped this hint too.
+ * Confirmed live via the real HeuristicSpecProvider before this fix: an
+ * app description for "מספרת גברים" matched only Customer, with the real
+ * Appointment domain entirely lost, while the bare-noun twin ("...
+ * במספרה...") already matched both Customer and Appointment.
+ */
+test("recognizes the Hebrew construct-state 'מספרת' form (e.g. 'מספרת גברים') as the Appointment entity, not just the bare 'מספרה' form", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const mensBarbershop = await provider.generate("אפליקציה למספרת גברים לניהול לוח הזמנים והלקוחות שלנו", true);
+  assert.ok(mensBarbershop.entities.some((e) => e.name === "Appointment"), "Hebrew 'מספרת גברים' must match the Appointment entity rule");
+
+  const womensSalon = await provider.generate("מערכת לניהול לקוחות במספרת נשים בעיר", true);
+  assert.ok(womensSalon.entities.some((e) => e.name === "Appointment"), "Hebrew 'מספרת נשים' must match the Appointment entity rule");
+
+  // Non-regression: the already-working bare-noun form must still match.
+  const bareForm = await provider.generate("מערכת לניהול לקוחות במספרה בעיר", true);
+  assert.ok(bareForm.entities.some((e) => e.name === "Appointment"), "the bare 'מספרה' form must still match (no regression)");
+});
+
+/**
  * Round 1800: a different vertical than round 1799's salon/barber fix, but
  * the same degenerate-fallback failure class -- a spa or massage business
  * had no keyword anywhere matching the Appointment entity rule either.
