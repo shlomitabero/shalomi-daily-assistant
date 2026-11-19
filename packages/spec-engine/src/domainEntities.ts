@@ -461,8 +461,34 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // already make, since "in order (to)" alone is overwhelmingly more
       // common across ordinary app descriptions than all of those
       // combined.
-      /(?<!(?<!-)\bin\s)\border(s)?\b/, "purchase", "checkout page", "checkout flow", "online checkout",
-      "delivery", "deliveries", "wolt",
+      /(?<!(?<!-)\bin\s)\border(s)?\b/,
+      // Round 2305: bare "purchase" had no guard against the ordinary
+      // mechanical/climbing/political "grip/influence" idiom ("how much
+      // purchase their shoes get on the rock face", "the purchase our
+      // message has with swing voters", "a lever gives you more purchase
+      // on a stuck bolt") -- confirmed live, all three fabricated an
+      // Order entity with zero e-commerce concept. Not a bare deletion:
+      // "an app to track customer purchases at our shop" depends solely
+      // on this bare word, so a lookbehind excluding only the specific
+      // "much/more purchase" idiom is used instead, mirroring this
+      // file's other \b-bounded fixes' accepted-residual-risk trade-off
+      // (e.g. "court order"/"money order" above).
+      /\bpurchases?\b(?<!(?:much|more)\s*purchase)/,
+      "checkout page", "checkout flow", "online checkout",
+      // Round 2305: bare "delivery"/"deliveries" had no guard against
+      // the ordinary childbirth/obstetric sense ("a midwife app to track
+      // patient deliveries", "an obstetric clinic app that logs each
+      // delivery") -- confirmed live, all three fabricated an Order
+      // entity with zero e-commerce concept. Not a bare deletion: "an
+      // app for a delivery service to manage drivers and routes"
+      // depends solely on this bare word, so a document-wide
+      // bidirectional exclusion is used instead (mirroring this file's
+      // own burger-menu/property-נכס/מנות conventions for the same
+      // "genuinely ambiguous between two domains" shape), excluding
+      // only when an unambiguous obstetric cue word co-occurs anywhere
+      // in the text.
+      /\bdeliver(?:y|ies)\b(?![\s\S]*?(?:midwife|prenatal|obstetric|newborn|maternity))(?<!(?:midwife|prenatal|obstetric|newborn|maternity)[\s\S]*)/,
+      "wolt",
       // "הזמנה"/"הזמנות" is a true Hebrew homograph: it means both "order"
       // (a purchase) and "invitation" (a wedding/party/event invitation --
       // "הזמנה לחתונה", "הזמנות למסיבה"). Excludes the idiomatic "invitation

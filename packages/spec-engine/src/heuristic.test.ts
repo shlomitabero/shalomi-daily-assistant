@@ -400,6 +400,64 @@ test("MenuItem's Hebrew 'מנות' keyword doesn't spuriously match the medical 
   assert.ok(!ordersOnly.entities.some((e) => e.name === "MenuItem"), "'הזמנות' must still not spuriously match MenuItem via 'מנות'");
 });
 
+/**
+ * Round 2305: Order's bare "purchase" had no guard against the ordinary
+ * mechanical/climbing/political "grip/influence" idiom ("how much
+ * purchase their shoes get on the rock face", "the purchase our message
+ * has with swing voters", "a lever gives you more purchase on a stuck
+ * bolt"). The seventh confirmed instance of the bare-overly-broad-
+ * keyword shape rounds 2297/2300-2304 fixed.
+ */
+test("Order's 'purchase' keyword doesn't spuriously match the mechanical/climbing/political 'grip' idiom", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const climbing = await provider.generate("A climbing gear review app that tracks how much purchase their shoes get on the rock face.");
+  assert.ok(!climbing.entities.some((e) => e.name === "Order"), "'purchase' (grip idiom) must not spuriously match Order");
+
+  const political = await provider.generate("A campaign analytics app measuring how much purchase our message has with swing voters.");
+  assert.ok(!political.entities.some((e) => e.name === "Order"), "'purchase' (influence idiom) must not spuriously match Order");
+
+  const mechanic = await provider.generate("A mechanic's toolkit app noting that a tool lever gives you more purchase on a stuck bolt.");
+  assert.ok(!mechanic.entities.some((e) => e.name === "Order"), "'purchase' (leverage idiom) must not spuriously match Order");
+
+  // Non-regression: a genuine purchase description depends SOLELY on
+  // this bare word (no other Order keyword present) and must still match.
+  const realPurchase = await provider.generate("An app to track customer purchases at our shop.");
+  assert.ok(realPurchase.entities.some((e) => e.name === "Order"), "a genuine customer-purchases description must still match Order");
+});
+
+/**
+ * Round 2305: Order's bare "delivery"/"deliveries" had no guard against
+ * the ordinary childbirth/obstetric sense ("a midwife app to track
+ * patient deliveries", "an obstetric clinic app that logs each
+ * delivery"). The eighth confirmed instance of the same bug shape.
+ */
+test("Order's 'delivery'/'deliveries' keywords don't spuriously match the childbirth/obstetric sense", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const midwife = await provider.generate("A midwife app to track patient deliveries and prenatal appointments.");
+  assert.ok(!midwife.entities.some((e) => e.name === "Order"), "'deliveries' (childbirth sense) must not spuriously match Order");
+
+  const obstetric = await provider.generate("An obstetric clinic app that logs each delivery and the mother's recovery notes.");
+  assert.ok(!obstetric.entities.some((e) => e.name === "Order"), "'delivery' (childbirth sense) must not spuriously match Order");
+
+  const maternity = await provider.generate("A maternity ward app for nurses to record deliveries and newborn vitals.");
+  assert.ok(!maternity.entities.some((e) => e.name === "Order"), "'deliveries' (childbirth sense) must not spuriously match Order");
+
+  // Non-regression: genuine delivery descriptions depend SOLELY on this
+  // bare word (no other Order keyword present) and must still match.
+  const deliveryService = await provider.generate("An app for a delivery service to manage drivers and routes.");
+  assert.ok(deliveryService.entities.some((e) => e.name === "Order"), "a genuine delivery-service description must still match Order");
+
+  const deliveriesToCustomers = await provider.generate("An app for tracking deliveries to customers' homes.");
+  assert.ok(deliveriesToCustomers.entities.some((e) => e.name === "Order"), "a genuine deliveries-to-customers description must still match Order");
+
+  // Non-regression: the pre-existing Wolt test (round 1718, Hebrew
+  // "משלוחים") is unaffected -- it's a different language and keyword.
+  const woltHe = await provider.generate("אפליקציה משלוחים כמו wolt");
+  assert.ok(woltHe.entities.some((e) => e.name === "Order"), "the Hebrew Wolt delivery description must still match Order");
+});
+
 test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
   // Round 1690: "membership fee" is the single most natural English
   // phrase for what a gym/studio/co-working-space business charges, but
