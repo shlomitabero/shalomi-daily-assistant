@@ -342,8 +342,31 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // or payments via this phrase. "צימר"/"אכסניה"/"בית הארחה" (the
   // unambiguous Hebrew terms for a vacation cabin/hostel/guesthouse) carry
   // no such collision and are added instead.
+  //
+  // Round 2286: "אכסניה"/"בית הארחה" above are bare-literal substring
+  // checks, so neither tolerates Hebrew's own construct-state ("סמיכות")
+  // and definite-article inflections -- the exact pitfall this file's own
+  // sibling domainEntities.ts warns about in its file header (pitfall #2):
+  // a keyword matches the bare noun but not its inflected forms when it
+  // modifies or is modified by a following word. "אכסניה" (hostel) becomes
+  // "אכסניית" before a noun ("אכסניית נוער", "youth hostel" -- the single
+  // most natural way to phrase this business in Hebrew), and "בית הארחה"
+  // (guesthouse) becomes "בית ההארחה" when made definite ("בית ההארחה
+  // שלנו", "our guesthouse") -- Hebrew's definite article attaches to the
+  // SECOND noun of a construct chain, not the first. Neither inflected
+  // form is a substring of its bare keyword (the point of divergence comes
+  // before the final letter in both cases), so both silently escaped this
+  // hint and fell through to the generic "No payments" default. Live-
+  // confirmed via the real HeuristicSpecProvider: "אכסניית נוער עם חדרים
+  // משותפים לתיירים" and "בית ההארחה שלנו מציע חדרים נוחים לתיירים" both
+  // recommended "בלי תשלומים" before this fix and "Stripe" after, with
+  // their own bare-noun-phrasing twins ("אכסניה לנוער...", "בית הארחה
+  // קטן...") already correctly recommending "Stripe" either way --
+  // isolating the inflection itself, not the business description, as the
+  // cause. "צימר" (a Yiddish/German loanword) does not undergo Hebrew
+  // construct-state inflection, so it needs no analogous addition.
   "hotel", "motel", "bed and breakfast", "hostel", "guesthouse", "guest house",
-  "צימר", "אכסניה", "בית הארחה",
+  "צימר", "אכסניה", "אכסניית", "בית הארחה", "בית ההארחה",
   // Round 2277: the same drift once more, for event/show/concert ticket
   // sales. "A platform for selling tickets to concerts and events." matches
   // only the generic Item entity (or Event, in Hebrew phrasing), neither of

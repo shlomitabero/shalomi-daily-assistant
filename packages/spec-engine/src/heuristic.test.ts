@@ -1046,6 +1046,24 @@ test("asks about payments (recommending Stripe) for a hotel, motel, bed and brea
   const achsaniaHePaymentQuestion = achsaniaHe.openQuestions.find((q) => q.question.includes("תשלומ"));
   assert.ok(achsaniaHePaymentQuestion);
   assert.equal(achsaniaHePaymentQuestion!.recommendation, "Stripe");
+
+  // Round 2286: "אכסניה"/"בית הארחה" above were bare-literal substring
+  // checks, so the ordinary Hebrew construct-state inflection of
+  // "אכסניה" ("אכסניית נוער", "youth hostel" -- the single most natural
+  // way to phrase this exact business) and the definite-article form of
+  // "בית הארחה" ("בית ההארחה שלנו", "our guesthouse") both silently
+  // escaped this hint and fell through to the generic "No payments"
+  // default, even though neither description differs in substance from
+  // the already-covered bare-noun phrasing just above.
+  const achsaniatHe = await provider.generate("אכסניית נוער עם חדרים משותפים לתיירים.");
+  const achsaniatHePaymentQuestion = achsaniatHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(achsaniatHePaymentQuestion);
+  assert.equal(achsaniatHePaymentQuestion!.recommendation, "Stripe", "the construct-state 'אכסניית' form must be recognized exactly like the bare 'אכסניה' form");
+
+  const beitHaachnasaHe = await provider.generate("בית ההארחה שלנו מציע חדרים נוחים לתיירים.");
+  const beitHaachnasaHePaymentQuestion = beitHaachnasaHe.openQuestions.find((q) => q.question.includes("תשלומ"));
+  assert.ok(beitHaachnasaHePaymentQuestion);
+  assert.equal(beitHaachnasaHePaymentQuestion!.recommendation, "Stripe", "the definite-article 'בית ההארחה' form must be recognized exactly like the bare 'בית הארחה' form");
 });
 
 /**
