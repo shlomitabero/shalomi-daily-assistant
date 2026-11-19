@@ -2388,7 +2388,34 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // recruiting phrasing, round 2315's feminine political
       // exclusion, and round 2321's plural-construct exclusion all
       // confirmed still correct.
-      /מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/,
+      //
+      // Round 2324: a FOURTH grammatical variant of this exact same
+      // collision -- the feminine-PLURAL form "מועמדות" ("female
+      // candidates" / "candidacy"). Neither the bare "מועמד" branch's
+      // "(?!ת)(?!ים)(?!י)" checks nor any other branch ever considered
+      // a following "ות", so "מועמדות" slipped through every existing
+      // lookahead the same way "מועמדי" (round 2321) and the bare
+      // construct-singular (round 2323) did before it. Confirmed live:
+      // "מועמדות הנשיאות"/"מועמדות ראשות העיר" (construct) and
+      // "המועמדות לנשיאות" (ל-form) each fabricated JobApplicant.
+      // Fixed with "מועמדות"'s own independent branch carrying its own
+      // full pair of lookaheads (ל-list and construct-list, the same
+      // pattern as the other branches), plus "(?!ות)" added to the
+      // bare branch so it stops swallowing this form. A shared
+      // optional "(?:ות)?" suffix placed before the bare branch's
+      // lookaheads was tested and confirmed to still wrongly match all
+      // three false positives -- the same backtracking pitfall every
+      // one of this guard's three prior fixes (rounds 2315/2321/2323)
+      // already hit. Genuine recruiting phrasing (including the
+      // genuinely idiomatic "הגשת מועמדות למשרה" = "submitting a
+      // candidacy for a position", where "מועמדות" means the abstract
+      // noun "candidacy") and every prior round's exclusions confirmed
+      // still correct. This is the fourth fix to this one collision in
+      // four separate rounds (2315/2321/2323/2324) -- a strong signal
+      // that this specific guard rewards an unusually thorough
+      // grammatical-variant audit; future rounds finding yet another
+      // uncovered form here should not be surprising.
+      /מועמדות(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!ות)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/,
       // Round 1536: bare "גיוס" is a substring of the equally ordinary
       // fundraising phrases "גיוס כספים"/"גיוס תרומות" ("raising money"/
       // "raising donations") -- Hebrew overloads this root for both

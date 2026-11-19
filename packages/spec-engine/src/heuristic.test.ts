@@ -6495,6 +6495,36 @@ test("JobApplicant's political 'מועמד'/'מועמדת' guard also excludes t
   assert.ok(!feminineMayoralCandidateWithLamed.entities.some((e) => e.name === "JobApplicant"), "'מועמדת לראשות העיר' (round 2315's own feminine ל-political exclusion) must still not match JobApplicant");
 });
 
+test("JobApplicant's political guard also excludes the feminine-plural 'מועמדות' (fourth variant of this recurring collision)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const femPluralPresidencyConstruct = await provider.generate("אתר חדשות המסקר את מועמדות הנשיאות המובילות בסקרים לפני הבחירות הקרובות.");
+  assert.ok(!femPluralPresidencyConstruct.entities.some((e) => e.name === "JobApplicant"), "'מועמדות הנשיאות' (the female presidential candidates, construct) must not spuriously match JobApplicant");
+
+  const femPluralMayoralConstruct = await provider.generate("אפליקציה שמציגה את מועמדות ראשות העיר בבחירות המקומיות הקרובות.");
+  assert.ok(!femPluralMayoralConstruct.entities.some((e) => e.name === "JobApplicant"), "'מועמדות ראשות העיר' (the female mayoral candidates, construct) must not spuriously match JobApplicant");
+
+  const femPluralPresidencyLamed = await provider.generate("אתר המסקר את המועמדות לנשיאות ארצות הברית לפני יום הבחירות.");
+  assert.ok(!femPluralPresidencyLamed.entities.some((e) => e.name === "JobApplicant"), "'המועמדות לנשיאות' (the female presidential candidates, ל-form) must not spuriously match JobApplicant");
+
+  // Non-regression: genuine recruiting (including the genuinely idiomatic "הגשת מועמדות" = "submitting a candidacy")
+  // and every prior round's exclusions (2315/2321/2323) must still hold.
+  const genuinePluralRecruiting = await provider.generate("אנו מחפשים מועמדים למשרות פתוחות בחברה.");
+  assert.ok(genuinePluralRecruiting.entities.some((e) => e.name === "JobApplicant"), "'מועמדים למשרות פתוחות' (candidates for open positions) must still match JobApplicant");
+
+  const genuineCandidacySubmission = await provider.generate("הגשת מועמדות למשרה דורשת קורות חיים מעודכנים.");
+  assert.ok(genuineCandidacySubmission.entities.some((e) => e.name === "JobApplicant"), "'הגשת מועמדות למשרה' (submitting a candidacy for a position) must still match JobApplicant");
+
+  const genuineBareFemDegree = await provider.generate("אנחנו מעוניינים במועמדת בעלת תואר ראשון בהנדסה.");
+  assert.ok(genuineBareFemDegree.entities.some((e) => e.name === "JobApplicant"), "'מועמדת בעלת תואר ראשון' must still match JobApplicant");
+
+  const alreadyFixedSingularConstructMasc = await provider.generate("אתר חדשות שמציג סקרים ועדכונים על מועמד הנשיאות הרפובליקני ומסע הבחירות שלו.");
+  assert.ok(!alreadyFixedSingularConstructMasc.entities.some((e) => e.name === "JobApplicant"), "'מועמד הנשיאות' (round 2323's own singular-construct exclusion, masc.) must still not match JobApplicant");
+
+  const alreadyFixedPluralConstruct = await provider.generate("אתר המציג את מועמדי הנשיאות ואת תוצאות הסקרים העדכניים שלהם לפני יום הבחירות.");
+  assert.ok(!alreadyFixedPluralConstruct.entities.some((e) => e.name === "JobApplicant"), "'מועמדי הנשיאות' (round 2321's own plural-construct exclusion) must still not match JobApplicant");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
