@@ -52715,3 +52715,88 @@ Both fixes not duplicated in PAYMENT_KEYWORDS (which only uses "classes" via the
 **Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a FORTY-FIFTH round running (2274-2318, no browser/computer-use tooling available). FOUR deferred gaps now stand on Course alone (bare-price-crashing, military-topic-vs-squad, and now "courses" vs. restaurant meal courses), plus the Ticket bare-noun gap and Courier's license/insurance sub-case elsewhere. The "bare overly-broad word in a keyword array" pattern now has 23 confirmed instances across rounds 2297/2300-2318 -- 9 in BILLING_ENTITY_NAMES entities plus 14 in non-billing entities, with Course alone now accounting for 6 across four separate rounds (2314, 2316 x2, 2317, 2318 x2) -- by far the single most productive entity this campaign has found. The "re-examine an already-fixed entity, specifically checking its OTHER keywords AND whether an earlier fix's own grammatical variants were fully covered" strategy is now validated at a finer grain than just "pick a different keyword" -- round 2318's both fixes were literally the missing half of an earlier round's own guard (singular-vs-plural for both "class" and "כיתה"). Future rounds auditing any entity's prior fix should explicitly check every grammatical form of the keyword that fix touched, not just the one sentence that found the original bug. The Hebrew construct-state/sofit-letter/definite-article inflection pattern (10 confirmed instances, rounds 2286-2293/2298-2299) remains de-emphasized as largely exhausted.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2319: MenuItem's תפריט UI-chrome guard didn't cover plural/construct forms
+
+**Bug:** Round 880/2241 added a guard excluding MenuItem's bare Hebrew keyword
+"תפריט" (menu) when it appears in UI-chrome contexts (adjacent to ניווט/נפתח/צד -
+navigation/opens/side), to avoid confusing a navigation or side menu for a
+restaurant's food menu. That guard, `/תפריט(?!\s*(ניווט|נפתח|צד))/`,
+only matched the bare singular form. The plural and construct-state forms -
+"תפריטי" (construct plural, e.g. "תפריטי ניווט" = navigation menus)
+and "תפריטים" (absolute plural) - were never covered, so a description
+with several navigation menus or various side menus still spuriously
+matched MenuItem, exactly the UI-chrome false positive round 880/2241 had
+already fixed for the singular.
+
+**Severity beyond the wrong entity:** MenuItem is one of the nine entities in
+`BILLING_ENTITY_NAMES`, so this false positive doesn't just fabricate an
+irrelevant entity - it also sets `needsPayments = true` and corrupts the
+payment-provider `openQuestions` entry, flipping its `recommendation` field
+from the correct "no payments" option to "Stripe" for apps that have no real
+billing context at all (a todo/productivity app with a side nav, for
+instance). This was confirmed directly by inspecting the full
+`openQuestions` JSON structure (not just checking that "Stripe" appears
+somewhere in `options`, which is true of every payment question and proves
+nothing about which one is recommended) for both the false-positive case
+and a genuine no-payment baseline case.
+
+**How it was found:** this round's survey agent was explicitly briefed with
+a two-part strategy: (A) the general "re-examine an already-fixed entity's
+full keyword array for additional, different collisions" strategy validated
+across rounds 2314/2316/2317/2318, and (B) the more specific refinement
+introduced after round 2318's two bugs - audit whether an *earlier* round's
+fix/guard was extended to *every grammatical variant* (singular vs. plural,
+construct vs. absolute state) of the keyword it touched. This round's
+MenuItem bug satisfies both simultaneously: it is both "another collision
+in an already-touched entity" and "a prior singular-only guard never
+extended to the plural/construct forms."
+
+**Backtracking pitfall, reconfirmed:** the fix's optional plural/construct
+suffix had to be placed *inside* the negative lookahead, not as a separate
+optional group before it. Directly tested: placing the suffix group outside
+the lookahead still wrongly matches the false-positive sentences, because
+the engine can backtrack to the suffix's zero-width alternative and
+trivially satisfy the now-irrelevant lookahead. The correct structure, with
+the suffix group inside the lookahead, correctly excludes the same
+sentences. This is the same pitfall first identified in round 2315 and
+reconfirmed in round 2318's fixes.
+
+**Fix** (`domainEntities.ts`, MenuItem's Hebrew keyword list):
+```js
+/תפריט(?!(ים|י)?\s*(ניווט|נפתח|צד))/,
+```
+replacing round 880/2241's singular-only regex, with a doc comment
+explaining the plural/construct gap, the backtracking-pitfall reasoning for
+the chosen structure, and a note that genuine plural usage (e.g. "תפריטי השף" -
+the chef's menus, a real restaurant-app sentence) still correctly matches
+MenuItem.
+
+**Test added** (`heuristic.test.ts`): confirms both the navigation-menu
+plural/construct case and the side-menu plural/construct case no longer
+match MenuItem and no longer corrupt the payment recommendation, while the
+non-regression "chef's menus" genuine-plural case still does match.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 230 (the new test), as predicted; pass-after showed 230/230. Full
+`@forge/spec-engine` suite: 426/426 (up from 425). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background`. Production
+build: clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 25 confirmed instances total. The refined
+"audit whether a prior fix's guard covers every grammatical variant"
+strategy is now validated across two consecutive rounds (2318's two bugs
+and 2319's MenuItem bug), reinforcing it as a distinct, productive search
+angle in its own right, not just a one-off coincidence. Future rounds
+should keep applying both the general "re-examine fixed entities" strategy
+and this more specific grammatical-variant-coverage audit together, as this
+round's agent was briefed to do. Standing deferred/unsafe gaps, unchanged
+this round: Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course military-topic-vs-squad-unit
+ambiguity (round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
