@@ -7466,6 +7466,36 @@ test("round 2358: Expense's keywords were still missing the construct-state sing
   assert.ok(realExpense2.entities.some((e) => e.name === "Expense"), "'הוצאות עסקיות' (round 912's own control) must still match Expense");
 });
 
+test("round 2359: Donation's 'עמותה'/'עמותות' cue-word alternation (round 2111/2306) was missing the construct-state singular 'עמותת' ('nonprofit of ...'), so a genuine donation description using only that cue form lost the Donation entity entirely", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const childrenNonprofit = await provider.generate("אפליקציה לאיסוף תרומות עבור עמותת הילדים באזורנו.");
+  assert.ok(childrenNonprofit.entities.some((e) => e.name === "Donation"), "'עמותת הילדים' (construct-state nonprofit cue) with genuine תרומות wording must match Donation");
+
+  const disabledNonprofit = await provider.generate("המערכת מנהלת תרומות כספיות עבור עמותת הנכים המקומית.");
+  assert.ok(disabledNonprofit.entities.some((e) => e.name === "Donation"), "'עמותת הנכים' (construct-state nonprofit cue) with genuine תרומות wording must match Donation");
+
+  const animalNonprofit = await provider.generate("אנחנו אוספים תרומות למען עמותת בעלי חיים.");
+  assert.ok(animalNonprofit.entities.some((e) => e.name === "Donation"), "'עמותת בעלי חיים' (construct-state nonprofit cue) with genuine תרומות wording must match Donation");
+
+  // Non-regression: the bare absolute form must still work (round 2306's own fix).
+  const bareNonprofit = await provider.generate("אפליקציה לאיסוף תרומות עבור העמותה שלנו.");
+  assert.ok(bareNonprofit.entities.some((e) => e.name === "Donation"), "bare 'העמותה' cue with genuine תרומות wording must still match Donation");
+
+  // Non-regression: round 2306's own no-donation-wording guard must NOT be reopened --
+  // the construct-state cue must still only ever unlock תרומה/תרומות, never match alone.
+  const volunteerNoMoney = await provider.generate("אפליקציה לניהול מתנדבים בעמותת הילדים ללא כל גיוס כספים.");
+  assert.ok(!volunteerNoMoney.entities.some((e) => e.name === "Donation"), "construct-state 'עמותת' cue with zero donation wording must NOT spuriously match Donation (round 2306)");
+
+  const courseNoMoney = await provider.generate("עמותת הנכים שלנו מפעילה תוכנית חינמית לשיעורי עזר לילדים אחרי הלימודים.");
+  assert.ok(!courseNoMoney.entities.some((e) => e.name === "Donation"), "construct-state 'עמותת' cue with zero donation wording must NOT spuriously match Donation (round 2306)");
+
+  // Non-regression: the "תרם" idiom-exclusion guard (round 2322) must still hold even when
+  // the construct-state cue is merely the idiom's object, not genuine donation wording.
+  const ordinaryContribution = await provider.generate("הכלי תרם רבות לשיפור התפוקה של עמותת הנכים.");
+  assert.ok(!ordinaryContribution.entities.some((e) => e.name === "Donation"), "'תרם' (ordinary 'contributed to') with construct-state cue as its object must NOT spuriously match Donation");
+});
+
 /**
  * Round 913's finding: Ticket's bare "תמיכה"/"תמיכת" keywords had the
  * same idiom-co-occurrence shape rounds 911/912 just fixed for Deal/

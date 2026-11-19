@@ -2975,7 +2975,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // relying on the bare word alone, preserving its original
       // plural-inflection coverage via the bidirectional regex below.
       /\bdonat(?:e|es|ed|ing)\b/,
-      /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
+      // Round 2359: the cue-word alternation below (added round 2111,
+      // tightened round 2306) only ever listed the ABSOLUTE forms
+      // "עמותה"/"עמותות" ("nonprofit"/"nonprofits"), never the
+      // construct-state (סמיכות) singular "עמותת" (e.g. "עמותת הילדים" =
+      // "the children's nonprofit", "עמותת צדקה" = "charity nonprofit").
+      // Since "עמותת" ends in ת, not ה, it is not a substring of
+      // "עמותה" and so never unlocked the bidirectional תרומה/תרומות
+      // lookaround on its own -- the same construct-state gap shape
+      // found on other entities' keywords (rounds 912/2287/2288/2289/
+      // 2330/2358 etc.), just never applied to this cue list.
+      /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
       // Round 2322: round 2293's bare verb forms "תרם"/"תרמה"/"תרמו"/
       // "לתרום" only checked that they weren't a substring of unrelated
       // NOUNS (תרמיל "backpack", תרמית "fraud") -- it never checked the
