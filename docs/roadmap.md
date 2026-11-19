@@ -56867,3 +56867,68 @@ deduplication, boundary conditions in field-count or label-building
 logic) rather than re-walking the same six functions the same way.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2368: Order's "purchase" keyword missing past-tense/gerund forms (new method: English verb-tense/plural completeness gap)
+
+**Bug:** `domainEntities.ts`'s Order entity keyword
+`/\bpurchases?\b(?<!(?:much|more)\s*purchase)/,` only ever covered the
+bare infinitive/present "purchase" and the plural/3rd-person
+"purchases" -- never the past tense "purchased" or the gerund
+"purchasing", even though describing a purchase-tracking feature in
+either tense is at least as natural as the present tense. Since Order
+is in `BILLING_ENTITY_NAMES`, losing the entity match also flipped the
+payment recommendation from "Stripe" to "No payments".
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "A system to track items our customers purchased last year." and "An app for customers purchasing gift cards online." -- both
+naming a purchase-tracking feature, just in past tense / gerund form
+-- matched no `Order` entity and recommended "No payments" on the
+unmodified code.
+
+**Fix** (`domainEntities.ts`, Order entity):
+```js
+/\bpurchas(?:e|es|ed|ing)\b(?<!(?:much|more)\s*purchase)/
+```
+Widens the match group from `e|es` to `e|es|ed|ing` while keeping the
+existing round-2305 "much/more purchase" grip-idiom negative-lookbehind
+guard untouched -- that mechanical/climbing/political idiom never
+conjugates as "purchased"/"purchasing" in natural English, so the
+guard didn't need widening, only reusing as-is.
+
+**Test added** (`heuristic.test.ts`, immediately after the existing
+round-2305 "grip" idiom test): confirms the 4 new tense/gerund
+sentences now match Order and recommend Stripe; confirms the 2
+existing bare-noun/present-tense controls still match; confirms the 2
+existing "much/more purchase" idiom-guard sentences still exclude
+Order; confirms "repurchased" still does not spuriously match via this
+keyword (word-boundary non-regression).
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 278 (the new test), as predicted; pass-after showed 278/278 --
+no regression. Full `@forge/spec-engine` suite: 474/474 (up from 473).
+Full `@forge/api` suite: 1782/1782 clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** this round opens a new, fourth productive
+bug-finding method -- "English verb-tense/plural completeness gap" --
+the English-language analog of the "4th Hebrew inflection missing"
+method that found bugs in 8 consecutive rounds (2359-2366). The three
+prior methods ((a) bidirectional-lookaround cue-word gaps, (b) 4th
+Hebrew inflection missing, (c) mirror-array drift between
+`domainEntities.ts` and `PAYMENT_KEYWORDS`) are all independently
+confirmed exhausted file-wide as of round 2367. This round's own
+6-point structural-logic-bug sweep of `heuristic.ts`'s control-flow
+functions (buildScreens/buildOpenQuestions edge cases, array dedup/
+Unicode-normalization equality, matchRoles's Admin/Member branch
+logic, withLabels/summarize label-collision risk, order-dependence of
+matchEntities/matchRoles, generate()'s language-detection internal
+consistency) again came back negative across all six angles, matching
+round 2367's result -- reinforcing that heuristic.ts's control flow is
+a mature, already-hardened area along the angles tested so far. Next
+round should continue sweeping other entities' English keyword lists
+for the same tense/plural-completeness gap this round found for Order
+(e.g. Donation's "donate" paradigm, Rental's "rent" paradigm, and other
+multi-word English keyword lists not yet individually swept).
+
+Live: https://forge-ai-m7p7.onrender.com
