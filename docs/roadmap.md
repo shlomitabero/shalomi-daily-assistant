@@ -52207,3 +52207,19 @@ Live: https://forge-ai-m7p7.onrender.com
 **Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a FOURTEENTH round running (2274-2287, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred. The Hebrew construct-state/definite-article inflection pattern has now found bugs in 2 rounds running (2286-2287), as part of a broader "claimed-comprehensive coverage actually isn't" pattern that has found bugs in 5 rounds running (2283-2287).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+## Round 2288 (2026-11-19): Appointment entity's "מספרה" keyword also missed its construct-state "מספרת"
+
+**Bug:** the exact same construct-state gap round 2287 fixed for "פגישה"/"פגישת", sitting two keywords later in the identical Appointment `DomainEntityRule` keyword array: "מספרה" (barbershop/hair salon) never got its own construct form "מספרת" added. "מספרת גברים" ("men's barbershop") and "מספרת נשים" ("women's hair salon") are extremely common, idiomatic ways to name this exact business, and "מספרת" is not a substring of "מספרה", so it silently escaped this hint too -- round 2287's own fix, one keyword slot earlier in the same array, didn't catch its immediate neighbor.
+
+**Confirmed empirically** via the real `matchEntities`: "אפליקציה למספרת גברים לניהול לוח הזמנים והלקוחות שלנו" (an app for a men's barbershop to manage our schedule and customers) matched only `Customer`, with the real Appointment domain lost, while the bare-noun twin ("...במספרה...") already matched both `Customer` and `Appointment`.
+
+**Fix:** added "מספרת" alongside "מספרה", the same convention used for "פגישה"/"פגישת" one commit ago.
+
+**How it was found:** this round's survey agent continued the Hebrew construct-state inflection line from the last two rounds, this time checking the rest of the Appointment entity's own keyword array (where round 2287's fix lives) rather than a different entity, and found a second gap sitting right next to the one just fixed.
+
+**Verification:** fail-before/pass-after via `git stash push --keep-index` on `domainEntities.ts` alone: the new test's assertions failed exactly as predicted against the pre-fix keyword list (with round 2287's own "פגישת" fix still in place, confirming isolation of this round's own change), then passed cleanly after restoring the fix. Full `heuristic.test.ts` (196/196), full `@forge/spec-engine` suite (392/392), and full `@forge/api` suite (the dependent package, 1782/1782) all clean. The `@forge/api` production build is also clean.
+
+**Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a FIFTEENTH round running (2274-2288, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred. The Hebrew construct-state/definite-article inflection pattern has now found bugs in 3 rounds running (2286-2288) -- this round's survey agent flagged that the ~370 Hebrew keyword literals in domainEntities.ts were only spot-checked, not exhaustively verified, so more instances of this exact gap likely remain for future rounds to find, possibly even adjacent to fixes already made (as this round's own finding, sitting right next to round 2287's, demonstrates).
+
+Live: https://forge-ai-m7p7.onrender.com
