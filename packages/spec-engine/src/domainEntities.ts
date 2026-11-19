@@ -563,7 +563,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "much/more purchase" idiom is used instead, mirroring this
       // file's other \b-bounded fixes' accepted-residual-risk trade-off
       // (e.g. "court order"/"money order" above).
-      /\bpurchases?\b(?<!(?:much|more)\s*purchase)/,
+      //
+      // Round 2368: the English side of this same completeness gap
+      // Hebrew keywords were swept for in rounds 2359-2366 -- this
+      // keyword only ever covered the bare infinitive/present "purchase"
+      // and the plural/3rd-person "purchases", never the past tense
+      // "purchased" or the gerund "purchasing", even though describing
+      // a purchase-tracking feature in either tense is at least as
+      // natural. Since Order is in BILLING_ENTITY_NAMES, losing the
+      // entity match also flipped the payment recommendation to "No
+      // payments". The "much/more purchase" idiom guard doesn't need
+      // widening: that mechanical/grip idiom never conjugates as
+      // "purchased"/"purchasing" in natural English.
+      /\bpurchas(?:e|es|ed|ing)\b(?<!(?:much|more)\s*purchase)/,
       "checkout page", "checkout flow", "online checkout",
       // Round 2305: bare "delivery"/"deliveries" had no guard against
       // the ordinary childbirth/obstetric sense ("a midwife app to track

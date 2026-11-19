@@ -427,6 +427,53 @@ test("Order's 'purchase' keyword doesn't spuriously match the mechanical/climbin
 });
 
 /**
+ * Round 2368: the English side of the same completeness gap Hebrew
+ * keywords were swept for in rounds 2359-2366 -- Order's "purchase"
+ * keyword only ever covered the bare infinitive/present "purchase" and
+ * the plural/3rd-person "purchases", never the past tense "purchased"
+ * or the gerund "purchasing", even though describing a purchase-
+ * tracking feature in either tense is at least as natural. Since Order
+ * is in BILLING_ENTITY_NAMES, losing the entity match also flipped the
+ * payment recommendation to "No payments".
+ */
+test("Order's 'purchase' keyword also matches the past-tense 'purchased' and gerund 'purchasing' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const trackedLastYear = await provider.generate("A system to track items our customers purchased last year.");
+  assert.ok(trackedLastYear.entities.some((e) => e.name === "Order"), "'purchased' (past tense) must match Order");
+  const trackedLastYearPayment = trackedLastYear.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.strictEqual(trackedLastYearPayment?.recommendation, "Stripe", "an Order match must still recommend Stripe");
+
+  const giftCards = await provider.generate("An app for customers purchasing gift cards online.");
+  assert.ok(giftCards.entities.some((e) => e.name === "Order"), "'purchasing' (gerund) must match Order");
+
+  const crm = await provider.generate("A CRM that tracks what each client has purchased from us.");
+  assert.ok(crm.entities.some((e) => e.name === "Order"), "'has purchased' must match Order");
+
+  const rightNow = await provider.generate("A dashboard showing everything the store's customers are purchasing right now.");
+  assert.ok(rightNow.entities.some((e) => e.name === "Order"), "'are purchasing' must match Order");
+
+  // Non-regression: the existing bare-noun/present-tense controls still work.
+  const bareNoun = await provider.generate("A system to track customer purchases.");
+  assert.ok(bareNoun.entities.some((e) => e.name === "Order"), "bare 'purchases' must still match Order");
+
+  const barePresent = await provider.generate("An app to let customers purchase gift cards online.");
+  assert.ok(barePresent.entities.some((e) => e.name === "Order"), "bare present-tense 'purchase' must still match Order");
+
+  // Non-regression: the round 2305 "grip" idiom guard must still exclude Order,
+  // even extended to this round's wider tense coverage.
+  const lever = await provider.generate("A lever gives you more purchase on a stuck bolt.");
+  assert.ok(!lever.entities.some((e) => e.name === "Order"), "'more purchase' (grip idiom) must still not match Order");
+
+  const climbingShoes = await provider.generate("How much purchase their shoes get on the rock face.");
+  assert.ok(!climbingShoes.entities.some((e) => e.name === "Order"), "'much purchase' (grip idiom) must still not match Order");
+
+  // Non-regression: word-boundary -- "repurchased" must not spuriously match via this keyword.
+  const repurchased = await provider.generate("A loyalty app to track items customers repurchased.");
+  assert.ok(!repurchased.entities.some((e) => e.name === "Order"), "'repurchased' must not spuriously match Order via the 'purchase' keyword");
+});
+
+/**
  * Round 2305: Order's bare "delivery"/"deliveries" had no guard against
  * the ordinary childbirth/obstetric sense ("a midwife app to track
  * patient deliveries", "an obstetric clinic app that logs each
