@@ -6298,6 +6298,72 @@ test("Course's 'curriculum' keyword doesn't spuriously match the 'curriculum vit
 });
 
 /**
+ * Round 2318: Course's bare "classes" collided with several
+ * "<modifier> classes" compound nouns -- drug/tax/storage/character/
+ * risk/income/asset/social classes -- the same category round 1727
+ * already excluded for bare singular "class" (asset/weight/middle/
+ * etc.) but missed for the plural. Deliberately did NOT guard "weight
+ * classes": a genuine class-scheduling app (a boxing gym) plausibly
+ * uses that exact phrase for real classes organized by weight
+ * category, confirmed below. The twenty-second confirmed instance of
+ * the bare-overly-broad-keyword shape rounds 2297/2300-2317 fixed.
+ */
+test("Course's 'classes' keyword doesn't spuriously match '<modifier> classes' compound nouns (drug/tax/storage/character/risk/income/asset/social classes)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const drugClasses = await provider.generate("The pharmacy reference app organizes medications by drug classes, such as opioids, NSAIDs, and beta blockers.");
+  assert.ok(!drugClasses.entities.some((e) => e.name === "Course"), "'drug classes' must not spuriously match Course");
+
+  const taxClasses = await provider.generate("Employees are assigned to different tax classes based on marital status and income bracket.");
+  assert.ok(!taxClasses.entities.some((e) => e.name === "Course"), "'tax classes' must not spuriously match Course");
+
+  const storageClasses = await provider.generate("The cloud console lets admins choose storage classes for each bucket, from hot to cold archive tiers.");
+  assert.ok(!storageClasses.entities.some((e) => e.name === "Course"), "'storage classes' must not spuriously match Course");
+
+  const characterClasses = await provider.generate("The RPG lets players pick from several character classes like warrior, mage, and rogue before starting a campaign.");
+  assert.ok(!characterClasses.entities.some((e) => e.name === "Course"), "'character classes' must not spuriously match Course");
+
+  const assetClasses = await provider.generate("The report breaks down household wealth across several asset classes, including equities, bonds, and real estate.");
+  assert.ok(!assetClasses.entities.some((e) => e.name === "Course"), "'asset classes' must not spuriously match Course");
+
+  const socialClasses = await provider.generate("Sociologists study how social classes shape access to education and health care in modern economies.");
+  assert.ok(!socialClasses.entities.some((e) => e.name === "Course"), "'social classes' must not spuriously match Course");
+
+  // Non-regression: genuine class-scheduling descriptions must still match.
+  const fitness = await provider.generate("The gym offers fitness classes every morning, including yoga classes and spin classes for all levels.");
+  assert.ok(fitness.entities.some((e) => e.name === "Course"), "a genuine fitness-classes description must still match Course");
+
+  // Adversarial: a genuine class-scheduling app that ALSO uses "weight
+  // classes" for a real topic must still match Course (via the other,
+  // unguarded "classes" occurrence) -- confirms the guard is local to
+  // the specific modifier, not a document-wide exclusion.
+  const boxingGym = await provider.generate("Our boxing gym schedules weekly classes with an instructor, and students are grouped into weight classes for sparring during each class.");
+  assert.ok(boxingGym.entities.some((e) => e.name === "Course"), "a genuine boxing-gym description mentioning 'weight classes' must still match Course");
+});
+
+/**
+ * Round 2318: round 2316 fixed Course's SINGULAR Hebrew "כיתה" against
+ * the military-squad collision but missed the plural "כיתות" -- a
+ * completely separate literal string that inherited none of that
+ * guard. The twenty-third confirmed instance of the bare-overly-broad-
+ * keyword shape rounds 2297/2300-2317 fixed, mirroring round 2316's
+ * own singular guard exactly.
+ */
+test("Course's Hebrew 'כיתות' (plural) keyword doesn't spuriously match the military 'squad' sense, mirroring round 2316's singular fix", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const combatSquads = await provider.generate("האפליקציה מנהלת את כיתות הקרביות של הגדוד, כולל ציוד וחיילים.");
+  assert.ok(!combatSquads.entities.some((e) => e.name === "Course"), "'כיתות קרביות' (combat squads) must not spuriously match Course");
+
+  const basicTrainingSquads = await provider.generate("המערכת מנהלת את כיתות הטירונות בבסיס ומעקב אחרי הציוד שלהן.");
+  assert.ok(!basicTrainingSquads.entities.some((e) => e.name === "Course"), "'כיתות הטירונות' (basic-training squads) must not spuriously match Course");
+
+  // Non-regression: genuine classroom descriptions must still match.
+  const schoolClassrooms = await provider.generate("האפליקציה מנהלת את כיתות בית הספר ומאפשרת למורים לתזמן שיעורים.");
+  assert.ok(schoolClassrooms.entities.some((e) => e.name === "Course"), "a genuine school-classrooms description must still match Course");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

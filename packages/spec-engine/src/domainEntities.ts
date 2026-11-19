@@ -1433,7 +1433,20 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // construct-state gap shape rounds 576-582 already found elsewhere
       // in this file. A plural-only phrasing matched no Course-specific
       // keyword at all.
-      "כיתות",
+      //
+      // Round 2318: round 2316 fixed this entity's SINGULAR "כיתה"
+      // against the military-squad collision (combat squad/battalion/
+      // company/basic-training squad) but missed this plural, a
+      // completely separate literal string that inherited none of that
+      // guard. Confirmed live: a combat-squad equipment tracker, a
+      // battalion-squad roster app, a company-squad tracker, and a
+      // basic-training-squad tracker each fabricated Course. Mirrors
+      // round 2316's own singular guard exactly, scoped to the same
+      // vetted-safe structural/military terms (not the broader "army"/
+      // "soldiers"/"commander" cues that round already confirmed unsafe
+      // for the singular) -- the same already-deferred military-topic-
+      // vs-squad-unit ambiguity applies equally here, left open.
+      /כיתות(?![\s\S]*?(?:קרבית|קרבי|גדוד|פלוגה|טירונות))(?<!(?:קרבית|קרבי|גדוד|פלוגה|טירונות)[\s\S]*?)/,
       // Round 1727: this entity's own description reads "A course or
       // class the business teaches," but had no English "class" keyword
       // at all -- flagged but deliberately deferred by round 1708. Bare
@@ -1446,7 +1459,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // business's course offerings. "class schedule(s)" is added
       // separately so the common singular phrasing ("a weekly class
       // schedule") still matches without touching bare singular "class".
-      /\bclasses\b/, /\bclass schedules?\b/,
+      //
+      // Round 2318: that round-1727 reasoning checked IDIOMS but missed
+      // a whole category of "<modifier> classes" compound nouns -- the
+      // exact same category already excluded for singular "class" above
+      // (asset/weight/middle/etc.) turns out to apply to several plural
+      // modifiers too. Confirmed live: "drug classes", "tax classes",
+      // "storage classes" (cloud/IT), "character classes" (video
+      // games), "risk classes" (insurance), "income classes", "asset
+      // classes", and "social classes" each fabricated Course, in zero
+      // relation to lessons. The lookbehind excludes only these specific
+      // confirmed-unambiguous modifiers; "weight classes" is
+      // deliberately left OUT -- adversarially confirmed a genuine
+      // class-scheduling app (a boxing gym) plausibly uses that exact
+      // phrase for real classes organized by weight category, so
+      // excluding it would risk a real false negative, while every
+      // other guard here is scoped to modifiers that never mean
+      // "lessons". The guard is local (the specific modifier
+      // immediately before "classes"), not document-wide, so it never
+      // costs a real hit as long as any other "classes"/Course keyword
+      // occurrence exists in the same description.
+      /(?<!\b(?:asset|drug|medication|tax|storage|character|risk|income|social|economic)\s)\bclasses\b/, /\bclass schedules?\b/,
       // Round 1992: "שיעור" is a true Hebrew homograph, the same
       // grammatical-polysemy shape round 890's "ביקורת" (audit/review) fix
       // and round 1982's "משוב" (feedback/"excellent") fix already closed
