@@ -54026,3 +54026,93 @@ unlisted-stance-noun leak (this round, an accepted trade-off, same
 class as round 2027's ספק guard).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2335: Event's 'כנס' login-idiom guard missed the 2nd-person-future 'ktiv chaser' spelling
+
+**Bug:** Event's login-idiom exclusion guard for the "כנס" (conference)
+keyword (`domainEntities.ts`, inside the Event keyword array) is a flat
+chain of fixed-length lookbehinds built up over several prior rounds
+(1918, 2332) to exclude the unrelated כ.נ.ס ("to enter"/"to log in")
+verb family: ניכנס/תיכנס/יכנס/ייכנס/נכנס/להיכנס/מתכנס/התכנסות/אכנס. It
+still missed the "ktiv chaser" (vowel-letter-dropped) spelling of the
+2nd-person future -- "תכנס" (masc. sing.), "תכנסי"
+(fem. sing.), "תכנסו" (plural) -- which drops the extra "י"
+that "תיכנס" has, leaving bare "ת" as the character immediately before
+"כנס". None of the existing lookbehinds (all either 0 characters, or a
+specific 2-character sequence ending in something other than bare "ת")
+catch this.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול מלאי. כדי להתחיל, תכנס למערכת עם שם משתמש וסיסמה." (an inventory app
+describing its own login step), "אפליקציה לניהול מלאי. גברת, תכנסי למערכת עם שם משתמש וסיסמה." (fem. sing.), and
+"אפליקציה לניהול מלאי. תכנסו למערכת עם שם משתמש וסיסמה." (plural) all fabricated a spurious `Event` entity
+(fields name/date/venue/capacity/status) alongside the real `Product`
+entity -- this ordinary, arguably more common-in-casual-UI-copy login
+phrasing is at least as natural as the already-fixed "תיכנס" spelling.
+
+**Fix** (`domainEntities.ts`, Event's keyword array):
+```js
+/(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)(?<!א)(?<!ת)כנס/
+```
+A single `(?<!ת)` lookbehind closes the gap. This is safe because
+Hebrew has no noun-prefix "ת" (unlike ב/ל/מ/ה, which do attach directly
+to nouns), so a bare "ת" glued directly onto "כנס" with no space is
+never a genuine construct/prefixed form of the conference noun --
+confirmed empirically including a composite sentence containing both
+the login verb and a genuine conference mention ("מצב בו תכנס לכנס בעוד שעה."),
+and confirmed no regression on "מתכנס"/"להתכנס" (convene/assemble
+senses), which were already excluded by the pre-existing lookbehinds
+(both still immediately preceded by "ת" as well).
+
+**BILLING_ENTITY_NAMES:** Event is NOT a member, so this bug is
+entity-fabrication only -- it does not affect the Stripe-vs-no-payments
+recommendation, unlike every Donation-side fix this window.
+
+**No residual gap disclosed this round:** unlike round 2334's leaky
+denylist, this guard's own adversarial test suite (24 cases, including
+the already-fixed forms, the new bug forms, genuine conference usage in
+multiple inflections, and the convene/assemble non-regression checks)
+passed cleanly with zero failures on the proposed fix.
+
+**Test added** (`heuristic.test.ts`): confirms all three new bug
+sentences ("אפליקציה לניהול מלאי. כדי להתחיל, תכנס למערכת עם שם משתמש וסיסמה.", "אפליקציה לניהול מלאי. גברת, תכנסי למערכת עם שם משתמש וסיסמה.",
+"אפליקציה לניהול מלאי. תכנסו למערכת עם שם משתמש וסיסמה.") no longer match Event, the already-fixed
+"אפליקציה לניהול מלאי. תיכנס למערכת עם שם משתמש וסיסמה." form stays excluded, a genuine conference
+description ("אפליקציה לניהול כנס עסקי שנתי עם הרשמה ותשלום.") still matches Event, and the mixed
+verb+noun sentence still matches Event via the genuine noun occurrence.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 246 (the new test), as predicted; pass-after showed 246/246.
+Full `@forge/spec-engine` suite: 442/442 (up from 441). Full
+`@forge/api` suite: 1782/1782, unchanged, run via Bash's native
+`run_in_background` from `apps/api` (disk space checked healthy
+beforehand: ~1GB tsx cache, 21G free). Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round used discovery method (A)
+("missing grammatical person/number on an idiom-exclusion guard"),
+previously declared exhausted for this exact guard after round 2332's
+audit, resurfacing on a fresh grammatical form (2nd-person future,
+chaser spelling) not covered by that audit's scope -- reinforcing the
+standing lesson that such audits are scoped to the specific forms
+checked, not a file-wide or even guard-wide guarantee once a new
+spelling variant is considered. The survey agent also re-verified,
+without finding any new gap, Courier's DMV/insurance/traffic-ticket
+guards (already extensively iterated through round 2311), Property's
+נכס financial/IP-asset exclusion (round 2282's bidirectional-lookaround
+fix confirmed still correct), Vehicle's רכב/מוסך forms (all covered),
+and the Order "הזמנה" exclusion list's named words (all now real
+keywords in their respective entities per rounds 2330/2331). Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap
+(rounds 2282-2283); Courier license/insurance/traffic-ticket sub-case
+(round 2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318); Order's
+forward-only "הזמנה" exclusion-lookahead directionality gap (round
+2331, accepted trade-off); pre-existing roadmap.md script-substitution
+corruption from rounds 2316/2324/2325 (round 2332, deferred to a
+dedicated future round); Donation's "צדקה" guard's residual
+unlisted-stance-noun leak (round 2334, accepted trade-off).
+
+Live: https://forge-ai-m7p7.onrender.com
