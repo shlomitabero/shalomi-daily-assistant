@@ -6032,6 +6032,30 @@ test("Courier's 'driver(s)'/'נהג'/'נהגים' keywords don't spuriously matc
 });
 
 /**
+ * Round 2312: Appointment's bare "appointment" keyword is a literal
+ * substring of two completely unrelated, common words --
+ * "disappointment" (feelings/reviews/complaints) and "reappointment"
+ * (e.g. a board/committee member, an HR/governance concept) -- with
+ * zero scheduling connection. The fifteenth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2311 fixed. Unlike
+ * round 2311's Courier fix, this one is a plain `\b`-bounded substring
+ * fix with no unsafe-marker tradeoff to scope around.
+ */
+test("Appointment's 'appointment' keyword doesn't spuriously match inside 'disappointment' or 'reappointment'", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const disappointment = await provider.generate("An app to record moments of disappointment.");
+  assert.ok(!disappointment.entities.some((e) => e.name === "Appointment"), "'disappointment' alone must not spuriously match Appointment");
+
+  const reappointment = await provider.generate("An app to track a committee member's reappointment every term.");
+  assert.ok(!reappointment.entities.some((e) => e.name === "Appointment"), "'reappointment' alone must not spuriously match Appointment");
+
+  // Non-regression: genuine appointment-scheduling descriptions must still match.
+  const hairSalon = await provider.generate("An app for a hair salon to schedule appointment bookings with customers.");
+  assert.ok(hairSalon.entities.some((e) => e.name === "Appointment"), "a genuine appointment-scheduling description must still match Appointment");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different

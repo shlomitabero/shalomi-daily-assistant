@@ -234,7 +234,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // real Appointment domain lost, while the bare-noun twin ("...
     // במספרה...") already matched both Customer and Appointment.
     keywords: [
-      "appointment", /\bbookings?\b/, /\breservations?\b/,
+      // Round 2312: bare "appointment" is a literal substring of two
+      // completely unrelated, common words -- "disappointment"
+      // (feelings/reviews/complaints) and "reappointment" (e.g. a board
+      // or committee member, an HR/governance concept) -- with zero
+      // scheduling connection. Confirmed live: "An app to record moments
+      // of disappointment." and a committee-reappointment description
+      // both matched ONLY ['Appointment'], fabricating a bogus
+      // scheduling entity with zero relation to either description.
+      // The same unguarded-bare-string pitfall this file's other
+      // `\b`-bounded keywords (just below, "bookings?"/"reservations?")
+      // already guard against. Not in BILLING_ENTITY_NAMES (rounds
+      // 1345/1346 deliberately excluded Appointment there) and not
+      // duplicated in PAYMENT_KEYWORDS, so this fix affects only entity
+      // detection, not payment recommendations.
+      /\bappointments?\b/, /\bbookings?\b/, /\breservations?\b/,
       "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
       /\bspa\b/, "massage", "massage therapy",
       "תורים", "פגישה", "פגישות", "פגישת", "מספרה", "מספרת", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
