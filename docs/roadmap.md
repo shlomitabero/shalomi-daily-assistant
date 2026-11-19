@@ -54681,3 +54681,96 @@ covered negation/verb immediately before it (round 2341, accepted
 trade-off, same leaky-denylist class).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2342: Vendor's 'רכש' idiom guard, patched three times before, was STILL missing a form
+
+**Bug:** Rounds 2309, 2320, and 2326 progressively covered all 8
+person/number/gender combinations of the PAST tense for Vendor's
+"רכש" (acquire/procure) idiom-exclusion guard (vs. the "acquired
+experience/knowledge/skills" idiom). None of them covered the
+2nd-person-feminine-singular "י"-suffixed forms, which read as either
+the imperative ("רכשי!" -- "acquire!") or the future ("תרכשי" -- "you[f]
+will acquire") depending on context. The gap existed because the bare
+"רכש" branch's lookahead chain excluded "ה"/"ו"/"ת"/"נ" (to stop it
+from mistaking a longer form's prefix for itself) but never added "י",
+and unlike every other grammatical person/number combination, there
+was no dedicated "רכשי" branch at all.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "רכשי ניסיון רב בתפקיד הקודם ותשתמשי בו כאן, ואני רוצה אפליקציה לניהול משימות." (imperative: acquire
+experience!) and "במהלך ההכשרה החדשה תרכשי ניסיון רב בתחום השירות, ואני רוצה אפליקציה לניהול משימות." (future: you[f] will acquire
+experience) both fabricated a Vendor entity with zero procurement
+content.
+
+**Fix** (`domainEntities.ts`, Vendor's keyword array):
+```js
+/רכשתם(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתן(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשתי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשנו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשת(?!ם)(?!ן)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשי(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשו(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!ו)(?!ת)(?!נ)(?!י)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))/
+```
+Adds a dedicated "רכשי" branch with the same idiom-object lookahead as
+every other person/number form, and adds "(?!י)" to the bare "רכש"
+branch's lookahead chain so it still can't mistake "רכשי"'s prefix for
+itself. Confirmed empirically this closes both repro cases without
+regressing any of rounds 2309/2320/2326's existing exclusions or
+genuine vendor usage, e.g. "רכשי ציוד חדש מהספק המקומי" still matches
+Vendor as before.
+
+**BILLING_ENTITY_NAMES:** Vendor is NOT a member, so this bug is
+entity-fabrication only.
+
+**Standing lesson reinforced -- now with a new wrinkle:** this is the
+fifth time the "missing grammatical person/number/tense on a
+multi-round idiom guard" shape has recurred (Vendor's own רכש guard
+rounds 2309/2320/2326, Donation's תרם guard round 2327, Course's נתן
+guard round 2328, Vendor's ספק guard round 2341, and now Vendor's רכש
+guard AGAIN in round 2342) -- but this time it is the SAME specific
+guard (רכש) recurring a second time, after already being patched
+THREE separate times across 2309/2320/2326. Even a guard that has just
+been re-patched this very window is not guaranteed to be exhausted;
+the full grammatical paradigm (person x number x gender x tense x
+mood, including the imperative, which is easy to overlook since it
+has no overt subject) needs re-deriving from scratch, not assumed
+closed because an earlier pass already added several branches.
+
+**Test added** (`heuristic.test.ts`): confirms both bug sentences no
+longer match Vendor, while genuine vendor sentences using the same
+2fs verb forms still do.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 254 (the new test), as predicted; pass-after showed 254/254.
+Full `@forge/spec-engine` suite: 450/450 (up from 449). Full
+`@forge/api` suite: 1782/1782, clean (no flakes this round, unlike
+rounds 2338/2339). Production build: clean (`dist/server.js 1.5mb`,
+exit code 0).
+
+**Standing notes update:** discovery method (A) ("missing grammatical
+form on an idiom-exclusion guard") now validated a sixth time overall
+and a second time specifically on Vendor's own רכש guard within this
+same window -- worth flagging for the next round: re-deriving the full
+paradigm (including the imperative mood) for Donation's תרם/תורם
+family and Course's נתן/שיעור guards, neither of which has been
+re-checked against this discipline yet, is now a higher priority than
+re-sweeping method (C) (still likely exhausted) or starting fresh on
+method (B) (named-but-missing keyword, last swept through round 2334).
+Standing deferred/unsafe gaps, unchanged this round: Ticket bare-noun
+gap (rounds 2282-2283); Courier license/insurance/traffic-ticket
+sub-case (round 2311); Course bare-price-crashing sub-case (round
+2316); Course military-topic-vs-squad-unit ambiguity (round 2316);
+Course "courses"-vs-restaurant-meal-courses sub-case (round 2318);
+Order's forward-only "הזמנה" exclusion-lookahead directionality gap
+(round 2331, accepted trade-off); pre-existing roadmap.md
+script-substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+leaks (round 2340, accepted trade-off); Vendor's "ספק" guard's
+residual leak on rarer doubt-phrasings (round 2341, accepted
+trade-off); Vendor's "רכש" guard's residual leak on any future-form
+negation phrasings not yet enumerated (round 2342, accepted
+trade-off, same leaky-denylist class).
+
+Live: https://forge-ai-m7p7.onrender.com
