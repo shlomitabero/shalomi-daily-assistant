@@ -288,7 +288,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // don't collide with "מאמין" (believer) or "מתאמן"/"להתאמן" (to
       // practice/work out) as bare substrings, so no lookbehind guard is
       // needed here (unlike עובד/צוות below).
-      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים",
+      //
+      // Round 2290: those three forms don't cover Hebrew's own construct-
+      // state ("סמיכות") plural "מאמני" (e.g. "מאמני כדורגל", "football
+      // coaches") -- the same inflection-gap class already fixed 4 rounds
+      // running for other entities (lodging, Appointment x2, Task). The
+      // plural "מאמנים" reverts the bare singular's word-final sofit nun
+      // (ן) to a regular nun (נ) before adding its own suffix, so neither
+      // "מאמן" (ending in sofit nun) nor "מאמנת" is a substring of the
+      // construct form "מאמני" (ending in regular nun + "י") -- two
+      // different Unicode letters, not just a human-readable near-miss.
+      // Confirmed via the real matchEntities: "אפליקציה לניהול מאמני
+      // כדורגל בקבוצה" matched only the generic Item fallback, with the
+      // real Employee/staff domain entirely lost, while the bare-plural
+      // twin ("...מאמנים בקבוצה") already matched Employee correctly.
+      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני",
       // Bare "עובד"/"עובדת"/"עובדים" (round 565) are substrings of the
       // pu'al passive-participle adjective "מעובד"/"מעובדת"/"מעובדים"/
       // "מעובדות" ("processed", as in processed food/data/materials), an
@@ -2821,7 +2835,10 @@ export const ROLE_RULES: Record<string, RoleRule> = {
       "employee", /\bstaff\b/, /\bworkers?\b/, "team member",
       // Round 1720: kept in sync with the Employee entity rule's own
       // "trainer"/"מאמן" addition above.
-      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים",
+      //
+      // Round 2290: kept in sync with that same entity rule's own
+      // construct-state "מאמני" addition (see its comment above).
+      /\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני",
       /(?<!מ)עובד(?!ה)(?!ות\s*(?:על|מעניינ|מרתק|מדהימ|משעשע|סקרני|אקראי))/,
       /(?<!מ)עובדת/, /(?<!מ)עובדים/, /(?<!מ)צוות/,
     ],

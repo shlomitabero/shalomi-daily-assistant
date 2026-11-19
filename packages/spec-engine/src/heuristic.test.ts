@@ -371,6 +371,36 @@ test("recognizes 'trainers'/'מאמנים' as Employee staff, in both the Englis
   assert.ok(he.entities.some((e) => e.name === "Employee"), "the Hebrew Fitness studio example must match the Employee entity");
 });
 
+/**
+ * Round 2290: the exact same construct-state gap rounds 2287-2289 fixed
+ * for Appointment and Task's own Hebrew keywords, found this round in
+ * Employee's "מאמן"/"מאמנת"/"מאמנים" trainer keywords (and their mirror
+ * in ROLE_RULES.Employee). The plural "מאמנים" reverts the bare
+ * singular's word-final sofit nun (ן) to a regular nun (נ) before adding
+ * its own suffix, so neither "מאמן" (sofit nun) nor "מאמנת" is a
+ * substring of the construct-plural form "מאמני" (regular nun + "י",
+ * e.g. "מאמני כדורגל", "football coaches") -- two different Unicode
+ * letters, not just a human-readable near-miss. Confirmed live via the
+ * real matchEntities/matchRoles before this fix: "אפליקציה לניהול מאמני
+ * כדורגל בקבוצה" matched only the generic Item fallback entity and
+ * omitted the Employee role entirely, while the bare-plural twin
+ * ("...מאמנים בקבוצה") already matched Employee correctly in both.
+ */
+test("recognizes the Hebrew construct-state 'מאמני' form (e.g. 'מאמני כדורגל') as Employee staff/role, not just the bare 'מאמן'/'מאמנים' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const soccerCoaches = await provider.generate("אפליקציה לניהול מאמני כדורגל בקבוצה", true);
+  assert.ok(soccerCoaches.entities.some((e) => e.name === "Employee"), "Hebrew 'מאמני כדורגל' must match the Employee entity rule");
+  assert.ok(soccerCoaches.roles.includes("עובד/ת"), "Hebrew 'מאמני כדורגל' must include the Employee role ('עובד/ת')");
+
+  const swimCoaches = await provider.generate("אפליקציה לניהול מאמני שחייה בקבוצה", true);
+  assert.ok(swimCoaches.entities.some((e) => e.name === "Employee"), "Hebrew 'מאמני שחייה' must match the Employee entity rule");
+
+  // Non-regression: the already-working bare-plural form must still match.
+  const barePlural = await provider.generate("אפליקציה לניהול מאמנים בקבוצה", true);
+  assert.ok(barePlural.entities.some((e) => e.name === "Employee"), "the bare 'מאמנים' form must still match (no regression)");
+});
+
 test("recognizes 'classes'/'class schedule' as the Course entity, in both the English and Hebrew built-in 'Fitness studio' example descriptions", async () => {
   // Round 1727: the Course entity's own description reads "A course or
   // class the business teaches," but the keyword array had no English
