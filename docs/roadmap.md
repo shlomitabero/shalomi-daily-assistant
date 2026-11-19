@@ -56518,3 +56518,85 @@ round should verify that conclusion or pivot to heuristic.ts
 structural logic bugs per the standing fallback.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2363: Donation's own subject noun missing construct-state "תרומת"
+
+**Bug:** continuing the search opened up by rounds 2361-2362, this
+round's survey agent first independently re-verified round 2362's
+claim that `ROLE_RULES` is exhausted for the "missing 4th Hebrew
+inflection" bug class -- re-read the whole table fresh, re-derived
+Manager's fix by hand, and confirmed it holds (only 4 roles exist;
+Admin is unconditional; Manager's alternation produces exactly the 4
+real suffixes; Customer has no gender/number variability). With that
+confirmed, the agent applied the same construct-state audit lens
+elsewhere and found round 2359's own fix was incomplete: round 2359
+fixed Donation's cue-word alternation (the lookaround's right-hand
+side) to add construct-state "עמותת" alongside absolute "עמותה"/
+"עמותות", but never applied the identical fix to the lookaround's
+SUBJECT noun. "תרומ(?:ה|ות)" only ever covered the absolute singular
+("תרומה") and absolute plural ("תרומות"), never the construct-state
+singular "תרומת" (e.g. "תרומת דם" = "blood donation", "תרומת איברים"
+= "organ donation", "תרומת כספים" = "money donation" -- all extremely
+common, arguably more natural than the absolute "תרומה של דם"
+phrasing). Since "תרומת" ends in ת, not ה, it is not a substring of
+either absolute form, so neither branch of the bidirectional
+lookaround ever fired.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול תרומת דם במרכזים רפואיים.", "אפליקציה לניהול תרומת איברים בין בתי חולים.", and
+"אפליקציה למעקב אחרי תרומת כספים לעמותה שלנו." all lost the Donation entity entirely (fell through to
+the generic Item fallback), despite containing genuine donor/blood/
+organ/nonprofit wording.
+
+**Fix** (`domainEntities.ts`, Donation's bidirectional lookaround):
+```js
+/תרומ(?:ה|ות|ת)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות|ת))/
+```
+Adds the "ת" construct-singular suffix to both occurrences of the
+subject-noun alternation.
+
+**Verification (regression/collision checks run live):** confirmed
+the already-working absolute singular/plural forms are unaffected;
+confirmed round 2111's own homograph-exclusion guard (this
+lookaround's entire reason for being cue-gated rather than a bare
+literal) still holds for the construct form too -- a construct-state
+"contribution" sentence (academic/company sense) with no donor/
+nonprofit/blood/organ cue word still correctly excludes Donation.
+During independent re-verification, also discovered that a separate,
+pre-existing, unrelated keyword ("תורמים" as a standalone donor noun
+with its own idiom-exclusion guard, several rounds prior) already
+covers sentences containing that literal word regardless of this fix
+-- noted here only to correct the record, since one of the agent's
+own verification sentences happened to pass for that unrelated
+reason rather than exercising this round's actual fix; the three bug
+sentences above were independently confirmed clean of that overlap
+and do demonstrate the real gap.
+
+**Test added** (`heuristic.test.ts`, immediately after round 2359's
+existing test): confirms all 3 bug sentences now match Donation;
+confirms both existing absolute-form non-regression cases still
+pass; confirms the homograph-exclusion non-regression case stays
+correct.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 274 (the new test), as predicted; pass-after showed 274/274 --
+no regression. Full `@forge/spec-engine` suite: 470/470 (up from 469).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "4th Hebrew inflection missing from an
+incrementally-built keyword/guard" lens has now found bugs in 4
+consecutive rounds (2359-2363, counting both Donation fixes) across
+both `ROLE_RULES` and `DOMAIN_ENTITY_RULES`. `ROLE_RULES` is
+independently confirmed exhausted for this specific angle. Next round
+should either continue applying this lens to other multi-round
+Hebrew keyword families in `DOMAIN_ENTITY_RULES` (the Order entity's
+"רכישה"/"רכישות" was flagged as a candidate but set aside this round
+-- it has a pre-existing, more complex "acquisition of X" idiom
+collision that a naive construct-state addition would worsen, and
+needs its own dedicated round with a bounded exclusion list design,
+not a quick single-line fix) or pivot to heuristic.ts structural logic
+bugs per the standing fallback.
+
+Live: https://forge-ai-m7p7.onrender.com
