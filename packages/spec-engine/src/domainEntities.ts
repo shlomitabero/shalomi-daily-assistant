@@ -356,7 +356,20 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // "חיובי"/"חיובית"/"חיוביות" ("positive"/"positivity") -- see the
     // identical fix and its rationale in heuristic.ts's PAYMENT_KEYWORDS.
     // "חיובים" is still matched explicitly as its own keyword below.
-    keywords: ["invoice", "billing", "payment", "חשבונית", "חשבוניות", /חיוב(?!י(?!ם))/, "חיובים"],
+    //
+    // Round 2301: the bare English "billing" keyword that used to sit
+    // here (and was independently duplicated in heuristic.ts's
+    // PAYMENT_KEYWORDS) was unguarded, unlike every other keyword in
+    // this array -- the same shape round 2297 ("nonprofit") and round
+    // 2300 ("subscription") fixed. "Billing" is genuinely polysemous:
+    // the entertainment-industry sense ("billing order" -- whose name
+    // appears first/biggest in credits) has nothing to do with money.
+    // Confirmed live: "An app for a community theater to track actors,
+    // their roles, and billing order in each show's printed program."
+    // fabricated an Invoice entity and wrongly recommended Stripe.
+    // Removed -- every genuine invoicing/billing description already
+    // matches via "invoice"/"payment" or the Hebrew keywords instead.
+    keywords: ["invoice", "payment", "חשבונית", "חשבוניות", /חיוב(?!י(?!ם))/, "חיובים"],
     labelHe: "חשבוניות",
     descriptionHe: "חשבון שנשלח ללקוח.",
     fieldLabelsHe: {

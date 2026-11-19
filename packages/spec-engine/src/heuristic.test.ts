@@ -270,6 +270,32 @@ test("'subscription' alone (email/YouTube/RSS/podcast, no billing concept) does 
   assert.ok(realBilling.entities.some((e) => e.name === "Subscription"), "a genuine recurring-billing description must still match Subscription");
 });
 
+/**
+ * Round 2301: the bare "billing" keyword (removed from both the Invoice
+ * entity's own keywords in domainEntities.ts and PAYMENT_KEYWORDS here)
+ * was a genuinely polysemous whole word -- the entertainment-industry
+ * sense of "billing" (whose name appears first/biggest in a show's
+ * credits, as in "billing order") has nothing to do with money, yet
+ * fabricated an Invoice entity and wrongly recommended Stripe. The same
+ * bare-overly-broad-word shape round 2297 fixed for Donation's
+ * "nonprofit" and round 2300 fixed for Subscription's "subscription".
+ */
+test("'billing' alone (entertainment-industry 'billing order', no money concept) does not spuriously match Invoice or recommend Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const theater = await provider.generate(
+    "An app for a community theater to track actors, their roles, and billing order in each show's printed program.",
+  );
+  assert.ok(!theater.entities.some((e) => e.name === "Invoice"), "'billing' alone must not spuriously match Invoice");
+
+  // Non-regression: genuine invoicing descriptions must still match via "invoice"/"payment".
+  const freelance = await provider.generate("An app for a freelance consultant to send invoices to clients.");
+  assert.ok(freelance.entities.some((e) => e.name === "Invoice"), "a genuine invoicing description must still match Invoice");
+  const freelancePaymentQuestion = freelance.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(freelancePaymentQuestion);
+  assert.equal(freelancePaymentQuestion!.recommendation, "Stripe", "a genuine invoicing description must still recommend Stripe");
+});
+
 test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
   // Round 1690: "membership fee" is the single most natural English
   // phrase for what a gym/studio/co-working-space business charges, but

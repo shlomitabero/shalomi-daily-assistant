@@ -13,7 +13,14 @@ import {
 } from "./domainEntities.js";
 
 const PAYMENT_KEYWORDS: (string | RegExp)[] = [
-  "payment", "invoice", "billing",
+  "payment", "invoice",
+  // Round 2301: bare "billing" removed -- see domainEntities.ts's own
+  // round-2301 comment on the Invoice entity's keyword array for the
+  // full explanation (entertainment-industry "billing order" has
+  // nothing to do with money). This array independently carried the
+  // identical unguarded word, so it needed the same fix -- removing it
+  // from only one of the two lists would have left the other still
+  // producing the wrong Stripe recommendation on its own.
   // Round 2300: bare "subscription" removed -- see domainEntities.ts's
   // own round-2300 comment on the Subscription entity's keyword array
   // for the full explanation (email/YouTube/RSS/podcast "subscriptions"
