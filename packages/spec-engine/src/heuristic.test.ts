@@ -6731,6 +6731,34 @@ test("Event's keywords also cover 'מסיבה'/'מסיבות'/'מסיבת' (part
   assert.ok(!reasonsPersonal.entities.some((e) => e.name === "Event"), "'מסיבות אישיות' (for personal reasons) must not spuriously match Event");
 });
 
+test("Event's 'כנס' (conference) login-verb exclusion guard (round 1918) also covers the 1st-person-singular future 'אכנס' (previously a false positive)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const firstPersonFuture1 = await provider.generate("אפליקציה לניהול משימות שבה המשתמש אכנס למערכת עם שם משתמש וסיסמה בכל בוקר.");
+  assert.ok(!firstPersonFuture1.entities.some((e) => e.name === "Event"), "'המשתמש אכנס למערכת' (the user will log in, 1st-person future) must not spuriously match Event");
+
+  const firstPersonFuture2 = await provider.generate("המשתמש אכנס למערכת כדי לבדוק את המלאי שלו.");
+  assert.ok(!firstPersonFuture2.entities.some((e) => e.name === "Event"), "'אכנס למערכת כדי לבדוק' (will log in to check) must not spuriously match Event");
+
+  // Non-regression: round 1918's own future-tense controls for other persons must still be excluded.
+  const thirdPersonFuture = await provider.generate("המשתמש יכנס למערכת עם שם משתמש וסיסמה.");
+  assert.ok(!thirdPersonFuture.entities.some((e) => e.name === "Event"), "'המשתמש יכנס למערכת' (round 1918's own 3rd-person-future exclusion) must still not match Event");
+
+  const presentTense = await provider.generate("המשתמש נכנס למערכת בבוקר.");
+  assert.ok(!presentTense.entities.some((e) => e.name === "Event"), "'המשתמש נכנס למערכת' (round 562's own present-tense exclusion) must still not match Event");
+
+  // Non-regression: genuine standalone conference mentions must still match, including a composite
+  // sentence containing both the login verb and a real conference mention.
+  const genuineConference1 = await provider.generate("אנחנו מתכננים כנס שנתי גדול למפתחים.");
+  assert.ok(genuineConference1.entities.some((e) => e.name === "Event"), "'מתכננים כנס שנתי' (planning an annual conference) must still match Event");
+
+  const genuineConference2 = await provider.generate("נרשמתי לכנס המפתחים שיתקיים בתל אביב.");
+  assert.ok(genuineConference2.entities.some((e) => e.name === "Event"), "'נרשמתי לכנס המפתחים' (registered for the developers' conference) must still match Event");
+
+  const composite = await provider.generate("אני אכנס למערכת ואחר כך אירשם לכנס הבינלאומי.");
+  assert.ok(composite.entities.some((e) => e.name === "Event"), "'אכנס למערכת ... לכנס הבינלאומי' (a sentence with both the login verb and a genuine conference mention) must still match Event");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the

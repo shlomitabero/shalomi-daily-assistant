@@ -1938,7 +1938,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // the ONE character immediately before "כנס", which is "י" in
       // both spellings), without affecting a genuine standalone "כנס"/
       // "הכנס" (conference) match.
-      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)כנס/,
+      // Round 2332: round 1918's fix covered every OTHER grammatical
+      // person of the future tense (ניכנס/תיכנס/יכנס/ייכנס all happen
+      // to have "י" immediately before "כנס") but missed 1st-person-
+      // singular future "אכנס" ("I will log in"), whose immediately-
+      // preceding character is "א" instead. Confirmed live: "...המשתמש
+      // אכנס למערכת עם שם משתמש וסיסמה..." (the user will log in to
+      // the system with a username and password) fabricated Event. "א"
+      // is never itself a prefix of a genuine standalone "כנס"/"הכנס"
+      // (conference) usage (the noun only ever takes ב/ל/ה/מ-type
+      // prefixes), confirmed empirically including a composite sentence
+      // containing both the login verb and a real conference mention.
+      // This guard is a flat chain of same-position fixed-length
+      // lookbehinds, not an optional-suffix-plus-lookahead shape, so the
+      // backtracking pitfall documented elsewhere in this file (Vendor's
+      // רכש, Donation's תרם) doesn't apply here -- confirmed empirically
+      // that a naive merged single-lookbehind variant behaves
+      // identically to the independent chain.
+      /(?<!נ)(?<!תי)(?<!להי)(?<!מת)(?<!הת)(?<!י)(?<!א)כנס/,
       // Bare "חתונה"/"חתונות" (round 575) are substrings of "תחתונה"/
       // "תחתונות" ("lower [clothing]"/"underwear", e.g. "הלבשה תחתונה"),
       // an unrelated, common clothing/lingerie term -- "תחתונה" is
