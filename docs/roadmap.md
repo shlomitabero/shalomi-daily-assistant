@@ -55538,3 +55538,95 @@ unfixable with a local regex guard and permanently deferred (rounds
 2349-2350).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2351: PAYMENT_KEYWORDS "sell + course(s)/ticket(s)" phrases missing "sells"/"sold"
+
+**Bug:** a background survey agent flagged that the "sell(ing) +
+course(s)/class(es)" phrase (round 1700) and the "sell(ing) +
+ticket(s)" phrase (round 893) in `PAYMENT_KEYWORDS` (`heuristic.ts`)
+only covered the bare infinitive and the gerund -- "sell(?:ing)?" --
+never the equally common 3rd-person-singular present "sells" or the
+past tense "sold". This is the same "missing grammatical form" bug
+class already fixed many times for Hebrew (rounds 1700, 1989, 2349,
+2350), here found for the first time in the English half of the
+array, which had apparently never been audited the same way.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "An online academy that sells online courses to working professionals." (3rd person singular
+present) and "A marketplace that sold online courses to thousands of students last year." (past tense) both wrongly
+recommended "No payments" despite describing a course-selling
+business; the identical gap held for tickets, e.g. "A box office app that sells tickets for local theater shows."
+and "An events company that sold tickets for last summer's festival.".
+
+**Verification correction:** two of the survey agent's own four
+example sentences ("A platform that already sold thousands of online
+courses to students", "A site that sells event tickets online for
+concerts") had extra words wedged between the verb and the noun
+phrase ("thousands of", "event"), so they never actually exercised
+this fix -- the scoped regex requires the verb immediately adjacent to
+the noun phrase, the same narrow adjacency the pre-existing "sell"/
+"selling" forms already required (by design, per rounds 460/893's own
+comments, to avoid over-matching unrelated "sell"/"selling" usage).
+Caught during independent verification by re-running the agent's
+proposed fix against its own claimed example sentences and seeing two
+of the four not flip; corrected by writing fresh, properly-adjacent
+test sentences before trusting the fix, and used those (not the
+agent's original two) in the final code comments and regression test.
+
+**Fix** (`heuristic.ts`, `PAYMENT_KEYWORDS` array):
+```js
+/\b(?:sells?|selling|sold)\s+(?:online\s+)?(?:courses?|classes?)\b/
+/\b(?:sells?|selling|sold)\s+tickets?\b/
+```
+Adds "sells?"/"sold" as sibling alternatives to the existing "sell(?:ing)?"
+pattern, in both the course/class phrase and the ticket phrase.
+
+**Collision check:** "oversold", "unsold", and "resold" all lack a
+word boundary immediately before "sold" (as required by the pattern's
+own `\b`), so none of them are swallowed by the new "sold" alternative
+-- confirmed live with adversarial sentences using all three near both
+"courses" and "tickets".
+
+**Test added** (`heuristic.test.ts`): confirms all 4 bug sentences
+(sells/sold x courses/tickets, properly adjacent) now correctly
+recommend Stripe; the pre-existing infinitive/gerund forms, rounds
+460/893/1700's own non-regression cases, and the oversold/unsold/resold
+collision checks all stay correctly excluded with the English "No
+payments" label (these are English-language inputs, unlike rounds
+2349-2350's Hebrew "בלי תשלומים" cases).
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 262 (the new test's first assertion, which short-circuits the
+rest of the test body), as predicted; pass-after showed 262/262 -- no
+regression. Full `@forge/spec-engine` suite: 458/458 (up from 457).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this is the first round to find a bug in
+PAYMENT_KEYWORDS' English-language keywords specifically (as opposed
+to its Hebrew ones, rounds 2349-2350) -- the same grammatical-
+completeness audit discipline applies regardless of language. Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap
+(rounds 2282-2283); Courier license/insurance/traffic-ticket sub-case
+(round 2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course "courses"-
+vs-restaurant-meal-courses sub-case (round 2318); Order's forward-only
+"הזמנה" exclusion-lookahead directionality gap (round 2331, accepted
+trade-off); pre-existing roadmap.md script-substitution corruption
+from rounds 2316/2324/2325 (round 2332, deferred to a dedicated future
+round); Donation's "צדקה" guard's residual unlisted-stance-noun leak
+(round 2334, accepted trade-off); Patient's "מטופל" guard's residual
+leaks (round 2336, accepted trade-off); Deal's "הזדמנות" guard's
+residual leak (round 2337, accepted trade-off); Customer's "לקוח"
+guard's residual leak (round 2338, accepted trade-off); Appointment's
+"מספרת" guard's residual leak (round 2339, accepted trade-off);
+Shipment's "שילוח" guard's residual leaks (round 2340, accepted
+trade-off); PAYMENT_KEYWORDS' "נשלם" gap, confirmed genuinely
+unfixable with a local regex guard and permanently deferred (rounds
+2349-2350); PAYMENT_KEYWORDS' broader-proximity "sell ... course(s)/
+ticket(s)" gap (words wedged between the verb and the noun, e.g. "sold
+thousands of online courses"), newly identified this round as a
+distinct, still-open gap beyond the narrow-adjacency fix just made.
+
+Live: https://forge-ai-m7p7.onrender.com
