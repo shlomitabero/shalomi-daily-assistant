@@ -298,7 +298,10 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // because of which grammatical inflection of "hair salon" was used --
   // the same textbook-paid-business-told-no-payments failure round 1819
   // fixed for the bare noun in the first place.
-  "מספרה", "מספרת", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
+  // Round 2365: kept in sync with domainEntities.ts's own Appointment
+  // entity rule's "מספרות" (plain plural "hair salons") addition, guarded
+  // identically against the unrelated "tell/narrate" verb sense.
+  "מספרה", "מספרת", /מספרות(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/, "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
   // Round 1831: the exact same drift round 1819 fixed for salons/spas,
   // this time for pet care. A dog/cat grooming, pet sitting/boarding/
   // walking, or veterinary business matches only Pet (rounds 1752/1817's

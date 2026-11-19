@@ -308,6 +308,19 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // would still slip through, an accepted trade-off for the
       // confirmed-live common cases this closes.
       /מספרת(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/,
+      // Round 2365: the plain plural "מספרות" ("hair salons"/
+      // "barbershops") was never added at all -- "מספרה" ends in ה, its
+      // plural "מספרות" ends in ות, not a substring of either existing
+      // form, the same fem-plural gap shape already fixed elsewhere
+      // (תרומה/עמותה/הזמנה/חתונה). A plural-only hair-salon description
+      // lost the Appointment entity entirely. Guarded identically to the
+      // round-2339 "מספרת" guard above: "מספרות" also spells the
+      // ordinary fem.-plural present-tense verb "tell/narrate" (e.g.
+      // "המורות מספרות סיפורים"), confirmed live via several real
+      // storytelling sentences all spuriously matching without this
+      // guard -- same leaky-denylist convention as the construct-form
+      // guard it mirrors.
+      /מספרות(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/,
       "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
     ],
     labelHe: "תורים",

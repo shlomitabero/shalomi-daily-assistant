@@ -1027,6 +1027,38 @@ test("asks about payments (recommending Stripe) for a Hebrew construct-state hai
   assert.equal(constructPaymentQuestion!.recommendation, "Stripe", "'מספרת נשים' must recommend Stripe, the same as the bare 'מספרה' form");
 });
 
+test("round 2365: recognizes the Hebrew plain-plural 'מספרות' form (hair salons/barbershops) as Appointment and recommends Stripe, guarded against the unrelated 'tell/narrate' verb sense", async () => {
+  const provider = new HeuristicSpecProvider();
+  const isPaymentQuestion = (q: { question: string }) => {
+    const lower = q.question.toLowerCase();
+    return lower.includes("payment") || q.question.includes("תשלו");
+  };
+
+  const chainSalons = await provider.generate("אפליקציה לניהול רשת מספרות באזור המרכז, כולל לוח זמנים ולקוחות.", true);
+  assert.ok(chainSalons.entities.some((e) => e.name === "Appointment"), "'רשת מספרות' (plain plural hair salons) must match Appointment");
+  const chainPaymentQuestion = chainSalons.openQuestions.find(isPaymentQuestion);
+  assert.ok(chainPaymentQuestion);
+  assert.equal(chainPaymentQuestion!.recommendation, "Stripe", "'רשת מספרות' must recommend Stripe, the same as the bare 'מספרה' and construct 'מספרת' forms");
+
+  const citySalons = await provider.generate("אפליקציה לניהול מספרות העיר, כולל לקוחות ולוח זמנים.", true);
+  assert.ok(citySalons.entities.some((e) => e.name === "Appointment"), "'מספרות העיר' (plain plural hair salons) must match Appointment");
+
+  // Non-regression: the "tell/narrate" fem.-plural verb sense must NOT spuriously match.
+  const teachersNarrating = await provider.generate("המורות מספרות סיפורים קצרים לתלמידים בכל בוקר.", true);
+  assert.ok(!teachersNarrating.entities.some((e) => e.name === "Appointment"), "'המורות מספרות סיפורים' (teachers telling stories, idiom) must NOT spuriously match Appointment");
+  const narratingPaymentQuestion = teachersNarrating.openQuestions.find(isPaymentQuestion);
+  if (narratingPaymentQuestion) {
+    assert.notEqual(narratingPaymentQuestion.recommendation, "Stripe", "the storytelling idiom must NOT spuriously recommend Stripe");
+  }
+
+  const grandmothersNarrating = await provider.generate("הסבתות מספרות לנו חוויות מהעבר בכל ביקור משפחתי.", true);
+  assert.ok(!grandmothersNarrating.entities.some((e) => e.name === "Appointment"), "'הסבתות מספרות חוויות' (grandmothers narrating memories, idiom) must NOT spuriously match Appointment");
+
+  // Non-regression: the already-working bare singular and construct singular forms must still work.
+  const bareSalon = await provider.generate("אפליקציה למספרה לניהול תורים ולקוחות", true);
+  assert.ok(bareSalon.entities.some((e) => e.name === "Appointment"), "the bare 'מספרה' form must still match (no regression)");
+});
+
 /**
  * Round 2295: the same PAYMENT_KEYWORDS mirror-drift class round 2294
  * found for Appointment's "מספרת", found again for Vehicle's "מוסך".
