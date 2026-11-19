@@ -51939,3 +51939,24 @@ Following round 2270's own suggestion, this round drilled into the Time Machine 
 **Suggestion for next areas:** this specific cluster (checkpoints.ts restore + HistoryPanel.tsx) now looks genuinely exhausted. Candidates with less documented hardening per the roadmap's own trail: `apps/api/src/backup.ts` (not yet touched by any recent round, per round 2266's own suggestion -- note round 2267 only touched codegen.ts's *copy* of this feature, not backup.ts itself), `apps/api/src/routes/webhookIn.ts`'s own handler (signature verification/idempotency of the public inbound webhook route itself, as opposed to how automations.ts consumes its trigger -- still unexplored since round 2266 first flagged it), or a live-interactive/Playwright pass against the actual running app for Time Machine specifically, since every round on this topic so far has been static reading only.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+## Round 2272 (2026-11-19): Accounting-format parenthesized negatives with the currency symbol outside the parens were silently dropped in five sites
+
+**Bug:** Excel's "Accounting" number format places the currency symbol *before* the opening parenthesis for a negative value, e.g. `$(1,234.56)` for -1234.56 (as opposed to the more common `($1,234.56)`, where the symbol is inside). The parenthesized-negative detector (`WEBHOOK_PARENTHESIZED_NEGATIVE` / `CSV_PARENTHESIZED_NEGATIVE`, regex `/^\((.*)\)$/`) was being tested against the **raw** cell/field value, before currency-symbol stripping. Since `$(1,234.56)` doesn't start with `(`, the anchor never matched, so the value fell through to generic numeric cleanup, which also failed (the string still had a leading `$` plus literal parens), and the import/webhook field was dropped as non-numeric instead of being parsed as -1234.56.
+
+This was the same reordering mistake, independently present in **five** separate code sites (the codebase's established "fix every sibling copy in the same round" convention applied):
+1. `apps/api/src/routes/webhookIn.ts` -- inbound webhook's `normalizeBodyValues` number branch.
+2. `apps/web/src/entityFormatting.ts` -- CSV import (`buildImportRecords`).
+3. `apps/web/src/entityFormatting.ts` -- JSON import (`buildImportRecordsFromJson`).
+4. `apps/api/src/codegen.ts` -- generated exported app's CSV import (mirrors #2).
+5. `apps/api/src/codegen.ts` -- generated exported app's JSON import (mirrors #3).
+
+**Fix:** reordered each site to strip currency/formatting characters (`WEBHOOK_NUMBER_FORMATTING` / `CSV_NUMBER_FORMATTING`, character class `[$€£₪¥₩%\s]`, which never contains `(` or `)`) *first*, then test the parenthesis-wrapper regex against the already-stripped string, then unwrap to a leading `-` before the final decimal-separator normalization. Verified via manual tracing that the formatting character class never includes a paren, so this reordering is a strictly safe superset of the prior behavior (every previously-accepted parenthesized value, e.g. `($1,234.56)` with the symbol inside, is still accepted, since stripping happens before the anchor test either way for that case too).
+
+**Regression coverage added:** a new webhook test (`app.test.ts`) posting `{ amount: "$(1,234.56)" }` and asserting the stored value is -1234.56; extended the existing round-1633 CSV-import parenthesized-negative test (`entityFormatting.test.ts`) with a `$(1,234.56)` row, plus a new dedicated JSON-import test; identical additions mirrored in `codegen.test.ts` for the generated exported app's CSV and JSON import paths.
+
+**Verification:** fail-before/pass-after via `git stash` on all 6 new/modified assertions (all failed exactly as predicted pre-fix, passed cleanly post-fix, first attempt). Full `entityFormatting.test.ts` (335/335), `codegen.test.ts` (610/610), `app.test.ts` (568/568) clean. Full package suites: `@forge/web` 2216/2216 clean; `@forge/api` 1779/1780, the one failure being the pre-existing, unrelated `password.test.ts` concurrent-hashing timing flake (CPU-scheduling noise under full-suite load, not touched by this change). Both production builds (`apps/web`, `apps/api`) clean.
+
+**Lesson reinforced:** when a survey agent flags a regex-ordering bug at one call site, actively search for structurally-identical copies across the whole codebase (live app CSV import, live app JSON import, and both of codegen.ts's generated mirrors) before closing the round, rather than fixing only the one site that was flagged and letting siblings drift out of sync.
+
+Live: https://forge-ai-m7p7.onrender.com
