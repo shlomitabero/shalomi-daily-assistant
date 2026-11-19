@@ -56447,3 +56447,74 @@ already be extensively audited under generic sweep-round comments --
 no fresh construct-state gap found there this round.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2362: Employee's trainer keywords missing feminine-plural "מאמנות"
+
+**Bug:** continuing the search of `ROLE_RULES` opened up by round
+2361, this round's survey agent found the same "incrementally-built
+keyword family missing its fourth Hebrew inflection" bug class --
+applied this time to a missing keyword rather than a missing
+negative-lookahead branch, and hitting both `DOMAIN_ENTITY_RULES.
+Employee` and its `ROLE_RULES.Employee` mirror (the code's own
+comment says to keep the two in sync). Round 1720 added "מאמן"/
+"מאמנת"/"מאמנים" (masc. singular, fem. singular, masc. plural -- the
+"trainer/coach" keyword family). Round 2290 added the construct-
+plural "מאמני" (a genuinely different spelling: the plural reverts
+the bare singular's word-final sofit-nun "ן" to a regular nun "נ"
+before adding its own suffix, so neither "מאמן" nor "מאמנת" is a
+substring of it). Neither round, nor any round since, added the
+fourth inflection, feminine plural "מאמנות" ("female trainers/
+coaches") -- for the identical orthographic reason round 2290 already
+documented, the sofit-nun in "מאמן" is never a substring of "מאמנות"'s
+regular nun + "ות", so it slipped through entirely.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול מאמנות יוגה בסטודיו" and
+"המערכת עוזרת לתזמן את מאמנות הפילאטיס שמלמדות בסטודיו" -- each naming only female
+trainers/coaches, with none of the other three inflections present --
+both lost the Employee entity entirely (fell through to the generic
+MenuItem fallback) and lost the עובד/ת (Employee) role, while the
+other three inflections (masc./fem. singular, masc. plural,
+construct-plural) all already matched correctly.
+
+**Fix** (`domainEntities.ts`, both the entity rule and its ROLE_RULES
+mirror):
+```js
+/\btrainers?\b/, "מאמן", "מאמנת", "מאמנים", "מאמני", "מאמנות"
+```
+Adds "מאמנות" right after the existing "מאמני".
+
+**Verification (regression/collision checks run live):** confirmed
+all four already-working forms (bare singular/plural, construct-
+plural) are unaffected; confirmed no collision with the unrelated
+"מתאמנות" (trainees/practicing women) or "מאמינות" (believers) --
+neither contains "מאמנות" as a substring (confirmed by direct
+`.includes()` checks, not just reasoning), consistent with round
+1720's own original no-collision reasoning for the other three forms.
+
+**Test added** (`heuristic.test.ts`, immediately after round 2290's
+existing construct-plural test): confirms both bug sentences now
+match Employee and the עובד/ת role; confirms the "מתאמנות" collision
+case stays excluded; confirms the bare-plural form still matches.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 273 (the new test), as predicted; pass-after showed 273/273 --
+no regression. Full `@forge/spec-engine` suite: 469/469 (up from 468).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** `ROLE_RULES` has now produced two real bugs
+in a row (rounds 2361-2362) via the same "4th Hebrew inflection
+missing from an incrementally-built keyword/guard" lens -- this round
+re-checked ROLE_RULES end-to-end (Admin, Manager, Employee, Customer
+are the only four roles) and found Admin has no gender/number guard
+(matchRoles adds it unconditionally), Manager's round-2361 fix is now
+complete (its new alternation produces exactly the 4 real suffix
+forms, no more and no less), and Customer's keywords have no gender/
+number variability to miss -- so this specific angle (ROLE_RULES
+keyword-family inflection gaps) may now be close to exhausted; next
+round should verify that conclusion or pivot to heuristic.ts
+structural logic bugs per the standing fallback.
+
+Live: https://forge-ai-m7p7.onrender.com
