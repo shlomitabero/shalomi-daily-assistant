@@ -3235,9 +3235,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // pitfall here (same lookbehind-with-mandatory-connector shape) --
     // independent alternatives are kept anyway for consistency with this
     // file's established defensive convention.
+    //
+    // Round 2341: round 2329's own fix covered the 3rd-person-PLURAL
+    // PRESENT-tense forms of these idiom verbs, but neither round 2027
+    // nor round 2329 ever covered the corresponding PAST-tense forms --
+    // הטיל/הטילה/הטילו ("cast doubt", masc./fem./plural) and
+    // העלה/העלתה/העלו ("raised doubt", masc./fem./plural) -- which are at
+    // least as common in realistic business prose as the present tense.
+    // Confirmed live: "המנכ"ל הטיל ספק רב בהצלחת התוכנית העסקית..." (the
+    // CEO cast great doubt on the business plan's success) and "המנהל
+    // העלה ספק משמעותי לגבי לוח הזמנים..." (the manager raised
+    // significant doubt about the timeline), among four other
+    // person/gender/number combinations, all fabricated a Vendor entity
+    // with zero procurement content. A second, smaller gap found at the
+    // same time: "כל" inserted between the negation word and "ספק"
+    // ("ללא כל ספק"/"אין כל ספק"/"בלי כל ספק" -- "without any doubt") was
+    // never covered either, since the existing lookbehinds require the
+    // idiom word to sit immediately before "ספק". Adding the six missing
+    // past-tense lookbehinds plus the three "כל"-inserted negation
+    // lookbehinds closes all nine confirmed-live repro cases without
+    // regressing any of rounds 2027/2329's existing exclusions or
+    // genuine vendor usage. Same unmerged-lookbehind convention as
+    // rounds 2328/2329 for consistency.
     keywords: [
       "vendor", "vendors", "supplier", "suppliers", "procurement",
-      /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!מעלה )(?<!מעלים )(?<!מעלות )ספק(?!ות)(?!\s*אם)/,
+      /(?<!ללא )(?<!אין )(?<!בלי )(?<!ללא כל )(?<!אין כל )(?<!בלי כל )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!הטיל )(?<!הטילה )(?<!הטילו )(?<!מעלה )(?<!מעלים )(?<!מעלות )(?<!העלה )(?<!העלתה )(?<!העלו )ספק(?!ות)(?!\s*אם)/,
       "ספקים",
       // Round 2309: bare "רכש" is the correct noun for "procurement"
       // ("ניהול רכש"), but it's also the ordinary 3rd-person-masc. past-

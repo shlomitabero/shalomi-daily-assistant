@@ -7616,3 +7616,41 @@ test("Shipment's bare 'שילוח' keyword doesn't spuriously match the unrelate
   const existingFixture2 = await provider.generate("אפליקציה לניהול מחסן ולוגיסטיקה, כולל מעקב חבילות ושילוח");
   assert.ok(existingFixture2.entities.some((e) => e.name === "Shipment"), "pre-existing end-of-sentence 'ושילוח' fixture must still match Shipment");
 });
+
+test("Vendor's 'ספק' (doubt) idiom-exclusion guard also needed to cover the PAST-tense verb forms and 'כל'-inserted negations", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const castDoubtMasc = await provider.generate("המנכ\"ל הטיל ספק רב בהצלחת התוכנית העסקית לפני שאישר אותה");
+  assert.ok(!castDoubtMasc.entities.some((e) => e.name === "Vendor"), "'הטיל ספק' (cast doubt, masc. sing. past) must not spuriously match Vendor");
+
+  const castDoubtFem = await provider.generate("המנהלת הטילה ספק כבד על כדאיות הרכישה המתוכננת");
+  assert.ok(!castDoubtFem.entities.some((e) => e.name === "Vendor"), "'הטילה ספק' (cast doubt, fem. sing. past) must not spuriously match Vendor");
+
+  const castDoubtPlural = await provider.generate("חברי הדירקטוריון הטילו ספק משמעותי בתחזית ההכנסות לשנה הקרובה");
+  assert.ok(!castDoubtPlural.entities.some((e) => e.name === "Vendor"), "'הטילו ספק' (cast doubt, plural past) must not spuriously match Vendor");
+
+  const raisedDoubtMasc = await provider.generate("המנהל העלה ספק משמעותי לגבי לוח הזמנים של הפרויקט");
+  assert.ok(!raisedDoubtMasc.entities.some((e) => e.name === "Vendor"), "'העלה ספק' (raised doubt, masc. sing. past) must not spuriously match Vendor");
+
+  const raisedDoubtFem = await provider.generate("המנהלת העלתה ספק כבד בנוגע ליכולת שלנו לסגור את הרבעון בזמן");
+  assert.ok(!raisedDoubtFem.entities.some((e) => e.name === "Vendor"), "'העלתה ספק' (raised doubt, fem. sing. past) must not spuriously match Vendor");
+
+  const raisedDoubtPlural = await provider.generate("החברים העלו ספק גדול בנוגע להצלחת התוכנית העסקית החדשה");
+  assert.ok(!raisedDoubtPlural.entities.some((e) => e.name === "Vendor"), "'העלו ספק' (raised doubt, plural past) must not spuriously match Vendor");
+
+  const noDoubtAtAll1 = await provider.generate("ללא כל ספק הפרויקט הזה ישנה את פני התעשייה כולה");
+  assert.ok(!noDoubtAtAll1.entities.some((e) => e.name === "Vendor"), "'ללא כל ספק' (without any doubt) must not spuriously match Vendor");
+
+  const noDoubtAtAll2 = await provider.generate("אין כל ספק שהמוצר הזה יצליח בשוק");
+  assert.ok(!noDoubtAtAll2.entities.some((e) => e.name === "Vendor"), "'אין כל ספק' (there's no doubt at all) must not spuriously match Vendor");
+
+  const noDoubtAtAll3 = await provider.generate("בלי כל ספק נצליח לעמוד בלוח הזמנים שהוגדר");
+  assert.ok(!noDoubtAtAll3.entities.some((e) => e.name === "Vendor"), "'בלי כל ספק' (without any doubt at all) must not spuriously match Vendor");
+
+  // Non-regression: genuine vendor usage must still match.
+  const genuineVendor1 = await provider.generate("יש לנו ספק טוב שמספק לנו חומרי גלם למפעל שלנו");
+  assert.ok(genuineVendor1.entities.some((e) => e.name === "Vendor"), "'יש לנו ספק טוב' (we have a good supplier) must still match Vendor");
+
+  const genuineVendor2 = await provider.generate("קיים ספק אחד בלבד שמייצר את הרכיב הזה");
+  assert.ok(genuineVendor2.entities.some((e) => e.name === "Vendor"), "'קיים ספק אחד בלבד' (only one supplier exists) must still match Vendor");
+});
