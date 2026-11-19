@@ -54596,3 +54596,88 @@ dead, but round 2340's own experience with שילוח suggests not to
 treat this as permanently closed either).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2341: Vendor's 'ספק' (doubt) idiom guard was missing past-tense verb forms
+
+**Bug:** Rounds 2027 and 2329's idiom-exclusion guard for Vendor's
+"ספק" (doubt vs. supplier) only ever covered PRESENT-tense forms of
+the two "casts/raises doubt" idiom verbs
+(מטיל/מטילה/מטילים/מטילות, מעלה/מעלים/מעלות). Neither round added the
+corresponding PAST-tense forms -- הטיל/הטילה/הטילו ("cast doubt",
+masc./fem./plural) and העלה/העלתה/העלו ("raised doubt",
+masc./fem./plural) -- which are at least as common in realistic
+business prose as the present tense. A second, smaller gap found at
+the same time: "כל" inserted between a negation word and "ספק" ("ללא
+כל ספק"/"אין כל ספק"/"בלי כל ספק" -- "without any doubt") was never
+covered either, since the existing lookbehinds require the idiom word
+to sit immediately before "ספק".
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "המנכ"ל הטיל ספק רב בהצלחת התוכנית העסקית לפני שאישר אותה" (the CEO cast great
+doubt on the business plan's success) and "המנהל העלה ספק משמעותי לגבי לוח הזמנים של הפרויקט"
+(the manager raised significant doubt about the timeline), among four
+other person/gender/number combinations, plus "ללא כל ספק הפרויקט הזה ישנה את פני התעשייה כולה"
+(without any doubt) and two other "כל"-inserted negations, all nine
+fabricated a Vendor entity with zero procurement content.
+
+**Fix** (`domainEntities.ts`, Vendor's keyword array):
+```js
+/(?<!ללא )(?<!אין )(?<!בלי )(?<!ללא כל )(?<!אין כל )(?<!בלי כל )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!הטיל )(?<!הטילה )(?<!הטילו )(?<!מעלה )(?<!מעלים )(?<!מעלות )(?<!העלה )(?<!העלתה )(?<!העלו )ספק(?!ות)(?!\s*אם)/
+```
+Adds the six missing past-tense lookbehinds plus the three
+"כל"-inserted negation lookbehinds. Confirmed empirically this closes
+all nine repro cases without regressing rounds 2027/2329's existing
+exclusions or genuine vendor usage, e.g. "יש לנו ספק טוב שמספק לנו חומרי גלם למפעל שלנו"
+still matches Vendor as before.
+
+**BILLING_ENTITY_NAMES:** Vendor is NOT a member, so this bug is
+entity-fabrication only.
+
+**Standing lesson reinforced:** this is the fourth time this
+"missing grammatical person/number/tense on a multi-round idiom guard"
+shape has recurred (Vendor's own רכש guard round 2326, Donation's תרם
+guard round 2327, Course's נתן guard round 2328, Vendor's own ספק
+guard again now in round 2341 after already being touched in rounds
+2027 and 2329) -- a guard patched more than once is not necessarily
+exhausted; it's worth re-deriving the FULL grammatical paradigm
+(person x number x tense) for any guard that has already needed more
+than one round's fix, rather than assuming a second fix closed it for
+good.
+
+**Test added** (`heuristic.test.ts`): confirms all nine bug sentences
+no longer match Vendor, while genuine vendor sentences still do.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 253 (the new test), as predicted; pass-after showed 253/253.
+Full `@forge/spec-engine` suite: 449/449 (up from 448). Full
+`@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round pivoted from discovery method
+(C) (now likely exhausted for this window after 5 confirmed instances,
+rounds 2336-2340) back to method (A) ("missing grammatical form on an
+idiom-exclusion guard"), per the task's own suggestion to check
+entities' multi-round guards for a form nobody's checked yet -- the
+first method-(A) finding since round 2335. Standing deferred/unsafe
+gaps, unchanged this round: Ticket bare-noun gap (rounds 2282-2283);
+Courier license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318); Order's
+forward-only "הזמנה" exclusion-lookahead directionality gap (round
+2331, accepted trade-off); pre-existing roadmap.md
+script-substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+leaks (round 2340, accepted trade-off); Vendor's "ספק" guard's
+residual leak on rarer doubt-phrasings without "אם" and without a
+covered negation/verb immediately before it (round 2341, accepted
+trade-off, same leaky-denylist class).
+
+Live: https://forge-ai-m7p7.onrender.com
