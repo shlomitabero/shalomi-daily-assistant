@@ -236,6 +236,40 @@ test("asks about payments for a membership/subscription description phrased with
   assert.equal(paymentQuestion!.recommendation, "Stripe");
 });
 
+/**
+ * Round 2300: the bare "subscription" keyword (removed from both the
+ * Subscription entity's own keywords in domainEntities.ts and
+ * PAYMENT_KEYWORDS here) was a genuinely polysemous whole word --
+ * "email subscription" (a newsletter), "YouTube subscription" (a
+ * channel), "RSS subscription" (a feed), and "podcast subscription" (a
+ * show) all fabricated a Subscription entity and wrongly recommended
+ * Stripe, even though none of these apps have any recurring-billing
+ * concept. The same bare-overly-broad-word shape round 2297 fixed for
+ * Donation's "nonprofit".
+ */
+test("'subscription' alone (email/YouTube/RSS/podcast, no billing concept) does not spuriously match Subscription or recommend Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const emailDigest = await provider.generate("An app to manage email subscription preferences for our weekly newsletter.");
+  assert.ok(!emailDigest.entities.some((e) => e.name === "Subscription"), "'subscription' alone must not spuriously match Subscription");
+  const emailDigestPaymentQuestion = emailDigest.openQuestions.find((q) => q.question.toLowerCase().includes("payment"));
+  assert.ok(emailDigestPaymentQuestion);
+  assert.equal(emailDigestPaymentQuestion!.recommendation, "No payments", "'subscription' alone must not spuriously recommend Stripe");
+
+  const youtube = await provider.generate("A tool to let users manage their YouTube channel subscriptions and notifications.");
+  assert.ok(!youtube.entities.some((e) => e.name === "Subscription"), "'subscription' alone must not spuriously match Subscription");
+
+  const rss = await provider.generate("A reader app where users can manage their RSS feed subscriptions.");
+  assert.ok(!rss.entities.some((e) => e.name === "Subscription"), "'subscription' alone must not spuriously match Subscription");
+
+  const podcast = await provider.generate("A podcast app to track which shows a user has a subscription to for later listening.");
+  assert.ok(!podcast.entities.some((e) => e.name === "Subscription"), "'subscription' alone must not spuriously match Subscription");
+
+  // Non-regression: a genuine recurring-billing description must still match.
+  const realBilling = await provider.generate("A SaaS app to track customer membership plans and recurring billing.");
+  assert.ok(realBilling.entities.some((e) => e.name === "Subscription"), "a genuine recurring-billing description must still match Subscription");
+});
+
 test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
   // Round 1690: "membership fee" is the single most natural English
   // phrase for what a gym/studio/co-working-space business charges, but

@@ -1903,7 +1903,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // got the wrong "No payments" recommendation on buildOpenQuestions'
       // own payment question -- even though the Hebrew equivalent ("דמי
       // חבר") already matched correctly.
-      "subscription", "membership plan", "membership fee", "recurring billing", "subscription plan", "member management",
+      //
+      // Round 2300: the bare "subscription" keyword that used to sit
+      // here had no guard at all, unlike every other keyword in this
+      // array. "Subscription" is a genuinely polysemous whole word --
+      // "email subscription" (a newsletter), "YouTube subscription" (a
+      // channel), "RSS subscription" (a feed), "podcast subscription"
+      // (a show) are all ordinary, extremely common phrasings with zero
+      // recurring-billing concept, the same "nonprofit"/round-2297 shape
+      // (a bare, overly-broad word in a BILLING_ENTITY_NAMES entity's
+      // own keyword list). Confirmed live: "An app to manage email
+      // subscription preferences for our weekly newsletter." and three
+      // other non-billing "subscription" phrasings all fabricated a
+      // Subscription entity and wrongly recommended Stripe. Removed --
+      // every genuine recurring-billing description already matches via
+      // "membership plan"/"membership fee"/"recurring billing"/
+      // "subscription plan"/"member management" instead.
+      "membership plan", "membership fee", "recurring billing", "subscription plan", "member management",
       // Round 1708: this very file's own built-in "Fitness studio" example
       // description ("managing memberships and classes...") used the plain
       // plural "memberships" -- a word round 1690's "membership fee"/

@@ -13,7 +13,14 @@ import {
 } from "./domainEntities.js";
 
 const PAYMENT_KEYWORDS: (string | RegExp)[] = [
-  "payment", "invoice", "billing", "subscription",
+  "payment", "invoice", "billing",
+  // Round 2300: bare "subscription" removed -- see domainEntities.ts's
+  // own round-2300 comment on the Subscription entity's keyword array
+  // for the full explanation (email/YouTube/RSS/podcast "subscriptions"
+  // are ordinary, non-billing uses of the word). This array independently
+  // carried the identical unguarded word, so it needed the same fix --
+  // removing it from only one of the two lists would have left the other
+  // still producing the wrong Stripe recommendation on its own.
   // Bare "checkout" (round 550) is as genuinely ambiguous here as it is in
   // domainEntities.ts's own Order keywords (see that file's own comment) --
   // a library's book checkout or a hotel's checkout time has nothing to do
