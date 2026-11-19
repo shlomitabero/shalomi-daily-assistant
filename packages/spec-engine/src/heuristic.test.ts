@@ -7771,6 +7771,31 @@ test("Course's 'שיעור' comeuppance-idiom guard round 2353: was also missing
   assert.ok(!interestRateControl.entities.some((e) => e.name === "Course"), "'שיעור הריבית' (interest rate, existing lookahead exclusion) must still not match Course");
 });
 
+test("Course's 'שיעור' comeuppance-idiom guard round 2355: was also missing the 1st-person-plural FUTURE form 'ניתן' (unsafe to add as a bare literal due to the common 'possible' homograph, gated on the pronoun 'אנחנו' instead)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futurePlural = await provider.generate("אפליקציה לניהול שכנים. אנחנו ניתן לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!futurePlural.entities.some((e) => e.name === "Course"), "'אנחנו ניתן לשכן שיעור' (we will teach the neighbor a lesson, comeuppance idiom) must not spuriously match Course");
+
+  const futurePluralWithConjunction = await provider.generate("אפליקציה לניהול שכנים. ואנחנו ניתן לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!futurePluralWithConjunction.entities.some((e) => e.name === "Course"), "'ואנחנו ניתן לשכן שיעור' (conjunction-prefixed variant) must not spuriously match Course");
+
+  // Non-regression: bare "ניתן" (possible/available) in genuine business sentences must still match Course.
+  const possibleToAcquire = await provider.generate("אפליקציית הרשמה לקורסים. ניתן לרכוש גישה לכל שיעור בנפרד באתר שלנו.");
+  assert.ok(possibleToAcquire.entities.some((e) => e.name === "Course"), "'ניתן לרכוש גישה לכל שיעור' (it's possible to acquire access to each lesson) must still match Course, not be swallowed by the new 'אנחנו ניתן' guard");
+
+  const possibleToBook = await provider.generate("בית ספר למוזיקה. ניתן להזמין שיעור פרטי בכל שעה דרך האפליקציה.");
+  assert.ok(possibleToBook.entities.some((e) => e.name === "Course"), "'ניתן להזמין שיעור פרטי' (it's possible to book a private lesson) must still match Course");
+
+  // Non-regression: genuine "we give a lesson" sentences where "אנחנו ניתן" has no ל-object
+  // immediately after it (so the idiom shape doesn't apply) must still match Course.
+  const genuineWeGiveLesson = await provider.generate("אפליקציה לסטודיו יוגה. אנחנו ניתן שיעור פרטי כל יום שני בבוקר.");
+  assert.ok(genuineWeGiveLesson.entities.some((e) => e.name === "Course"), "'אנחנו ניתן שיעור פרטי' (we give a private lesson, no ל-object) must still match Course");
+
+  const genuineWeGiveDrivingLesson = await provider.generate("בית ספר לנהיגה. אנחנו ניתן שיעור נהיגה ראשון בחינם.");
+  assert.ok(genuineWeGiveDrivingLesson.entities.some((e) => e.name === "Course"), "'אנחנו ניתן שיעור נהיגה' (we give a first driving lesson) must still match Course");
+});
+
 test("Vendor's 'ספק' (doubt) idiom-exclusion guard was ALSO missing an entire FUTURE tense, the same gap shape rounds 2343/2344 found on Donation/Course", async () => {
   const provider = new HeuristicSpecProvider();
 

@@ -1702,7 +1702,29 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // educational content) wrongly fabricated Course. Adds "תתני" as
       // a new alternative; confirmed live this doesn't affect the
       // existing "תני"/"תיתן" entries or any genuine lesson sentence.
-      /(?<!(?:לתת|אתן|תיתן|תתני|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
+      //
+      // Round 2355: the 1st-person-PLURAL future of לתת ("we will
+      // give") is "ניתן" -- but unlike every other missing-form gap
+      // found in rounds 2352/2353, this one could not simply be added
+      // as a bare literal, because "ניתן" is ALSO an extremely common,
+      // unrelated Hebrew word meaning "possible/available" (e.g. "ניתן
+      // לרכוש..." = "it's possible to acquire..."). That's almost
+      // certainly why it was never added earlier. Confirmed live: "אנחנו
+      // ניתן לשכן הבעייתי שיעור שהוא לא ישכח" (we will teach the
+      // problematic neighbor a lesson he won't forget, in a neighbor-
+      // management app) wrongly fabricated Course. The fix gates on
+      // "אנחנו ניתן" (the pronoun "we" immediately before "ניתן") as a
+      // single unit: this is unambiguous, since the "possible" sense of
+      // "ניתן" is a passive participle that agrees in number with its
+      // subject -- a plural subject like "אנחנו" would require the
+      // agreeing plural form "ניתנים", never the bare singular "ניתן".
+      // Confirmed live this leaves the bare "ניתן" business sentences
+      // ("ניתן לרכוש..."/"ניתן להזמין...") and genuine "אנחנו ניתן שיעור"
+      // sentences with no ל-object between the verb and שיעור (so the
+      // idiom shape doesn't apply) all correctly unaffected, as does
+      // "אנחנו ניתנים" (the correctly-agreeing plural form, a different
+      // string entirely).
+      /(?<!(?:לתת|אתן|תיתן|תתני|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|אנחנו\s+ניתן|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
