@@ -53116,3 +53116,77 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2324: JobApplicant's political guard was STILL missing a fourth variant -- feminine-plural מועמדות
+
+**Bug:** The fourth grammatical variant of this exact same collision found
+in four consecutive rounds (2315, 2321, 2323, 2324). Neither the bare
+"מועמד" branch's "(?!ת)(?!ים)(?!י)" checks nor any other branch ever
+considered a following "ות", so "מועמדות" ("female candidates" /
+"candidacy") slipped through every existing lookahead -- exactly the same
+mechanism by which "מועמדי" (round 2321) and the bare construct-singular
+(round 2323) slipped through before it. This round's survey agent was
+explicitly briefed to check this exact entity FIRST, given the three prior
+rounds' recurring pattern, before moving to other entities -- and it paid
+off immediately.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אתר חדשות המסקר את מועמדות הנשיאות המובילות בסקרים לפני הבחירות הקרובות." (construct, presidential),
+"אפליקציה שמציגה את מועמדות ראשות העיר בבחירות המקומיות הקרובות." (construct, mayoral), and "אתר המסקר את המועמדות לנשיאות ארצות הברית לפני יום הבחירות." (ל-form,
+presidential) each fabricated JobApplicant with zero recruiting content.
+Genuine recruiting ("אנו מחפשים מועמדים למשרות פתוחות בחברה."), the genuinely idiomatic
+"הגשת מועמדות למשרה דורשת קורות חיים מעודכנים." (where "מועמדות" means the abstract noun
+"candidacy", not "female candidates"), and every one of rounds 2315's,
+2321's, and 2323's own exclusions all still behaved correctly.
+
+**Fix** (`domainEntities.ts`, JobApplicant's Hebrew keyword list):
+"מועמדות" gets its own independent branch carrying its own full pair
+of lookaheads (ל-list and construct-list, the same pattern as the other
+branches), plus "(?!ות)" added to the bare branch so it stops swallowing
+this form:
+```js
+/מועמדות(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדי(?!ם)(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמדים(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))|מועמדת(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))|מועמד(?!ת)(?!ים)(?!י)(?!ות)(?!\s*ל(?:נשיאות|כנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|דוקטורט|תואר\s*שלישי|פרופסורה|בחירות))(?!\s*(?:הנשיאות|הכנסת|ראשות\s*העיר|ראש\s*העיר|ראשות\s*הממשלה|ראש\s*הממשלה|הדוקטורט|התואר\s*השלישי|הפרופסורה|הבחירות|המפלגה))/
+```
+A shared optional "(?:ות)?" suffix placed before the bare branch's existing
+lookaheads was tested and confirmed to still wrongly match all three false
+positives -- the same backtracking pitfall every one of this guard's three
+prior fixes (rounds 2315/2321/2323) already hit, reconfirmed a fourth time
+on a fourth variant of the same guard.
+
+**Test added** (`heuristic.test.ts`): confirms all three false positives
+no longer match JobApplicant, while genuine recruiting, the genuine
+"candidacy" idiom, and every prior round's own exclusions still behave
+correctly.
+
+**BILLING_ENTITY_NAMES:** JobApplicant is not in `BILLING_ENTITY_NAMES`,
+so this bug is limited to entity-list corruption.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 235 (the new test), as predicted; pass-after showed 235/235. Full
+`@forge/spec-engine` suite: 431/431 (up from 430). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background` (disk space
+checked healthy beforehand). Production build: clean (`dist/server.js
+1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 30 confirmed instances total. JobApplicant's political-
+candidate guard on the bare word "מועמד" has now needed FOUR separate
+fixes across four consecutive rounds (2315: bare/plural/feminine + ל;
+2321: construct-plural; 2323: construct-singular; 2324: feminine-plural)
+-- each time a different grammatical variant of the identical underlying
+collision. This is the strongest recurring-collision streak observed so
+far in this bug-hunt. Future rounds should keep this guard on their
+checklist for at least one more audit pass (e.g.: is there a feminine
+construct-plural reading distinct from the one just fixed? Any dual/rare
+form? A different preposition entirely, like "כמועמד"?) rather than
+assuming round 2324 is necessarily the last word on it, though it is also
+plausible the guard is now actually exhausted -- only another careful
+audit will tell. Standing deferred/unsafe gaps, unchanged this round:
+Ticket bare-noun gap (rounds 2282-2283); Courier
+license/insurance/traffic-ticket sub-case (round 2311); Course
+bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
