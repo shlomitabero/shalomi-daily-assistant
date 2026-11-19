@@ -177,7 +177,18 @@ const PAYMENT_KEYWORDS: (string | RegExp)[] = [
   // filter app description spuriously hit this array too, wrongly
   // recommending Stripe on top of the entity-match false positive. Kept
   // in sync with the same `(?!רי|ם)` lookahead guard.
-  "מספרה", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
+  //
+  // Round 2294: domainEntities.ts's own Appointment keyword list added
+  // the construct-state "מספרת" (e.g. "מספרת נשים"/"מספרת גברים") in
+  // round 2288, mirroring round 2287's "פגישת" fix on the same array --
+  // but that addition was never copied into this file's own narrow
+  // mirror. "אפליקציה למספרת נשים לניהול תורים ולקוחות" matched the exact
+  // same entities (Customer, Appointment) as the bare-noun twin
+  // ("...למספרה..."), yet got "No payments" instead of Stripe, purely
+  // because of which grammatical inflection of "hair salon" was used --
+  // the same textbook-paid-business-told-no-payments failure round 1819
+  // fixed for the bare noun in the first place.
+  "מספרה", "מספרת", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
   // Round 1831: the exact same drift round 1819 fixed for salons/spas,
   // this time for pet care. A dog/cat grooming, pet sitting/boarding/
   // walking, or veterinary business matches only Pet (rounds 1752/1817's

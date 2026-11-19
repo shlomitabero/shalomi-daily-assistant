@@ -727,6 +727,50 @@ test("asks about payments (recommending Stripe) for a hair salon/spa/massage des
   assert.equal(spaPaymentQuestion!.recommendation, "Stripe");
 });
 
+/**
+ * Round 2294: this file's own PAYMENT_KEYWORDS array mirrors a narrow,
+ * low-ambiguity set of salon/spa phrases from domainEntities.ts's
+ * Appointment keyword list (see round 1819 above). Round 2288 added the
+ * Hebrew construct-state "מספרת" (e.g. "מספרת נשים"/"מספרת גברים") to
+ * that Appointment keyword list alongside the bare "מספרה", but the
+ * addition was never copied into this file's own mirror -- so a
+ * construct-state hair-salon description matched the identical entities
+ * (Customer, Appointment) as its bare-noun twin, yet got "No payments"
+ * instead of Stripe, purely because of which inflection of "hair salon"
+ * was used.
+ */
+test("asks about payments (recommending Stripe) for a Hebrew construct-state hair-salon description ('מספרת נשים'), not just the bare 'מספרה' form", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  // generate()'s Hebrew mode (isHebrew=true) phrases the open question
+  // itself in Hebrew ("באיזה ספק תשלומים כדאי להשתמש?"), not English, so
+  // this filter must match the Hebrew word for "payment(s)" too -- unlike
+  // every other payment-question lookup in this file, which only ever
+  // calls generate() in English. Matches on the 4-letter prefix "תשלו"
+  // rather than the singular "תשלום", since the singular ends in the
+  // SOFIT mem ם (U+05DD) while the plural "תשלומים" actually used by the
+  // real question text has an ordinary מ (U+05DE) in that position (the
+  // sofit mem there is the word's final letter instead) -- the exact
+  // same sofit-letter trap this round's own fix is about, caught here by
+  // checking actual codepoints rather than eyeballing the Hebrew text.
+  const isPaymentQuestion = (q: { question: string }) => {
+    const lower = q.question.toLowerCase();
+    return lower.includes("payment") || q.question.includes("תשלו");
+  };
+
+  const bare = await provider.generate("אפליקציה למספרה לניהול תורים ולקוחות", true);
+  assert.ok(bare.entities.some((e) => e.name === "Appointment"));
+  const barePaymentQuestion = bare.openQuestions.find(isPaymentQuestion);
+  assert.ok(barePaymentQuestion);
+  assert.equal(barePaymentQuestion!.recommendation, "Stripe");
+
+  const construct = await provider.generate("אפליקציה למספרת נשים לניהול תורים ולקוחות", true);
+  assert.ok(construct.entities.some((e) => e.name === "Appointment"));
+  const constructPaymentQuestion = construct.openQuestions.find(isPaymentQuestion);
+  assert.ok(constructPaymentQuestion);
+  assert.equal(constructPaymentQuestion!.recommendation, "Stripe", "'מספרת נשים' must recommend Stripe, the same as the bare 'מספרה' form");
+});
+
 test("still recommends 'No payments' for a genuinely non-commercial appointment scheduler, confirming the round-1819 salon/spa fix doesn't regress bare 'appointment' ambiguity", async () => {
   const provider = new HeuristicSpecProvider();
   const school = await provider.generate("A school's system for scheduling parent-teacher conference appointments.");
