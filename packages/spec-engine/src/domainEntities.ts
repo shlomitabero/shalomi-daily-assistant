@@ -1532,7 +1532,30 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // between the verb and "שיעור"); a literal lesson always lacks
       // that ל-object ("המורה נתן שיעור" = the teacher gave a lesson,
       // confirmed still matching).
-      /(?<!(?:לתת|אתן|תיתן|ייתן|נתן|נתנה|נתנו)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
+      //
+      // Round 2328: round 2314's give-verb alternation
+      // (לתת/אתן/תיתן/ייתן/נתן/נתנה/נתנו) covers the infinitive, future
+      // (1st/2nd/3rd singular), and 3rd-person past (he/she/they-or-we
+      // gave) -- but never 1st-person-singular past ("נתתי" = I gave),
+      // 2nd-person-singular past ("נתת" = you gave), or 2nd-person-plural
+      // past ("נתתם"/"נתתן" = you-pl gave), the same "missing grammatical
+      // person" gap shape already found twice this window in Vendor's
+      // רכש guard (round 2326) and Donation's תרם guard (round 2327).
+      // Confirmed live: "נתתי לשכן שלי שיעור שהוא לא ישכח..." (I gave my
+      // neighbor a lesson he won't forget), "אתה נתת לו שיעור..." (you
+      // gave him a lesson), and "אתם נתתם לצוות היריב שיעור..." (you-pl
+      // gave the rival team a lesson) all fabricated Course via this
+      // same comeuppance idiom. Unlike רכש/תרם (lookahead-gated idioms,
+      // where a shared optional-suffix group lets the engine backtrack
+      // to a vacuous zero-width alternative and vacuously satisfy the
+      // lookahead), this guard is a lookbehind gated by a mandatory,
+      // non-optional "ל"+whitespace continuation: a naive merged
+      // "נתת(?:י|ם|ן)?" variant was tested and does NOT reintroduce the
+      // backtracking pitfall here, since the letter left over after a
+      // skipped optional suffix (ם/ן/י) can never itself satisfy that
+      // mandatory ל/whitespace gate. Independent alternatives are kept
+      // anyway to match this file's established defensive convention.
+      /(?<!(?:לתת|אתן|תיתן|ייתן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",

@@ -6619,6 +6619,33 @@ test("Donation's 'תרם' keywords also cover the 1st/2nd-person forms 'תרמת
   assert.ok(alreadyWorkingThirdPerson.entities.some((e) => e.name === "Donation"), "'הוא תרם כסף רב לעמותה' (he donated money to the nonprofit) must still match Donation");
 });
 
+test("Course's 'שיעור' comeuppance-idiom guard (round 2314) also covers the 1st/2nd-person forms 'נתתי'/'נתת'/'נתתם'/'נתתן' (previously a false negative, fabricating Course)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const firstPersonSingular = await provider.generate("נתתי לשכן שלי שיעור שהוא לא ישכח כל החיים שלו.");
+  assert.ok(!firstPersonSingular.entities.some((e) => e.name === "Course"), "'נתתי לשכן שלי שיעור' (I gave my neighbor a lesson, comeuppance idiom) must not spuriously match Course");
+
+  const secondPersonSingular = await provider.generate("אתה נתת לו שיעור שהוא לא ישכח לעולם.");
+  assert.ok(!secondPersonSingular.entities.some((e) => e.name === "Course"), "'אתה נתת לו שיעור' (you gave him a lesson, comeuppance idiom) must not spuriously match Course");
+
+  const secondPersonPluralMasc = await provider.generate("אתם נתתם לצוות היריב שיעור בטקטיקה.");
+  assert.ok(!secondPersonPluralMasc.entities.some((e) => e.name === "Course"), "'אתם נתתם לצוות היריב שיעור' (you-pl gave the rival team a lesson, comeuppance idiom) must not spuriously match Course");
+
+  const secondPersonPluralFem = await provider.generate("אתן נתתן לקבוצה המתחרה שיעור בניהול זמן.");
+  assert.ok(!secondPersonPluralFem.entities.some((e) => e.name === "Course"), "'אתן נתתן לקבוצה המתחרה שיעור' (you-pl-fem gave the competing group a lesson, comeuppance idiom) must not spuriously match Course");
+
+  // Non-regression: round 2314's own 3rd-person/future controls must still be excluded.
+  const thirdPersonControl = await provider.generate("הוא נתן לשכן שלו שיעור שהוא לא ישכח.");
+  assert.ok(!thirdPersonControl.entities.some((e) => e.name === "Course"), "'הוא נתן לשכן שלו שיעור' (round 2314's own 3rd-person exclusion) must still not match Course");
+
+  const futureControl = await provider.generate("אני אתן לו שיעור שהוא לא ישכח.");
+  assert.ok(!futureControl.entities.some((e) => e.name === "Course"), "'אני אתן לו שיעור' (round 2314's own future-tense exclusion) must still not match Course");
+
+  // Non-regression: a genuine standalone lesson must still match Course.
+  const genuineLesson = await provider.generate("אני מציע שיעור יוגה פרטי בבית הלקוח.");
+  assert.ok(genuineLesson.entities.some((e) => e.name === "Course"), "'אני מציע שיעור יוגה פרטי' (a genuine standalone lesson) must still match Course");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
