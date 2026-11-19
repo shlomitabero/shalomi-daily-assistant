@@ -54320,3 +54320,93 @@ unlisted-cue-noun leaks (round 2336, accepted trade-off); Deal's
 accepted trade-off, same leaky-denylist class).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2338: Customer's bare 'לקוח' collided with the Hebrew 'derived/taken from' idiom
+
+**Bug:** Customer's Hebrew "לקוח"/"לקוחה" were listed completely
+unguarded (`domainEntities.ts`, Customer's keyword array, the very
+first entity rule in the file) -- unlike the ENGLISH "client" a few
+lines above in the same array (and קליינט a line below), neither had
+any collision guard at all. "לקוח"/"לקוחה" is not only the noun
+"customer": it's also the ordinary Pa'al passive-participle adjective
+of the root ל-ק-ח ("to take"), meaning "derived/taken from".
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "הציטוט הזה לקוח מתוך הספר הקדוש ומופיע גם באתר שלנו." (this quote is
+taken from the holy book), "הקטע לקוח מתוך נאום היסטורי מפורסם ומוצג באתר החדשות שלנו." (the passage
+is taken from a historic speech), "המידע באתר לקוח ממקורות רשמיים של משרד הבריאות." (the
+info is taken from official health-ministry sources),
+"הכתובה לקוחה מתוך מגילת העצמאות ומוצגת באתר ההיסטוריה שלנו." (fem. "is taken from"), and a realistic
+daily-quotes app description ("אפליקציה לניהול ציטוטים יומיים, כל ציטוט לקוח מתוך ספר מסוים ומוצג למשתמשים כל בוקר.") each fabricated a
+bogus Customer entity for a plain content/quotes/information app with
+zero CRM content.
+
+**Fix** (`domainEntities.ts`, Customer's keyword array):
+```js
+/(?<!(?:^|[\s.,!?])(?:ה)?(?:ציטוט|ציטוטים|קטע|קטעים|מידע|שם|שמות|מילה|מילים|סיפור|סיפורים|תוכן|נתון|נתונים|תרגום|רעיון|כתובה|משפט|משפטים|פסוק|פסוקים|תיאור|קביעה)(?:\s+\S+){0,3}\s)לקוח(?!ה|ות)/
+```
+(with a matching regex for the feminine "לקוחה"). Hebrew has no `\b`,
+so this excludes the specific "excerpt/content/name"-type cue nouns
+(bare or ה-prefixed) that precede the adjective in this idiom,
+allowing up to 3 intervening words -- the same bounded-window, leaky-
+denylist convention as round 2337's הזדמנות guard. Confirmed
+empirically against every existing "לקוח"/"לקוחה" fixture already in
+`heuristic.test.ts` (roughly 50 occurrences) that none has a cue noun
+within this window, so the fix regresses nothing existing. Genuine
+customer usage still matches: "אנחנו מנהלים לקוחות ומוכרים להם מוצרים.", "לקוח מרוצה חוזר לרכוש שוב.",
+and the feminine "הלקוחה שלנו מרוצה מהשירות." all confirmed unaffected.
+The plural "לקוחות" is left unguarded, same as before: its own
+adjective-plural counterpart would be "לקוחים", a distinct word, so it
+has no equivalent collision.
+
+**BILLING_ENTITY_NAMES:** Customer is NOT a member (and no
+"customer"/"לקוח" phrase appears in `PAYMENT_KEYWORDS` either), so
+this bug is entity-fabrication only.
+
+**Deliberately a leaky denylist, not an exhaustive fix**, same class
+as round 2334's צדקה guard and round 2337's הזדמנות guard: a cue noun
+outside the curated list (e.g. "כתבה"/article, "פתגם"/proverb) or more
+than 3 words before the target still isn't excluded -- an accepted
+trade-off for the confirmed-live common cases this closes.
+
+**Test added** (`heuristic.test.ts`): confirms all five bug sentences
+no longer match Customer, while genuine CRM/customer sentences
+(masculine, feminine, and plural) still do.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 250 (the new test), as predicted; pass-after showed 250/250.
+Full `@forge/spec-engine` suite: 446/446 (up from 445). Full
+`@forge/api` suite: 1781/1782 on the first run, with the one failure
+(`codegen.test.ts`'s file-upload-descriptor test, unrelated to this
+diff -- a 401-vs-201 auth assertion) confirmed a flake by re-running
+it in isolation, where it passed cleanly. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round used discovery method (C),
+now validated 3-for-3 (round 2336 Patient/מטופל, round 2337 Deal/
+הזדמנות, round 2338 Customer/לקוח) -- all three found on the FIRST
+Hebrew keyword in an entity's array, suggesting this pattern of
+grammatical-polysemy collisions may cluster on words chosen early when
+an entity's keyword list was first written, before later rounds'
+guard conventions were established. Worth continuing to audit every
+entity's Hebrew keywords for ones with zero guard at all. Standing
+deferred/unsafe gaps, unchanged this round: Ticket bare-noun gap
+(rounds 2282-2283); Courier license/insurance/traffic-ticket sub-case
+(round 2311); Course bare-price-crashing sub-case (round 2316); Course
+military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318); Order's
+forward-only "הזמנה" exclusion-lookahead directionality gap (round
+2331, accepted trade-off); pre-existing roadmap.md script-substitution
+corruption from rounds 2316/2324/2325 (round 2332, deferred to a
+dedicated future round); Donation's "צדקה" guard's residual
+unlisted-stance-noun leak (round 2334, accepted trade-off); Patient's
+"מטופל" guard's residual ב-prefix and unlisted-cue-noun leaks (round
+2336, accepted trade-off); Deal's "הזדמנות" guard's residual
+unlisted-infinitive leak (round 2337, accepted trade-off); Customer's
+"לקוח" guard's residual unlisted-cue-noun leak (round 2338, accepted
+trade-off, same leaky-denylist class); Volunteer's bare unguarded
+"מתנדב"/"מתנדבת"/"מתנדבים" (checked-but-inconclusive as of round 2337,
+no plausible collision found yet).
+
+Live: https://forge-ai-m7p7.onrender.com
