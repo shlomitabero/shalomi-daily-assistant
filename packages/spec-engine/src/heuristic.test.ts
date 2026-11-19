@@ -6590,6 +6590,35 @@ test("Vendor's 'רכש' idiom guard also excludes the 1st/2nd-person forms 'רכ
   assert.ok(!alreadyFixedPlural.entities.some((e) => e.name === "Vendor"), "'רכשו מיומנויות' (round 2320's own 3rd-person-plural exclusion) must still not match Vendor");
 });
 
+test("Donation's 'תרם' keywords also cover the 1st/2nd-person forms 'תרמתי'/'תרמנו'/'תרמת'/'תרמתם' (previously a false negative, not just unguarded)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const firstPersonSingular = await provider.generate("אני תרמתי כסף רב בכל שנה ואני רוצה אפליקציה לניהול התרומה השנתית שלי.");
+  assert.ok(firstPersonSingular.entities.some((e) => e.name === "Donation"), "'תרמתי כסף רב' (I donated a lot of money) must match Donation");
+  const firstPersonSingularStripeQ = firstPersonSingular.openQuestions?.find((q) => q.options.includes("Stripe"));
+  assert.ok(firstPersonSingularStripeQ && firstPersonSingularStripeQ.recommendation === "Stripe", "'תרמתי כסף רב' must correctly recommend Stripe, not 'no payments'");
+
+  const firstPersonPlural = await provider.generate("אנחנו תרמנו ציוד רפואי לבית חולים כל חודש ואני רוצה אפליקציה לניהול הציוד.");
+  assert.ok(firstPersonPlural.entities.some((e) => e.name === "Donation"), "'תרמנו ציוד רפואי' (we donated medical equipment) must match Donation");
+
+  const secondPersonSingular = await provider.generate("אתה תרמת סכום נכבד למטרה חשובה ואני רוצה אפליקציה שתעקוב אחרי הסכום.");
+  assert.ok(secondPersonSingular.entities.some((e) => e.name === "Donation"), "'תרמת סכום נכבד' (you donated a considerable sum) must match Donation");
+
+  const secondPersonPluralMasc = await provider.generate("אתם תרמתם סכום נכבד בכל רבעון ואני רוצה אפליקציה לניהול הסכום.");
+  assert.ok(secondPersonPluralMasc.entities.some((e) => e.name === "Donation"), "'תרמתם סכום נכבד' (you-pl donated a considerable sum) must match Donation");
+
+  // Non-regression: the "contributed to X's success" idiom (round 2322) must still be excluded for these persons too.
+  const idiomFirstSingular = await provider.generate("תרמתי רבות להצלחת הפרויקט במהלך השנה האחרונה.");
+  assert.ok(!idiomFirstSingular.entities.some((e) => e.name === "Donation"), "'תרמתי רבות להצלחת הפרויקט' (contributed to the project's success) must not spuriously match Donation");
+
+  const idiomSecondPluralMasc = await provider.generate("אתם תרמתם רבות להשלמת המשימה בזמן.");
+  assert.ok(!idiomSecondPluralMasc.entities.some((e) => e.name === "Donation"), "'תרמתם רבות להשלמת המשימה' (contributed to finishing the task) must not spuriously match Donation");
+
+  // Non-regression: round 2309's/2322's own 3rd-person control must still match.
+  const alreadyWorkingThirdPerson = await provider.generate("הוא תרם כסף רב לעמותה.");
+  assert.ok(alreadyWorkingThirdPerson.entities.some((e) => e.name === "Donation"), "'הוא תרם כסף רב לעמותה' (he donated money to the nonprofit) must still match Donation");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the

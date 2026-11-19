@@ -2663,6 +2663,41 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /תרמה(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תרמו(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /לתרום(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      // Round 2327: the fix above only ever covered 3rd-person verb
+      // forms (masc./fem. singular, plural, infinitive) -- it never
+      // checked the 1st-/2nd-person forms of the identical verb:
+      // "תרמתי"/"תרמנו" (I/we donated) and "תרמת"/"תרמתם"/"תרמתן"
+      // (you donated, sing./pl.). Unlike round 2326's Vendor "רכש"
+      // case, these forms share no accidental substring overlap with
+      // the forms above at all (every suffix changes which Unicode
+      // mem -- sofit vs. regular -- appears, so there's no risk of a
+      // false match the way "רכש" was a prefix of "רכשו"); the bug
+      // here is a pure FALSE NEGATIVE, not a false positive: these
+      // persons were simply never recognized as Donation at all.
+      // Confirmed live: "אני תרמתי כסף רב בכל שנה..." (I donate a lot
+      // of money every year), "אנחנו תרמנו ציוד רפואי..." (we donated
+      // medical equipment), "אתה תרמת סכום נכבד..." (you donated a
+      // considerable sum), and "אתם תרמתם סכום נכבד..." (you-pl
+      // donated a considerable sum) all fell through to the generic
+      // Item fallback, losing the Donation domain entirely -- and
+      // since Donation is in BILLING_ENTITY_NAMES, each also wrongly
+      // flipped the payment-provider recommendation from "Stripe" to
+      // "no payments". Added each person as its own independent
+      // branch with its own full idiom-exclusion lookahead (longest/
+      // most-specific literal first, same pattern as round 2326's
+      // Vendor fix); "תרמת" excludes a following "ם"/"ן"/"י" so it
+      // can't mistake "תרמתם"/"תרמתן"/"תרמתי"'s prefix for itself. A
+      // naive merged regex sharing one lookahead across a suffix
+      // alternation (e.g. "תרמ(?:ת|תי|תם|תן|נו)(?!...)") was tested
+      // and confirmed to wrongly match the idiom-exclusion sentences
+      // too (e.g. "תרמתם רבות להשלמת המשימה") -- the same backtracking
+      // pitfall round 2326 just reconfirmed for Vendor, here on
+      // Donation's own idiom guard.
+      /תרמתם(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמתן(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמתי(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמנו(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תרמת(?!ם)(?!ן)(?!י)(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",
