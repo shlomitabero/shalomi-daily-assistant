@@ -2657,6 +2657,14 @@ test("Security scan flags the snake_case form of a sensitive field name, not jus
  * "pin" substring (the "ping" inside "ship-ping") is preceded by a letter,
  * not a word start, the same collision class the pre-existing "ssn" hint
  * already guards against for "businessName"/"className".
+ *
+ * Round 2284: also covers the all-caps acronym form "PIN" (bare, or
+ * prefixed like "securityPIN"/"cardPIN") -- the "pin" hint's own doc
+ * comment claimed it mirrors the "ssn" hint's exact shape, but it had
+ * actually dropped the ssn hint's third alternative, the bare all-caps
+ * acronym matched anywhere ("SSN" alongside "ssn"/"Ssn"). "PIN" is just as
+ * commonly written fully uppercase as "SSN" is, and silently escaped this
+ * hint entirely before this fix.
  */
 test("Security scan flags card/bank/PIN/passport/driver's-license field names, without spuriously flagging 'pineapple'/'pink'/'opinion'/'spinner'/'napkin'/'shipping'", () => {
   const spec: ProductSpec = {
@@ -2679,6 +2687,9 @@ test("Security scan flags card/bank/PIN/passport/driver's-license field names, w
           { name: "pin", type: "text", required: false },
           { name: "pinCode", type: "text", required: false },
           { name: "securityPins", type: "text", required: false },
+          { name: "PIN", type: "text", required: false },
+          { name: "securityPIN", type: "text", required: false },
+          { name: "cardPIN", type: "text", required: false },
           { name: "passportNumber", type: "text", required: false },
           { name: "driversLicenseNumber", type: "text", required: false },
           { name: "shippingAddress", type: "text", required: false },
@@ -2696,6 +2707,7 @@ test("Security scan flags card/bank/PIN/passport/driver's-license field names, w
   for (const field of [
     "cardNumber", "cvv", "bankAccountNumber", "routingNumber", "iban",
     "pin", "pinCode", "securityPins", "passportNumber", "driversLicenseNumber",
+    "PIN", "securityPIN", "cardPIN",
   ]) {
     assert.ok(
       security.warnings.some((w) => w.includes(`"PaymentMethod.${field}"`)),
@@ -2708,7 +2720,7 @@ test("Security scan flags card/bank/PIN/passport/driver's-license field names, w
       `an ordinary '${field}' field must never be flagged just because it contains the substring "pin"`,
     );
   }
-  assert.equal(security.warnings.length, 10, "exactly the 10 genuinely sensitive-sounding fields should be flagged");
+  assert.equal(security.warnings.length, 13, "exactly the 13 genuinely sensitive-sounding fields should be flagged");
 });
 
 /**

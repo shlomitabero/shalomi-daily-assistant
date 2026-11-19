@@ -123,7 +123,18 @@ const SENSITIVE_FIELD_HINTS: (string | RegExp)[] = [
   // rules out "pineapple"/"pink"/"pint" while still catching the plural
   // "pins"/"securityPins" via the optional trailing "s", the same plural
   // fix round 1913 already applied to "secret"/"token"/"ssn".
-  /(?:(?<![a-zA-Z])pin|Pin)s?(?![a-z])/,
+  //
+  // Round 2284: this hint's own doc comment above claims it "mirrors the
+  // ssn regex's exact shape," but it actually dropped the ssn hint's third
+  // alternative -- the all-caps acronym form matched ANYWHERE in the name,
+  // not just at a word start ("SSN" above matches `ssn|SSN`, this one only
+  // ever matched `pin|Pin`). "PIN" (Personal Identification Number) is
+  // just as commonly written fully uppercase as "SSN" is -- "PIN",
+  // "userPIN", "securityPIN", "cardPIN", "PINCode" all silently escaped
+  // this hint entirely. Live-confirmed via the real runSecurityScan: a
+  // PaymentMethod entity with PIN/securityPIN/cardPIN fields (alongside a
+  // correctly-flagged pinCode) scored those three fields zero warnings.
+  /(?:(?<![a-zA-Z])pin|Pin|PIN)s?(?![a-z])/,
 ];
 
 interface ImpactSummary {
