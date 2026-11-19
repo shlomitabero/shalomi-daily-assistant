@@ -7620,6 +7620,41 @@ test("round 2363: Donation's own subject noun 'תרומ(?:ה|ות)' was missing 
   assert.ok(!companyContribution.entities.some((e) => e.name === "Donation"), "construct-state 'תרומת' with the unrelated 'contribution' sense and no donor/nonprofit/blood/organ cue must NOT spuriously match Donation");
 });
 
+test("round 2364: Order's 'רכישה'/'רכישות' keywords were missing the construct-state singular 'רכישת' ('purchase of ...'), added with a guard against the unrelated 'acquisition of X' idiom (gaining experience/knowledge/citizenship/etc.)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const equipmentPurchase = await provider.generate("אפליקציה לניהול רכישת ציוד למחסן.");
+  assert.ok(equipmentPurchase.entities.some((e) => e.name === "Order"), "'רכישת ציוד' (construct-state equipment purchase) must match Order");
+
+  const customerPurchase = await provider.generate("מערכת למעקב אחרי רכישת לקוח בחנות המקוונת.");
+  assert.ok(customerPurchase.entities.some((e) => e.name === "Order"), "'רכישת לקוח' (construct-state customer purchase/acquisition) must match Order");
+
+  const vehiclePurchase = await provider.generate("מערכת למעקב אחרי רכישת רכב משומש.");
+  assert.ok(vehiclePurchase.entities.some((e) => e.name === "Order"), "'רכישת רכב' (construct-state vehicle purchase) must match Order");
+
+  // Non-regression: the already-working absolute forms must still work.
+  const absoluteSingular = await provider.generate("אפליקציה לניהול רכישה של ציוד משרדי.");
+  assert.ok(absoluteSingular.entities.some((e) => e.name === "Order"), "absolute singular 'רכישה של ציוד משרדי' must still match Order");
+
+  const absolutePlural = await provider.generate("מערכת למעקב אחרי רכישות של לקוחות בחנות.");
+  assert.ok(absolutePlural.entities.some((e) => e.name === "Order"), "absolute plural 'רכישות של לקוחות' must still match Order");
+
+  // Collision-containment: the construct-state "acquisition of X" idiom (gaining experience/
+  // citizenship/knowledge/time/etc., unrelated to a business purchase) must NOT match Order --
+  // a naive unguarded "רכישת" addition would have turned every one of these into a false positive.
+  const experienceIdiom = await provider.generate("אפליקציה לניהול רכישת ניסיון מקצועי בתחום.");
+  assert.ok(!experienceIdiom.entities.some((e) => e.name === "Order"), "'רכישת ניסיון' (gaining experience, idiom) must NOT spuriously match Order");
+
+  const citizenshipIdiom = await provider.generate("מערכת למעקב אחרי רכישת אזרחות של עולים חדשים.");
+  assert.ok(!citizenshipIdiom.entities.some((e) => e.name === "Order"), "'רכישת אזרחות' (acquiring citizenship, idiom) must NOT spuriously match Order");
+
+  const knowledgeIdiom = await provider.generate("פלטפורמה לרכישת ידע חדש בתחומים שונים.");
+  assert.ok(!knowledgeIdiom.entities.some((e) => e.name === "Order"), "'רכישת ידע' (gaining knowledge, idiom) must NOT spuriously match Order");
+
+  const timeIdiom = await provider.generate("האסטרטגיה הזו נועדה לרכישת זמן נוסף לפני ההחלטה.");
+  assert.ok(!timeIdiom.entities.some((e) => e.name === "Order"), "'רכישת זמן' (buying time, idiom) must NOT spuriously match Order");
+});
+
 /**
  * Round 913's finding: Ticket's bare "תמיכה"/"תמיכת" keywords had the
  * same idiom-co-occurrence shape rounds 911/912 just fixed for Deal/

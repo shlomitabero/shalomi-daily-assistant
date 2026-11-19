@@ -589,7 +589,31 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // fix, with the real Order domain entirely lost, while the bare-
       // noun twin ("...הזמנה של לקוח...") already matched Order correctly.
       /הזמנ(?:ה|ות|ת)(?!\s*ל?(?:חתונה|חתונת|חתונות|אירוע|אירועי|אירועים|מסיבה|מסיבת|מסיבות|כנס|יום\s*הולדת))/,
-      "רכישה", "רכישות", "משלוח", "משלוחים",
+      "רכישה", "רכישות",
+      // Round 2364: the absolute forms "רכישה"/"רכישות" above never
+      // covered the construct-state singular "רכישת" (e.g. "רכישת ציוד"
+      // = "equipment purchase", "רכישת לקוח" = "customer purchase/
+      // acquisition") -- since "רכישת" ends in ת, not ה, it is not a
+      // substring of either absolute form and fell through entirely to
+      // whatever other entity matched (Item/Customer/Vehicle), exactly
+      // the same construct-state gap shape round 2363 fixed for
+      // Donation's "תרומת". Unlike "תרומת" though, a bare "רכישת"
+      // addition collides with the ordinary "acquisition of X" idiom
+      // (gaining knowledge/experience/citizenship/trust/status etc.,
+      // e.g. "רכישת ניסיון מקצועי" = "gaining professional experience",
+      // "רכישת אזרחות" = "acquiring citizenship") -- confirmed live, a
+      // naive unguarded "רכישת" addition turned every one of several
+      // such idiom sentences (none of which matched Order before) into
+      // a spurious Order match, which is strictly worse than the status
+      // quo. The negative lookahead excludes exactly those idiom nouns
+      // right after "רכישת", mirroring this file's other "common word +
+      // excluded noun list" guards (e.g. ROLE_RULES.Manager's
+      // "מנהל(?!...מערכת)"). The pre-existing absolute-form idiom
+      // collision ("רכישה של ניסיון מקצועי" already spuriously matching
+      // Order) is a separate, broader, pre-existing bug this round does
+      // not attempt to fix.
+      /רכישת(?!\s*(?:ניסיון|זמן|אזרחות|ידע|השכלה|מוניטין|ביטחון|אמון|כוח|השפעה|מעמד|חברים))/,
+      "משלוח", "משלוחים",
       // "וולט" is the Hebrew transliteration of both the Wolt delivery
       // app and the electrical unit "volt" -- identical spelling, no way
       // to tell them apart by spelling alone. Excludes the unit sense via
