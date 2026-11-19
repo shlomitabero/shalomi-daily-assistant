@@ -7750,6 +7750,27 @@ test("Course's 'שיעור' give-verb idiom guard was never given PRESENT-tense 
   assert.ok(tanurControl.entities.some((e) => e.name === "Course"), "'יש לנו תנור לבישול' (oven, 'תנור') must still match Course via the unrelated 'שיעור' mention, not be mistaken for imperative 'תנו'");
 });
 
+test("Course's 'שיעור' comeuppance-idiom guard round 2353: was also missing the 2nd-person-feminine-singular FUTURE form 'תתני' (not already caught by the existing bare 'תני' entry)", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futureFemSingular = await provider.generate("אפליקציה לניהול שכנים. את תתני לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!futureFemSingular.entities.some((e) => e.name === "Course"), "'את תתני לשכן שיעור' (you[f] will teach the neighbor a lesson, comeuppance idiom) must not spuriously match Course");
+
+  // Non-regression: the already-working masc./3fs future exclusion must still hold.
+  const futureMascSingular = await provider.generate("אפליקציה לניהול שכנים. אתה תיתן לשכן הבעייתי שיעור שהוא לא ישכח.");
+  assert.ok(!futureMascSingular.entities.some((e) => e.name === "Course"), "'אתה תיתן לשכן שיעור' (2ms/3fs future, pre-existing fix) must still not match Course");
+
+  // Non-regression: genuine lesson usage must still match.
+  const genuineLesson = await provider.generate("אפליקציה לניהול קורסים. המורה נתן שיעור מצוין היום.");
+  assert.ok(genuineLesson.entities.some((e) => e.name === "Course"), "'המורה נתן שיעור מצוין' (the teacher gave an excellent lesson) must still match Course");
+
+  const genuinePrivateLesson = await provider.generate("שיעור פרטי בבית.");
+  assert.ok(genuinePrivateLesson.entities.some((e) => e.name === "Course"), "'שיעור פרטי בבית' (private lesson at home) must still match Course");
+
+  const interestRateControl = await provider.generate("שיעור הריבית עלה.");
+  assert.ok(!interestRateControl.entities.some((e) => e.name === "Course"), "'שיעור הריבית' (interest rate, existing lookahead exclusion) must still not match Course");
+});
+
 test("Vendor's 'ספק' (doubt) idiom-exclusion guard was ALSO missing an entire FUTURE tense, the same gap shape rounds 2343/2344 found on Donation/Course", async () => {
   const provider = new HeuristicSpecProvider();
 

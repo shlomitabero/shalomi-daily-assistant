@@ -1685,7 +1685,24 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // actually starts a word, confirmed empirically this excludes
       // all of the above collisions while still catching every "תן/
       // תני/תנו ל-X ... שיעור" idiom sentence.
-      /(?<!(?:לתת|אתן|תיתן|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
+      //
+      // Round 2353: this guard was extended round-by-round (2314, 2328,
+      // 2344) for many person/number/gender/tense combinations of
+      // "give" but, like Vendor's ספק guard before round 2352 fixed
+      // it, never covered the 2nd-person-FEMININE-singular FUTURE form
+      // "תתני" ("you[f] will give"). The "-י" suffix makes it a
+      // distinct string from "תיתן" (2ms/3fs future) -- and critically,
+      // it is NOT already caught by the existing bare "תני" alternative
+      // either, because that one is deliberately guarded with
+      // "(?<![א-ת])" to require nothing but a word boundary right
+      // before it, and "תתני" has a Hebrew letter ("ת") immediately
+      // before its own "תני" suffix. Confirmed live: "את תתני לשכן
+      // הבעייתי שיעור שהוא לא ישכח" (you[f] will teach the problematic
+      // neighbor a lesson he won't forget -- comeuppance idiom, zero
+      // educational content) wrongly fabricated Course. Adds "תתני" as
+      // a new alternative; confirmed live this doesn't affect the
+      // existing "תני"/"תיתן" entries or any genuine lesson sentence.
+      /(?<!(?:לתת|אתן|תיתן|תתני|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/,
     ],
     labelHe: "קורסים",
     descriptionHe: "קורס או שיעור שהעסק מלמד.",
