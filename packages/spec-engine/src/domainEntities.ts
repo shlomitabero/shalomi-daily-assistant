@@ -2568,7 +2568,23 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // used throughout this file (e.g. /\bmechanic(s)?\b/ above).
       /\bplumber(s)?\b/, /\belectrician(s)?\b/, /\btechnician(s)?\b/, /\bhandyman\b/, /\bhandymen\b/,
       /\blocksmith(s)?\b/,
-      "hvac", "plumbing",
+      "hvac",
+      // Round 2302: bare "plumbing" was deliberately NOT like "hvac" (an
+      // unambiguous acronym) -- it has a very common metaphorical/tech-
+      // jargon sense ("the plumbing" of a system, "backend plumbing",
+      // "plumbing of a deployment pipeline") with nothing to do with the
+      // trade, the same bare-noun-collision shape this file's own
+      // "tailor"/"mover"/"landscaping" comments above already document.
+      // Confirmed live: "An internal dashboard for engineers to
+      // visualize the plumbing of our microservices deployment pipeline
+      // and trace requests between services." fabricated a WorkOrder
+      // entity and wrongly recommended Stripe for a pure internal
+      // engineering tool with no customers or money involved. Replaced
+      // with phrase-only keywords, mirroring the adjacent conventions --
+      // "An app to manage scheduled plumbing jobs and customer requests
+      // for a small plumbing company" (previously matched ONLY via the
+      // bare word) still matches via "plumbing company"/"plumbing jobs".
+      "plumbing business", "plumbing company", "plumbing jobs", "plumbing service", "plumbing services",
       // Round 1816: a tailoring/alterations shop is an equally common
       // small-business vertical as the daycare/salon/spa ones rounds
       // 1700-1800 already covered, but it had no WorkOrder keyword at all --

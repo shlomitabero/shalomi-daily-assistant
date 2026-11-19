@@ -296,6 +296,36 @@ test("'billing' alone (entertainment-industry 'billing order', no money concept)
   assert.equal(freelancePaymentQuestion!.recommendation, "Stripe", "a genuine invoicing description must still recommend Stripe");
 });
 
+/**
+ * Round 2302: WorkOrder's bare "plumbing" keyword (replaced with
+ * phrase-only variants) had a very common metaphorical/tech-jargon
+ * sense -- "the plumbing" of a system, "backend plumbing", "plumbing of
+ * a deployment pipeline" -- with nothing to do with the plumbing trade,
+ * the same bare-noun-collision shape this file's own "tailor"/"mover"/
+ * "landscaping" fixes already guard against. The fourth confirmed
+ * instance of the bare-overly-broad-keyword shape rounds 2297/2300/2301
+ * fixed for "nonprofit"/"subscription"/"billing".
+ */
+test("'plumbing' used metaphorically (tech-jargon 'the plumbing' of a system) does not spuriously match WorkOrder or recommend Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const internalTool = await provider.generate(
+    "An internal dashboard for engineers to visualize the plumbing of our microservices deployment pipeline and trace requests between services.",
+  );
+  assert.ok(!internalTool.entities.some((e) => e.name === "WorkOrder"), "'plumbing' alone must not spuriously match WorkOrder");
+
+  // Non-regression: genuine plumbing-company descriptions must still match,
+  // via the new phrase-only keywords instead of the removed bare word.
+  const plumbingCo = await provider.generate(
+    "An app to manage scheduled plumbing jobs and customer requests for a small plumbing company.",
+  );
+  assert.ok(plumbingCo.entities.some((e) => e.name === "WorkOrder"), "a genuine plumbing-company description must still match WorkOrder");
+
+  // Non-regression: the pre-existing /\bplumber(s)?\b/ keyword is unaffected.
+  const plumber = await provider.generate("An app for a plumber to track jobs, schedule technician visits, and invoice customers for repairs.");
+  assert.ok(plumber.entities.some((e) => e.name === "WorkOrder"), "'plumber' must still match WorkOrder");
+});
+
 test("recognizes a membership-fee description as the Subscription entity, even though 'membership fee' is phrased differently from the other recognized phrasings", async () => {
   // Round 1690: "membership fee" is the single most natural English
   // phrase for what a gym/studio/co-working-space business charges, but
