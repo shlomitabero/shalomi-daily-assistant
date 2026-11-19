@@ -6759,6 +6759,42 @@ test("Event's 'כנס' (conference) login-verb exclusion guard (round 1918) also
   assert.ok(composite.entities.some((e) => e.name === "Event"), "'אכנס למערכת ... לכנס הבינלאומי' (a sentence with both the login verb and a genuine conference mention) must still match Event");
 });
 
+test("Donation's keywords also cover the PRESENT-tense 'תורם'/'תורמת'/'תורמים'/'תורמות' (donor) forms, previously missing entirely", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const donorsManage = await provider.generate("אפליקציה לניהול התורמים של העמותה שלנו - שם, טלפון, סכום וקמפיין.");
+  assert.ok(donorsManage.entities.some((e) => e.name === "Donation"), "'התורמים של העמותה' (the nonprofit's donors) must match Donation");
+  const donorsManageStripeQ = donorsManage.openQuestions?.find((q) => q.options.includes("Stripe"));
+  assert.ok(donorsManageStripeQ && donorsManageStripeQ.recommendation === "Stripe", "'התורמים של העמותה' must correctly recommend Stripe, not 'no payments'");
+
+  const donorMascSing = await provider.generate("אפליקציה לניהול התורם הראשי של העמותה.");
+  assert.ok(donorMascSing.entities.some((e) => e.name === "Donation"), "'התורם הראשי' (the main donor, masc. singular) must match Donation");
+
+  const donorFemSing = await provider.generate("יש לנו התורמת העיקרית שלמדה על הפרויקט.");
+  assert.ok(donorFemSing.entities.some((e) => e.name === "Donation"), "'התורמת העיקרית' (the main donor, fem. singular) must match Donation");
+
+  const donorFemPlur = await provider.generate("התורמות הוותיקות של העמותה מקבלות תודה מיוחדת מדי שנה.");
+  assert.ok(donorFemPlur.entities.some((e) => e.name === "Donation"), "'התורמות הוותיקות' (the veteran donors, fem. plural) must match Donation");
+
+  const genuineDonorToFund = await provider.generate("הוא תורם לקרן המחקר שלנו כל שנה.");
+  assert.ok(genuineDonorToFund.entities.some((e) => e.name === "Donation"), "'תורם לקרן המחקר' (donates to the research fund) must match Donation");
+
+  // Non-regression: the "contributes to X" metaphorical idiom (same collision already
+  // guarded for the noun תרומה round 2111 and the past-tense verb תרם round 2322) must
+  // still be excluded for every present-tense form too.
+  const idiomImprove = await provider.generate("הכלי הזה תורם לשיפור התפוקה של הצוות.");
+  assert.ok(!idiomImprove.entities.some((e) => e.name === "Donation"), "'תורם לשיפור התפוקה' (contributes to improving output, masc. sing.) must not spuriously match Donation");
+
+  const idiomUX = await provider.generate("התכונה החדשה תורמת רבות לשיפור חווית המשתמש בכל עדכון.");
+  assert.ok(!idiomUX.entities.some((e) => e.name === "Donation"), "'תורמת רבות לשיפור חווית המשתמש' (contributes to improving UX, fem. sing.) must not spuriously match Donation");
+
+  const idiomEffort = await provider.generate("כל חברי הצוות תורמים מאמץ רב להשלמת המשימה.");
+  assert.ok(!idiomEffort.entities.some((e) => e.name === "Donation"), "'תורמים מאמץ רב להשלמת המשימה' (contribute much effort to completing the task, masc. plur.) must not spuriously match Donation");
+
+  const idiomEvent = await provider.generate("כולם תורמים להצלחת האירוע השנתי במשרד.");
+  assert.ok(!idiomEvent.entities.some((e) => e.name === "Donation"), "'תורמים להצלחת האירוע' (contribute to the event's success, masc. plur.) must not spuriously match Donation");
+});
+
 /**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the

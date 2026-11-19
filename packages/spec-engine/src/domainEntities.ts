@@ -2794,6 +2794,46 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /תרמתי(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תרמנו(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
       /תרמת(?!ם)(?!ן)(?!י)(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      // Round 2333: all of the above only ever covers the PAST-tense
+      // verb תרם ("donated"). The entire PRESENT-tense paradigm --
+      // תורם/תורמת/תורמים/תורמות -- was never added as a keyword in any
+      // form, even though these same four words are also the literal
+      // Hebrew nouns "donor"/"female donor"/"donors"/"female donors"
+      // (Hebrew present-tense verbs double as agent-noun participles).
+      // Tellingly, "תורם"/"תורמים" already appear by name inside this
+      // very entity's own "תרומה"/"תרומות" disambiguation regex above
+      // (used only as cue words to unlock THAT keyword) but were never
+      // themselves promoted to standalone keywords -- the "named but
+      // missing as its own positive keyword" shape rounds 2330/2331
+      // found via another entity's exclusion list, here found within
+      // the same entity instead. Confirmed live: "אפליקציה לניהול
+      // התורמים של העמותה שלנו..." (app to manage our nonprofit's
+      // donors) and three similar donor-management sentences all fell
+      // through to the generic Item/Project fallback, losing Donation
+      // entirely -- and since Donation is in BILLING_ENTITY_NAMES, each
+      // also wrongly flipped the payment recommendation from Stripe to
+      // "no payments".
+      //
+      // Same idiom collision as the past-tense verb (round 2111/2322):
+      // all four present-tense forms are also the ordinary, very common
+      // metaphorical "contributes" with zero charitable-giving content
+      // ("הכלי תורם לשיפור התפוקה" = the tool contributes to improving
+      // output), so each form reuses this entity's own already-tested
+      // idiom-exclusion lookahead. Each form is its own independent
+      // regex entry, not a shared alternation: "תורם" ends in the SOFIT
+      // mem (ם) while "תורמת"/"תורמים"/"תורמות" all continue with the
+      // ordinary mem (מ) instead, so "תורמים".includes("תורם") is
+      // literally false in JS -- confirmed empirically that a naive
+      // merged "תורם(?:ת|ים|ות)?(?!...)" variant doesn't just risk the
+      // usual backtracking pitfall, it fails to match three of the four
+      // forms outright, since the base literal doesn't even occur as a
+      // substring of them (the same sofit-vs-regular-mem fact round
+      // 2293 already established for the past-tense תרם/תרמה pair, now
+      // reconfirmed for the present-tense paradigm).
+      /תורם(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תורמת(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תורמים(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
+      /תורמות(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/,
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",
