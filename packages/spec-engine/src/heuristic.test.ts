@@ -2184,6 +2184,34 @@ test("recognizes dog/cat grooming descriptions as the Pet entity, not the generi
 });
 
 /**
+ * Round 2298: Pet's "חיית מחמד"/"חיות מחמד" (pet/pets) keywords had no
+ * definite-article entries. In a Hebrew construct chain (סמיכות), the
+ * definite article "ה" attaches to the SECOND noun, not the first -- the
+ * same pattern round 2286 found for "בית הארחה"->"בית ההארחה" and round
+ * 2291 found for "מוסך"->"מוסכי" -- so "חיית המחמד"/"חיות המחמד" ("the
+ * pet"/"the pets", e.g. "חיות המחמד של הלקוחות שלנו", an everyday way to
+ * say "our customers' pets") are not substrings of the bare indefinite
+ * keywords and silently escaped matching.
+ */
+test("recognizes the Hebrew definite-article 'חיות המחמד'/'חיית המחמד' forms as the Pet entity, not just the indefinite 'חיות מחמד'/'חיית מחמד' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const definitePlural = await provider.generate("אפליקציה לניהול חיות המחמד של הלקוחות שלנו", true);
+  assert.ok(definitePlural.entities.some((e) => e.name === "Pet"), "'חיות המחמד' must match the Pet entity rule");
+
+  const definiteSingular = await provider.generate("אפליקציה למעקב אחרי חיית המחמד של כל לקוח", true);
+  assert.ok(definiteSingular.entities.some((e) => e.name === "Pet"), "'חיית המחמד' must match the Pet entity rule");
+
+  const groomingSalon = await provider.generate("סלון טיפוח לחיות המחמד של השכונה", true);
+  assert.ok(groomingSalon.entities.some((e) => e.name === "Pet"), "'חיות המחמד' must match the Pet entity rule, not fall through to the generic Item fallback");
+  assert.ok(!groomingSalon.entities.some((e) => e.name === "Item"), "must not fall through to the generic Item fallback");
+
+  // Non-regression: the already-working indefinite forms must still match.
+  const indefinitePlural = await provider.generate("אפליקציה לניהול חיות מחמד של הלקוחות שלנו", true);
+  assert.ok(indefinitePlural.entities.some((e) => e.name === "Pet"), "'חיות מחמד' (indefinite) must still match Pet");
+});
+
+/**
  * Round 1769: the Student entity rule's keywords only ever covered the
  * "student"/"learner"/"pupil" phrasing of an educational program -- a
  * daycare, preschool, or childcare business (an equally common

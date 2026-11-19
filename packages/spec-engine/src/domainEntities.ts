@@ -1668,7 +1668,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       "veterinary", "vet clinic", "pet owner", "pet grooming", "animal clinic",
       "dog walking", "dog walker", "pet sitting", "pet sitter", "pet boarding", "dog daycare",
       "dog grooming", "cat grooming", "dog groomer", "cat groomer", "pet groomer",
-      "חיית מחמד", "חיות מחמד", "וטרינר", "וטרינרית", "טיפוח כלבים", "טיפוח חתולים",
+      // Round 2298: "חיית מחמד"/"חיות מחמד" (pet/pets) had no definite-
+      // article entries. In a Hebrew construct chain (סמיכות), the
+      // definite article "ה" attaches to the SECOND noun, not the first
+      // -- the same pattern round 2286 found for "בית הארחה"->"בית
+      // ההארחה" and round 2291 found for "מוסך"->"מוסכי" -- so the
+      // definite forms "חיית המחמד"/"חיות המחמד" ("the pet"/"the pets",
+      // e.g. "חיות המחמד של הלקוחות שלנו", an everyday way to say "our
+      // customers' pets") are not substrings of the bare indefinite
+      // keywords and silently escaped matching entirely. Confirmed live:
+      // "אפליקציה לניהול חיות המחמד של הלקוחות שלנו" and "סלון טיפוח
+      // לחיות המחמד של השכונה" both lost the real Pet domain (matching
+      // only Customer or the generic Item fallback), while the
+      // indefinite twin ("...חיות מחמד...") already matched Pet.
+      "חיית מחמד", "חיות מחמד", "חיית המחמד", "חיות המחמד",
+      "וטרינר", "וטרינרית", "טיפוח כלבים", "טיפוח חתולים",
       "טיול כלבים", "פנסיון לכלבים",
     ],
     labelHe: "חיות מחמד",
