@@ -3013,6 +3013,26 @@ test("buildImportRecords rejects a hex/octal/binary-notation number cell instead
   assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
 });
 
+test("buildImportRecords rejects a currency-prefixed hex/octal/binary-notation number cell, instead of letting the currency-symbol cleanup strip the prefix and re-expose a bare value Number() coerces", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "$0x10"],
+    ["Beta LLC", "€0b101"],
+    ["Gamma Inc", "£0o17"],
+    ["Delta Co", "$1,200.50"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [{ client: "Delta Co", amount: 1200.5 }]);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /Row 1.*\$0x10.*Amount/);
+  assert.match(result.errors[1], /Row 2.*0b101.*Amount/);
+  assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
+});
+
 test("buildImportRecords rejects a date column value that isn't a real, well-formed calendar date", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },
@@ -4123,6 +4143,17 @@ test("buildImportRecordsFromJson rejects a hex/octal/binary-notation number stri
   assert.deepEqual(result.records, [{ amount: 42 }, { amount: 1200.5 }]);
   assert.equal(result.errors.length, 3);
   assert.match(result.errors[0], /Row 1.*0x10.*Amount/);
+  assert.match(result.errors[1], /Row 2.*0b101.*Amount/);
+  assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
+});
+
+test("buildImportRecordsFromJson rejects a currency-prefixed hex/octal/binary-notation number string, instead of letting the currency-symbol cleanup strip the prefix and re-expose a bare value Number() coerces", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: "$0x10" }, { amount: "€0b101" }, { amount: "£0o17" }, { amount: "$1,200.50" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, [{ amount: 1200.5 }]);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /Row 1.*\$0x10.*Amount/);
   assert.match(result.errors[1], /Row 2.*0b101.*Amount/);
   assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
 });

@@ -2682,7 +2682,13 @@ export function buildImportRecords(
           // "-" guard catches the parenthesized-negative equivalent, a bare
           // "()" -- Number("-") is also NaN, but checked explicitly to match
           // webhookIn.ts's own guard rather than relying on that coincidence.
-          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
+          // Round 2255: re-run HEX_OCTAL_BINARY_PREFIX against the CLEANED
+          // string too, not just the original raw cell -- "$0x10" doesn't
+          // match the prefix check above (it starts with "$", not "0x"),
+          // but CSV_NUMBER_FORMATTING strips the "$" right here, silently
+          // re-exposing the bare "0x10" this round's own check exists to
+          // reject. Confirmed live: "$0x10" imported as 16 before this fix.
+          if (cleaned !== "" && cleaned !== "-" && !HEX_OCTAL_BINARY_PREFIX.test(cleaned)) n = Number(cleaned);
         }
         // Number.isFinite, not just !Number.isNaN: Number("Infinity") is
         // Infinity, not NaN, so it passes a NaN-only check -- but
@@ -3000,7 +3006,11 @@ export function buildImportRecordsFromJson(
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? `-${parenMatch[1]}` : raw;
           const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
-          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
+          // Round 2255: see buildImportRecords' own identical fix above --
+          // currency-symbol stripping can re-expose a bare hex/octal/binary
+          // prefix ("$0x10" -> "0x10") that the earlier raw-string check
+          // missed, since it only runs before this cleanup.
+          if (cleaned !== "" && cleaned !== "-" && !HEX_OCTAL_BINARY_PREFIX.test(cleaned)) n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {
           rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;

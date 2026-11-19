@@ -4691,7 +4691,13 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
           const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
-          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
+          // Round 2255: mirrors the live preview's own identical fix -- see
+          // entityFormatting.ts's buildImportRecords -- re-running
+          // HEX_OCTAL_BINARY_PREFIX against the CLEANED string too, not
+          // just the original raw cell, since currency-symbol stripping
+          // can re-expose a bare hex/octal/binary prefix ("$0x10" ->
+          // "0x10") that the earlier raw-string check above missed.
+          if (cleaned !== "" && cleaned !== "-" && !HEX_OCTAL_BINARY_PREFIX.test(cleaned)) n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
@@ -4993,7 +4999,11 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
           const unwrapped = parenMatch ? \`-\${parenMatch[1]}\` : raw;
           const cleaned = normalizeDecimalSeparator(unwrapped.replace(CSV_NUMBER_FORMATTING, ""));
-          if (cleaned !== "" && cleaned !== "-") n = Number(cleaned);
+          // Round 2255: see buildImportRecords' own identical fix above --
+          // currency-symbol stripping can re-expose a bare hex/octal/binary
+          // prefix ("$0x10" -> "0x10") that the earlier raw-string check
+          // missed, since it only runs before this cleanup.
+          if (cleaned !== "" && cleaned !== "-" && !HEX_OCTAL_BINARY_PREFIX.test(cleaned)) n = Number(cleaned);
         }
         if (!Number.isFinite(n)) {
           rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
