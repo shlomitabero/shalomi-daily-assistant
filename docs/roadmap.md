@@ -56673,3 +56673,75 @@ applying this lens to other multi-round Hebrew keyword families in
 per the standing fallback if that angle is exhausted.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2365: Appointment missing plain-plural "מספרות" hair-salon keyword
+
+**Bug:** continuing the "4th Hebrew inflection missing" lens (6
+consecutive rounds, 2359-2364), this round's survey agent searched
+for other Hebrew keyword families built up incrementally across 3+
+numbered rounds and found round 2288's "מספרה"/"מספרת" hair-salon
+family was still missing its plain plural "מספרות" ("hair salons"/
+"barbershops"). Round 2288 added the construct-state singular
+"מספרת" next to the bare singular "מספרה"; round 2339 guarded
+"מספרת" against the unrelated "tells/narrates" verb sense. But
+"מספרות" was never added at all -- "מספרה" ends in ה, its plural
+"מספרות" ends in ות, not a substring of either existing form, the
+same fem-plural gap shape already fixed elsewhere (תרומה/עמותה/
+הזמנה/חתונה). A plural-only hair-salon description lost the
+Appointment entity entirely.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`, with per-keyword match dumps to rule out an
+unrelated pre-existing keyword masking the result): "אפליקציה לניהול רשת מספרות באזור המרכז, כולל לוח זמנים ולקוחות." and
+"אפליקציה לניהול מספרות העיר, כולל לקוחות ולוח זמנים." both lost the Appointment entity (matched only
+`Customer`), with no other keyword in the array accounting for the
+loss.
+
+**Idiom-collision risk, checked before designing the fix:** "מספרות"
+also spells the ordinary feminine-plural present-tense verb "tell/
+narrate" (e.g. "המורות מספרות סיפורים" = "the teachers tell
+stories"). Confirmed live that a naive bare-literal addition would
+spuriously match several real storytelling sentences.
+
+**Fix** (`domainEntities.ts`, Appointment's keyword array, and its
+`PAYMENT_KEYWORDS` mirror in `heuristic.ts`):
+```js
+/מספרות(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/
+```
+Guarded identically to round 2339's existing "מספרת" guard (the
+same leaky-denylist convention, deliberately not exhaustive).
+
+**Verification (regression/collision checks run live):** confirmed
+both bug sentences now match Appointment and recommend Stripe (the
+`PAYMENT_KEYWORDS` mirror, verified via the Hebrew-aware payment-
+question filter this file's own round-2339 test established); the
+storytelling idiom sentences stay excluded, correctly recommending
+"No payments"; the existing bare-singular and construct-singular
+controls are unaffected.
+
+**Test added** (`heuristic.test.ts`, immediately after round 2339's
+existing construct-state test): confirms 2 independent plural
+sentences now match Appointment and recommend Stripe; confirms 2
+storytelling-idiom sentences stay excluded; confirms the bare
+singular form still matches.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 276 (the new test), as predicted; pass-after showed 276/276 --
+no regression. Full `@forge/spec-engine` suite: 472/472 (up from 471).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.6mb`, exit code 0).
+
+**Standing notes update:** the "4th Hebrew inflection missing from an
+incrementally-built keyword/guard" lens has now found bugs in 7
+consecutive rounds (2359-2365). Also flagged, not fixed this round:
+`PAYMENT_KEYWORDS`'s own pre-existing "מספרת" entry (added round
+2294) has no idiom-exclusion guard at all, unlike `domainEntities.ts`'s
+own guarded "מספרת" (round 2339) -- a storytelling sentence with bare
+singular "מספרת" currently gets wrongly recommended Stripe on the
+payment side even though the entity-match side was already fixed.
+This round's own new "מספרות" addition to `PAYMENT_KEYWORDS` was
+guarded correctly; the pre-existing singular gap is a separate,
+narrower residual left for a future round.
+
+Live: https://forge-ai-m7p7.onrender.com
