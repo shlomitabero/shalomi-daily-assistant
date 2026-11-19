@@ -5123,9 +5123,11 @@ test("the exported EntityView's own generated invalidNumberField flags a hex/oct
 test("the exported EntityView's handleSubmit saves only the field the user actually touched, instead of reviving every other field's stale pre-dialog value", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
   const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDraftUnchangedSrc = entityViewJsx.match(/function fieldDraftUnchanged\(field, draft, stored\) \{[\s\S]*?\n\}\n/)?.[0];
   const handleSubmitSrc = entityViewJsx.match(/async function handleSubmit\(e\) \{[\s\S]*?\n  \}\n/)?.[0];
   const startEditSrc = entityViewJsx.match(/function startEdit\(record\) \{[\s\S]*?\n  \}\n/)?.[0];
   assert.ok(invalidNumberFieldSrc, "expected to find invalidNumberField in generated output");
+  assert.ok(fieldDraftUnchangedSrc, "expected to find fieldDraftUnchanged in generated output");
   assert.ok(handleSubmitSrc, "expected to find an async handleSubmit in generated output");
   assert.ok(startEditSrc, "expected to find a startEdit in generated output");
 
@@ -5183,6 +5185,7 @@ test("the exported EntityView's handleSubmit saves only the field the user actua
     const requiredFileField = entity.fields.find((f) => f.type === "file" && f.required);
     const recordHasNoRequiredFile = requiredFileField && (form[requiredFileField.name] === "" || form[requiredFileField.name] == null);
     ${invalidNumberFieldSrc}
+    ${fieldDraftUnchangedSrc}
     ${startEditSrc}
     ${handleSubmitSrc}
     return { startEdit, handleSubmit, getForm: () => form };
@@ -24325,12 +24328,13 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDraftUnchangedSrc = entityViewJsx.match(/function fieldDraftUnchanged\(field, draft, stored\) \{[\s\S]*?\n\}\n/)?.[0];
   const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const cancelSrc = entityViewJsx.match(/function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const blurSrc = entityViewJsx.match(/function handleCellBlur\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    invalidNumberFieldSrc && commitSrc && cancelSrc && blurSrc,
-    "expected to find invalidNumberField/commitInlineEdit/cancelInlineEdit/handleCellBlur in generated output",
+    invalidNumberFieldSrc && fieldDraftUnchangedSrc && commitSrc && cancelSrc && blurSrc,
+    "expected to find invalidNumberField/fieldDraftUnchanged/commitInlineEdit/cancelInlineEdit/handleCellBlur in generated output",
   );
 
   const state: { editingCell: { recordId: number; field: string } | null; cellDraft: unknown } = {
@@ -24358,7 +24362,7 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
       // from cellDraft ("New Value") above so this test's own real commit
       // still proceeds past that new check exactly as before.
       "records",
-      `${invalidNumberFieldSrc}\n${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
+      `${invalidNumberFieldSrc}\n${fieldDraftUnchangedSrc}\n${commitSrc}\n${cancelSrc}\n${blurSrc}\nreturn { commitInlineEdit, handleCellBlur };`,
     )(
       state.editingCell,
       false,
@@ -24398,8 +24402,9 @@ test("the exported EntityView's generated inline cell editor suppresses a stale 
 test("the exported EntityView's generated inline cell editor refuses to commit a required field left blank, instead of sending a doomed PATCH", async () => {
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
+  const fieldDraftUnchangedSrc = entityViewJsx.match(/function fieldDraftUnchanged\(field, draft, stored\) \{[\s\S]*?\n\}\n/)?.[0];
   const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(commitSrc, "expected to find commitInlineEdit in generated output");
+  assert.ok(fieldDraftUnchangedSrc && commitSrc, "expected to find fieldDraftUnchanged and commitInlineEdit in generated output");
 
   let capturedError: string | undefined;
   let updateCalled = false;
@@ -24419,7 +24424,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
     // from cellDraft ("") above so this test's own required-field check still
     // gets reached exactly as before.
     "records",
-    `${commitSrc}\nreturn commitInlineEdit;`,
+    `${fieldDraftUnchangedSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "name" },
     false,
@@ -24457,8 +24462,12 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDraftUnchangedSrc = entityViewJsx.match(/function fieldDraftUnchanged\(field, draft, stored\) \{[\s\S]*?\n\}\n/)?.[0];
   const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(invalidNumberFieldSrc && commitSrc, "expected to find invalidNumberField and commitInlineEdit in generated output");
+  assert.ok(
+    invalidNumberFieldSrc && fieldDraftUnchangedSrc && commitSrc,
+    "expected to find invalidNumberField, fieldDraftUnchanged and commitInlineEdit in generated output",
+  );
 
   let capturedError: string | undefined;
   let updateCalled = false;
@@ -24478,7 +24487,7 @@ test("the exported EntityView's generated inline cell editor refuses to commit a
     // cellDraft ("abc") above so this test's own invalidNumberField check
     // still gets reached exactly as before.
     "records",
-    `${invalidNumberFieldSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
+    `${invalidNumberFieldSrc}\n${fieldDraftUnchangedSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "amount" },
     false,
@@ -24519,8 +24528,12 @@ test("the exported EntityView's generated inline cell editor sends no update at 
   const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
 
   const invalidNumberFieldSrc = entityViewJsx.match(/function invalidNumberField\(field, value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDraftUnchangedSrc = entityViewJsx.match(/function fieldDraftUnchanged\(field, draft, stored\) \{[\s\S]*?\n\}\n/)?.[0];
   const commitSrc = entityViewJsx.match(/async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
-  assert.ok(invalidNumberFieldSrc && commitSrc, "expected to find invalidNumberField and commitInlineEdit in generated output");
+  assert.ok(
+    invalidNumberFieldSrc && fieldDraftUnchangedSrc && commitSrc,
+    "expected to find invalidNumberField, fieldDraftUnchanged and commitInlineEdit in generated output",
+  );
 
   let updateCalled = false;
   let refreshCalled = false;
@@ -24537,7 +24550,7 @@ test("the exported EntityView's generated inline cell editor sends no update at 
     "setError",
     "setMoveErrorId",
     "records",
-    `${invalidNumberFieldSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
+    `${invalidNumberFieldSrc}\n${fieldDraftUnchangedSrc}\n${commitSrc}\nreturn commitInlineEdit;`,
   )(
     { recordId: 1, field: "status" },
     false,

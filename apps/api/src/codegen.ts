@@ -6176,6 +6176,31 @@ function invalidNumberField(field, value) {
   return !Number.isFinite(Number(trimmed));
 }
 
+// Round 2265: mirrors the live preview's own EntityPanel.tsx fix -- a
+// "number" field's own FieldInput branch always hands its onChange a raw
+// STRING (round 980 removed this component's eager Number(value)
+// coercion there, so typing a leading "-"/"." as the first character of
+// a negative/fractional value doesn't get mangled mid-keystroke), but
+// the record's own stored value for that field is a real number. Every
+// draft-vs-stored comparison below used plain strict ===/!== with no
+// type normalization, so re-typing a number field back to its own exact
+// original value still read as "changed" purely because one side was
+// now a string -- a false beforeunload warning, plus a real, unnecessary
+// PATCH that updateRecord (repository.ts) unconditionally stamps with a
+// fresh updatedAt/updatedByUserId, a bogus audit-trail entry for an edit
+// that never actually changed anything. The draft.trim() !== "" guard
+// matters: Number("") is 0, so without it, clearing a number field that
+// already held 0 would be misread as "unchanged" and silently skip the
+// real clearing PATCH.
+function fieldDraftUnchanged(field, draft, stored) {
+  if (draft === stored) return true;
+  if (field && field.type === "number" && typeof draft === "string" && typeof stored === "number" && draft.trim() !== "") {
+    const parsed = Number(draft);
+    return Number.isFinite(parsed) && parsed === stored;
+  }
+  return false;
+}
+
 // Round 1167: mirrors the live preview's own EntityPanel.tsx fix -- a
 // record can carry a legacy enum value no longer in field.enumValues
 // (e.g. after a later refine narrowed the field's own options).
@@ -6703,7 +6728,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // path already reset to -- for create mode, rather than inventing a
   // third comparison.
   const formIsDirty = editingId != null
-    ? entity.fields.some((f) => form[f.name] !== editingOriginalRef.current?.[f.name])
+    ? entity.fields.some((f) => !fieldDraftUnchanged(f, form[f.name], editingOriginalRef.current?.[f.name]))
     : entity.fields.some((f) => form[f.name] !== emptyForm(entity)[f.name]);
   useEffect(() => {
     if (!formIsDirty) return;
@@ -7044,7 +7069,13 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
   // still equal to the stored value startInlineEdit seeded it with)
   // correctly does not warn.
   useEffect(() => {
-    const cellEditIsDirty = editingCell != null && cellDraft !== records.find((r) => r.id === editingCell.recordId)?.[editingCell.field];
+    const cellEditIsDirty =
+      editingCell != null &&
+      !fieldDraftUnchanged(
+        entity.fields.find((f) => f.name === editingCell.field),
+        cellDraft,
+        records.find((r) => r.id === editingCell.recordId)?.[editingCell.field],
+      );
     if (!cellEditIsDirty) return;
     function handleBeforeUnload(e) {
       e.preventDefault();
@@ -8306,7 +8337,7 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
         const original = editingOriginalRef.current;
         const changedOnly = {};
         for (const f of entity.fields) {
-          if (!original || form[f.name] !== original[f.name]) {
+          if (!original || !fieldDraftUnchanged(f, form[f.name], original[f.name])) {
             changedOnly[f.name] = form[f.name];
           }
         }
@@ -8898,20 +8929,22 @@ export function EntityView({ entity, highlightRecordId, onHighlightHandled, onJu
     if (writesInFlight) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    const fieldDef = entity.fields.find((f) => f.name === field);
     // Round 2077: nothing to commit at all if the draft is still exactly
     // the record's own currently-stored value -- see the live Forge AI
     // preview's EntityPanel.tsx handleSubmit's own identical doc comment.
     // A stale enum value left untouched would otherwise re-submit and get
     // rejected by coerceValue's enum check, turning a pure no-op into a
-    // false VALIDATION_ERROR.
-    if (value === records.find((r) => r.id === recordId)?.[field]) {
+    // false VALIDATION_ERROR. Round 2265: uses fieldDraftUnchanged (see
+    // its own doc comment above) instead of plain === -- mirrors the live
+    // preview's own identical fix.
+    if (fieldDraftUnchanged(fieldDef, value, records.find((r) => r.id === recordId)?.[field])) {
       suppressCellBlurCommitRef.current = true;
       setEditingCell(null);
       return;
     }
     // Mirrors handleBulkUpdate's own identical check above -- without it,
     // clearing a required cell and committing fires a doomed PATCH.
-    const fieldDef = entity.fields.find((f) => f.name === field);
     // Round 939: trims before comparing -- mirrors handleBulkUpdate's own
     // identical fix above.
     if (fieldDef?.required && String(value ?? "").trim() === "") {

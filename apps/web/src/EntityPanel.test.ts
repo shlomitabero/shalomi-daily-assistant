@@ -2694,6 +2694,38 @@ test("EntityPanel's own invalidNumberField flags a hex/octal/binary-notation str
 });
 
 /**
+ * Round 2265: fieldDraftUnchanged's own unit coverage. A "number" field's
+ * own FieldInput branch always hands its onChange a raw string, but the
+ * stored value is a real JS number -- every draft-vs-stored comparison in
+ * this file (cellEditIsDirty, formIsDirty, handleSubmit's changedOnly,
+ * commitInlineEdit's no-op guard) relies on this one helper to treat a
+ * re-typed-but-numerically-identical string as unchanged. Also confirms
+ * the one deliberate exception: "" must never be treated as unchanged
+ * relative to a stored 0 -- Number("") is 0, so without that guard,
+ * clearing a number field that already held 0 (to genuinely blank it)
+ * would be silently misread as a no-op.
+ */
+test("EntityPanel's own fieldDraftUnchanged treats a re-typed number string as unchanged only when it's numerically identical, and never treats an empty string as unchanged", () => {
+  const helperMatch = entityPanelSrc.match(/function fieldDraftUnchanged\(field: Field \| undefined, draft: unknown, stored: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  assert.ok(helperMatch, "expected to find fieldDraftUnchanged in EntityPanel.tsx");
+  const { code } = transformSync(helperMatch![0], { loader: "ts" });
+  const fieldDraftUnchanged = new Function(`${code}\nreturn fieldDraftUnchanged;`)();
+
+  const numberField = { type: "number" };
+  const textField = { type: "text" };
+
+  assert.equal(fieldDraftUnchanged(numberField, "150", 150), true, "a re-typed string numerically identical to the stored number must be unchanged");
+  assert.equal(fieldDraftUnchanged(numberField, "150.0", 150), true, "a numerically-equal but differently-formatted string must also be unchanged");
+  assert.equal(fieldDraftUnchanged(numberField, "1e2", 100), true, "scientific notation must still be recognized as numerically equal");
+  assert.equal(fieldDraftUnchanged(numberField, "151", 150), false, "a genuinely different number must be reported as changed");
+  assert.equal(fieldDraftUnchanged(numberField, "", 0), false, "an emptied field must NEVER be treated as unchanged relative to a stored 0 -- Number('') is 0, but clearing the field is a real change");
+  assert.equal(fieldDraftUnchanged(numberField, "abc", 150), false, "a non-numeric string must be reported as changed, not crash or silently pass");
+  assert.equal(fieldDraftUnchanged(numberField, 150, 150), true, "the exact same type/value (no onChange fired yet) must still short-circuit as unchanged");
+  assert.equal(fieldDraftUnchanged(textField, "150", 150), false, "the number-specific normalization must never apply to a non-number field, even with the same-looking values");
+  assert.equal(fieldDraftUnchanged(undefined, "150", 150), false, "with no field definition available, only a strict match counts as unchanged");
+});
+
+/**
  * New in this round: bulk delete/duplicate already existed, but there was
  * no way to change a single shared field's value across several selected
  * records at once (e.g. marking 15 selected orders "Shipped") without
@@ -17250,14 +17282,18 @@ test("EntityPanel's inline cell editor commits a real PATCH on Enter and updates
  */
 test("EntityPanel's inline cell editor suppresses a stale post-commit blur instead of sending a second real PATCH for the same value", async () => {
   const helperMatch = entityPanelSrc.match(/function invalidNumberField\(field: Field, value: unknown\): boolean \{[\s\S]*?\n\}\n/);
+  // Round 2265: commitInlineEdit's own no-op guard now calls
+  // fieldDraftUnchanged (see its own doc comment) -- must be in scope
+  // alongside it, same as invalidNumberField already is.
+  const unchangedMatch = entityPanelSrc.match(/function fieldDraftUnchanged\(field: Field \| undefined, draft: unknown, stored: unknown\): boolean \{[\s\S]*?\n\}\n/);
   const commitSrc = entityPanelSrc.match(/ {2}async function commitInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const cancelSrc = entityPanelSrc.match(/ {2}function cancelInlineEdit\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   const blurSrc = entityPanelSrc.match(/ {2}function handleCellBlur\(\) \{[\s\S]*?\n {2}\}\n/)?.[0];
   assert.ok(
-    helperMatch && commitSrc && cancelSrc && blurSrc,
-    "expected to find invalidNumberField/commitInlineEdit/cancelInlineEdit/handleCellBlur in EntityPanel.tsx",
+    helperMatch && unchangedMatch && commitSrc && cancelSrc && blurSrc,
+    "expected to find invalidNumberField/fieldDraftUnchanged/commitInlineEdit/cancelInlineEdit/handleCellBlur in EntityPanel.tsx",
   );
-  const { code } = transformSync(`${helperMatch![0]}\n${commitSrc}\n${cancelSrc}\n${blurSrc}`, { loader: "ts" });
+  const { code } = transformSync(`${helperMatch![0]}\n${unchangedMatch![0]}\n${commitSrc}\n${cancelSrc}\n${blurSrc}`, { loader: "ts" });
 
   const state = {
     editingCell: { recordId: 1, field: "name" } as { recordId: number; field: string } | null,
@@ -17527,6 +17563,62 @@ test("EntityPanel's inline cell editor sends no PATCH at all when a stale (no-lo
       assert.equal(store[0].status, "archived", "the mock server's own record must be untouched");
       assert.equal(document.querySelector("p.error"), null, "no error banner should be shown -- nothing was actually submitted, so there's nothing to reject");
       assert.equal(statusCell.querySelector("select"), null, "the cell must still close normally, same as any other untouched blur");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
+ * Round 2265: a "number" field's own FieldInput branch always hands its
+ * onChange a raw STRING (round 980's own fix, right above), but the
+ * record's own stored value for that field is a real number -- so
+ * commitInlineEdit's round-2077 no-op guard just above (plain `===`) never
+ * actually fired for a number field: re-typing a value back to the exact
+ * same number it already held (e.g. typing an extra digit then backspacing
+ * it away) still read as "changed" purely because one side was now a
+ * string, defeating this guard's own stated purpose for every number
+ * field. Also confirms the sibling beforeunload warning (cellEditIsDirty)
+ * agrees: no real change, no warning, even mid-edit.
+ */
+test("EntityPanel's inline cell editor sends no PATCH, and warns of no unsaved changes, when a number cell is retyped back to its exact original value", async () => {
+  await withJsdom(async () => {
+    const dealWithAmount: Entity = { ...DEAL_ENTITY, fields: [...DEAL_ENTITY.fields, { name: "amount", label: "Amount", type: "number", required: false }] };
+    const store: EntityRecord[] = [{ id: 1, name: "Acme Corp", status: "new", amount: 150 }];
+    const originalFetch = globalThis.fetch;
+    let patchCount = 0;
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") patchCount += 1;
+      return mockRecordsFetch(store)(input, init);
+    }) as typeof fetch;
+    try {
+      renderEntityPanel({ entity: dealWithAmount, allEntities: [dealWithAmount] });
+      await waitForCondition(() => document.querySelectorAll("table tbody tr").length === 1);
+
+      function dispatchBeforeUnload(): boolean {
+        const event = new window.Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      }
+
+      const amountCell = document.querySelectorAll("table tbody td")[3] as HTMLTableCellElement;
+      fireEvent.doubleClick(amountCell);
+      const input = amountCell.querySelector('input[type="text"]') as HTMLInputElement;
+      assert.equal(input.value, "150", "the number field's own value must render as its string form, unchanged");
+
+      // Types an extra digit, then backspaces it away -- back to the
+      // exact same number the cell already held, just as a string now.
+      fireEvent.change(input, { target: { value: "1500" } });
+      assert.equal(dispatchBeforeUnload(), true, "a genuinely different value must still warn mid-edit");
+      fireEvent.change(input, { target: { value: "150" } });
+      assert.equal(dispatchBeforeUnload(), false, "retyping back to the exact original number must NOT warn -- nothing has actually changed");
+
+      fireEvent.blur(input);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(patchCount, 0, "retyping a number field back to its own original value must never send a PATCH");
+      assert.equal(store[0].amount, 150, "the mock server's own record must be untouched");
+      assert.equal(amountCell.querySelector("input"), null, "the cell must still close normally, same as any other untouched blur");
     } finally {
       globalThis.fetch = originalFetch;
     }

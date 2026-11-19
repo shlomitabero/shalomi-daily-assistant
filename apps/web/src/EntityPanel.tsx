@@ -181,6 +181,40 @@ function invalidNumberField(field: Field, value: unknown): boolean {
 }
 
 /**
+ * Round 2265: a "number" field's own FieldInput branch always hands its
+ * onChange a raw STRING (round 980 deliberately removed this component's
+ * eager Number(value) coercion there, so typing a leading "-" or "." as
+ * the very first character of a negative/fractional value doesn't get
+ * mangled mid-keystroke) -- but the record's own stored value for that
+ * same field is a real JS number. Every one of this file's draft-vs-
+ * stored comparisons (cellEditIsDirty, formIsDirty, handleSubmit's own
+ * changedOnly diff, commitInlineEdit's round-2077 no-op guard) used plain
+ * strict ===/!== with no type normalization, so re-typing a number
+ * field's value back to the exact same number it already held (e.g.
+ * typing an extra digit then backspacing it away) still read as
+ * "changed" purely because one side is now a string and the other a
+ * number -- defeating round 2077's own stated intent ("leaving a value
+ * alone should never be treated as submitting an edit to it") for every
+ * number field specifically: a false beforeunload warning, PLUS a real,
+ * unnecessary PATCH that repository.ts's updateRecord then unconditionally
+ * stamps with a fresh updatedAt/updatedByUserId -- a bogus audit-trail
+ * entry for an edit that never actually changed anything.
+ *
+ * The `draft.trim() !== ""` guard matters: Number("") is 0, so without it,
+ * clearing a number field that already held 0 (to genuinely blank it out)
+ * would be misread as "unchanged" and silently skip the real clearing
+ * PATCH -- "" must never be treated as equal to any stored value here.
+ */
+function fieldDraftUnchanged(field: Field | undefined, draft: unknown, stored: unknown): boolean {
+  if (draft === stored) return true;
+  if (field?.type === "number" && typeof draft === "string" && typeof stored === "number" && draft.trim() !== "") {
+    const parsed = Number(draft);
+    return Number.isFinite(parsed) && parsed === stored;
+  }
+  return false;
+}
+
+/**
  * Round 1167: the same bug class invalidNumberField above already fixed
  * for a non-numeric typed value, for a different root cause: a record
  * can carry a legacy enum value no longer in field.enumValues (e.g. after
@@ -2076,7 +2110,7 @@ export function EntityPanel({
   // success path already reset to -- for create mode, rather than
   // inventing a third comparison.
   const formIsDirty = editingId != null
-    ? entity.fields.some((f) => form[f.name] !== editingOriginalRef.current?.[f.name])
+    ? entity.fields.some((f) => !fieldDraftUnchanged(f, form[f.name], editingOriginalRef.current?.[f.name]))
     : entity.fields.some((f) => form[f.name] !== emptyForm(entity)[f.name]);
   useBeforeUnloadWarning(formIsDirty);
   const [error, setError] = useState<string | null>(null);
@@ -2329,7 +2363,13 @@ export function EntityPanel({
   // stale closure) the same way commitInlineEdit itself does, so opening an
   // edit session with no change yet (cellDraft still equal to the stored
   // value startInlineEdit seeded it with) correctly does not warn.
-  const cellEditIsDirty = editingCell != null && cellDraft !== records.find((r) => r.id === editingCell.recordId)?.[editingCell.field];
+  const cellEditIsDirty =
+    editingCell != null &&
+    !fieldDraftUnchanged(
+      entity.fields.find((f) => f.name === editingCell.field),
+      cellDraft,
+      records.find((r) => r.id === editingCell.recordId)?.[editingCell.field],
+    );
   useBeforeUnloadWarning(cellEditIsDirty);
   // Set right before an Escape-cancel clears editingCell, so the input's own
   // blur (which fires either immediately or once React unmounts it) knows to
@@ -4274,7 +4314,7 @@ export function EntityPanel({
         const original = editingOriginalRef.current;
         const changedOnly: Record<string, unknown> = {};
         for (const f of entity.fields) {
-          if (!original || form[f.name] !== original[f.name]) {
+          if (!original || !fieldDraftUnchanged(f, form[f.name], original[f.name])) {
             changedOnly[f.name] = form[f.name];
           }
         }
@@ -6002,6 +6042,7 @@ export function EntityPanel({
     if (writesInFlight) return;
     const { recordId, field } = editingCell;
     const value = cellDraft;
+    const fieldDef = entity.fields.find((f) => f.name === field);
     // Round 2077: nothing to commit at all if the draft is still exactly
     // the record's own currently-stored value for this field -- the same
     // comparison cellEditIsDirty (above) already uses for the beforeunload
@@ -6020,8 +6061,14 @@ export function EntityPanel({
     // checks below, is also strictly safer for THEIR already-invalid-but-
     // untouched-by-this-edit stored values (e.g. a field made required
     // after some rows were already saved blank): leaving a value alone
-    // should never be treated as submitting an edit to it.
-    if (value === records.find((r) => r.id === recordId)?.[field]) {
+    // should never be treated as submitting an edit to it. Round 2265:
+    // uses fieldDraftUnchanged (see its own doc comment) instead of plain
+    // === -- a "number" field's own FieldInput branch always hands back a
+    // string, so comparing it directly against the record's real stored
+    // number made this guard never actually fire for that field type: it
+    // always looked "changed" even when re-typed back to the identical
+    // value, defeating this exact guard's own stated purpose.
+    if (fieldDraftUnchanged(fieldDef, value, records.find((r) => r.id === recordId)?.[field])) {
       suppressCellBlurCommitRef.current = true;
       setEditingCell(null);
       return;
@@ -6035,7 +6082,6 @@ export function EntityPanel({
     // surfaced only as the generic VALIDATION_ERROR string -- actively
     // misleading here, since it says "check the form" while inline cell
     // editing never shows a form, just one table cell.
-    const fieldDef = entity.fields.find((f) => f.name === field);
     // Round 939: mirrors the single-record form's own missingField fix --
     // trims before comparing, so a whitespace-only value doesn't slip
     // past this friendly check into the generic server-side rejection.
