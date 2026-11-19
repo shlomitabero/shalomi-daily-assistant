@@ -847,7 +847,7 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     "failedShowAllEntitiesRef",
     "setResults",
     "results",
-    "selectedIndex",
+    "selectedIndexRef",
     "setSelectedIndex",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
@@ -881,8 +881,10 @@ test("GlobalSearchPanel's handleShowAll re-sorts results after a group's totalMa
     // Round 1033: this test doesn't exercise keyboard selection -- a
     // harmless no-op, same as every other newly-required parameter this
     // routine's own "signature-migration causes expected test breakage"
-    // pattern adds to an existing extraction test.
-    null,
+    // pattern adds to an existing extraction test. Round 2262: now a ref
+    // object (handleShowAll reads selectedIndexRef.current), not a plain
+    // value.
+    { current: null },
     () => {},
     () => {},
     entityLabelOccurrences,
@@ -936,7 +938,10 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     { entityName: "Deal", entityLabel: "Deal", totalMatches: 3, sample: [] },
   ];
   // "Customer" is keyboard-highlighted at its current slot, index 1.
-  let selectedIndex: number | null = 1;
+  // Round 2262: selectedIndex is now read via a ref (handleShowAll's own
+  // doc comment on why), so this is the ref itself, not a plain variable.
+  const selectedIndexRef = { current: 1 as number | null };
+  let selectedIndexAfterShowAll: number | null = null;
   const searchRequestId = { current: 0 };
 
   const fn = new Function(
@@ -955,7 +960,7 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     "failedShowAllEntitiesRef",
     "setResults",
     "results",
-    "selectedIndex",
+    "selectedIndexRef",
     "setSelectedIndex",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
@@ -986,9 +991,9 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     // free variable, since it no longer derives the sorted array from the
     // setResults updater's own `prev`) -- see its own doc comment on why.
     results,
-    selectedIndex,
+    selectedIndexRef,
     (next: number | null) => {
-      selectedIndex = next;
+      selectedIndexAfterShowAll = next;
     },
     () => {},
     entityLabelOccurrences,
@@ -1003,7 +1008,7 @@ test("GlobalSearchPanel's handleShowAll keeps a keyboard-highlighted group ident
     "sanity check: Deal's fresh count (10) must move it above Customer (6) but still below Order (20)",
   );
   assert.equal(
-    selectedIndex,
+    selectedIndexAfterShowAll,
     2,
     "the highlight must follow Customer to its new slot (2), not stay at its old slot (1), which the resort has since handed to Deal",
   );
@@ -1072,7 +1077,7 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
     "failedShowAllEntitiesRef",
     "setResults",
     "results",
-    "selectedIndex",
+    "selectedIndexRef",
     "setSelectedIndex",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
@@ -1103,7 +1108,7 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
       results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
     },
     results,
-    null,
+    { current: null },
     () => {},
     () => {},
     entityLabelOccurrences,
@@ -1127,6 +1132,136 @@ test("GlobalSearchPanel's handleShowAll never loses one group's own totalMatches
   assert.equal(byName.get("Customer"), 36, "Customer's own patch must survive Order's later concurrent write, not get silently reverted back to 5");
   assert.equal(byName.get("Order"), 20, "Order's own patch must also be applied correctly");
   assert.equal(results.length, 2, "neither group must be duplicated or dropped");
+});
+
+/**
+ * Regression test for round 2262: selectedEntityName (used to re-point
+ * selectedIndex at the SAME entity after handleShowAll's own totalMatches
+ * patch resorts `results`) used to be resolved from the plain
+ * `selectedIndex` state via closure -- fixed at whatever value was
+ * current when THIS SPECIFIC async call started, and never updated for
+ * the rest of that call's lifetime even though the function keeps
+ * running after its own `await listRecords`. Ordinary keyboard
+ * navigation while that fetch is still in flight updates the REAL
+ * selectedIndex state through a completely different call path
+ * (handleInputKeyDown) that the already-running closure had no
+ * visibility into -- confirmed empirically against the real rendered
+ * component: clicking "Deal"'s own "Show all" while "Customer" (a
+ * DIFFERENT group) was highlighted, then arrow-keying to "Deal" itself
+ * before its fetch resolved, silently snapped the highlight back to
+ * "Customer" the instant the fetch completed, discarding the user's own
+ * later navigation. Fixed by reading a ref (selectedIndexRef, kept
+ * current by its own effect) instead of the closure variable. This test
+ * simulates the keyboard navigation by mutating selectedIndexRef.current
+ * directly between the fetch starting and resolving -- exactly what the
+ * real component's own effect would have already done to it by the time
+ * the fetch resolves.
+ */
+test("GlobalSearchPanel's handleShowAll re-points selectedIndex at whatever is LIVE-selected when its own fetch resolves, not whatever was selected when it was first called", async () => {
+  const helperMatch = globalSearchPanelSrc.match(
+    /function withRelationToAliases\(entities: Entity\[\], recordsByEntity: RelatedRecordsByEntity\): RelatedRecordsByEntity \{[\s\S]*?\n\}\n/,
+  );
+  assert.ok(helperMatch, "expected to find withRelationToAliases in GlobalSearchPanel.tsx");
+  const handlerMatch = globalSearchPanelSrc.match(/ {2}async function handleShowAll\(entityName: string\) \{[\s\S]*?\n {2}\}\n/);
+  assert.ok(handlerMatch, "expected to find handleShowAll in GlobalSearchPanel.tsx");
+  const { code } = transformSync(`${helperMatch![0]}\n${handlerMatch![0]}`, { loader: "ts" });
+
+  const entityOrder = { name: "Order", label: "Order", fields: [] };
+  const entityCustomer = { name: "Customer", label: "Customer", fields: [] };
+  const entityDeal = { name: "Deal", label: "Deal", fields: [] };
+
+  function fakeSearchEntityRecords(entity: { name: string; label: string }, records: unknown[]) {
+    return { entityName: entity.name, entityLabel: entity.label, totalMatches: records.length, sample: records };
+  }
+
+  let results: { entityName: string; entityLabel: string; totalMatches: number; sample: unknown[] }[] = [
+    { entityName: "Order", entityLabel: "Order", totalMatches: 20, sample: [] },
+    { entityName: "Customer", entityLabel: "Customer", totalMatches: 8, sample: [] },
+    { entityName: "Deal", entityLabel: "Deal", totalMatches: 7, sample: [] },
+  ];
+  // "Customer" is keyboard-highlighted at its current slot, index 1, at
+  // the moment "Show all" is clicked on a DIFFERENT group ("Deal").
+  const selectedIndexRef = { current: 1 as number | null };
+  let selectedIndexAfterShowAll: number | null = "unset" as unknown as number | null;
+  const searchRequestId = { current: 0 };
+
+  let resolveListRecords: (() => void) | null = null;
+  const fn = new Function(
+    "entities",
+    "projectId",
+    "listRecords",
+    "searchEntityRecords",
+    "highlightQuery",
+    "lastRecordsByEntityRef",
+    "setShowAllLoading",
+    "setExpandedSamples",
+    "searchRequestId",
+    "lang",
+    "setError",
+    "errorFromShowAllEntityRef",
+    "failedShowAllEntitiesRef",
+    "setResults",
+    "results",
+    "selectedIndexRef",
+    "setSelectedIndex",
+    "setTruncatedEntityNames",
+    "entityLabelOccurrences",
+    "entityDisplayLabel",
+    `${code}\nreturn handleShowAll;`,
+  )(
+    [entityOrder, entityCustomer, entityDeal],
+    "proj1",
+    async () =>
+      new Promise((resolve) => {
+        resolveListRecords = () =>
+          resolve({ records: new Array(10).fill(0).map((_, i) => ({ id: i, name: `deal-${i}` })) });
+      }),
+    fakeSearchEntityRecords,
+    "smith",
+    { current: {} },
+    () => {},
+    () => {},
+    searchRequestId,
+    "en",
+    () => {},
+    { current: null },
+    { current: new Map() },
+    (next: typeof results | ((prev: typeof results) => typeof results)) => {
+      results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
+    },
+    results,
+    selectedIndexRef,
+    (next: number | null) => {
+      selectedIndexAfterShowAll = next;
+    },
+    () => {},
+    entityLabelOccurrences,
+    entityDisplayLabel,
+  ) as (entityName: string) => Promise<void>;
+
+  const showAllPromise = fn("Deal");
+  await Promise.resolve(); // let "Show all" actually start and reach its held-open listRecords call
+
+  // Simulates the user arrow-keying from "Customer" to "Deal" WHILE
+  // "Deal"'s own "Show all" fetch is still in flight -- exactly what the
+  // real component's handleInputKeyDown -> setSelectedIndex -> this ref's
+  // own sync effect would have already produced by the time the fetch
+  // below resolves.
+  selectedIndexRef.current = 2;
+
+  resolveListRecords!();
+  await showAllPromise;
+
+  assert.deepEqual(
+    results.map((r) => r.entityName),
+    ["Order", "Deal", "Customer"],
+    "sanity check: Deal's fresh count (10) must move it above Customer (8) but still below Order (20)",
+  );
+  assert.equal(
+    selectedIndexAfterShowAll,
+    1,
+    "the highlight must follow Deal (whatever is LIVE-selected right now) to its new slot (1), not revert to Customer's new slot (2) just because Customer was selected back when this call started",
+  );
 });
 
 /**
@@ -1243,7 +1378,7 @@ test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set
     "failedShowAllEntitiesRef",
     "setResults",
     "results",
-    "selectedIndex",
+    "selectedIndexRef",
     "setSelectedIndex",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
@@ -1265,7 +1400,7 @@ test("GlobalSearchPanel's handleShowAll adds its own entity to the truncated set
     { current: new Map() },
     () => {},
     [],
-    null,
+    { current: null },
     () => {},
     (next: string[] | ((prev: string[]) => string[])) => {
       truncatedNames = typeof next === "function" ? (next as (prev: string[]) => string[])(truncatedNames) : next;
@@ -2768,7 +2903,7 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's successful ret
     "failedShowAllEntitiesRef",
     "setResults",
     "results",
-    "selectedIndex",
+    "selectedIndexRef",
     "setSelectedIndex",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
@@ -2798,7 +2933,7 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's successful ret
       results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
     },
     results,
-    null,
+    { current: null },
     () => {},
     () => {},
     entityLabelOccurrences,
@@ -2890,7 +3025,7 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's own NEW failur
     "failedShowAllEntitiesRef",
     "setResults",
     "results",
-    "selectedIndex",
+    "selectedIndexRef",
     "setSelectedIndex",
     "setTruncatedEntityNames",
     "entityLabelOccurrences",
@@ -2923,7 +3058,7 @@ test("GlobalSearchPanel's handleShowAll must not let one entity's own NEW failur
       results = typeof next === "function" ? (next as (prev: typeof results) => typeof results)(results) : next;
     },
     results,
-    null,
+    { current: null },
     () => {},
     () => {},
     entityLabelOccurrences,

@@ -159,6 +159,26 @@ export function GlobalSearchPanel({
   // text against results that were matched on the old query.
   const [highlightQuery, setHighlightQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  // Round 2262: handleShowAll re-resolves selectedIndex to the SAME
+  // entity after its totalMatches patch resorts `results` -- but it used
+  // to read the plain `selectedIndex` state via closure, which is fixed
+  // at whatever value was current when THIS SPECIFIC async call started
+  // (effectively "whatever was selected when the button was clicked")
+  // and never updates for the rest of that closure's lifetime, even
+  // though the function keeps running after its own `await`. Ordinary
+  // keyboard navigation (ArrowDown/ArrowUp) while that fetch is still in
+  // flight updates the REAL selectedIndex state through an entirely
+  // separate call path (handleInputKeyDown) that the already-running
+  // closure has no visibility into -- confirmed empirically: clicking a
+  // DIFFERENT group's "Show all", then arrow-keying to a third group
+  // before that fetch resolves, silently snapped the highlight back to
+  // the pre-click selection the instant the fetch completed, discarding
+  // the user's own later navigation. This ref mirrors the live value so
+  // handleShowAll can read whatever is ACTUALLY selected right now.
+  const selectedIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    selectedIndexRef.current = selectedIndex;
+  }, [selectedIndex]);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => getRecentSearches(projectId, userId));
   // A group's "and N more" text used to be a dead end -- the extra matches
   // were real (totalMatches said so) but nothing on screen could reach
@@ -507,8 +527,19 @@ export function GlobalSearchPanel({
         // the moment the updater itself runs (not "the next line" after
         // the outer setResults call returns), with nextResults already in
         // scope.
-        const selectedEntityName = selectedIndex !== null ? results[selectedIndex]?.entityName ?? null : null;
+        //
+        // Round 2262: selectedEntityName itself used to be resolved
+        // OUTSIDE the updater, from the plain `selectedIndex`/`results`
+        // closure variables -- stale the instant any keyboard navigation
+        // happened on the live component between this call's own
+        // `await listRecords` and this point. Resolved HERE instead,
+        // against `selectedIndexRef.current` (always current) and `prev`
+        // (the updater's own guaranteed-fresh snapshot), so it reflects
+        // whatever is ACTUALLY selected right now, not whatever was
+        // selected when this specific "Show all" call started.
         setResults((prev) => {
+          const liveSelectedIndex = selectedIndexRef.current;
+          const selectedEntityName = liveSelectedIndex !== null ? prev[liveSelectedIndex]?.entityName ?? null : null;
           const nextResults = prev
             .map((r) => (r.entityName === entityName ? { ...r, totalMatches: full.sample.length } : r))
             .sort((a, b) => b.totalMatches - a.totalMatches);
