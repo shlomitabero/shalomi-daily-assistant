@@ -2236,16 +2236,27 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // "Stripe" on nothing but the word "nonprofit" itself. Removed;
       // every existing test that matched Donation via "nonprofit" also
       // independently contains "donor(s)"/"donation(s)"/"fundraising
-      // campaign", so none regress. The Hebrew "עמותה"/"עמותות" below is
-      // deliberately left untouched this round: round 576's own
-      // dedicated regression test requires that exact bare-word match
-      // (no donor/תרומה wording) for Hebrew, so removing it here would
-      // directly break established, intentional precedent -- whether
-      // that same precedent should also be revisited is an open
-      // question for a future round, not resolved by this one.
+      // campaign", so none regress.
+      //
+      // Round 2306: this round resolves the open question round 2297
+      // left -- the Hebrew "עמותה"/"עמותות" counterpart to English
+      // "nonprofit" had the identical bare-overly-broad-word collision.
+      // Confirmed live: "אפליקציה לניהול מתנדבים בעמותה ללא כל גיוס
+      // כספים." (volunteer management, zero fundraising) and "העמותה
+      // שלנו מפעילה תוכנית חינמית לשיעורי עזר לילדים אחרי הלימודים."
+      // (a free after-school tutoring program) both matched Donation
+      // and wrongly recommended Stripe on nothing but the word "עמותה"
+      // itself -- the same failure mode round 2297 fixed for English.
+      // Removed, resolving the asymmetry round 2297 deliberately left
+      // open. This DOES overturn round 576's own precedent (its test
+      // required this exact bare-word match with no donor/תרומה
+      // wording) -- that test is revised in this same round to require
+      // genuine donation wording alongside עמותה/עמותות instead of
+      // relying on the bare word alone, preserving its original
+      // plural-inflection coverage via the bidirectional regex below.
       /\bdonat(?:e|es|ed|ing)\b/,
       /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
-      "עמותה", "עמותות", "תרם", "תרמה", "תרמו", "לתרום",
+      "תרם", "תרמה", "תרמו", "לתרום",
     ],
     labelHe: "תרומות",
     descriptionHe: "תרומה שנתרמה על ידי תורם.",

@@ -2836,7 +2836,12 @@ test("Donation/Shipment keywords avoid the substring collisions their obvious ph
 test("JobApplicant's 'גיוס' keyword doesn't spuriously match the fundraising phrase 'גיוס כספים'/'גיוס תרומות'", async () => {
   const provider = new HeuristicSpecProvider();
 
-  const fundraising = await provider.generate("אפליקציה לניהול גיוס כספים לעמותה שלנו, עם קמפיינים ותורמים.");
+  // Round 2306: "עמותה" alone used to make this match Donation; now that
+  // the bare Hebrew keyword is removed (see domainEntities.ts's own
+  // round-2306 comment), "תרומות" is added so the sentence still
+  // matches Donation via genuine donation wording, independent of the
+  // "גיוס כספים" phrase this test is actually isolating.
+  const fundraising = await provider.generate("אפליקציה לניהול תרומות וגיוס כספים לעמותה שלנו, עם קמפיינים ותורמים.");
   assert.ok(fundraising.entities.some((e) => e.name === "Donation"), "'גיוס כספים' must still match Donation");
   assert.ok(
     !fundraising.entities.some((e) => e.name === "JobApplicant"),
@@ -5789,25 +5794,54 @@ test("Event's 'חתונה'/'חתונות' keywords don't spuriously match 'תח�
 });
 
 /**
- * Regression test for round 576's finding: Donation's Hebrew keyword
- * "עמותה" (nonprofit) had no plural entry. Unlike most of this file's
- * Hebrew nouns, the plural "עמותות" replaces the final ה with ות rather
- * than appending a suffix, so it is not a substring of "עמותה" the way
- * "תרומה"/"תרומות" already are -- a description using only the plural
- * matched no domain entity at all (it fell back to the generic Item
- * entity), even though it is unambiguously describing nonprofits.
+ * Regression test for round 576's finding, REVISED in round 2306:
+ * Donation's Hebrew keyword "עמותה" (nonprofit) originally had no plural
+ * entry -- "עמותות" replaces the final ה with ות rather than appending a
+ * suffix, so it wasn't a substring of "עמותה" the way "תרומה"/"תרומות"
+ * already are, and a plural-only phrasing matched no entity at all.
+ *
+ * Round 2306 then found that the bare "עמותה"/"עמותות" match this test
+ * originally required (with NO donor/תרומה wording) was itself the same
+ * bare-overly-broad-word collision round 2297 fixed for English
+ * "nonprofit" -- see domainEntities.ts's own round-2306 comment and the
+ * new false-positive test right below this one. This test is revised to
+ * require genuine donation wording alongside עמותה/עמותות (matching via
+ * the bidirectional regex instead of the now-removed bare keyword),
+ * preserving its original plural-inflection coverage.
  */
-test("Donation's 'עמותה' keyword also matches its plural 'עמותות', which isn't a substring of the singular", async () => {
+test("Donation's 'עמותה'/'עמותות' keywords, combined with genuine donation wording, still cover both singular and plural", async () => {
   const provider = new HeuristicSpecProvider();
 
-  const pluralOnly = await provider.generate("מערכת לניהול עמותות בארץ, כולל מעקב סטטוס.");
+  const pluralOnly = await provider.generate("מערכת לניהול תרומות לעמותות בארץ, כולל מעקב סטטוס.");
   assert.ok(
     pluralOnly.entities.some((e) => e.name === "Donation"),
-    "'עמותות' (nonprofits, plural) alone must match Donation",
+    "'עמותות' (nonprofits, plural) with genuine donation wording must match Donation",
   );
 
-  const singular = await provider.generate("אפליקציה לניהול עמותה אחת, כולל מעקב סטטוס.");
-  assert.ok(singular.entities.some((e) => e.name === "Donation"), "'עמותה' (singular) must still match Donation");
+  const singular = await provider.generate("אפליקציה לניהול תרומה לעמותה אחת, כולל מעקב סטטוס.");
+  assert.ok(singular.entities.some((e) => e.name === "Donation"), "'עמותה' (singular) with genuine donation wording must still match Donation");
+});
+
+/**
+ * Round 2306: resolves the open question round 2297 explicitly left --
+ * bare Hebrew "עמותה"/"עמותות", with no donor/donation/fundraising
+ * wording anywhere in the description, fabricated a Donation entity and
+ * wrongly recommended Stripe, the identical failure mode round 2297
+ * fixed for English "nonprofit". The ninth confirmed instance of the
+ * bare-overly-broad-keyword shape rounds 2297/2300-2305 fixed.
+ */
+test("bare Hebrew 'עמותה'/'עמותות' (no donor/donation/fundraising wording) does not spuriously match Donation or recommend Stripe", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const volunteers = await provider.generate("אפליקציה לניהול מתנדבים בעמותה ללא כל גיוס כספים.");
+  assert.ok(!volunteers.entities.some((e) => e.name === "Donation"), "bare 'עמותה' alone must not spuriously match Donation");
+
+  const tutoring = await provider.generate("העמותה שלנו מפעילה תוכנית חינמית לשיעורי עזר לילדים אחרי הלימודים.");
+  assert.ok(!tutoring.entities.some((e) => e.name === "Donation"), "bare 'עמותה' alone must not spuriously match Donation");
+
+  // Non-regression: genuine donation descriptions must still match.
+  const realDonation = await provider.generate("עמותה שמגייסת תרומות מתורמים לצורך מימון פעילותה.");
+  assert.ok(realDonation.entities.some((e) => e.name === "Donation"), "a genuine donation description must still match Donation");
 });
 
 /**
