@@ -280,7 +280,35 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       /\bappointments?\b/, /\bbookings?\b/, /\breservations?\b/,
       "hair salon", "beauty salon", "nail salon", "barbershop", "barber shop", "hairdresser", "hair stylist",
       /\bspa\b/, "massage", "massage therapy",
-      "תורים", "פגישה", "פגישות", "פגישת", "מספרה", "מספרת", "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
+      "תורים", "פגישה", "פגישות", "פגישת", "מספרה",
+      // Round 2339: the round 2288 construct-state fix above added bare
+      // "מספרת" completely unguarded -- unlike almost every other Hebrew
+      // keyword in this file. "מספרת" is also the ordinary Hebrew
+      // feminine-singular present-tense verb "tells/narrates" (Piel
+      // binyan of the root ס-פ-ר, e.g. "היא מספרת סיפור" = "she tells a
+      // story"), with zero connection to a hair salon/barbershop.
+      // Confirmed live: "אפליקציה לילדים שבה דמות מספרת סיפור לפני
+      // השינה כל ערב" (a kids' app where a character tells a bedtime
+      // story every night) fabricated Appointment as its ONLY entity for
+      // a pure storytelling app with zero scheduling content, and
+      // "...המורה מספרת סיפורים קצרים לתלמידים..." (the teacher tells
+      // short stories to students) bolted a bogus Appointment onto an
+      // otherwise-correct Student/Course spec.
+      //
+      // Hebrew has no \b, so this excludes the specific narrative-verb
+      // direct objects the "tells" sense takes immediately after it
+      // (same leaky-denylist convention as this file's other idiom
+      // guards, e.g. round 2338's לקוח guard) -- confirmed empirically
+      // against both existing round-2288 test fixtures ("מספרת גברים"/
+      // "מספרת נשים") that this doesn't regress genuine salon-naming
+      // usage, since neither "גברים" (men) nor "נשים" (women) is a
+      // narrative-object noun. Deliberately a leaky denylist, not an
+      // exhaustive fix: a narrative object outside this curated list
+      // (e.g. "מספרת שיר"/tells a poem, "מספרת חידה"/tells a riddle)
+      // would still slip through, an accepted trade-off for the
+      // confirmed-live common cases this closes.
+      /מספרת(?!\s*(?:סיפור|סיפורים|סיפורי|בדיחה|בדיחות|חוויה|חוויות|אגדה|אגדות|זכרון|זכרונות|זיכרון|זיכרונות|עלילה|עלילות|על|לי|לו|לה|להם|לנו|איך|כיצד|מה|משהו))/,
+      "סלון יופי", /ספא(?!רי|ם)/, "עיסוי",
     ],
     labelHe: "תורים",
     descriptionHe: "פגישה מתוזמנת עם לקוח.",

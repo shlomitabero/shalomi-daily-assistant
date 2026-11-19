@@ -7567,3 +7567,26 @@ test("Customer's bare 'לקוח'/'לקוחה' keywords don't spuriously match th
   const feminineCustomer = await provider.generate("הלקוחה שלנו מרוצה מהשירות.");
   assert.ok(feminineCustomer.entities.some((e) => e.name === "Customer"), "'הלקוחה שלנו' (our fem. customer) must still match Customer");
 });
+
+test("Appointment's bare 'מספרת' keyword doesn't spuriously match the unrelated 'tells/narrates' verb", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const bedtimeStory = await provider.generate("אפליקציה לילדים שבה דמות מספרת סיפור לפני השינה כל ערב.");
+  assert.ok(!bedtimeStory.entities.some((e) => e.name === "Appointment"), "'דמות מספרת סיפור' (a character tells a story) must not spuriously match Appointment");
+
+  const teacherTellsStories = await provider.generate("פלטפורמה חינוכית שבה המורה מספרת סיפורים קצרים לתלמידים בכיתה.");
+  assert.ok(!teacherTellsStories.entities.some((e) => e.name === "Appointment"), "'המורה מספרת סיפורים' (the teacher tells stories) must not spuriously match Appointment");
+
+  const tellsAboutExperience = await provider.generate("אתר שבו כל משתמשת מספרת על החוויה שלה עם המוצרים שלנו.");
+  assert.ok(!tellsAboutExperience.entities.some((e) => e.name === "Appointment"), "'מספרת על החוויה' (tells about the experience) must not spuriously match Appointment");
+
+  const tellsAJoke = await provider.generate("הסבתא מספרת בדיחה בכל מסיבה");
+  assert.ok(!tellsAJoke.entities.some((e) => e.name === "Appointment"), "'מספרת בדיחה' (tells a joke) must not spuriously match Appointment");
+
+  // Non-regression: genuine salon-naming usage (round 2288's own fixtures) must still match.
+  const mensBarbershop = await provider.generate("אפליקציה למספרת גברים לניהול לוח הזמנים והלקוחות שלנו");
+  assert.ok(mensBarbershop.entities.some((e) => e.name === "Appointment"), "'מספרת גברים' (men's barbershop) must still match Appointment");
+
+  const womensSalon = await provider.generate("מערכת לניהול לקוחות במספרת נשים בעיר");
+  assert.ok(womensSalon.entities.some((e) => e.name === "Appointment"), "'מספרת נשים' (women's hair salon) must still match Appointment");
+});
