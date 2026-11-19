@@ -2991,7 +2991,22 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // lookaround on its own -- the same construct-state gap shape
       // found on other entities' keywords (rounds 912/2287/2288/2289/
       // 2330/2358 etc.), just never applied to this cue list.
-      /תרומ(?:ה|ות)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות))/,
+      //
+      // Round 2363: the identical gap was never fixed on the SUBJECT noun
+      // itself. "תרומ(?:ה|ות)" only ever covered the absolute singular
+      // ("תרומה") and absolute plural ("תרומות"), never the construct-
+      // state singular "תרומת" (e.g. "תרומת דם" = "blood donation",
+      // "תרומת איברים" = "organ donation", "תרומת כספים" = "money
+      // donation" -- all extremely common, arguably more natural than
+      // the absolute "תרומה של דם" phrasing). Since "תרומת" ends in ת,
+      // not ה, it is not a substring of either absolute form, so neither
+      // branch of the bidirectional lookaround ever fired, and the whole
+      // Donation domain was lost. The cue-gating itself (round 2111's
+      // reason this is a lookaround at all, not a bare literal) is
+      // unaffected: a construct-state "contribution" sentence with no
+      // donor/nonprofit/blood/organ cue word still correctly excludes
+      // Donation.
+      /תרומ(?:ה|ות|ת)(?=[\s\S]*(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים))|(?:תורם|תורמים|עמותה|עמותות|עמותת|צדקה|(?<![א-ת])דם(?![א-ת])|איברים)(?=[\s\S]*תרומ(?:ה|ות|ת))/,
       // Round 2322: round 2293's bare verb forms "תרם"/"תרמה"/"תרמו"/
       // "לתרום" only checked that they weren't a substring of unrelated
       // NOUNS (תרמיל "backpack", תרמית "fraud") -- it never checked the

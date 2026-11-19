@@ -7594,6 +7594,32 @@ test("round 2359: Donation's 'עמותה'/'עמותות' cue-word alternation (r
   assert.ok(!ordinaryContribution.entities.some((e) => e.name === "Donation"), "'תרם' (ordinary 'contributed to') with construct-state cue as its object must NOT spuriously match Donation");
 });
 
+test("round 2363: Donation's own subject noun 'תרומ(?:ה|ות)' was missing the construct-state singular 'תרומת' ('donation of ...'), so a genuine donation description using only that form lost the Donation entity entirely", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const bloodDonation = await provider.generate("אפליקציה לניהול תרומת דם במרכזים רפואיים.");
+  assert.ok(bloodDonation.entities.some((e) => e.name === "Donation"), "'תרומת דם' (construct-state blood donation) must match Donation");
+
+  const organDonation = await provider.generate("אפליקציה לניהול תרומת איברים בין בתי חולים.");
+  assert.ok(organDonation.entities.some((e) => e.name === "Donation"), "'תרומת איברים' (construct-state organ donation) must match Donation");
+
+  const moneyDonation = await provider.generate("אפליקציה למעקב אחרי תרומת כספים לעמותה שלנו.");
+  assert.ok(moneyDonation.entities.some((e) => e.name === "Donation"), "'תרומת כספים' (construct-state money donation) with 'עמותה' cue must match Donation");
+
+  // Non-regression: the already-working absolute forms must still work.
+  const absoluteSingular = await provider.generate("אפליקציה לניהול תרומה של דם במרכזים רפואיים.");
+  assert.ok(absoluteSingular.entities.some((e) => e.name === "Donation"), "absolute singular 'תרומה של דם' must still match Donation");
+
+  const absolutePlural = await provider.generate("אפליקציה לניהול תרומות דם במרכזים רפואיים.");
+  assert.ok(absolutePlural.entities.some((e) => e.name === "Donation"), "absolute plural 'תרומות דם' must still match Donation");
+
+  // Non-regression: round 2111's own homograph-exclusion guard must NOT be reopened --
+  // the construct-state form must still only ever unlock Donation alongside a genuine
+  // donor/nonprofit/blood/organ cue, never match the unrelated "contribution" sense alone.
+  const companyContribution = await provider.generate("תרומת החברה החדשה לשיפור חווית המשתמש הייתה משמעותית.");
+  assert.ok(!companyContribution.entities.some((e) => e.name === "Donation"), "construct-state 'תרומת' with the unrelated 'contribution' sense and no donor/nonprofit/blood/organ cue must NOT spuriously match Donation");
+});
+
 /**
  * Round 913's finding: Ticket's bare "תמיכה"/"תמיכת" keywords had the
  * same idiom-co-occurrence shape rounds 911/912 just fixed for Deal/
