@@ -4276,7 +4276,15 @@ export const ROLE_RULES: Record<string, RoleRule> = {
   // made optional alongside the existing "ת", matching all three
   // inflections while still matching a real standalone "מנהל"/"מנהלת"/
   // "מנהלי" (e.g. "מנהלי חנות", real store managers, plural).
-  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!י?ת?\s*מערכת)/, "ניהול"], labelHe: "מנהל/ת" },
+  // Round 2361: the `י?ת?` alternation above can produce only "", "י",
+  // "ת", or "ית" -- it can never produce "ות" (no "ו" anywhere in the
+  // pattern), so the fourth, equally common inflection "מנהלות מערכת"
+  // ("female system administrators", feminine plural) was never covered
+  // and still slipped through as a spurious Manager match. Replaced with
+  // an explicit `(?:י|ת|ות)?` alternation covering all four suffix shapes,
+  // while still matching a real standalone "מנהלות" (e.g. "מנהלות חנות",
+  // real store managers, feminine plural).
+  Manager: { keywords: ["manager", /\bmanagement\b/, /מנהל(?!(?:י|ת|ות)?\s*מערכת)/, "ניהול"], labelHe: "מנהל/ת" },
   // Same bare-substring collision as the Employee entity rule above
   // ("coworker" contains "worker") -- \b-bounded here too. Also same
   // pu'al "מעובד" collision (round 565) as the Employee entity rule's own

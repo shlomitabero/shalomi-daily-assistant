@@ -5284,6 +5284,38 @@ test("Manager's 'מנהל' keyword doesn't spuriously match inside Admin's own c
 });
 
 /**
+ * Regression test for round 2361's finding: a fourth inflection of the same
+ * word family rounds 659/811/814 (above) already fixed for the masculine
+ * singular, feminine singular, and construct-state plural -- the feminine
+ * plural "מנהלות מערכת" ("female system administrators"). The `י?ת?`
+ * lookahead those rounds built can produce only "", "י", "ת", or "ית" as a
+ * suffix -- it can never produce "ות" (no "ו" anywhere in the pattern) --
+ * so this fourth inflection slipped through and still spuriously got
+ * Manager, the same way rounds 659/811/814's own bugs did for the other
+ * three inflections.
+ */
+test("round 2361: Manager's 'מנהל' keyword doesn't spuriously match inside Admin's own feminine-plural 'מנהלות מערכת' phrase", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const adminOnlyFemPlural = await provider.generate("יש לנו כמה מנהלות מערכת שמטפלות בהרשאות הצוות.");
+  assert.ok(
+    !adminOnlyFemPlural.roles.includes("מנהל/ת"),
+    "a description naming only system administrators (feminine plural) must not spuriously add a Manager role via the 'מנהל' substring",
+  );
+
+  const adminOnlyFemPlural2 = await provider.generate("המערכת מנוהלת על ידי מנהלות מערכת בלבד, שאר הצוות הם עובדים רגילים.");
+  assert.ok(
+    !adminOnlyFemPlural2.roles.includes("מנהל/ת"),
+    "a second description naming only system administrators (feminine plural) must not spuriously add a Manager role via the 'מנהל' substring",
+  );
+
+  // The real feminine-plural word still works on its own, the same way
+  // rounds 659/811/814's own counterparts do for the other inflections.
+  const realFemManagers = await provider.generate("חנות בגדים עם כמה מנהלות חנות שמחליפות משמרות.");
+  assert.ok(realFemManagers.roles.includes("מנהל/ת"), "a standalone 'מנהלות' (feminine plural store managers) must still add the Manager role");
+});
+
+/**
  * Regression test for round 561's finding: Student's bare "pupil" keyword
  * is a whole-word genuine polysemy collision (not a substring issue) with
  * the ophthalmology/optometry term "pupil" (the part of the eye) -- the
