@@ -53338,3 +53338,79 @@ military-topic-vs-squad-unit ambiguity (round 2316); Course
 "courses"-vs-restaurant-meal-courses sub-case (round 2318).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2327: Donation's תרם guard was missing the 1st/2nd-person forms entirely (a false negative, not a false positive)
+
+**Bug:** Round 2293 added bare 3rd-person forms of the "donated" verb
+(תרם/תרמה/תרמו/לתרום); round 2322 added the idiom-exclusion lookahead
+("contributed to X's success"). Neither round covered the OTHER
+grammatical persons of the same verb paradigm: 1st-person singular/plural
+("תרמתי"/"תרמנו" = I/we donated) and 2nd-person singular/plural
+("תרמת"/"תרמתם"/"תרמתן" = you donated). This round's survey
+agent was explicitly briefed to check whether round 2326's "missing
+grammatical person" finding in Vendor's רכש guard generalizes to OTHER
+Hebrew verb-idiom guards -- it does: the identical gap shape, this time in
+Donation. Unlike round 2326's Vendor bug (a false POSITIVE, since רכש
+risked being a substring-prefix of longer forms), this is a pure false
+NEGATIVE: sofit-mem/regular-mem forms share zero accidental substring
+overlap with the existing 3rd-person forms, so these persons were simply
+never recognized at all, not matched incorrectly.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אני תרמתי כסף רב בכל שנה ואני רוצה אפליקציה לניהול התרומה השנתית שלי." (I donated a lot of money),
+"אנחנו תרמנו ציוד רפואי לבית חולים כל חודש ואני רוצה אפליקציה לניהול הציוד." (we donated medical equipment), "אתה תרמת סכום נכבד למטרה חשובה ואני רוצה אפליקציה שתעקוב אחרי הסכום." (you
+donated a considerable sum), and "אתם תרמתם סכום נכבד בכל רבעון ואני רוצה אפליקציה לניהול הסכום." (you-pl donated a
+considerable sum) all fell through to the generic `Item` entity with the
+wrong "no payments" recommendation instead of Donation+Stripe. The idiom
+exclusions for the same new persons ("תרמתי רבות להצלחת הפרויקט במהלך השנה האחרונה.", "אתם תרמתם רבות להשלמת המשימה בזמן.")
+and the pre-existing 3rd-person case ("הוא תרם כסף רב לעמותה.") all still
+behaved correctly.
+
+**Fix** (`domainEntities.ts`, Donation's Hebrew keyword list): each person
+gets its own independent branch with its own full idiom-exclusion
+lookahead, longest/most-specific literal first so e.g. "תרמתם" is
+tried before the bare "תרמת" prefix matches it:
+```js
+/תרמתם(?!\s+(?:\S+\s+){0,2}ל(?:הצלחת|שיפור|פיתוח|צמיחת|ניצחון|השלמת|קידום|יישום|התפתחות|הישג|הישגי))/
+```
+"תרמת" additionally excludes "ם"/"ן"/"י" directly after it so it
+can never mistake "תרמתם"/"תרמתן"/"תרמתי"'s prefix for itself.
+
+**Backtracking pitfall, reconfirmed:** a shared merged regex using one
+optional suffix group before a single lookahead was tested and confirmed
+to wrongly match both new idiom-exclusion sentences ("תרמתי רבות להצלחת הפרויקט במהלך השנה האחרונה." and
+"אתם תרמתם רבות להשלמת המשימה בזמן.") -- the same shared-group backtracking pitfall this file
+keeps rediscovering, reconfirmed here on a pure false-negative shape
+rather than round 2326's false-positive shape.
+
+**Test added** (`heuristic.test.ts`): confirms all four new 1st/2nd-person
+forms now match Donation (including the Stripe payment recommendation,
+not just entity presence), while the idiom exclusions for the same
+persons and the pre-existing 3rd-person case all still behave correctly.
+
+**BILLING_ENTITY_NAMES:** Donation IS in `BILLING_ENTITY_NAMES`, so this
+false negative also corrupted the payment-recommendation `openQuestions`
+field (recommending "no payments" instead of Stripe), not just the
+entity list -- a dual-severity bug, same class as round 2322's idiom fix.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure out
+of 238 (the new test), as predicted; pass-after showed 238/238. Full
+`@forge/spec-engine` suite: 434/434 (up from 433). Full `@forge/api` suite:
+1782/1782, unchanged, run via Bash's native `run_in_background` (disk
+space checked healthy beforehand). Production build: clean (`dist/server.js
+1.5mb`, exit code 0).
+
+**Standing notes update:** the "bare overly-broad word in a keyword array"
+pattern now has 33 confirmed instances total. The "missing grammatical
+person" gap shape is now confirmed 2-for-2 across Vendor (round 2326,
+false positive) and Donation (this round, false negative) -- worth
+checking other Hebrew verb-idiom guards (e.g. any BILLING_ENTITY_NAMES
+member with its own idiom-exclusion lookahead) for the same shape in
+future rounds. Standing deferred/unsafe gaps, unchanged this round: Ticket
+bare-noun gap (rounds 2282-2283); Courier license/insurance/traffic-ticket
+sub-case (round 2311); Course bare-price-crashing sub-case (round 2316);
+Course military-topic-vs-squad-unit ambiguity (round 2316); Course
+"courses"-vs-restaurant-meal-courses sub-case (round 2318).
+
+Live: https://forge-ai-m7p7.onrender.com
