@@ -7590,3 +7590,29 @@ test("Appointment's bare 'מספרת' keyword doesn't spuriously match the unrel
   const womensSalon = await provider.generate("מערכת לניהול לקוחות במספרת נשים בעיר");
   assert.ok(womensSalon.entities.some((e) => e.name === "Appointment"), "'מספרת נשים' (women's hair salon) must still match Appointment");
 });
+
+test("Shipment's bare 'שילוח' keyword doesn't spuriously match the unrelated 'deportation/expulsion' sense", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const deportationProceedings = await provider.generate("אפליקציה לניהול הליכי שילוח מהגרים לא חוקיים מהמדינה");
+  assert.ok(!deportationProceedings.entities.some((e) => e.name === "Shipment"), "'שילוח מהגרים' (deportation of migrants) must not spuriously match Shipment");
+
+  const deportationInfiltrators = await provider.generate("המדינה החלה בשילוח מסתננים לארץ שלישית");
+  assert.ok(!deportationInfiltrators.entities.some((e) => e.name === "Shipment"), "'שילוח מסתננים' (deportation of infiltrators) must not spuriously match Shipment");
+
+  const deportationRefugees = await provider.generate("מערכת לניהול תיקי שילוח פליטים מהארץ");
+  assert.ok(!deportationRefugees.entities.some((e) => e.name === "Shipment"), "'שילוח פליטים' (refugee deportation) must not spuriously match Shipment");
+
+  // Non-regression: genuine shipping/logistics usage must still match.
+  const packageShipping = await provider.generate("אפליקציה לניהול שילוח חבילות לבתי לקוחות");
+  assert.ok(packageShipping.entities.some((e) => e.name === "Shipment"), "'שילוח חבילות' (package shipping) must still match Shipment");
+
+  const internationalShippingCo = await provider.generate("חברת שילוח בינלאומי למעקב אחרי משלוחים");
+  assert.ok(internationalShippingCo.entities.some((e) => e.name === "Shipment"), "'שילוח בינלאומי' (international shipping) must still match Shipment");
+
+  const existingFixture1 = await provider.generate("אפליקציה לניהול מחסן ומעקב אחר שילוח חבילות");
+  assert.ok(existingFixture1.entities.some((e) => e.name === "Shipment"), "pre-existing 'שילוח חבילות' fixture must still match Shipment");
+
+  const existingFixture2 = await provider.generate("אפליקציה לניהול מחסן ולוגיסטיקה, כולל מעקב חבילות ושילוח");
+  assert.ok(existingFixture2.entities.some((e) => e.name === "Shipment"), "pre-existing end-of-sentence 'ושילוח' fixture must still match Shipment");
+});

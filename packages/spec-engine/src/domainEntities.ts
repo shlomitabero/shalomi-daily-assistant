@@ -3086,7 +3086,32 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // existing "shipping" collision), "membership", or "dealership" --
       // confirmed live.
       /\bshipments?\b/,
-      "שילוח", "לוגיסטיקה", "ניהול מחסן", "מעקב חבילות",
+      // Round 2340: bare "שילוח" was listed completely unguarded. Beyond
+      // its logistics/freight sense, "שילוח" is also the current, common
+      // Hebrew bureaucratic/media term for deportation/expulsion (e.g.
+      // "מתווה השילוח" -- the well-known migrant-deportation policy term
+      // -- and phrases like "שילוח מהגרים"/"שילוח מסתננים"/"שילוח
+      // פליטים"), with zero logistics connection. Confirmed live: "...
+      // ניהול הליכי שילוח מהגרים לא חוקיים מהמדינה" (managing deportation
+      // proceedings of illegal migrants), "...שילוח מסתננים לארץ
+      // שלישית..." (deportation of infiltrators to a third country), and
+      // "...תיקי שילוח פליטים מהארץ" (refugee-deportation case files) all
+      // matched ONLY Shipment, fabricating trackingNumber/carrier/
+      // destination/shipDate fields for apps with zero logistics content.
+      //
+      // Hebrew has no \b, so this excludes the specific deportation
+      // object-nouns that follow the word in this sense (same
+      // leaky-denylist convention as round 2339's מספרת guard) --
+      // confirmed empirically against both existing test fixtures that
+      // genuine shipping/logistics usage, including at the end of a
+      // sentence with no following word, still matches. Deliberately a
+      // leaky denylist, not an exhaustive fix: a bare abstract usage with
+      // no following object noun at all (e.g. "מתווה השילוח" -- the
+      // deportation POLICY itself) or an object noun outside this list
+      // would still slip through, an accepted trade-off for the
+      // confirmed-live common cases this closes.
+      /שילוח(?!\s*(?:מהגרים|המהגרים|מסתננים|המסתננים|פליטים|הפליטים|עובדים זרים|העובדים הזרים|אזרחים|תושבים))/,
+      "לוגיסטיקה", "ניהול מחסן", "מעקב חבילות",
     ],
     labelHe: "משלוחים ומעקב",
     descriptionHe: "חבילה שנשלחת ועוקבים אחריה.",
