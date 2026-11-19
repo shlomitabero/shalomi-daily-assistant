@@ -55630,3 +55630,77 @@ thousands of online courses"), newly identified this round as a
 distinct, still-open gap beyond the narrow-adjacency fix just made.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2352: Vendor's "ספק" doubt-idiom guard missing 2nd-person-feminine-singular FUTURE forms
+
+**Bug:** Vendor's "ספק" (doubt) idiom-exclusion guard (`domainEntities.ts`)
+has been extended across present tense (round 2027), present-tense
+plural (round 2329), past tense (round 2341), future tense singular
+(round 2345), and future tense plural (round 2347) -- but never covered
+the 2nd-person-FEMININE-singular future forms, which take a distinct
+"-י" suffix: "תטילי" ("you[f] will cast doubt") and "תעלי" ("you[f]
+will raise doubt"). Neither is a substring of the already-listed
+"תטיל "/"תעלה " (the extra "י" sits before the trailing space), so
+sentences using them fell straight past the guard and the bare "ספק"
+idiom noun got matched, fabricating a bogus Vendor/procurement entity.
+This exact -י suffix form is already handled elsewhere in this file
+for the same bug class (Donation's "תתרמי", round 2343) -- it was
+simply never propagated to this guard.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול פרויקטים. את תטילי ספק רב בהצלחת התוכנית בשבוע הבא." (you[f] will cast great doubt
+on the plan's success) and "אפליקציה לניהול תקציב. את תעלי ספק משמעותי לגבי התוכנית הכספית בפגישה." (you[f] will raise
+significant doubt about the financial plan) both wrongly fabricated
+Vendor with zero procurement content.
+
+**Fix** (`domainEntities.ts`, Vendor's `keywords` array):
+```js
+/(?<!ללא )(?<!אין )(?<!בלי )(?<!ללא כל )(?<!אין כל )(?<!בלי כל )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מטילים )(?<!מטילות )(?<!הטיל )(?<!הטילה )(?<!הטילו )(?<!יטיל )(?<!תטיל )(?<!תטילי )(?<!נטיל )(?<!אטיל )(?<!יטילו )(?<!תטילו )(?<!מעלה )(?<!מעלים )(?<!מעלות )(?<!העלה )(?<!העלתה )(?<!העלו )(?<!יעלה )(?<!תעלה )(?<!תעלי )(?<!נעלה )(?<!אעלה )(?<!יעלו )(?<!תעלו )ספק(?!ות)(?!\s*אם)/
+```
+Adds `(?<!תטילי )` and `(?<!תעלי )` to the lookbehind chain, same
+unmerged independent-branch convention as every other entry in this
+guard.
+
+**Collision check:** confirmed live that "ותטילי ספק" (with a "ו"
+conjunction prefix, "and you[f] will cast doubt" -- still the same
+idiom) is also correctly excluded by the fixed-length lookbehind
+matching just the trailing "תטילי " substring, which is the
+semantically correct outcome, not an unintended over-exclusion.
+
+**Test added** (`heuristic.test.ts`): confirms both new bug sentences
+no longer match Vendor; non-regression checks confirm the existing
+masc./plural future exclusions, the negation guard, and both genuine
+singular/plural vendor senses are unaffected.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 263 (the new test), as predicted; pass-after showed 263/263 --
+no regression. Full `@forge/spec-engine` suite: 459/459 (up from 458).
+Full `@forge/api` suite: 1782/1782, clean. Production build: clean
+(`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this is a return to domainEntities.ts after
+rounds 2349-2351's PAYMENT_KEYWORDS detour, confirming the standard
+"missing grammatical form" method (A/A-2) still finds real bugs on
+guards that were last touched several rounds ago (this one, round
+2347) once a narrower slice (2fs future specifically) is checked.
+Standing deferred/unsafe gaps, unchanged this round: Ticket bare-noun
+gap (rounds 2282-2283); Courier license/insurance/traffic-ticket
+sub-case (round 2311); Course bare-price-crashing sub-case (round
+2316); Course military-topic-vs-squad-unit ambiguity (round 2316);
+Course "courses"-vs-restaurant-meal-courses sub-case (round 2318);
+Order's forward-only "הזמנה" exclusion-lookahead directionality gap
+(round 2331, accepted trade-off); pre-existing roadmap.md script-
+substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+leaks (round 2340, accepted trade-off); PAYMENT_KEYWORDS' "נשלם" gap,
+permanently deferred (rounds 2349-2350); PAYMENT_KEYWORDS' broader-
+proximity "sell ... course(s)/ticket(s)" gap, still open (round 2351).
+
+Live: https://forge-ai-m7p7.onrender.com
