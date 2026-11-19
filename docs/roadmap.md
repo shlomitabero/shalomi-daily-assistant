@@ -54508,3 +54508,91 @@ Volunteer's bare unguarded "מתנדב"/"מתנדבת"/"מתנדבים"
 collision found).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2340: Shipment's bare 'שילוח' collided with the Hebrew 'deportation/expulsion' sense
+
+**Bug:** Shipment's Hebrew "שילוח" (deliberately chosen over "משלוח"
+to avoid an Order collision, per the entity's own earlier comment) was
+listed completely unguarded, unlike almost every other Hebrew keyword
+in this file. Beyond its logistics/freight sense, "שילוח" is also the
+current, common Hebrew bureaucratic/media term for deportation/
+expulsion -- e.g. "מתווה השילוח" (the well-known migrant-deportation
+policy term) and phrases like "שילוח מהגרים"/"שילוח מסתננים"/"שילוח
+פליטים" -- with zero logistics connection.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "אפליקציה לניהול הליכי שילוח מהגרים לא חוקיים מהמדינה" (managing
+deportation proceedings of illegal migrants), "המדינה החלה בשילוח מסתננים לארץ שלישית"
+(deportation of infiltrators to a third country), and
+"מערכת לניהול תיקי שילוח פליטים מהארץ" (refugee-deportation case files) each matched
+ONLY Shipment, fabricating trackingNumber/carrier/destination/shipDate
+fields for apps with zero logistics content.
+
+**Fix** (`domainEntities.ts`, Shipment's keyword array):
+```js
+/שילוח(?!\s*(?:מהגרים|המהגרים|מסתננים|המסתננים|פליטים|הפליטים|עובדים זרים|העובדים הזרים|אזרחים|תושבים))/
+```
+Hebrew has no `\b`, so this excludes the specific deportation
+object-nouns that follow the word in this sense (same leaky-denylist
+convention as round 2339's מספרת guard). Confirmed against both
+existing shipping/logistics test fixtures, including "אפליקציה לניהול שילוח חבילות לבתי לקוחות"
+and one ending the sentence with no following word at all, that
+genuine usage is unaffected.
+
+**BILLING_ENTITY_NAMES:** Shipment is NOT a member (checked both
+heuristic.ts and templates.ts), so this bug is entity-fabrication
+only.
+
+**Deliberately a leaky denylist, not an exhaustive fix**, same class
+as round 2334's צדקה guard, round 2337's הזדמנות guard, round 2338's
+לקוח guard, and round 2339's מספרת guard: a bare abstract usage with
+no following object noun at all (e.g. "מתווה השילוח" -- the
+deportation POLICY itself) or an object noun outside the curated list
+would still slip through, an accepted trade-off for the confirmed-live
+common cases this closes.
+
+**Test added** (`heuristic.test.ts`): confirms three deportation
+sentences no longer match Shipment, while genuine shipping/logistics
+usage (including both pre-existing fixtures) still does.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 252 (the new test), as predicted; pass-after showed 252/252.
+Full `@forge/spec-engine` suite: 448/448 (up from 447). Full
+`@forge/api` suite: 1782/1782, clean on the first run this time (the
+two prior rounds' unrelated flakes did not recur). Production build:
+clean (`dist/server.js 1.5mb`, exit code 0).
+
+**Standing notes update:** this round confirmed the one "soft lead"
+round 2339 flagged but left unverified (שילוח's deportation-sense
+collision), bringing discovery method (C) to 5 confirmed instances
+this window (round 2336 Patient/מטופל, round 2337 Deal/הזדמנות, round
+2338 Customer/לקוח, round 2339 Appointment/מספרת, round 2340 Shipment/
+שילוח). Unlike the prior four, this one was found not on a keyword's
+first position but by chasing a specific soft lead through a fresh
+angle (modern political/bureaucratic usage rather than the originally-
+considered biblical idiom) -- worth remembering that a "checked but
+inconclusive" note from a prior round can still turn into a real bug
+with the right new angle, rather than treating it as permanently dead.
+Standing deferred/unsafe gaps, unchanged this round: Ticket bare-noun
+gap (rounds 2282-2283); Courier license/insurance/traffic-ticket
+sub-case (round 2311); Course bare-price-crashing sub-case (round
+2316); Course military-topic-vs-squad-unit ambiguity (round 2316);
+Course "courses"-vs-restaurant-meal-courses sub-case (round 2318);
+Order's forward-only "הזמנה" exclusion-lookahead directionality gap
+(round 2331, accepted trade-off); pre-existing roadmap.md
+script-substitution corruption from rounds 2316/2324/2325 (round 2332,
+deferred to a dedicated future round); Donation's "צדקה" guard's
+residual unlisted-stance-noun leak (round 2334, accepted trade-off);
+Patient's "מטופל" guard's residual leaks (round 2336, accepted
+trade-off); Deal's "הזדמנות" guard's residual leak (round 2337,
+accepted trade-off); Customer's "לקוח" guard's residual leak (round
+2338, accepted trade-off); Appointment's "מספרת" guard's residual leak
+(round 2339, accepted trade-off); Shipment's "שילוח" guard's residual
+bare-abstract-usage and unlisted-object-noun leaks (round 2340,
+accepted trade-off); Volunteer's bare unguarded "מתנדב"/"מתנדבת"/
+"מתנדבים" (checked-but-inconclusive across three rounds, likely truly
+dead, but round 2340's own experience with שילוח suggests not to
+treat this as permanently closed either).
+
+Live: https://forge-ai-m7p7.onrender.com
