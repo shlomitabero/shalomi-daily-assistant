@@ -4525,6 +4525,50 @@ test("Service's 'service' keyword doesn't spuriously match 'disservice'", async 
   assert.ok(realServices.entities.some((e) => e.name === "Service"), "'services' must still match Service");
 });
 
+// Round 2371: the bare noun/verb forms "service"/"services" were already
+// matched, but the equally natural past tense "serviced" and gerund
+// "servicing" -- "equipment we serviced last month", "scheduling servicing
+// appointments" -- shared no substring with "service(s)" and were never
+// covered, losing the entity entirely for those tenses. A single negative
+// lookahead excludes the real-estate idiom "serviced apartment(s)" (a
+// rental/property business, not a generic service business).
+test("Service's 'service' keyword also matches the past-tense 'serviced' and gerund 'servicing' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const equipmentTracked = await provider.generate("An app to track equipment we serviced last month.");
+  assert.ok(equipmentTracked.entities.some((e) => e.name === "Service"), "'serviced' (past tense) must match Service");
+
+  const schedulingCrm = await provider.generate("A CRM for scheduling servicing appointments for our clients.");
+  assert.ok(schedulingCrm.entities.some((e) => e.name === "Service"), "'servicing' (gerund) must match Service");
+
+  const machinesLog = await provider.generate("A platform to log machines our technicians serviced this week.");
+  assert.ok(machinesLog.entities.some((e) => e.name === "Service"), "'serviced' (past tense) must match Service");
+
+  const requestsTool = await provider.generate("A tool for managing servicing requests from customers.");
+  assert.ok(requestsTool.entities.some((e) => e.name === "Service"), "'servicing' (gerund) must match Service");
+
+  // Non-regression: the existing bare-noun controls still work.
+  const bareNoun = await provider.generate("Something to manage our service offerings.");
+  assert.ok(bareNoun.entities.some((e) => e.name === "Service"), "bare 'service' must still match Service");
+
+  const barePlural = await provider.generate("We offer services to customers.");
+  assert.ok(barePlural.entities.some((e) => e.name === "Service"), "bare 'services' must still match Service");
+
+  // Non-regression: the real-estate "serviced apartment(s)" idiom must never
+  // spuriously match Service via this keyword, now extended to the new forms.
+  const bookingSite = await provider.generate("A booking site for serviced apartments in the city center.");
+  assert.ok(!bookingSite.entities.some((e) => e.name === "Service"), "'serviced apartments' (real-estate idiom) must not match Service");
+
+  const listingPlatform = await provider.generate("A platform to list serviced apartments for short-term rentals.");
+  assert.ok(!listingPlatform.entities.some((e) => e.name === "Service"), "'serviced apartments' (real-estate idiom) must not match Service");
+
+  // Non-regression: the existing round-453 "disservice" substring guard must still hold.
+  const disserviceStillExcluded = await provider.generate(
+    "An app for a reputation management consultant to track clients who worry that bad reviews will do a disservice to their reputation.",
+  );
+  assert.ok(!disserviceStillExcluded.entities.some((e) => e.name === "Service"), "'disservice' must still not spuriously match Service");
+});
+
 /**
  * Regression test for round 829's finding: Service's bare Hebrew keywords
  * "שירות"/"שירותים" are substrings of "כשירות" ("competency"/"fitness"/

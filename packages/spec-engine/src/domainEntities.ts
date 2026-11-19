@@ -719,7 +719,17 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     // every real standalone use ("טיפול", "הטיפול", "לטיפול", and the
     // plural "טיפולים", none of which are followed by "וג"), confirmed
     // empirically after fixing.
-    keywords: [/\bservice(s)?\b/, /\btreatment(s)?\b/, /(?<!כ)שירות/, /(?<!כ)שירותים/, /טיפול(?!וג)/, "טיפולים"],
+    // Round 2371: the bare noun/verb forms "service"/"services" were
+    // already matched, but the equally natural past tense "serviced" and
+    // gerund "servicing" -- "equipment we serviced last month",
+    // "scheduling servicing appointments" -- shared no substring with
+    // "service(s)" and were never covered, losing the entity entirely for
+    // those tenses. A single negative lookahead excludes exactly the
+    // real-estate idiom "serviced apartment(s)" (a rental/property
+    // business, not a generic service business), confirmed live this
+    // doesn't affect any genuine match or the existing round-453
+    // "disservice" substring guard.
+    keywords: [/\bservic(?:e|es|ed|ing)\b(?!\s+apartments?\b)/, /\btreatment(s)?\b/, /(?<!כ)שירות/, /(?<!כ)שירותים/, /טיפול(?!וג)/, "טיפולים"],
     labelHe: "שירותים",
     descriptionHe: "משהו שהעסק מציע למכירה.",
     fieldLabelsHe: { name: "שם", price: "מחיר", durationMinutes: "משך בדקות", description: "תיאור" },
