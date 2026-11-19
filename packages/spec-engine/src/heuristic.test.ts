@@ -7818,3 +7818,26 @@ test("Vendor's 'רכש' keyword could never detect true vav-spelled future tense
   const vavDroppingPlural = await provider.generate("הם ירכשו ציוד חדש למחלקה בשבוע הקרוב");
   assert.ok(vavDroppingPlural.entities.some((e) => e.name === "Vendor"), "'ירכשו ציוד חדש' (vav-dropping future, already worked) must still match Vendor");
 });
+
+test("Vendor's 'ספק' (doubt) idiom-exclusion guard was also missing the future-tense PLURAL forms, the residual gap round 2345 flagged but didn't fix", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const futurePluralCast3rd = await provider.generate("חברי הוועד יטילו ספק רב בהצלחת המיזם בשבוע הבא.");
+  assert.ok(!futurePluralCast3rd.entities.some((e) => e.name === "Vendor"), "'יטילו ספק' (will cast doubt, 3pl future) must not spuriously match Vendor");
+
+  const futurePluralCast2nd = await provider.generate("אתם תטילו ספק כבד בתוכנית העבודה אם לא תבדקו אותה.");
+  assert.ok(!futurePluralCast2nd.entities.some((e) => e.name === "Vendor"), "'תטילו ספק' (will cast doubt, 2pl future) must not spuriously match Vendor");
+
+  const futurePluralRaise3rd = await provider.generate("הבוחנים יעלו ספק משמעותי לגבי איכות המוצר בבדיקה הבאה.");
+  assert.ok(!futurePluralRaise3rd.entities.some((e) => e.name === "Vendor"), "'יעלו ספק' (will raise doubt, 3pl future) must not spuriously match Vendor");
+
+  const futurePluralRaise2nd = await provider.generate("אתם תעלו ספק רב בנוגע לתקציב אם לא תקבלו הסברים.");
+  assert.ok(!futurePluralRaise2nd.entities.some((e) => e.name === "Vendor"), "'תעלו ספק' (will raise doubt, 2pl future) must not spuriously match Vendor");
+
+  // Non-regression: the already-working singular future exclusion (round 2345) and genuine vendor usage must still hold.
+  const futureSingularCast = await provider.generate("המנהל יטיל ספק רב בתוכנית המכירות בשבוע הבא");
+  assert.ok(!futureSingularCast.entities.some((e) => e.name === "Vendor"), "'יטיל ספק' (singular future, round 2345's existing fix) must still not match Vendor");
+
+  const genuineVendor = await provider.generate("אנחנו עובדים עם ספק סחורה חדש לניהול המלאי.");
+  assert.ok(genuineVendor.entities.some((e) => e.name === "Vendor"), "'עובדים עם ספק סחורה חדש' (we work with a new goods supplier) must still match Vendor");
+});
