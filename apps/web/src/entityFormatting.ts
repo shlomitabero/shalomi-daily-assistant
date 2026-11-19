@@ -2376,6 +2376,26 @@ function normalizeDecimalSeparator(s: string): string {
 const CSV_PARENTHESIZED_NEGATIVE = /^\((.*)\)$/;
 
 /**
+ * Round 2253: mirrors packages/db/src/repository.ts's own coerceValue fix
+ * (round 2252) for the identical gap on the CSV/JSON import side -- a
+ * number field's raw string is handed straight to `Number(raw)` below,
+ * and `Number("0x10")`/`Number("0b101")`/`Number("0o17")` are 16/5/15, all
+ * finite, so a hex/octal/binary-notation string silently imported as an
+ * unrelated real number instead of being rejected. Confirmed live:
+ * importing "0x10" into a number field via CSV or JSON stored 16 with
+ * zero import error. Unlike repository.ts's own fix, this can't simply
+ * reuse its full "reject anything that isn't a plain decimal/scientific
+ * numeral" regex -- this function's own currency-formatting cleanup just
+ * below (CSV_NUMBER_FORMATTING/CSV_PARENTHESIZED_NEGATIVE) deliberately
+ * accepts shapes like "$1,200.50" that aren't a plain numeral either, so a
+ * blanket "must already look like a plain number" check would wrongly
+ * reject every legitimately-formatted currency cell. Narrowly matches
+ * only the specific 0x/0b/0o prefix instead, which is never a real
+ * currency/formatting artifact.
+ */
+const HEX_OCTAL_BINARY_PREFIX = /^[+-]?0[xXbBoO]/;
+
+/**
  * Round 2138: mirrors webhookIn.ts's own WEBHOOK_DATE_PREFIX (round 1551) --
  * every OTHER coercion leniency on this page (currency formatting above,
  * parenthesized negatives just above) was explicitly ported from that same
@@ -2645,6 +2665,12 @@ export function buildImportRecords(
           break;
         }
       } else if (field.type === "number") {
+        // Round 2253: see HEX_OCTAL_BINARY_PREFIX's own doc comment above --
+        // "0x10"/"0b101"/"0o17" must never import as 16/5/15.
+        if (HEX_OCTAL_BINARY_PREFIX.test(raw.trim())) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;
+          break;
+        }
         let n = Number(raw);
         if (!Number.isFinite(n)) {
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
@@ -2960,6 +2986,14 @@ export function buildImportRecordsFromJson(
         // boolean/array/object value (where a bare Number(raw) would
         // otherwise silently coerce, e.g. Number(true) === 1) is still
         // rejected outright rather than silently accepted.
+        // Round 2253: see HEX_OCTAL_BINARY_PREFIX's own doc comment above --
+        // "0x10"/"0b101"/"0o17" must never import as 16/5/15. Only a string
+        // raw value can carry this prefix at all; a genuine JSON number
+        // (already typeof "number") never does.
+        if (typeof raw === "string" && HEX_OCTAL_BINARY_PREFIX.test(raw.trim())) {
+          rowError = `Row ${rowIndex + 1}: "${raw}" isn't a number for field "${field.label ?? field.name}".`;
+          break;
+        }
         const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
         let n = numberIsCoercible ? Number(raw) : NaN;
         if (!Number.isFinite(n) && typeof raw === "string") {

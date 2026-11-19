@@ -4474,6 +4474,19 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
   // become a bare ( or ), turning this into a no-op "match everything" regex.
   const CSV_PARENTHESIZED_NEGATIVE = /^\\((.*)\\)$/;
 
+  // Round 2253: mirrors the live preview's own entityFormatting.ts fix --
+  // a number field's raw string went straight to \`Number(raw)\` below, and
+  // Number("0x10")/Number("0b101")/Number("0o17") are 16/5/15, all finite,
+  // so a hex/octal/binary-notation string silently imported as an
+  // unrelated real number instead of being rejected. Can't reuse
+  // repository.ts's own blanket "must already look like a plain number"
+  // regex here -- the CSV_NUMBER_FORMATTING/CSV_PARENTHESIZED_NEGATIVE
+  // cleanup just above deliberately accepts shapes like "$1,200.50" that
+  // aren't a plain numeral either, so that blanket check would wrongly
+  // reject every legitimately-formatted currency cell. Narrowly matches
+  // only the specific 0x/0b/0o prefix instead.
+  const HEX_OCTAL_BINARY_PREFIX = /^[+-]?0[xXbBoO]/;
+
   // Round 1182: case-insensitive, mirroring the established relationTo convention (rounds 1159-1181).
   const relationResolvable = (f) => !!f.relationTo && ALL_ENTITIES.some((e) => e.name.toLowerCase() === f.relationTo.toLowerCase()) && !!(relatedRecords && relatedRecords[f.relationTo]);
 
@@ -4650,6 +4663,12 @@ function buildImportRecords(fields, rows, relatedRecords, entity, existingRecord
           break;
         }
       } else if (field.type === "number") {
+        // Round 2253: see HEX_OCTAL_BINARY_PREFIX's own doc comment above --
+        // "0x10"/"0b101"/"0o17" must never import as 16/5/15.
+        if (HEX_OCTAL_BINARY_PREFIX.test(raw.trim())) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
+          break;
+        }
         let n = Number(raw);
         if (!Number.isFinite(n)) {
           const parenMatch = CSV_PARENTHESIZED_NEGATIVE.exec(raw);
@@ -4910,6 +4929,12 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
         // unconditionally deleted the way currency symbols/"%" always can.
         const CSV_NUMBER_FORMATTING = /[$€£₪¥₹₩%\\s]/g;
         const CSV_PARENTHESIZED_NEGATIVE = /^\\((.*)\\)$/;
+        // Round 2253: mirrors buildImportRecords' own HEX_OCTAL_BINARY_PREFIX
+        // above (declared locally for the same reason as the two constants
+        // just above) -- Number("0x10")/Number("0b101")/Number("0o17") are
+        // 16/5/15, all finite, so a hex/octal/binary-notation string would
+        // otherwise silently import as an unrelated real number.
+        const HEX_OCTAL_BINARY_PREFIX = /^[+-]?0[xXbBoO]/;
         // Round 1925: mirrors the identical fix in buildImportRecords
         // above -- "€99,90" was silently mangled into "9990" (100x too
         // large) instead of 99.90, since "," was unconditionally deleted
@@ -4937,6 +4962,14 @@ function buildImportRecordsFromJson(fields, rows, relatedRecords, entity, existi
           }
           return s;
         };
+        // Round 2253: see HEX_OCTAL_BINARY_PREFIX's own doc comment above --
+        // "0x10"/"0b101"/"0o17" must never import as 16/5/15. Only a string
+        // raw value can carry this prefix at all; a genuine JSON number
+        // (already typeof "number") never does.
+        if (typeof raw === "string" && HEX_OCTAL_BINARY_PREFIX.test(raw.trim())) {
+          rowError = \`Row \${rowIndex + 1}: "\${raw}" isn't a number for field "\${field.label || field.name}".\`;
+          break;
+        }
         const numberIsCoercible = typeof raw === "number" || typeof raw === "string";
         let n = numberIsCoercible ? Number(raw) : NaN;
         if (!Number.isFinite(n) && typeof raw === "string") {

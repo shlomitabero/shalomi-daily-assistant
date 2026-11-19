@@ -16390,6 +16390,29 @@ test("the exported EntityView's own generated buildImportRecordsFromJson still r
   assert.match(result.errors[1], /isn't a number/);
 });
 
+test("the exported EntityView's own generated buildImportRecordsFromJson rejects a hex/octal/binary-notation number string, instead of silently importing it as the unrelated decimal value Number() coerces it to", () => {
+  const files = generateExportFiles(project);
+  const entityViewJsx = files.find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const importJsonSrc = entityViewJsx.match(/function buildImportRecordsFromJson\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(importJsonSrc && makeDuplicateWarningCheckerSrc, "expected to find buildImportRecordsFromJson/makeDuplicateWarningChecker in the generated EntityView.jsx");
+
+  const allEntitiesDecl = "const ALL_ENTITIES = [];";
+  const buildImportRecordsFromJson = new Function(`${allEntitiesDecl}\n${makeDuplicateWarningCheckerSrc}\n${importJsonSrc}\nreturn buildImportRecordsFromJson;`)();
+
+  const fields = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const result = buildImportRecordsFromJson(
+    fields,
+    [{ amount: "0x10" }, { amount: "0b101" }, { amount: "0o17" }, { amount: "42" }, { amount: "$1,200.50" }],
+    {},
+  );
+  assert.deepEqual(result.records, [{ amount: 42 }, { amount: 1200.5 }]);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /Row 1.*0x10.*Amount/);
+  assert.match(result.errors[1], /Row 2.*0b101.*Amount/);
+  assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
+});
+
 /**
  * Round 1316: an empty string fell through to the catch-all text branch,
  * which only checks `typeof raw !== "string"` -- true for "" too -- so a
@@ -18800,6 +18823,61 @@ test("the exported EntityView's CSV import accepts an accounting-style parenthes
   ]);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Row 3.*Amount/);
+});
+
+test("the exported EntityView's CSV import rejects a hex/octal/binary-notation number cell instead of silently importing it as the unrelated decimal value Number() coerces it to", () => {
+  const invoiceProject: Project = {
+    ...project,
+    spec: {
+      ...project.spec,
+      entities: [
+        {
+          name: "Invoice",
+          label: "Invoice",
+          fields: [
+            { name: "client", label: "Client", type: "text", required: true },
+            { name: "amount", label: "Amount", type: "number", required: false },
+          ],
+        },
+      ],
+    },
+  };
+  const entityViewJsx = generateExportFiles(invoiceProject).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+
+  const isValidDateSrc = entityViewJsx.match(/const DATE_FORMAT[\s\S]*?\nfunction isValidDate\(value\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldLabelOccurrencesSrc = entityViewJsx.match(/function csvFieldLabelOccurrences\(fields\) \{[\s\S]*?\n\}\n/)?.[0];
+  const fieldDisplayLabelSrc = entityViewJsx.match(/function csvFieldDisplayLabel\(field, occurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const headerSrc = entityViewJsx.match(/function matchesImportHeader\(header, field, labelOccurrences\) \{[\s\S]*?\n\}\n/)?.[0];
+  const importSrc = entityViewJsx.match(/function buildImportRecords\(fields, rows, relatedRecords, entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  const makeDuplicateWarningCheckerSrc = entityViewJsx.match(/function makeDuplicateWarningChecker\(entity, existingRecords\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(
+    isValidDateSrc && fieldLabelOccurrencesSrc && fieldDisplayLabelSrc && headerSrc && importSrc,
+    "expected to find isValidDate/fieldLabelOccurrences/fieldDisplayLabel/matchesImportHeader/buildImportRecords in generated output",
+  );
+
+  const buildImportRecords = new Function(
+    `${isValidDateSrc}\n${fieldLabelOccurrencesSrc}\n${fieldDisplayLabelSrc}\n${headerSrc}\n${makeDuplicateWarningCheckerSrc}\n${importSrc}\nreturn buildImportRecords;`,
+  )();
+
+  const fields = invoiceProject.spec.entities[0].fields;
+  const rows = [
+    ["Client", "Amount"],
+    ["Acme Corp", "0x10"],
+    ["Beta LLC", "0b101"],
+    ["Gamma Inc", "0o17"],
+    ["Delta Co", "42"],
+    ["Epsilon Co", "$1,200.50"],
+  ];
+  const { records, errors } = buildImportRecords(fields, rows);
+
+  assert.deepEqual(records, [
+    { client: "Delta Co", amount: 42 },
+    { client: "Epsilon Co", amount: 1200.5 },
+  ]);
+  assert.equal(errors.length, 3);
+  assert.match(errors[0], /Row 1.*0x10.*Amount/);
+  assert.match(errors[1], /Row 2.*0b101.*Amount/);
+  assert.match(errors[2], /Row 3.*0o17.*Amount/);
 });
 
 /**

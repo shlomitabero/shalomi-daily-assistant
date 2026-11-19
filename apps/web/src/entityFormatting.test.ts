@@ -2989,6 +2989,30 @@ test("buildImportRecords accepts an accounting-style parenthesized-negative numb
   assert.match(result.errors[0], /Row 3.*Amount/);
 });
 
+test("buildImportRecords rejects a hex/octal/binary-notation number cell instead of silently importing it as the unrelated decimal value Number() coerces it to", () => {
+  const fields: Field[] = [
+    { name: "client", type: "text", required: true },
+    { name: "amount", label: "Amount", type: "number", required: false },
+  ];
+  const rows = [
+    ["client", "amount"],
+    ["Acme Corp", "0x10"],
+    ["Beta LLC", "0b101"],
+    ["Gamma Inc", "0o17"],
+    ["Delta Co", "42"],
+    ["Epsilon Co", "$1,200.50"],
+  ];
+  const result = buildImportRecords(fields, rows);
+  assert.deepEqual(result.records, [
+    { client: "Delta Co", amount: 42 },
+    { client: "Epsilon Co", amount: 1200.5 },
+  ]);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /Row 1.*0x10.*Amount/);
+  assert.match(result.errors[1], /Row 2.*0b101.*Amount/);
+  assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
+});
+
 test("buildImportRecords rejects a date column value that isn't a real, well-formed calendar date", () => {
   const fields: Field[] = [
     { name: "name", type: "text", required: true },
@@ -4090,6 +4114,17 @@ test("buildImportRecordsFromJson accepts a hand-typed comma/currency-formatted n
   const result = buildImportRecordsFromJson(fields, rows);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.records, [{ amount: 1234.56 }, { amount: -42 }]);
+});
+
+test("buildImportRecordsFromJson rejects a hex/octal/binary-notation number string, instead of silently importing it as the unrelated decimal value Number() coerces it to", () => {
+  const fields: Field[] = [{ name: "amount", label: "Amount", type: "number", required: true }];
+  const rows = [{ amount: "0x10" }, { amount: "0b101" }, { amount: "0o17" }, { amount: "42" }, { amount: "$1,200.50" }];
+  const result = buildImportRecordsFromJson(fields, rows);
+  assert.deepEqual(result.records, [{ amount: 42 }, { amount: 1200.5 }]);
+  assert.equal(result.errors.length, 3);
+  assert.match(result.errors[0], /Row 1.*0x10.*Amount/);
+  assert.match(result.errors[1], /Row 2.*0b101.*Amount/);
+  assert.match(result.errors[2], /Row 3.*0o17.*Amount/);
 });
 
 test("buildImportRecordsFromJson still rejects a boolean/array/object value for a number field, instead of silently coercing it the way a bare Number(raw) would (e.g. Number(true) === 1)", () => {
