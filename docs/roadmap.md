@@ -55283,3 +55283,72 @@ residual leak on any idiom phrasing using a give-verb form not yet
 enumerated (round 2344, accepted trade-off).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2348: no new bug found -- method A-3 search came back negative, with a clear account of why
+
+**Summary:** after four consecutive rounds (2343-2347) each confirming
+a genuine entity-detection bug, round 2348 is the first round this
+window to end without implementing a fix. The survey agent did a
+thorough systematic search for another instance of method A-3
+("keyword orthography break" -- discovered round 2346 on Vendor's
+"רכש", refined round 2347) and came back with a well-supported
+negative result, independently spot-checked before accepting it.
+
+**What was checked:** every bare Hebrew keyword literal in
+`domainEntities.ts` (147 extracted across all 36 entity keyword
+blocks) was examined for whether it is a primary positive-match verb
+root (not an idiom-exclusion-guard lookbehind) subject to vowel-
+insertion orthography breaks. Findings:
+- Only two primary keywords are built from a verb root with a full
+  idiom-exclusion paradigm layered on: Vendor's "רכש" (already fixed,
+  rounds 2309-2346) and Donation's "תרם". Donation's future-tense
+  branches (אתרום/תתרום/יתרום/נתרום, lines 3059+) were independently
+  re-confirmed present in the real file -- its future tense was
+  already correctly vav-spelled from round 2343, so no bug there.
+- Shipment's "שילוח" entity never uses the bare root ש-ל-ח as its own
+  keyword (only the derived noun "שילוח" with its round-2340 idiom
+  guard). ש-ל-ח has no weak letters and no doubled root letters, so
+  its own Pa'al future (ישלח/תשלח/נשלח/אשלח) needs no vowel-letter
+  insertion at all -- confirmed live that a future-tense Shipment
+  sentence ("אנחנו נשלח את המוצרים ללקוחות...") already correctly
+  matches Shipment via the noun, unaffected by this root's own
+  conjugation.
+- No entity in the file uses a hollow-root (ayin-vav/ayin-yod, e.g.
+  קום/בוא/שוב) or geminate-root (e.g. סבב) verb as a bare keyword at
+  all -- every apparent hit was a false-positive substring inside an
+  unrelated noun ("מקום"/place, "משוב"/feedback, "קטגוריה"/category),
+  so this higher-risk root class has no candidate to even apply to in
+  this codebase.
+
+**Conclusion:** method A-3 (vowel-insertion orthography break on a
+primary keyword) now appears to be a narrow, largely-exhausted vein
+for this file -- it required a specific, apparently rare combination
+(a sound Pa'al root, used as a bare primary keyword rather than an
+idiom-exclusion guard, whose future tense needs vav-insertion) that
+only Vendor's רכש happened to match. Future rounds pursuing this
+method should treat a positive hit as the exception, not expect
+another one without a specific new candidate.
+
+**Fallback:** a limited method-C/method-B pass found nothing
+confirmable (MenuItem's "מנה"/portion homograph is already
+deliberately never used as a bare keyword, so no live bug there) --
+reported honestly as a negative result rather than forcing a weak
+claim.
+
+**No code changes this round.** `git status --short` confirmed clean
+before and after the survey. BILLING_ENTITY_NAMES re-confirmed
+unchanged: `["Invoice","Order","Donation","Subscription","Rental","Property","MenuItem","WorkOrder","InsuranceClaim"]`.
+
+**Standing notes:** all previously-documented deferred/unsafe gaps
+remain unchanged and undiminished by this round (see round 2347's
+entry for the full list). The next round should pivot away from
+method A-3 as the primary hypothesis generator and either return to a
+fresh, specific method-C hypothesis, resume the method-B sweep (last
+completed through round 2334), or consider widening the survey's
+scope beyond domainEntities.ts's Hebrew regex guards to other parts
+of the heuristic spec-generation pipeline (e.g. price/date parsing,
+field-inference logic) that haven't been systematically swept this
+window.
+
+Live: https://forge-ai-m7p7.onrender.com
