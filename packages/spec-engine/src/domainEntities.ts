@@ -1018,8 +1018,37 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // the exact collocation this tech sense is always phrased with, so
       // the real courier sense ("our delivery drivers", "assign drivers
       // to routes") is untouched.
-      /\b(?<!(?:device|printer|graphics card|audio|network|display|usb|gpu|hardware|software|chipset|bluetooth|wifi|sound|video|webcam)\s)driver(s)?\b/,
-      "delivery person", /שליח(?![תו])/, "שליחים", /(?<!מ)נהג/, /(?<!מ)נהגים/,
+      // Round 2311: bare "driver(s)"/"נהג"/"נהגים" also collide with the
+      // DMV/racing/driving-school sense -- a licensed-to-drive PERSON,
+      // outside any delivery/courier context -- distinct from the
+      // device/hardware sense fixed above (round 2243). Confirmed live:
+      // "An app for the DMV to manage driver license renewals.", "A
+      // racing league app to track drivers, their lap times, and
+      // standings.", and a driving-school student-driver description
+      // (English and Hebrew equivalents of all three) each fabricated
+      // Courier as a spurious entity with zero delivery/courier content.
+      // Document-wide markers exclude only the sub-cases confirmed to
+      // have NO plausible overlap with genuine courier text (dmv/racing/
+      // lap times/driving school/student driver -- a real courier
+      // description never mentions these). Deliberately NOT excluding
+      // "license"/"insurance" as markers: confirmed live that genuine
+      // courier descriptions legitimately and correctly match via this
+      // very keyword while also mentioning compliance fields like
+      // "drivers license numbers" or "driver insurance" ("Track our
+      // drivers license numbers and vehicle registrations for
+      // deliveries.", "A courier company app to verify driver insurance
+      // before assigning routes." -- both must keep matching Courier).
+      // A naive license/insurance marker would wrongly exclude both.
+      // That DMV/traffic-ticket/license/insurance sub-case is left open/
+      // deferred, needing real disambiguation (e.g. requiring an absence
+      // of courier-domain cues like delivery/package/route elsewhere in
+      // the text) rather than an unsafe blanket marker -- the same way
+      // the Ticket bare-noun gap (rounds 2282-2283) is deliberately left
+      // open rather than force-fixed.
+      /(?<!\b(?:dmv|racing|lap times|driving school|student driver)\b[\s\S]*)\b(?<!(?:device|printer|graphics card|audio|network|display|usb|gpu|hardware|software|chipset|bluetooth|wifi|sound|video|webcam)\s)driver(s)?\b(?![\s\S]*?\b(?:dmv|racing|lap times|driving school|student driver)\b)/i,
+      "delivery person", /שליח(?![תו])/, "שליחים",
+      /(?<!(?:משרד הרישוי|מירוץ|מירוצים|בית ספר לנהיגה)[\s\S]*)(?<!מ)נהג(?![\s\S]*?(?:משרד הרישוי|מירוץ|מירוצים|בית ספר לנהיגה))/,
+      /(?<!(?:משרד הרישוי|מירוץ|מירוצים|בית ספר לנהיגה)[\s\S]*)(?<!מ)נהגים(?![\s\S]*?(?:משרד הרישוי|מירוץ|מירוצים|בית ספר לנהיגה))/,
       // "delivery person" had no plural entry (round 584). Unlike this
       // file's other missing-plural fixes (576-583, all Hebrew ה→ות or
       // sofit-letter swaps, or an irregular Hebrew construct plural),

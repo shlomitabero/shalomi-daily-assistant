@@ -5965,6 +5965,73 @@ test("Review's 'testimonial' keyword doesn't spuriously match the legal 'testimo
 });
 
 /**
+ * Round 2311: Courier's bare "driver(s)"/"נהג"/"נהגים" keywords (already
+ * guarded against the device/hardware-driver sense since round 2243)
+ * also collide with the DMV/racing/driving-school sense -- a
+ * licensed-to-drive PERSON, outside any delivery/courier context. The
+ * fourteenth confirmed instance of the bare-overly-broad-keyword shape
+ * rounds 2297/2300-2310 fixed. This fix is deliberately SCOPED: it
+ * excludes only the sub-cases with no plausible genuine-courier overlap
+ * (dmv/racing/lap times/driving school/student driver). It deliberately
+ * does NOT touch the license/insurance/traffic-ticket sub-case, since a
+ * real courier description can legitimately mention "drivers license
+ * numbers" or "driver insurance" as compliance fields (confirmed below,
+ * non-regression cases) -- a naive license/insurance marker would wrongly
+ * exclude those. That remaining sub-case is left open/deferred, the same
+ * way the Ticket bare-noun gap (rounds 2282-2283) is deliberately left
+ * open rather than force-fixed with an unsafe guard.
+ */
+test("Courier's 'driver(s)'/'נהג'/'נהגים' keywords don't spuriously match the DMV/racing/driving-school sense of a licensed driver", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const dmv = await provider.generate("An app for the DMV to manage driver license renewals.");
+  assert.ok(!dmv.entities.some((e) => e.name === "Courier"), "'DMV ... driver license renewals' must not spuriously match Courier");
+
+  const racing = await provider.generate("A racing league app to track drivers, their lap times, and standings.");
+  assert.ok(!racing.entities.some((e) => e.name === "Courier"), "a racing-league 'drivers'/'lap times' description must not spuriously match Courier");
+
+  const drivingSchool = await provider.generate("An app for a driving school to track student drivers and lesson schedules.");
+  assert.ok(!drivingSchool.entities.some((e) => e.name === "Courier"), "a driving-school 'student drivers' description must not spuriously match Courier");
+
+  const dmvHe = await provider.generate("אפליקציה למשרד הרישוי לניהול חידוש רישיון נהיגה לנהגים.");
+  assert.ok(!dmvHe.entities.some((e) => e.name === "Courier"), "Hebrew 'משרד הרישוי ... נהגים' must not spuriously match Courier");
+
+  const racingHe = await provider.generate("אפליקציה לליגת מירוצים למעקב אחרי נהגים, זמני הקפה ודירוג.");
+  assert.ok(!racingHe.entities.some((e) => e.name === "Courier"), "Hebrew racing-league 'נהגים' description must not spuriously match Courier");
+
+  const drivingSchoolHe = await provider.generate("אפליקציה לבית ספר לנהיגה למעקב אחרי תלמידים נהגים ולוחות זמנים לשיעורים.");
+  assert.ok(!drivingSchoolHe.entities.some((e) => e.name === "Courier"), "Hebrew driving-school 'תלמידים נהגים' description must not spuriously match Courier");
+
+  // Non-regression: genuine delivery/courier descriptions must still match,
+  // including the two edge cases that make a naive license/insurance
+  // marker unsafe -- a real courier app legitimately mentioning driver
+  // license numbers or driver insurance as compliance fields.
+  const fleet = await provider.generate("Manage our fleet of delivery drivers.");
+  assert.ok(fleet.entities.some((e) => e.name === "Courier"), "a genuine delivery-drivers description must still match Courier");
+
+  const tracking = await provider.generate("A courier app to track drivers delivering packages to customers.");
+  assert.ok(tracking.entities.some((e) => e.name === "Courier"), "a genuine courier-tracking-drivers description must still match Courier");
+
+  const licenseNumbers = await provider.generate("Track our drivers license numbers and vehicle registrations for deliveries.");
+  assert.ok(licenseNumbers.entities.some((e) => e.name === "Courier"), "a genuine courier description mentioning driver license numbers must still match Courier");
+
+  const insurance = await provider.generate("A courier company app to verify driver insurance before assigning routes.");
+  assert.ok(insurance.entities.some((e) => e.name === "Courier"), "a genuine courier description mentioning driver insurance must still match Courier");
+
+  const fleetHe = await provider.generate("ניהול צי של נהגי משלוחים.");
+  assert.ok(fleetHe.entities.some((e) => e.name === "Courier"), "a genuine Hebrew delivery-drivers description must still match Courier");
+
+  const trackingHe = await provider.generate("אפליקציית שליחויות למעקב אחרי נהגים המספקים חבילות ללקוחות.");
+  assert.ok(trackingHe.entities.some((e) => e.name === "Courier"), "a genuine Hebrew courier-tracking-drivers description must still match Courier");
+
+  const licenseNumbersHe = await provider.generate("מעקב אחרי מספרי רישיון נהיגה ורישום רכבים של הנהגים שלנו למשלוחים.");
+  assert.ok(licenseNumbersHe.entities.some((e) => e.name === "Courier"), "a genuine Hebrew courier description mentioning driver license numbers must still match Courier");
+
+  const insuranceHe = await provider.generate("אפליקציה לחברת שליחויות לאימות ביטוח נהגים לפני הקצאת מסלולים.");
+  assert.ok(insuranceHe.entities.some((e) => e.name === "Courier"), "a genuine Hebrew courier description mentioning driver insurance must still match Courier");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different
