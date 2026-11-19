@@ -5874,6 +5874,96 @@ test("AutomationsPanel's Retry button updates the rule's own last-run summary to
 });
 
 /**
+ * Round 2260: retryingRunId is one panel-wide value -- handleRetryRun's own
+ * reentrancy guard above is `if (retryingRunId !== null) return`, not
+ * per-run -- but the Retry button's own disabled condition only ever
+ * checked `retryingRunId === run.id`, so a DIFFERENT run's Retry button in
+ * the same History list stayed visibly enabled while another run's retry
+ * was in flight. Clicking it silently no-ops (handleRetryRun's own guard
+ * returns immediately): no second fetch, no error, no loading state,
+ * nothing -- a real "looks enabled but does nothing" trap for a rule with
+ * multiple failed runs, confirmed live before this fix. Mirrors this same
+ * file's own existing cross-gating convention (toggle/edit/delete/test/
+ * duplicate all disable on `retryingRunId !== null`, not a narrower check).
+ */
+test("AutomationsPanel's Retry button disables for a DIFFERENT run too while another run's retry is in flight, not just for its own run", async () => {
+  await withJsdom(async () => {
+    const originalFetch = globalThis.fetch;
+    let run1RetryCalls = 0;
+    let run2RetryCalls = 0;
+    const pending: { resolveRun1Retry: (() => void) | null } = { resolveRun1Retry: null };
+    globalThis.fetch = (async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && input === "/api/projects/proj1/automations") {
+        return new Response(JSON.stringify({ rules: [makeRule()] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (method === "GET" && input === "/api/projects/proj1/automations/rule1/runs") {
+        return new Response(
+          JSON.stringify({
+            runs: [
+              { id: "run1", ruleId: "rule1", status: "failed", error: "recipient not found", recordId: 7, triggeredAt: new Date("2026-03-15T09:00:00Z").toISOString() },
+              { id: "run2", ruleId: "rule1", status: "failed", error: "recipient not found", recordId: 8, triggeredAt: new Date("2026-03-15T10:00:00Z").toISOString() },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/runs/run1/retry") {
+        run1RetryCalls += 1;
+        await new Promise<void>((resolve) => {
+          pending.resolveRun1Retry = resolve;
+        });
+        return new Response(
+          JSON.stringify({ run: { id: "run1", ruleId: "rule1", status: "sent", error: null, actionType: "send_whatsapp", recordId: 7, triggeredAt: new Date().toISOString() } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (method === "POST" && input === "/api/projects/proj1/automations/rule1/runs/run2/retry") {
+        run2RetryCalls += 1;
+        return new Response(
+          JSON.stringify({ run: { id: "run2", ruleId: "rule1", status: "sent", error: null, actionType: "send_whatsapp", recordId: 8, triggeredAt: new Date().toISOString() } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected request ${method} ${input}`);
+    }) as typeof fetch;
+
+    try {
+      renderPanel();
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-row").length === 1);
+
+      const historyButton = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "History") as HTMLButtonElement;
+      fireEvent.click(historyButton);
+      await waitForCondition(() => document.querySelectorAll(".automations-rule-history-list li").length === 2);
+
+      const retryButtons = () => Array.from(document.querySelectorAll(".automations-rule-history-list li button")).filter((b) => /Retry/.test(b.textContent ?? "")) as HTMLButtonElement[];
+      const [run1Retry, run2Retry] = retryButtons();
+      assert.equal(run1Retry.disabled, false, "run1's Retry button must start enabled");
+      assert.equal(run2Retry.disabled, false, "run2's Retry button must start enabled");
+
+      fireEvent.click(run1Retry);
+      await waitForCondition(() => run1RetryCalls === 1);
+
+      const [run1RetryAfter, run2RetryAfter] = retryButtons();
+      assert.equal(run1RetryAfter.disabled, true, "run1's own Retry button must disable itself while its retry is in flight");
+      assert.equal(
+        run2RetryAfter.disabled,
+        true,
+        "run2's Retry button must ALSO disable while run1's retry is in flight -- retryingRunId is one panel-wide value, so a click here would otherwise silently no-op",
+      );
+
+      fireEvent.click(run2RetryAfter);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(run2RetryCalls, 0, "clicking the disabled run2 button must not fire a second retry request while run1's is still in flight");
+
+      pending.resolveRun1Retry?.();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+/**
  * Round 935: apps/api/src/automations.ts stores a failed send_whatsapp
  * run's error as the exact stable snake_case code whatsappWeb.ts's
  * sendMessage returns ("missing_country_code" is the COMMON case for a

@@ -1962,7 +1962,19 @@ export function AutomationsPanel({
                                     type="button"
                                     className="link-button small"
                                     onClick={() => handleRetryRun(rule, run)}
-                                    disabled={retryingRunId === run.id || busyRuleId !== null || createBusy || testingRuleId !== null}
+                                    // Round 2260: was `retryingRunId === run.id || ...` -- only
+                                    // ever disabled itself while IT was retrying, never for a
+                                    // SIBLING run's own Retry button in the same History list.
+                                    // retryingRunId is one panel-wide value (handleRetryRun's own
+                                    // reentrancy guard above is `if (retryingRunId !== null)
+                                    // return`, not per-run), so clicking a sibling run's Retry
+                                    // while another is in flight silently no-ops -- no fetch, no
+                                    // error, no loading state, nothing -- with the button still
+                                    // showing enabled. Matches the Test button's own identical
+                                    // `testingRuleId !== null` disabled check just above (its
+                                    // label alone narrows by rule.id; the disabled condition
+                                    // never did).
+                                    disabled={retryingRunId !== null || busyRuleId !== null || createBusy || testingRuleId !== null}
                                   >
                                     {retryingRunId === run.id ? t("automations.run.retrying") : t("automations.run.retry")}
                                   </button>
