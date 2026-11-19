@@ -5345,6 +5345,27 @@ test("the exported EntityView's own generated invalidNumberField flags a hex/oct
 });
 
 /**
+ * Round 2283: mirrors the live preview's own EntityPanel.tsx fieldDraftUnchanged
+ * fix -- a number field that was simply never filled in (stored null/
+ * undefined, not a genuine 0) used to report "" as "changed" after being
+ * typed into and deleted back empty, even though this exported app's own
+ * server.js coerce() maps an empty raw value right back to null for a
+ * non-required field, so nothing about the real stored value changes.
+ */
+test("the exported EntityView's own generated fieldDraftUnchanged treats an emptied draft as unchanged against a never-filled-in (null/undefined) stored value, but not against a genuine stored 0", () => {
+  const entityViewJsx = generateExportFiles(project).find((f) => f.path === "web/src/components/EntityView.jsx")!.content;
+  const fieldDraftUnchangedSrc = entityViewJsx.match(/function fieldDraftUnchanged\(field, draft, stored\) \{[\s\S]*?\n\}\n/)?.[0];
+  assert.ok(fieldDraftUnchangedSrc, "expected to find fieldDraftUnchanged in generated output");
+  const fieldDraftUnchanged = new Function(`${fieldDraftUnchangedSrc}\nreturn fieldDraftUnchanged;`)();
+
+  const numberField = { type: "number" };
+  assert.equal(fieldDraftUnchanged(numberField, "", null), true, "a number field never filled in (stored null) left exactly as empty must be unchanged");
+  assert.equal(fieldDraftUnchanged(numberField, "", undefined), true, "same no-op for a field not even present on the record yet (stored undefined)");
+  assert.equal(fieldDraftUnchanged(numberField, "", 0), false, "clearing a field that genuinely held 0 must still be reported as changed, not confused with the null case above");
+  assert.equal(fieldDraftUnchanged(numberField, "150", 150), true, "a re-typed string numerically identical to the stored number must still be unchanged (no regression)");
+});
+
+/**
  * Round 644 regression, ported from the live Forge AI preview's own
  * EntityPanel.tsx fix: startEdit used to snapshot the whole record into
  * `form`, and handleSubmit sent that whole snapshot back on save -- not

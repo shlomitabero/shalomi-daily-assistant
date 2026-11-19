@@ -6327,11 +6327,24 @@ function invalidNumberField(field, value) {
 // matters: Number("") is 0, so without it, clearing a number field that
 // already held 0 would be misread as "unchanged" and silently skip the
 // real clearing PATCH.
+//
+// Round 2283: mirrors the live preview's own EntityPanel.tsx fix for the
+// opposite gap -- a number field that was never filled in at all (stored
+// is null/undefined, not a genuine 0). Typing then deleting back to ""
+// used to fall through to "changed" even though server.js's own coerce()
+// (see renderServerJs) maps an empty raw value right back to null for a
+// non-required field, so nothing about the real stored value actually
+// changes.
 function fieldDraftUnchanged(field, draft, stored) {
   if (draft === stored) return true;
-  if (field && field.type === "number" && typeof draft === "string" && typeof stored === "number" && draft.trim() !== "") {
-    const parsed = Number(draft);
-    return Number.isFinite(parsed) && parsed === stored;
+  if (field && field.type === "number" && typeof draft === "string") {
+    if (draft.trim() === "") {
+      return stored === null || stored === undefined;
+    }
+    if (typeof stored === "number") {
+      const parsed = Number(draft);
+      return Number.isFinite(parsed) && parsed === stored;
+    }
   }
   return false;
 }

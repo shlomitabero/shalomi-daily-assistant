@@ -2704,6 +2704,13 @@ test("EntityPanel's own invalidNumberField flags a hex/octal/binary-notation str
  * relative to a stored 0 -- Number("") is 0, so without that guard,
  * clearing a number field that already held 0 (to genuinely blank it)
  * would be silently misread as a no-op.
+ *
+ * Round 2283: extended with the opposite case this helper used to miss --
+ * a number field that was simply never filled in (stored null/undefined,
+ * not a genuine 0). Typing a digit into an empty cell then deleting it
+ * back to "" is the same no-op coerceValue (repository.ts) itself already
+ * treats as a no-op (an empty raw value for a non-required field maps
+ * right back to null), but the helper used to report it as "changed".
  */
 test("EntityPanel's own fieldDraftUnchanged treats a re-typed number string as unchanged only when it's numerically identical, and never treats an empty string as unchanged", () => {
   const helperMatch = entityPanelSrc.match(/function fieldDraftUnchanged\(field: Field \| undefined, draft: unknown, stored: unknown\): boolean \{[\s\S]*?\n\}\n/);
@@ -2723,6 +2730,9 @@ test("EntityPanel's own fieldDraftUnchanged treats a re-typed number string as u
   assert.equal(fieldDraftUnchanged(numberField, 150, 150), true, "the exact same type/value (no onChange fired yet) must still short-circuit as unchanged");
   assert.equal(fieldDraftUnchanged(textField, "150", 150), false, "the number-specific normalization must never apply to a non-number field, even with the same-looking values");
   assert.equal(fieldDraftUnchanged(undefined, "150", 150), false, "with no field definition available, only a strict match counts as unchanged");
+  assert.equal(fieldDraftUnchanged(numberField, "", null), true, "round 2283: a number field that was never filled in (stored null) and is left exactly as empty must be unchanged, unlike the stored-0 case above");
+  assert.equal(fieldDraftUnchanged(numberField, "", undefined), true, "round 2283: same no-op for a field not even present on the record yet (stored undefined)");
+  assert.equal(fieldDraftUnchanged(numberField, "   ", null), true, "round 2283: a whitespace-only draft against a null stored value must also count as unchanged, matching coerceValue's own trim-then-check emptiness rule");
 });
 
 /**

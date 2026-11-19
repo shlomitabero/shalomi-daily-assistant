@@ -204,12 +204,28 @@ function invalidNumberField(field: Field, value: unknown): boolean {
  * clearing a number field that already held 0 (to genuinely blank it out)
  * would be misread as "unchanged" and silently skip the real clearing
  * PATCH -- "" must never be treated as equal to any stored value here.
+ *
+ * Round 2283: that same guard had the opposite gap for the far more common
+ * case -- a number field that was simply never filled in (`stored` is
+ * `null`/`undefined`, not a genuine 0). Typing a digit into an empty cell
+ * then deleting it back to "" before committing left `draft === ""` and
+ * `stored === null`, which fell through to the final `return false` below
+ * -- reported as "changed" even though coerceValue (repository.ts) maps an
+ * empty/whitespace raw value right back to `null` for a non-required
+ * field, so nothing about the real stored value would actually change.
+ * Unlike the stored-0 case above, "" against a null/undefined stored value
+ * genuinely IS the same emptiness on both sides.
  */
 function fieldDraftUnchanged(field: Field | undefined, draft: unknown, stored: unknown): boolean {
   if (draft === stored) return true;
-  if (field?.type === "number" && typeof draft === "string" && typeof stored === "number" && draft.trim() !== "") {
-    const parsed = Number(draft);
-    return Number.isFinite(parsed) && parsed === stored;
+  if (field?.type === "number" && typeof draft === "string") {
+    if (draft.trim() === "") {
+      return stored === null || stored === undefined;
+    }
+    if (typeof stored === "number") {
+      const parsed = Number(draft);
+      return Number.isFinite(parsed) && parsed === stored;
+    }
   }
   return false;
 }
