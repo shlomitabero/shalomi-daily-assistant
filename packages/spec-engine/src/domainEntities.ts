@@ -1493,7 +1493,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
       // substring of "מוסכים" the way most of this file's Hebrew nouns
       // are of their own plurals. A description using only the plural
       // ("רשת מוסכים") matched no domain entity at all.
-      "מוסך", "מוסכים", "מכונאי", "כלי רכב",
+      //
+      // Round 2291: that round-577 fix never added the construct-plural
+      // form "מוסכי" (e.g. "מוסכי העיר", "garages of the city") -- the
+      // same sofit-letter-reversion defect class round 2290 found for
+      // Employee's "מאמן"->"מאמני" (sofit nun), just a different entity
+      // and a different sofit letter (kaf). "מוסכי" uses the same regular
+      // kaf as "מוסכים" (not the sofit "ך" of the bare singular), so
+      // "מוסך" doesn't match it either -- and "מוסכים" (6 letters) can
+      // never be a substring of "מוסכי" (5 letters), the longer keyword
+      // can't fit inside the shorter snippet. Confirmed via the real
+      // matchEntities: "פלטפורמה להשוואת מוסכי האזור ומחירי תיקונים"
+      // matched only the generic Item fallback, with the real Vehicle/
+      // garage domain entirely lost, while the bare-plural twin ("...
+      // מוסכים...") already matched Vehicle correctly.
+      "מוסך", "מוסכים", "מוסכי", "מכונאי", "כלי רכב",
     ],
     labelHe: "כלי רכב",
     descriptionHe: "רכב שהעסק מטפל בו, משכיר, או עוקב אחריו.",

@@ -655,6 +655,34 @@ test("asks about payments (recommending Stripe) for an auto-repair/car-repair de
   assert.equal(garageHe.openQuestions[0].recommendation, "Stripe", "a Hebrew car-repair garage must be recommended Stripe, not 'בלי תשלומים'");
 });
 
+/**
+ * Round 2291: the exact same sofit-letter-reversion defect class round
+ * 2290 found for Employee's "מאמן"->"מאמני" (sofit nun), found this round
+ * in Vehicle's "מוסך"/"מוסכים" keywords -- round 577's own plural fix
+ * never added the construct-plural form "מוסכי" (e.g. "מוסכי העיר",
+ * "garages of the city"). "מוסכי" uses the same regular kaf as "מוסכים"
+ * (not the sofit "ך" of the bare singular "מוסך"), and "מוסכים" (6
+ * letters) can never be a substring of the shorter "מוסכי" (5 letters),
+ * so neither existing keyword matched it. Confirmed live via the real
+ * matchEntities before this fix: "פלטפורמה להשוואת מוסכי האזור ומחירי
+ * תיקונים" matched only the generic Item fallback, with the real
+ * Vehicle/garage domain entirely lost, while the bare-plural twin ("...
+ * מוסכים...") already matched Vehicle correctly.
+ */
+test("recognizes the Hebrew construct-plural 'מוסכי' form (e.g. 'מוסכי העיר') as the Vehicle entity, not just the bare 'מוסך'/'מוסכים' forms", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const regionalGarages = await provider.generate("פלטפורמה להשוואת מוסכי האזור ומחירי תיקונים", true);
+  assert.ok(regionalGarages.entities.some((e) => e.name === "Vehicle"), "Hebrew 'מוסכי האזור' must match the Vehicle entity rule");
+
+  const neighborhoodGarages = await provider.generate("אפליקציה לדירוג מוסכי השכונה", true);
+  assert.ok(neighborhoodGarages.entities.some((e) => e.name === "Vehicle"), "Hebrew 'מוסכי השכונה' must match the Vehicle entity rule");
+
+  // Non-regression: the already-working bare-plural form must still match.
+  const barePlural = await provider.generate("אפליקציה לניהול מוסכים", true);
+  assert.ok(barePlural.entities.some((e) => e.name === "Vehicle"), "the bare 'מוסכים' form must still match (no regression)");
+});
+
 test("asks about payments (recommending Stripe) for a field-service/repair description, even though it names none of PAYMENT_KEYWORDS", async () => {
   // "repair jobs"/"service calls"/"plumbing business" match the Service and
   // WorkOrder entities but share no substring with "payment"/"billing"/
