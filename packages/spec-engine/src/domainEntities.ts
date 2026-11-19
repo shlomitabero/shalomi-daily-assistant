@@ -2436,7 +2436,21 @@ export const DOMAIN_ENTITY_RULES: DomainEntityRule[] = [
     keywords: [
       "vendor", "vendors", "supplier", "suppliers", "procurement",
       /(?<!ללא )(?<!אין )(?<!בלי )(?<!מוטל ב)(?<!מטיל )(?<!מטילה )(?<!מעלה )ספק(?!ות)(?!\s*אם)/,
-      "ספקים", "רכש",
+      "ספקים",
+      // Round 2309: bare "רכש" is the correct noun for "procurement"
+      // ("ניהול רכש"), but it's also the ordinary 3rd-person-masc. past-
+      // tense VERB "acquired", used in extremely common idioms like
+      // "רכש ניסיון" (acquired experience), "רכש מיומנויות" (acquired
+      // skills), "רכש מוניטין" (acquired a reputation) -- none about
+      // buying from a vendor. Confirmed live: an employee-development
+      // description using "העובד רכש מיומנויות ניהול חדשות..." and a
+      // similar "רכש ניסיון" sentence both fabricated a Vendor entity
+      // with zero procurement content. Guarded with a lookahead
+      // excluding the specific "acquired-X" idiom objects confirmed to
+      // collide (handling both masc. "רכש" and fem. "רכשה" forms),
+      // the same bare-overly-broad-word shape rounds 2297/2300-2308
+      // already fixed elsewhere in this file.
+      /(?:רכשה(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון))|רכש(?!ה)(?!\s*(?:ניסיון|ידע|מיומנויות|מוניטין|תארים|הרגלים|השכלה|ביטחון)))/,
     ],
     labelHe: "ספקים",
     descriptionHe: "גורם עסקי שהעסק קונה ממנו סחורה או שירותים.",

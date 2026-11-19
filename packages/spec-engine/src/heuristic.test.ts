@@ -5916,6 +5916,32 @@ test("Project's 'project(s)' keyword doesn't spuriously match the forecasting/co
 });
 
 /**
+ * Round 2309: Vendor's bare Hebrew "רכש" is the correct noun for
+ * "procurement" ("ניהול רכש"), but it's also the ordinary 3rd-person
+ * past-tense VERB "acquired", used in extremely common idioms like
+ * "רכש ניסיון" (acquired experience) and "רכש מיומנויות" (acquired
+ * skills), none about buying from a vendor. The twelfth confirmed
+ * instance of the bare-overly-broad-keyword shape rounds 2297/2300-2308
+ * fixed.
+ */
+test("Vendor's Hebrew 'רכש' keyword doesn't spuriously match the 'acquired experience/skills' idiom", async () => {
+  const provider = new HeuristicSpecProvider();
+
+  const skills = await provider.generate("העובד רכש מיומנויות ניהול חדשות בעבודה והמערכת עוזרת לתעד את ההתקדמות שלו");
+  assert.ok(!skills.entities.some((e) => e.name === "Vendor"), "'רכש מיומנויות' (acquired skills) must not spuriously match Vendor");
+
+  const experience = await provider.generate("המנהל רכש ניסיון רב בניהול צוותים והמערכת שלנו עוזרת לתעד הישגים אישיים");
+  assert.ok(!experience.entities.some((e) => e.name === "Vendor"), "'רכש ניסיון' (acquired experience) must not spuriously match Vendor");
+
+  const reputation = await provider.generate("היא רכשה מוניטין טוב בתעשייה וכולם מכירים אותה כעת.");
+  assert.ok(!reputation.entities.some((e) => e.name === "Vendor"), "'רכשה מוניטין' (acquired a reputation, feminine form) must not spuriously match Vendor");
+
+  // Non-regression: genuine procurement descriptions must still match.
+  const procurement = await provider.generate("אפליקציה לניהול ספקים ורכש");
+  assert.ok(procurement.entities.some((e) => e.name === "Vendor"), "a genuine procurement description must still match Vendor");
+});
+
+/**
  * Regression test for round 577's finding: Vehicle's Hebrew keyword
  * "מוסך" (garage) had no plural entry. Its plural "מוסכים" swaps the
  * word-final sofit-kaf ("ך") for a regular kaf ("כ") -- a different
