@@ -54879,3 +54879,103 @@ on any idiom phrasing not matching the existing ל+noun lookahead list
 (round 2343, accepted trade-off, same leaky-denylist class).
 
 Live: https://forge-ai-m7p7.onrender.com
+
+
+## Round 2344: Course's 'שיעור' give-verb guard was ALSO missing an entire tense and mood
+
+**Bug:** Round 2328's idiom-exclusion guard for Course's "שיעור"
+keyword (vs. the Hebrew idiom "לתת ל-X שיעור" = to teach X a lesson/
+comeuppance, nothing to do with a real class) only ever covered the
+infinitive, future tense, and past tense of the give-verb. PRESENT
+tense (נותן/נותנת/נותנים/נותנות) and the IMPERATIVE mood (תן/תני/תנו)
+were never added at all -- the exact same "entire tense/mood missing
+outright" shape round 2343 found just one round earlier on Donation's
+תרם guard, this time on a completely different entity and idiom.
+
+**Confirmed live** (via a scratch script importing the real
+`HeuristicSpecProvider`): "הוא נותן לשכן שלו שיעור שהוא לא ישכח." (present tense: he's
+teaching his neighbor a lesson) and "תן לשכן שלך שיעור שהוא לא ישכח כל החיים!"
+(imperative: teach him a lesson!) both fabricated a Course entity with
+zero real lesson/class content, across all three grammatical persons
+and numbers in each category.
+
+**Fix** (`domainEntities.ts`, Course's "שיעור" keyword entry):
+```js
+/(?<!(?:לתת|אתן|תיתן|ייתן|נותנות|נותנים|נותנת|נותן|נתן|נתנה|נתנו|נתתי|נתתם|נתתן|נתת|(?<![א-ת])תנו|(?<![א-ת])תני|(?<![א-ת])תן)\s+ל\S*(?:\s+\S+){0,3}\s)שיעור(?!\s*ה?(?:ריבית|מס|אבטלה|הצלחה|נשירה|תחלופה|צמיחה|תמותה|ילודה|החזר|אינפלציה|תפוסה|תגובה|המרה))/
+```
+The present-tense forms needed no extra guard beyond the existing
+sofit-nun convention ("נותן" ends in ן, "נותנת"/"נותנים"/"נותנות" all
+continue with the ordinary נ, so none can prefix-match another). The
+imperative forms needed one, though: bare "תן"/"תני"/"תנו" are each a
+literal substring of unrelated, far more common words -- "ניתן לקבל שיעור פרטי בבית בכל יום."
+(it's possible to..., "ניתן") and "יש לנו תנור לבישול לפני השיעור." (oven, "תנור")
+both still correctly match Course after the fix thanks to a
+"(?<![א-ת])" word-start guard on each imperative branch, confirmed
+empirically this excludes "ניתן"/"מתן"/"אתנו"/"נתנו"/"תנור" from ever
+triggering the new branches while still catching every genuine
+imperative idiom sentence.
+
+**BILLING_ENTITY_NAMES:** Course is NOT a member, so this bug is
+entity-fabrication only.
+
+**Test added** (`heuristic.test.ts`): confirms all 6 new tense/mood
+idiom forms (3 present-tense person/number combinations + 3
+imperative person/number combinations) no longer fabricate Course,
+genuine present-tense lesson usage still matches, and the four
+word-boundary collision words ("ניתן" x2, "מתן", "אתנו", "תנור") all
+still correctly match Course rather than being swallowed by the new
+imperative guard.
+
+**Verification:** fail-before via `git stash` showed exactly 1 failure
+out of 256 (the new test), as predicted; pass-after showed 256/256 --
+unlike round 2343, this fix introduced no regression on the first
+attempt (the collision risk was caught and guarded against during the
+independent-verification phase, before implementation, rather than
+during the post-implementation full-suite run). Full
+`@forge/spec-engine` suite: 452/452 (up from 451). Full `@forge/api`
+suite: 1782/1782, clean. Production build: clean (`dist/server.js
+1.5mb`, exit code 0).
+
+**Standing notes update:** this is now the second confirmed instance
+of the "entire tense/mood category missing, not just person/number
+gaps" shape (Donation's תרם round 2343, Course's שיעור round 2344
+now) -- both found by deliberately re-deriving a guard's FULL
+grammatical paradigm (every tense x every mood) rather than assuming
+"already patched for X forms" meant complete. The round-2344 survey
+also flagged two further UNCHECKED leads on this same discipline,
+not yet independently verified or fixed: Vendor's "ספק" guard (round
+2341) may be missing future-tense forms of the "casts/raises doubt"
+idiom (יטיל/תטיל/נטיל/אטיל ספק, יעלה/תעלה/נעלה/אעלה ספק) entirely, and
+Vendor's "רכש" guard (rounds 2309/2320/2326/2342) may be missing true
+future-tense forms spelled with a vav (ארכוש/תרכוש/ירכוש/נרכוש) that
+don't even contain "רכש" as a substring and so are structurally
+unreachable by any existing branch -- both are strong candidates for
+the next round. Standing deferred/unsafe gaps, unchanged this round:
+Ticket bare-noun gap (rounds 2282-2283); Courier license/insurance/
+traffic-ticket sub-case (round 2311); Course bare-price-crashing
+sub-case (round 2316); Course military-topic-vs-squad-unit ambiguity
+(round 2316); Course "courses"-vs-restaurant-meal-courses sub-case
+(round 2318); Order's forward-only "הזמנה" exclusion-lookahead
+directionality gap (round 2331, accepted trade-off); pre-existing
+roadmap.md script-substitution corruption from rounds 2316/2324/2325
+(round 2332, deferred to a dedicated future round); Donation's "צדקה"
+guard's residual unlisted-stance-noun leak (round 2334, accepted
+trade-off); Patient's "מטופל" guard's residual leaks (round 2336,
+accepted trade-off); Deal's "הזדמנות" guard's residual leak (round
+2337, accepted trade-off); Customer's "לקוח" guard's residual leak
+(round 2338, accepted trade-off); Appointment's "מספרת" guard's
+residual leak (round 2339, accepted trade-off); Shipment's "שילוח"
+guard's residual leaks (round 2340, accepted trade-off); Vendor's
+"ספק" guard's residual leak on rarer doubt-phrasings (round 2341,
+accepted trade-off) -- NOW ALSO FLAGGED as possibly missing future
+tense entirely, see above; Vendor's "רכש" guard's residual leak on
+any future-form negation phrasings not yet enumerated (round 2342,
+accepted trade-off) -- NOW ALSO FLAGGED as possibly missing true
+future tense entirely, see above; Donation's new future/imperative
+branches' residual leak on any idiom phrasing not matching the
+existing ל+noun lookahead list (round 2343, accepted trade-off);
+Course's new imperative branches' residual leak on any idiom
+phrasing using a give-verb form not yet enumerated (round 2344,
+accepted trade-off, same leaky-denylist class).
+
+Live: https://forge-ai-m7p7.onrender.com
