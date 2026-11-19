@@ -52145,3 +52145,27 @@ Live: https://forge-ai-m7p7.onrender.com
 **Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for an ELEVENTH round running (2274-2284, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred.
 
 Live: https://forge-ai-m7p7.onrender.com
+
+## Round 2285 (2026-11-19): SENSITIVE_FIELD_HINTS' driver's-license hints covered only 2 of 4 natural spellings
+
+**Bug:** round 2278 added two plain-substring hints for a driver's-license field: `"driverslicense"` (plural "drivers", no underscore) and `"driver_license"` (singular "driver", with an underscore). Both are plain `lowerName.includes(hint)` checks (`pipeline.ts:759`), so neither tolerates the OTHER hint's own choice of plural-vs-singular and underscore-vs-none at the same time:
+- `driversLicenseNumber` (plural, camelCase) -> matched `"driverslicense"` -- OK
+- `driver_license_number` (singular, snake_case) -> matched `"driver_license"` -- OK
+- `driverLicenseNumber` (singular, camelCase) -> matched NEITHER -- MISSED
+- `drivers_license_number` (plural, snake_case) -> matched NEITHER -- MISSED
+
+`driverLicenseNumber` (singular) is arguably the *more* likely spelling an AI spec generator would pick, since it matches the singular convention every sibling field added in the very same round-2278 commit uses (`cardNumber`, `bankAccountNumber`, `routingNumber`, `passportNumber` are all singular, no trailing "s").
+
+**Confirmed empirically** via Node and by running the real `runSecurityScan` directly: a `PaymentMethod` entity with `driverLicenseNumber`/`drivers_license_number` fields (alongside the two already-covered spellings) scored those two fields zero warnings -- a spec using only the missed spellings would score a perfect 100/100 while storing an unencrypted driver's-license number, exactly the hazard class round 2278 exists to catch.
+
+**Fix:** added the two missing literal spellings (`"driverlicense"`, `"drivers_license"`), so all four plural/underscore combinations are now covered -- matching the plain-substring-list style already used for every other round-2278 hint rather than introducing a regex for this one field.
+
+**How it was found:** this round's survey agent, following up on the pattern that found bugs in rounds 2283 and 2284 (checking whether a documented one-sided fix/claim also covers its sibling case), checked round 2278's own hint pairs for exactly this kind of incomplete plural/separator coverage and found this one had it, while the `pin`/`ssn` pair (already fixed round 2284) and the other round-2278 string hints did not.
+
+**Verification:** fail-before/pass-after via `git stash push --keep-index` on `pipeline.ts` alone: the new assertions failed exactly as predicted against the pre-fix hint list, then passed cleanly after restoring the fix. Extended the existing round-2278 regression test (now 15 expected warnings, up from 13 after round 2284's own addition). Full `@forge/api` suite (1782/1782) and its production build both clean.
+
+**Investigated and ruled out as NOT bugs this round (per this round's survey agent, no need to re-check):** `seed.ts`'s `dayOffset` date-seeding formula for entities with multiple end-like date fields (asymmetric by design, correct by construction); `EntityPanel.tsx`'s `hiddenFields`/`fieldFilters` revalidation `useEffect`s omitting `userId` from their dependency arrays (a real inconsistency with sibling effects, but unreachable since `userId` never changes while an `EntityPanel` instance stays mounted); the other round-2278 plain-substring hints (`iban`, `cardnumber`, `bankaccount`, `cvv`, `cvc`, `routingnumber`, `passport`, etc. -- checked for English-word collisions like "Caribbean"/"urban"/"librarian" vs "iban", found safe); `entityFormatting.ts`'s CSV-import-specific `csvFieldLabelOccurrences`/`csvFieldDisplayLabel`/`matchesHeader`; `normalizeDecimalSeparator` and its claimed-identical mirror in `webhookIn.ts` (confirmed byte-identical); the four-file "identical" `fieldLabelOccurrences`/`fieldDisplayLabel`/`entityLabelOccurrences`/`entityDisplayLabel` implementations across `entityFormatting.ts`, `codegen.ts`, `backup.ts`, `pipeline.ts` (confirmed genuinely identical).
+
+**Standing note:** a genuine interactive Playwright/browser pass against the live app remains untried for a TWELFTH round running (2274-2285, no browser/computer-use tooling available). The Ticket-entity bare-noun gap (rounds 2282-2283) and Donation's Hebrew verb forms (round 2281) both remain open/deferred. The "does a function/hint claiming parity with a sibling actually have it" pattern has now found 3 bugs in a row (rounds 2283, 2284, 2285) -- worth continuing to mine any remaining hint arrays, keyword lists, or doc comments making similar claims.
+
+Live: https://forge-ai-m7p7.onrender.com
