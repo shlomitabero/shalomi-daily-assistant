@@ -68,9 +68,8 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 const BTN = {
-  primary:
-    "bg-gradient-to-b from-gold-2 to-gold text-[#1a140a] font-semibold shadow-[0_6px_20px_-8px_rgb(207_169_95/0.6)] hover:brightness-105",
-  secondary: "border border-line-strong text-ink bg-surface-2 hover:bg-surface-3",
+  primary: "bg-red border border-red text-white font-medium hover:brightness-110",
+  secondary: "border border-line text-ink bg-surface-2 hover:border-line-strong",
   ghost: "text-muted hover:text-ink",
   danger: "border border-bad/40 text-bad bg-bad/10 hover:bg-bad/15",
 };
@@ -134,36 +133,26 @@ export function Notice({ tone = "warn", children }: { tone?: "warn" | "ok" | "ba
   return <div className={cx("rounded-xl border px-3.5 py-2.5 text-sm", TONES[tone])}>{children}</div>;
 }
 
+/** Status chip as in the prototype: on target / close / below / no data. */
+export function achievementStatus(a: number | null): { tone: "ok" | "warn" | "bad" | "muted"; label: string } {
+  if (a === null) return { tone: "muted", label: "אין נתון" };
+  if (a + 1e-9 >= 1) return { tone: "ok", label: "ביעד" };
+  if (a >= 0.95) return { tone: "warn", label: "קרוב" };
+  return { tone: "bad", label: "מתחת" };
+}
+
 /**
- * Achievement meter on a 0–120% scale with threshold and target markers.
+ * Achievement bar on a 0–120% scale with a target tick (prototype style).
  * Fills from the start edge (right, in RTL).
  */
-export function AchievementMeter({
-  achievement,
-  thresholdPct,
-  showLegend,
-}: {
-  achievement: number | null;
-  thresholdPct: number;
-  showLegend?: boolean;
-}) {
-  const scale = (x: number) => `${(Math.min(Math.max(x, 0), CAP) / CAP) * 100}%`;
-  const a = achievement ?? 0;
-  const t = thresholdPct / 100;
-  const tone =
-    achievement === null ? "bg-faint" : a + 1e-9 < t ? "bg-bad" : a < 1 ? "bg-warn" : "bg-gradient-to-l from-gold to-gold-2";
+export function AchievementMeter({ achievement }: { achievement: number | null; thresholdPct?: number }) {
+  const a = achievement;
+  const w = a === null ? 0 : Math.min(1, a / CAP);
+  const color = a === null ? "var(--color-faint)" : a + 1e-9 >= 1 ? "var(--color-ok)" : a >= 0.95 ? "var(--color-warn)" : "var(--color-red)";
   return (
-    <div>
-      <div className="relative mt-3 h-2 rounded-full bg-surface-3" aria-hidden>
-        <div className={cx("absolute inset-y-0 start-0 rounded-full transition-all", tone)} style={{ width: scale(a) }} />
-        <div className="absolute -top-1 h-4 w-px bg-muted/70" style={{ insetInlineStart: scale(t) }} />
-        <div className="absolute -top-1.5 h-5 w-0.5 rounded bg-ink" style={{ insetInlineStart: scale(1) }} />
-      </div>
-      {showLegend ? (
-        <p className="mt-2 text-[0.68rem] text-faint">
-          50% מהבונוס בסף ({thresholdPct}%) · 100% ביעד <span className="text-ink/70">┃</span> · עד 120% מעל היעד
-        </p>
-      ) : null}
+    <div className="relative h-2 rounded-full bg-surface-2" aria-hidden>
+      <i className="absolute inset-y-0 start-0 rounded-full transition-[width] duration-700" style={{ width: `${w * 100}%`, background: color }} />
+      <span className="absolute -top-[3px] -bottom-[3px] w-0.5 rounded bg-ink/50" style={{ insetInlineStart: `${(1 / CAP) * 100}%` }} />
     </div>
   );
 }

@@ -26,6 +26,7 @@ export type JobRole =
 export interface MetricDef {
   id: MetricId;
   name: string;
+  description: string;
   scope: Scope;
   direction: Direction;
   defaultSource: string;
@@ -33,15 +34,15 @@ export interface MetricDef {
 }
 
 export const METRICS: readonly MetricDef[] = [
-  { id: "survey", name: "סקרי שביעות רצון", scope: "employee", direction: "higher", defaultSource: "survey", unit: "ציון" },
-  { id: "service", name: "שירות", scope: "employee", direction: "higher", defaultSource: "manual", unit: "ציון" },
-  { id: "food", name: "עמידה ביעד פוד קוסט", scope: "branch", direction: "lower", defaultSource: "cost", unit: "%" },
-  { id: "labor", name: "עמידה ביעד ליבור קוסט", scope: "branch", direction: "lower", defaultSource: "payroll", unit: "%" },
-  { id: "upsell", name: "הגדלת מכירות על מוצר", scope: "employee", direction: "higher", defaultSource: "tabit", unit: "יח׳" },
-  { id: "promo", name: "הגדלת יעדי מבצעים", scope: "branch", direction: "higher", defaultSource: "tabit", unit: "יח׳" },
-  { id: "revenue", name: "הגעה ליעד מחזור", scope: "branch", direction: "higher", defaultSource: "tabit", unit: "₪" },
-  { id: "answer", name: "מרכז שירות – אחוז מענה", scope: "branch", direction: "higher", defaultSource: "pbx", unit: "%" },
-  { id: "phone", name: "שירות בטלפון", scope: "employee", direction: "higher", defaultSource: "pbx", unit: "ציון" },
+  { id: "survey", name: "סקרי שביעות רצון", description: "ממוצע דירוג לקוחות (1–5)", scope: "employee", direction: "higher", defaultSource: "survey", unit: "ציון" },
+  { id: "service", name: "שירות", description: "ציון מנהל / לקוח סמוי (0–100)", scope: "employee", direction: "higher", defaultSource: "manual", unit: "ציון" },
+  { id: "food", name: "עמידה ביעד פוד קוסט", description: "עלות מזון מתוך מחזור", scope: "branch", direction: "lower", defaultSource: "cost", unit: "%" },
+  { id: "labor", name: "עמידה ביעד ליבור קוסט", description: "עלות שכר מתוך מחזור", scope: "branch", direction: "lower", defaultSource: "payroll", unit: "%" },
+  { id: "upsell", name: "הגדלת מכירות על מוצר", description: "מוצר החודש: Dragon Roll · יחידות", scope: "employee", direction: "higher", defaultSource: "tabit", unit: "יח׳" },
+  { id: "promo", name: "הגדלת יעדי מבצעים", description: "מימושי מבצע Happy Hour בסניף", scope: "branch", direction: "higher", defaultSource: "tabit", unit: "יח׳" },
+  { id: "revenue", name: "הגעה ליעד מחזור", description: "מחזור חודשי לפני מע״מ", scope: "branch", direction: "higher", defaultSource: "tabit", unit: "₪" },
+  { id: "answer", name: "מרכז שירות – אחוז מענה", description: "שיחות שנענו מתוך נכנסות", scope: "branch", direction: "higher", defaultSource: "pbx", unit: "%" },
+  { id: "phone", name: "שירות בטלפון", description: "ציון בקרת איכות שיחות (0–100)", scope: "employee", direction: "higher", defaultSource: "pbx", unit: "ציון" },
 ] as const;
 
 export const METRIC_BY_ID: Record<MetricId, MetricDef> = Object.fromEntries(
@@ -52,9 +53,9 @@ export const ROLE_LABELS: Record<JobRole, string> = {
   waiter: "מלצר/ית",
   bartender: "ברמן/ית",
   cook: "טבח/ית",
-  chef: "שף",
-  shift_manager: "מנהל/ת משמרת",
-  call_center: "מרכז שירות",
+  chef: "שף / סו־שף",
+  shift_manager: "אחמ״ש",
+  call_center: "מוקד הזמנות",
 };
 
 export const ROLE_ELIGIBILITY: Record<JobRole, MetricId[]> = {

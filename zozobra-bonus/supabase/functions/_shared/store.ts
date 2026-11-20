@@ -85,6 +85,7 @@ export interface PayoutUpsert {
   amount: number;
   lines: unknown;
   avgAchievement: number | null;
+  realization: number | null;
   missingMetrics: string[];
 }
 

@@ -6,6 +6,7 @@ import {
   computeMetricPayout,
   payoutFactor,
   prorationFor,
+  realization,
   type TargetRow,
 } from "./payout.ts";
 import { ROLE_ELIGIBILITY } from "./metrics.ts";
@@ -26,11 +27,11 @@ describe("payoutFactor", () => {
   it("pays 100% at target", () => {
     expect(payoutFactor(1, 90)).toBe(1);
   });
-  it("pays achievement above target", () => {
-    expect(payoutFactor(1.1, 90)).toBeCloseTo(1.1);
+  it("above target rises twice as fast (prototype rule)", () => {
+    expect(payoutFactor(1.05, 90)).toBeCloseTo(1.1);
   });
-  it("caps at 120%", () => {
-    expect(payoutFactor(1.2, 90)).toBeCloseTo(1.2);
+  it("caps at 120% from 110% achievement", () => {
+    expect(payoutFactor(1.1, 90)).toBeCloseTo(1.2);
     expect(payoutFactor(3, 90)).toBe(1.2);
   });
   it("handles a threshold equal to target (all-or-nothing)", () => {
@@ -55,7 +56,7 @@ describe("computeMetricPayout — higher is better", () => {
     expect(computeMetricPayout({ ...base, actual: 100 }).amount).toBe(50_000);
   });
   it("above target → up to cap", () => {
-    expect(computeMetricPayout({ ...base, actual: 110 }).amount).toBe(55_000);
+    expect(computeMetricPayout({ ...base, actual: 105 }).amount).toBe(55_000);
     expect(computeMetricPayout({ ...base, actual: 500 }).amount).toBe(60_000);
   });
 });
@@ -66,8 +67,8 @@ describe("computeMetricPayout — lower is better (inverted)", () => {
     expect(computeMetricPayout({ ...food, actual: 28 }).amount).toBe(40_000);
   });
   it("better than target → more, capped", () => {
-    // 28/25 = 1.12
-    expect(computeMetricPayout({ ...food, actual: 25 }).amount).toBe(44_800);
+    // 28/27 = 1.037 → 1 + 2×0.037 = 1.0741
+    expect(computeMetricPayout({ ...food, actual: 27 }).amount).toBe(42_963);
     expect(computeMetricPayout({ ...food, actual: 10 }).amount).toBe(48_000);
   });
   it("worse than target but within threshold → partial", () => {
@@ -128,7 +129,7 @@ describe("computeEmployeeBonus", () => {
       ],
     });
     expect(b.lines.map((l) => l.metricId)).toEqual(["survey", "upsell", "revenue"]);
-    expect(b.total).toBe(30_000 + 33_000 + 50_000);
+    expect(b.total).toBe(30_000 + 36_000 + 50_000);
     expect(b.missing).toEqual([]);
   });
 
@@ -167,6 +168,10 @@ describe("computeEmployeeBonus", () => {
     expect(b.total).toBe(Math.round((50_000 * 15) / 31));
   });
 
+  it("realization = earned ÷ full bonus", () => {
+    expect(realization([{ amount: 30_000, maxAmount: 30_000 }, { amount: 0, maxAmount: 10_000 }])).toBeCloseTo(0.75);
+    expect(realization([])).toBeNull();
+  });
   it("averageAchievement ignores missing lines and caps", () => {
     expect(averageAchievement([{ achievement: 1 }, { achievement: null }, { achievement: 2 }])).toBeCloseTo(1.1);
     expect(averageAchievement([{ achievement: null }])).toBeNull();

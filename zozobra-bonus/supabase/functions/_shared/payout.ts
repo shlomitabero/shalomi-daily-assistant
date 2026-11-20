@@ -7,8 +7,8 @@
 //   achievement <  threshold   -> 0%
 //   achievement == threshold   -> 50%  of max bonus
 //   threshold..target          -> linear 50% -> 100%
-//   achievement >= target      -> achievement itself (e.g. 110% -> 110%)
-//   capped at 120%
+//   achievement >= target      -> 100% + 2 × (achievement − 100%)  (approved prototype)
+//                                 e.g. 105% -> 110%, 110% and above -> 120% cap
 //   missing data               -> 0, flagged "missing" so it is visible before approval
 //   partial month              -> prorated by days employed
 // Money is integer agorot (1 ₪ = 100).
@@ -37,7 +37,7 @@ export function computeAchievement(
 /** Share of the max bonus (0..1.2) for an achievement ratio. */
 export function payoutFactor(achievement: number, thresholdPct: number): number {
   const t = thresholdPct / 100;
-  if (achievement + EPS >= 1) return Math.min(achievement, CAP);
+  if (achievement + EPS >= 1) return Math.min(CAP, 1 + 2 * (achievement - 1));
   if (achievement + EPS < t || t >= 1) return 0;
   return 0.5 + (0.5 * (achievement - t)) / (1 - t);
 }
@@ -168,7 +168,14 @@ export function computeEmployeeBonus(args: {
   };
 }
 
-/** Average achievement (capped) across lines that have data — used for the leaderboard. */
+/** Share of the employee's full (100%) bonus actually earned — the leaderboard ranking, as in the prototype. */
+export function realization(lines: Pick<BonusLine, "amount" | "maxAmount">[], proration = 1): number | null {
+  const max = lines.reduce((s, l) => s + l.maxAmount * proration, 0);
+  if (!max) return null;
+  return lines.reduce((s, l) => s + l.amount, 0) / max;
+}
+
+/** Average achievement (capped) across lines that have data. */
 export function averageAchievement(lines: Pick<BonusLine, "achievement">[]): number | null {
   const xs = lines.map((l) => l.achievement).filter((a): a is number => a !== null);
   if (!xs.length) return null;

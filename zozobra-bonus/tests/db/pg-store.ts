@@ -71,11 +71,12 @@ export function pgStore(pool: pg.Pool): DataStore {
     async upsertPayouts(rows) {
       for (const p of rows) {
         await q(
-          `insert into bonus_payouts (branch_id, period, employee_id, amount, lines, avg_achievement, missing_metrics)
-           values ($1,$2,$3,$4,$5,$6,$7)
+          `insert into bonus_payouts (branch_id, period, employee_id, amount, lines, avg_achievement, realization, missing_metrics)
+           values ($1,$2,$3,$4,$5,$6,$7,$8)
            on conflict (period, employee_id) do update set amount=excluded.amount, lines=excluded.lines,
-             avg_achievement=excluded.avg_achievement, missing_metrics=excluded.missing_metrics, calculated_at=now()`,
-          [p.branchId, periodToDate(p.period), p.employeeId, p.amount, JSON.stringify(p.lines), p.avgAchievement, p.missingMetrics]);
+             avg_achievement=excluded.avg_achievement, realization=excluded.realization,
+             missing_metrics=excluded.missing_metrics, calculated_at=now()`,
+          [p.branchId, periodToDate(p.period), p.employeeId, p.amount, JSON.stringify(p.lines), p.avgAchievement, p.realization, p.missingMetrics]);
       }
     },
     async deleteDraftPayouts(ids) {

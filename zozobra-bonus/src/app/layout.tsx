@@ -1,15 +1,15 @@
 import type { Metadata, Viewport } from "next";
-import { Frank_Ruhl_Libre, Heebo } from "next/font/google";
+import { Cormorant_Garamond, Heebo } from "next/font/google";
 import "./globals.css";
 import { ServiceWorker } from "@/components/ServiceWorker";
 
-const heebo = Heebo({ subsets: ["hebrew", "latin"], variable: "--font-heebo", display: "swap" });
-const frank = Frank_Ruhl_Libre({
+const heebo = Heebo({
   subsets: ["hebrew", "latin"],
-  weight: ["500", "700", "900"],
-  variable: "--font-frank",
+  weight: ["300", "400", "500", "700", "800"],
+  variable: "--font-heebo",
   display: "swap",
 });
+const cormorant = Cormorant_Garamond({ subsets: ["latin"], weight: ["500", "700"], variable: "--font-cormorant", display: "swap" });
 
 export const metadata: Metadata = {
   title: { default: "ZOZOBRA · בונוסים", template: "%s · ZOZOBRA" },
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0a09",
+  themeColor: "#0d0c0b",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -29,7 +29,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="he" dir="rtl" className={`${heebo.variable} ${frank.variable}`}>
+    <html lang="he" dir="rtl" className={`${heebo.variable} ${cormorant.variable}`}>
       <body className="antialiased">
         {children}
         <ServiceWorker />

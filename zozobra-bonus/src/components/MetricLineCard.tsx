@@ -1,5 +1,6 @@
-import { AchievementMeter, Badge } from "./ui";
-import { LINE_STATUS_LABEL, num, pct, shekels } from "@/lib/format";
+import { AchievementMeter, Badge, achievementStatus } from "./ui";
+import { MetricIcon } from "./MetricIcon";
+import { num, pct, shekels } from "@/lib/format";
 import { METRIC_BY_ID, type MetricId } from "@shared/metrics.ts";
 
 export interface PayoutLine {
@@ -16,48 +17,56 @@ export interface PayoutLine {
   proration: number;
 }
 
-export function MetricLineCard({ line }: { line: PayoutLine }) {
+export function MetricLineCard({ line, source }: { line: PayoutLine; source?: string }) {
   const def = METRIC_BY_ID[line.metric_id];
   const unit = def?.unit ?? "";
-  const lower = def?.direction === "lower";
-  const max = Math.round(line.max_amount * 1.2 * (line.proration ?? 1));
+  const max = Math.round(line.max_amount * (line.proration ?? 1));
+  const st = achievementStatus(line.achievement);
   return (
-    <article className="card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="font-medium leading-snug">{line.name}</h3>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-            <span>{def?.scope === "branch" ? "מדד סניפי" : "מדד אישי"}</span>
-            {lower ? <span>· נמוך = טוב</span> : null}
-            {line.status !== "ok" ? (
-              <Badge tone={line.status === "missing" ? "muted" : "bad"}>{LINE_STATUS_LABEL[line.status]}</Badge>
-            ) : null}
-          </div>
+    <article className="card flex flex-col gap-2.5 p-[15px]">
+      <div className="flex items-start gap-2.5">
+        <MetricIcon id={line.metric_id} />
+        <div className="min-w-0 flex-1">
+          <b className="block text-sm font-bold">{line.name}</b>
+          <small className="text-[11.5px] text-muted">{def?.description}</small>
         </div>
-        <div className="shrink-0 text-end">
-          <div className={`num text-lg font-bold ${line.amount > 0 ? "gold-text" : "text-faint"}`}>{shekels(line.amount)}</div>
-          <div className="text-[0.7rem] text-faint">
+        <div className="text-end font-extrabold whitespace-nowrap">
+          <span className="num">{shekels(line.amount)}</span>
+          <small className="block text-[10.5px] font-normal text-faint">
             מתוך <span className="num">{shekels(max)}</span>
-          </div>
+          </small>
         </div>
       </div>
-
-      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-        <Cell label="בפועל" value={num(line.actual, unit)} />
-        <Cell label="יעד" value={num(line.target, unit)} />
-        <Cell label="עמידה" value={pct(line.achievement)} strong />
+      <AchievementMeter achievement={line.achievement} />
+      <div className="flex items-center justify-between gap-2 text-xs text-muted">
+        <span>
+          בפועל <b className="num font-medium text-ink">{num(line.actual, unit)}</b> · יעד{" "}
+          <b className="num font-medium text-ink">{num(line.target, unit)}</b>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="rounded-full border border-line px-[7px] py-0.5 text-[10.5px] text-faint">
+            {def?.scope === "branch" ? "צוות" : "אישי"}
+          </span>
+          <Badge tone={st.tone}>
+            {line.achievement === null ? st.label : `${pct(line.achievement)} · ${st.label}`}
+          </Badge>
+        </span>
       </div>
-
-      <AchievementMeter achievement={line.achievement} thresholdPct={line.threshold_pct} showLegend />
+      <details className="text-[11px] text-faint">
+        <summary className="cursor-pointer">
+          {source ? `מקור: ${source} · ` : ""}איך מחושב?
+        </summary>
+        <div className="mt-2 rounded-xl bg-bg p-3 leading-7 text-muted">
+          יעד <b className="num text-ink">{num(line.target, unit)}</b> ({def?.direction === "lower" ? "נמוך יותר = טוב" : "גבוה יותר = טוב"})<br />
+          מתחת ל־{line.threshold_pct}% מהיעד ← <b className="text-ink">0 ₪</b>
+          <br />
+          ב־{line.threshold_pct}% מהיעד ← <b className="num text-ink">{shekels(max * 0.5)}</b>
+          <br />
+          ב־100% מהיעד ← <b className="num text-ink">{shekels(max)}</b>
+          <br />
+          מעל היעד ← עד <b className="num text-ink">{shekels(max * 1.2)}</b> (תקרה 120%)
+        </div>
+      </details>
     </article>
-  );
-}
-
-function Cell({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="rounded-lg bg-surface-2 px-2 py-1.5">
-      <div className="text-[0.65rem] text-muted">{label}</div>
-      <div className={`num text-sm ${strong ? "font-semibold text-ink" : "text-ink/90"}`}>{value}</div>
-    </div>
   );
 }

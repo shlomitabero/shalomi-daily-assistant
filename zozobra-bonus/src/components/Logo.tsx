@@ -1,13 +1,14 @@
-export function Logo({ size = "md" }: { size?: "md" | "lg" }) {
+export function Logo({ size = "md", subtitle }: { size?: "md" | "lg"; subtitle?: boolean }) {
   return (
-    <div className="flex flex-col items-center leading-none" dir="ltr">
-      <span
-        className={`font-display font-black tracking-[0.32em] gold-text ${size === "lg" ? "text-4xl" : "text-lg"}`}
-        style={{ paddingInlineStart: "0.32em" }}
+    <div className="flex flex-col items-center leading-none">
+      <b
+        dir="ltr"
+        className={`font-brand font-bold tracking-[0.18em] text-ink ${size === "lg" ? "text-5xl" : "text-[1.6rem]"}`}
+        style={{ paddingInlineStart: "0.18em" }}
       >
-        ZOZOBRA
-      </span>
-      {size === "lg" ? <span className="mt-2 text-[0.65rem] tracking-[0.4em] text-muted">PAN · ASIAN · KITCHEN</span> : null}
+        ZOZ<i className="not-italic text-red">O</i>BRA
+      </b>
+      {subtitle || size === "lg" ? <span className="mt-1.5 text-xs tracking-wide text-muted">מערכת בונוסים לצוות</span> : null}
     </div>
   );
 }

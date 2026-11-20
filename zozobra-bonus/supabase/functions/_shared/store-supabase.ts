@@ -181,6 +181,7 @@ export function supabaseStore(db: Client): DataStore {
               amount: p.amount,
               lines: p.lines,
               avg_achievement: p.avgAchievement,
+              realization: p.realization,
               missing_metrics: p.missingMetrics,
               calculated_at: new Date().toISOString(),
             })),

@@ -12,7 +12,7 @@
 | בעלים / מנהל | לוח בקרה, יעדים וסכומים, תיקון תוצאות, אישור ותשלום, ייצוא לאקסל, עובדים, חיבורים, ייבוא CSV, שיוך שמות, יומני סנכרון ושינויים |
 
 **כלל החישוב** (כל המספרים ניתנים לשינוי במסך "יעדים", לכל מדד ולכל חודש):
-מתחת לסף — 0. בסף — 50%. בין הסף ליעד — עולה בקו ישר. ביעד — 100%. מעל היעד — לפי אחוז העמידה, עד 120%.
+מתחת לסף — 0. בסף — 50%. בין הסף ליעד — עולה בקו ישר. ביעד — 100%. מעל היעד — כל אחוז מעל היעד מוסיף 2% לבונוס, עד תקרה של 120% (מושגת ב־110% מהיעד).
 במדדים שבהם נמוך = טוב (פוד קוסט, ליבור קוסט), העמידה היא יעד ÷ בפועל. נתון חסר = 0 על אותו מדד, ומסומן
 באדום לפני אישור. עובד שהתחיל או סיים באמצע חודש — הבונוס יחסי לימי העבודה. שינוי תוצאה או יעד אחרי
 אישור מחזיר את הבונוסים המושפעים לטיוטה ונרשם ביומן. בונוס ששולם נעול.
@@ -51,7 +51,7 @@ Demo logins (local only, OTP `123456`): 050-0000001 owner · 050-0000002 shift m
 
 ### Tests
 ```bash
-npm test     # 93 tests: payout engine, CSV, adapters/webhook/schedules, RLS, template CSV import
+npm test     # 96 tests: payout engine, CSV, adapters/webhook/schedules, RLS, template CSV import
 ```
 DB tests need a local Postgres 16+ (`TEST_DATABASE_ADMIN_URL`, default `postgres://postgres:postgres@localhost:5432/postgres`).
 They build a throwaway database from the real migrations with a small Supabase auth/vault stand-in (`tests/db/supabase-shim.sql`).

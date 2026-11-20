@@ -23,7 +23,7 @@ export default async function Approvals({
   const sb = await createClient();
   const { data } = await sb
     .from("bonus_payouts")
-    .select("id, amount, status, missing_metrics, avg_achievement, lines, employees!inner(first_name, last_name, job_role, tip_based, payroll_id)")
+    .select("id, amount, status, missing_metrics, realization, lines, employees!inner(first_name, last_name, job_role, tip_based, payroll_id)")
     .eq("period", periodToDate(period))
     .order("amount", { ascending: false });
 
@@ -32,7 +32,7 @@ export default async function Approvals({
     amount: number;
     status: string;
     missing_metrics: string[];
-    avg_achievement: number | null;
+    realization: number | null;
     lines: { name: string; amount: number; status: string }[];
     employees: { first_name: string; last_name: string; job_role: JobRole; tip_based: boolean; payroll_id: string | null };
   };
@@ -115,7 +115,7 @@ export default async function Approvals({
                         </div>
                         <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-muted">
                           <span className="truncate">
-                            {ROLE_LABELS[r.employees.job_role]} · עמידה {pct(r.avg_achievement)}
+                            {ROLE_LABELS[r.employees.job_role]} · מימוש {pct(r.realization)}
                             {r.missing_metrics?.length
                               ? ` · חסר: ${r.missing_metrics.map((m) => METRIC_BY_ID[m as MetricId]?.name ?? m).join(", ")}`
                               : ""}

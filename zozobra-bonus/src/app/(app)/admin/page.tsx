@@ -9,6 +9,7 @@ import { Card, Empty, LinkButton, Notice, PageHeader, SectionTitle, Stat, Status
 import { dateShort, dateTime, pct, shekels } from "@/lib/format";
 import { payday, periodLabel, periodToDate } from "@shared/period.ts";
 import { METRICS } from "@shared/metrics.ts";
+import { computeAchievement } from "@shared/payout.ts";
 import { recalcAction } from "./actions";
 
 export const metadata = { title: "לוח בקרה" };
@@ -26,9 +27,9 @@ export default async function AdminHome({
 
   const [{ data: payouts }, { data: targets }, { data: results }, { count: unmatched }, { data: integrations }] =
     await Promise.all([
-      sb.from("bonus_payouts").select("amount, status, missing_metrics, avg_achievement").eq("period", pd),
-      sb.from("metric_targets").select("metric_id, active").eq("period", pd),
-      sb.from("metric_results").select("metric_id, employee_id").eq("period", pd),
+      sb.from("bonus_payouts").select("amount, status, missing_metrics, realization").eq("period", pd),
+      sb.from("metric_targets").select("metric_id, active, target").eq("period", pd),
+      sb.from("metric_results").select("metric_id, employee_id, value").eq("period", pd),
       sb.from("unmatched_rows").select("id", { count: "exact", head: true }).is("resolved_at", null),
       sb.from("integrations").select("display_name, system, status, last_sync_at, last_status").order("display_name"),
     ]);
@@ -40,9 +41,14 @@ export default async function AdminHome({
   const branchMetricsMissing = METRICS.filter(
     (m) => m.scope === "branch" && activeTargets.has(m.id) && !(results ?? []).some((r) => r.metric_id === m.id),
   );
-  const avg = payouts?.length
-    ? payouts.reduce((a, p) => a + Number(p.avg_achievement ?? 0), 0) / payouts.length
-    : null;
+  const revenue = Number((results ?? []).find((r) => r.metric_id === "revenue" && !r.employee_id)?.value ?? 0);
+  const branchTargets = (targets ?? []).filter((t) => t.active && METRICS.find((m) => m.id === t.metric_id)?.scope === "branch");
+  const branchHit = branchTargets.filter((t) => {
+    const def = METRICS.find((m) => m.id === t.metric_id)!;
+    const r = (results ?? []).find((x) => x.metric_id === t.metric_id && !x.employee_id);
+    const a = computeAchievement(r ? Number(r.value) : null, Number(t.target), def.direction);
+    return a !== null && a + 1e-9 >= 1;
+  }).length;
 
   return (
     <>
@@ -64,10 +70,10 @@ export default async function AdminHome({
       ) : (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <Stat label="סה״כ בונוסים לחודש" value={shekels(sum())} tone="gold" hint={`${payouts?.length ?? 0} עובדים`} />
-            <Stat label="עמידה ממוצעת" value={pct(avg)} />
-            <Stat label="ממתינים לאישור" value={count("draft")} hint={shekels(sum("draft"))} />
-            <Stat label="מאושרים / שולמו" value={`${count("approved")} / ${count("paid")}`} hint={shekels(sum("approved") + sum("paid"))} />
+            <Stat label="סה״כ בונוסים החודש" value={shekels(sum())} tone="gold" hint={`${payouts?.length ?? 0} עובדים בתכנית`} />
+            <Stat label="% מהמחזור" value={revenue ? `${((sum() / 100 / revenue) * 100).toFixed(2)}%` : "—"} hint="עלות תכנית הבונוסים" />
+            <Stat label="יעדי סניף שהושגו" value={`${branchHit}/${branchTargets.length}`} hint="מדדי צוות" />
+            <Stat label="ממתינים / מאושרים / שולמו" value={`${count("draft")} / ${count("approved")} / ${count("paid")}`} hint={shekels(sum("approved") + sum("paid")) + " מאושר"} />
           </div>
 
           {withMissing || branchMetricsMissing.length || unmatched ? (

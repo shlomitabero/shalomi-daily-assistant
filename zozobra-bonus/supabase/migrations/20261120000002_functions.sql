@@ -247,16 +247,16 @@ create trigger employees_audit after insert or update on public.employees
 -- Employees cannot read other employees' rows; this function exposes only
 -- first name, role and average achievement for the caller's branch.
 create or replace function public.leaderboard(p_period date)
-returns table (rank bigint, first_name text, job_role public.job_role, avg_achievement numeric, is_me boolean)
+returns table (rank bigint, first_name text, job_role public.job_role, realization numeric, is_me boolean)
 language sql stable security definer set search_path = public, pg_temp as $$
-  select rank() over (order by p.avg_achievement desc nulls last),
-         e.first_name, e.job_role, round(p.avg_achievement, 4),
+  select rank() over (order by p.realization desc nulls last),
+         e.first_name, e.job_role, round(p.realization, 4),
          e.id = app.my_employee_id()
     from public.bonus_payouts p
     join public.employees e on e.id = p.employee_id
    where p.period = p_period
      and p.branch_id = app.my_branch_id()
-     and p.avg_achievement is not null
+     and p.realization is not null
    order by 1, 2
 $$;
 revoke all on function public.leaderboard(date) from public, anon;

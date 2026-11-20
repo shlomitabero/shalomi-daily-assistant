@@ -44,16 +44,17 @@ describe("template CSV import", () => {
     expect(res).toMatchObject({ received: 14, written: 14, unmatched: 0, rejected: 0 });
     expect(res.recalculated[0].employees).toBe(11);
 
-    // Noa (waiter): survey 4.9/4.6, service 95/90 (seed), upsell 150/120 → cap, promo 100%, revenue 105%
-    expect((await amount(E(3))).amount).toBe(31957 + 31667 + 36000 + 20000 + 52500);
-    // Itai: survey 4.14/4.6 = exactly threshold → 50%; service via Tabit id W-102; upsell 108/120 → 50%
-    expect((await amount(E(4))).amount).toBe(15000 + 30000 + 15000 + 20000 + 52500);
-    // Yossi (chef): food 28/27.5 with chef amount ₪800, labor 30/31.2 with chef amount ₪600, revenue
-    expect((await amount(E(8))).amount).toBe(81455 + 48462 + 52500);
-    // Shira (call center), matched by name: phone 81/90 → 50%, answer 100%, revenue
-    expect((await amount(E(12))).amount).toBe(15000 + 30000 + 52500);
+    // Noa (waiter): survey 4.8/4.6 → 108.7%, service 95/90 (seed) → 111.1%, upsell 74/60 → cap 120%,
+    // promo 905/900 → 101.1%, revenue 1.236M/1.2M → 106%
+    expect((await amount(E(3))).amount).toBe(43478 + 33333 + 30000 + 25278 + 63600);
+    // Itai: survey 4.232 = exactly 92% threshold → 50%; service via Tabit id W-102; upsell 45/60 = exactly 75% threshold → 50%
+    expect((await amount(E(4))).amount).toBe(20000 + 30000 + 12500 + 25278 + 63600);
+    // Yossi (chef): food 28/28.4 below target → 93%; labor 30/29.6 above target (lower is better) → 102.7%; revenue
+    expect((await amount(E(8))).amount).toBe(46479 + 51351 + 63600);
+    // Shira (call center), matched by name: phone 81/90 → 50%, answer 96.1/95, revenue
+    expect((await amount(E(12))).amount).toBe(15000 + 35811 + 63600);
     // Cooks: food + revenue
-    expect((await amount(E(9))).amount).toBe(40727 + 52500);
+    expect((await amount(E(9))).amount).toBe(46479 + 63600);
   });
 
   it("missing data and partial months are visible on the payout", async () => {
@@ -108,6 +109,6 @@ describe("template CSV import", () => {
     });
     expect(res).toMatchObject({ written: 1, rejected: 1 });
     const r = await pool.query(`select value from metric_results where metric_id='revenue'`);
-    expect(Number(r.rows[0].value)).toBe(1260000);
+    expect(Number(r.rows[0].value)).toBe(1236000);
   });
 });

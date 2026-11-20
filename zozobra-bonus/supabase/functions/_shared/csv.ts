@@ -102,8 +102,11 @@ export function parseNumber(raw: string): number | null {
     neg = true;
     s = s.slice(1, -1);
   }
-  // 1.234,5 (European) → 1234.5 ; 1,234.5 → 1234.5 ; 4,6 → 4.6
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, "").replace(",", ".");
+  // A dot is a decimal point ("4.232" = 4.232). Dot-as-thousands only when
+  // unambiguous: 1.234.567 or 1.234,5 → European; 1,234.5 → 1234.5; 4,6 → 4.6
+  if (/^-?\d{1,3}(\.\d{3}){2,}(,\d+)?$/.test(s) || /^-?\d{1,3}(\.\d{3})+,\d+$/.test(s)) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  }
   else if (/^-?\d+,\d{1,2}$/.test(s)) s = s.replace(",", ".");
   else s = s.replace(/,/g, "");
   const n = Number(s);

@@ -3,10 +3,11 @@ import { resolvePeriod } from "@/lib/periods";
 import { createClient } from "@/lib/supabase/server";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { MetricLineCard, type PayoutLine } from "@/components/MetricLineCard";
-import { Card, Empty, Notice, PageHeader, SectionTitle, StatusBadge } from "@/components/ui";
+import { ProgressRing } from "@/components/MetricIcon";
+import { Card, Empty, Notice, SectionTitle, StatusBadge } from "@/components/ui";
 import { dateShort, pct, shekels } from "@/lib/format";
 import { dateToPeriod, payday, periodLabel, periodToDate } from "@shared/period.ts";
-import { METRIC_BY_ID } from "@shared/metrics.ts";
+import { METRIC_BY_ID, ROLE_LABELS } from "@shared/metrics.ts";
 
 export const metadata = { title: "הבונוס שלי" };
 
@@ -21,16 +22,20 @@ export default async function MyBonus({ searchParams }: { searchParams: Promise<
   ]);
 
   const lines = (payout?.lines ?? []) as PayoutLine[];
-  const maxTotal = lines.reduce((s, l) => s + Math.round(l.max_amount * 1.2 * (l.proration ?? 1)), 0);
+  const maxTotal = lines.reduce((s, l) => s + Math.round(l.max_amount * (l.proration ?? 1)), 0);
+  const hit = lines.filter((l) => l.achievement !== null && l.achievement + 1e-9 >= 1).length;
+  const openBest = lines
+    .map((l) => ({ name: l.name, gap: Math.round(l.max_amount * (l.proration ?? 1)) - l.amount }))
+    .sort((a, b) => b.gap - a.gap)
+    .find((x) => x.gap > 0);
   const proration = lines[0]?.proration ?? 1;
 
   return (
     <>
-      <PageHeader
-        title={`שלום ${me.employee.first_name}`}
-        subtitle="הבונוס החודשי שלך, מעודכן לפי הנתונים האחרונים"
-        actions={<PeriodPicker period={period} periods={periods} />}
-      />
+      <div className="mb-4 flex items-center gap-2 text-[13px] text-muted">
+        <span>תקופה:</span>
+        <PeriodPicker period={period} periods={periods} />
+      </div>
 
       {!payout ? (
         <Empty title={`עדיין אין חישוב בונוס ל${periodLabel(period)}`}>
@@ -38,32 +43,38 @@ export default async function MyBonus({ searchParams }: { searchParams: Promise<
         </Empty>
       ) : (
         <div className="space-y-4">
-          <Card className="relative overflow-hidden p-5">
-            <div className="pointer-events-none absolute -top-16 -start-16 h-48 w-48 rounded-full bg-gold/10 blur-3xl" />
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted">בונוס {periodLabel(period)}</span>
-              <StatusBadge status={payout.status} />
+          <section className="hero flex items-center gap-4 p-[22px]">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-normal text-muted">הבונוס שלך החודש, {me.employee.first_name}</h2>
+              <div className="mt-1 mb-0.5 flex flex-wrap items-baseline gap-x-1.5 leading-tight">
+                <span className="num text-[2.4rem] font-extrabold tracking-tight">{shekels(payout.amount)}</span>
+                <small className="text-base font-medium whitespace-nowrap text-gold">
+                  מתוך <span className="num">{shekels(maxTotal)}</span>
+                </small>
+              </div>
+              <div className="text-[13px] text-muted">
+                {hit} מתוך {lines.length} יעדים הושגו
+                {openBest ? (
+                  <>
+                    {" "}· הכי הרבה כסף פתוח ב<b className="text-ink">{openBest.name}</b> <span className="num whitespace-nowrap">({shekels(openBest.gap)})</span>
+                  </>
+                ) : null}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <span className="rounded-full border border-line bg-surface-2 px-2.5 py-1 text-[11px] text-muted">{ROLE_LABELS[me.employee.job_role]}</span>
+                <span className="rounded-full border border-line bg-surface-2 px-2.5 py-1 text-[11px] text-muted">
+                  {payout.status === "paid" ? "✓ שולם" : payout.status === "approved" ? "✓ אושר לשכר" : "ממתין לאישור"}
+                </span>
+              </div>
             </div>
-            <div className="num mt-2 text-end font-display text-5xl font-black gold-text">{shekels(payout.amount)}</div>
-            <div className="mt-3 h-1.5 rounded-full bg-surface-3">
-              <div
-                className="h-full rounded-full bg-gradient-to-l from-gold to-gold-2"
-                style={{ width: `${maxTotal ? Math.min(100, (payout.amount / maxTotal) * 100) : 0}%` }}
-              />
-            </div>
-            <div className="mt-2 flex justify-between text-xs text-muted">
-              <span>עמידה ממוצעת {pct(payout.avg_achievement)}</span>
-              <span>
-                מקסימום אפשרי <span className="num">{shekels(maxTotal)}</span>
-              </span>
-            </div>
-            <p className="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-muted">
-              {payout.status === "paid"
-                ? "הבונוס שולם עם המשכורת."
-                : `ישולם עם המשכורת ב־${dateShort(payday(period))}${payout.status === "draft" ? ", לאחר אישור ההנהלה" : ""}.`}
-              {me.employee.tip_based ? " הבונוס מופיע בתלוש כשורה נפרדת, בנוסף לטיפים ולהשלמה לשכר מינימום." : ""}
-            </p>
-          </Card>
+            <ProgressRing value={Number(payout.realization ?? 0)} size={92} />
+          </section>
+          <p className="px-1 text-xs leading-relaxed text-muted">
+            {payout.status === "paid"
+              ? "הבונוס שולם עם המשכורת."
+              : `ישולם עם המשכורת ב־${dateShort(payday(period))}${payout.status === "draft" ? ", לאחר אישור ההנהלה" : ""}.`}
+            {me.employee.tip_based ? " הבונוס משולם מעבר לתשר ולהשלמה לשכר מינימום, כשורה נפרדת בתלוש." : ""}
+          </p>
 
           {proration < 1 ? (
             <Notice tone="gold">הבונוס מחושב באופן יחסי לימי העבודה בחודש ({pct(proration)}).</Notice>
@@ -75,7 +86,7 @@ export default async function MyBonus({ searchParams }: { searchParams: Promise<
             </Notice>
           ) : null}
 
-          <SectionTitle>פירוט לפי מדד</SectionTitle>
+          <SectionTitle aside={<span className="text-xs text-muted">{lines.length} מדדים לתפקיד</span>}>המדדים שלי</SectionTitle>
           <div className="space-y-3">
             {lines.map((l) => (
               <MetricLineCard key={l.metric_id} line={l} />

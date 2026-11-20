@@ -5,6 +5,7 @@
 import { METRIC_BY_ID, type MetricId } from "./metrics.ts";
 import {
   averageAchievement,
+  realization,
   computeEmployeeBonus,
   type EmployeeBonus,
   type TargetRow,
@@ -105,6 +106,7 @@ function toUpsert(branchId: string, period: string, b: EmployeeBonus): PayoutUps
     employeeId: b.employeeId,
     amount: b.total,
     avgAchievement: averageAchievement(b.lines),
+    realization: realization(b.lines, b.proration),
     missingMetrics: b.missing,
     lines: b.lines.map((l) => ({
       metric_id: l.metricId,

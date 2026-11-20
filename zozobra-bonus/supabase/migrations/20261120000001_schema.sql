@@ -64,6 +64,7 @@ create index on public.employee_external_ids (employee_id);
 create table public.metrics (
   id text primary key,
   name text not null,
+  description text not null default '',
   scope public.metric_scope not null,
   direction public.metric_direction not null,
   default_source public.integration_system not null,
@@ -169,7 +170,8 @@ create table public.bonus_payouts (
   employee_id uuid not null references public.employees(id),
   amount integer not null check (amount >= 0), -- agorot
   lines jsonb not null default '[]'::jsonb, -- calculation snapshot
-  avg_achievement numeric, -- for the leaderboard
+  avg_achievement numeric,
+  realization numeric, -- earned ÷ full (100%) bonus — leaderboard ranking
   missing_metrics text[] not null default '{}',
   status public.payout_status not null default 'draft',
   approved_by uuid,

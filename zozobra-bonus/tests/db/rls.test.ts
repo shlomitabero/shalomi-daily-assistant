@@ -70,7 +70,7 @@ describe("employee isolation", () => {
     await asUser(pool, uid.noa, async (q) => {
       const r = await q(`select * from leaderboard('2027-01-01')`);
       expect(r.rowCount).toBeGreaterThan(3);
-      expect(Object.keys(r.rows[0]).sort()).toEqual(["avg_achievement", "first_name", "is_me", "job_role", "rank"]);
+      expect(Object.keys(r.rows[0]).sort()).toEqual(["first_name", "is_me", "job_role", "rank", "realization"]);
       expect(r.rows.filter((x) => x.is_me).map((x) => x.first_name)).toEqual(["נועה"]);
       expect(r.rows.some((x) => x.first_name.includes("כהן"))).toBe(false);
     });
