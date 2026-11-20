@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { Logo } from "@/components/Logo";
@@ -15,7 +14,6 @@ function toE164(raw: string): string | null {
 }
 
 export default function LoginPage() {
-  const router = useRouter();
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -41,8 +39,8 @@ export default function LoginPage() {
     const { error } = await createClient().auth.verifyOtp({ phone: toE164(phone)!, token: code.trim(), type: "sms" });
     setBusy(false);
     if (error) return setError("הקוד שגוי או שפג תוקפו");
-    router.replace("/");
-    router.refresh();
+    // full navigation so the server sees the fresh session cookie
+    window.location.assign("/");
   }
 
   return (

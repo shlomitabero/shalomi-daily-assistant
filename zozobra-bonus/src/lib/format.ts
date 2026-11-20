@@ -50,3 +50,10 @@ export const LINE_STATUS_LABEL: Record<string, string> = {
   missing: "חסר נתון",
   invalid_target: "יעד לא תקין",
 };
+
+export const FREQ_LABEL: Record<string, string> = {
+  manual: "ידני",
+  every_15_min: "כל 15 דקות",
+  hourly: "כל שעה",
+  daily_0500: "כל יום ב־05:00",
+};
