@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:engine": "vitest run shared",
-    "test:db": "vitest run tests/db"
+    "test:db": "vitest run tests/db",
+    "recalc": "node --env-file=.env.local --import tsx scripts/recalc.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -28,7 +29,10 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "pg": "^8.23.1",
+    "server-only": "^0.0.1",
+    "supabase": "^2.122.1",
     "tailwindcss": "^4.3.5",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }

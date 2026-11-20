@@ -33,11 +33,14 @@ max_frequency = "60s"
 972500000008 = "123456"
 972500000011 = "123456"
 
+# Local only: the provider must be enabled for test OTPs to work; nothing is
+# sent because every demo number above has a fixed test code. Production SMS
+# provider + keys are set in the Supabase dashboard, never in this file.
 [auth.sms.twilio]
-enabled = false
-account_sid = "env(TWILIO_ACCOUNT_SID)"
-message_service_sid = "env(TWILIO_MESSAGE_SERVICE_SID)"
-auth_token = "env(TWILIO_AUTH_TOKEN)"
+enabled = true
+account_sid = "local-dev-not-a-real-sid"
+message_service_sid = "local-dev-not-a-real-sid"
+auth_token = "local-dev-not-a-real-token"
 
 [edge_runtime]
 enabled = true
