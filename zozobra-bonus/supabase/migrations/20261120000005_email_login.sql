@@ -21,8 +21,7 @@ begin
   return new;
 end $$;
 
-drop trigger if exists on_auth_user_linked on auth.users;
-create trigger on_auth_user_linked
+create or replace trigger on_auth_user_linked
   after insert or update of phone, email on auth.users
   for each row execute function app.link_auth_user();
 
