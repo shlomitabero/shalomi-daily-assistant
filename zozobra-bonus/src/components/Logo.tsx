@@ -8,7 +8,7 @@ export function Logo({ size = "md", subtitle }: { size?: "md" | "lg"; subtitle?:
       >
         ZOZ<i className="not-italic text-red">O</i>BRA
       </b>
-      {subtitle || size === "lg" ? <span className="mt-1.5 text-xs tracking-wide text-muted">מערכת בונוסים לצוות</span> : null}
+      {(subtitle ?? size === "lg") ? <span className="mt-1.5 text-xs tracking-wide text-muted">מערכת בונוסים לצוות</span> : null}
     </div>
   );
 }

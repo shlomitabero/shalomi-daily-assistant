@@ -6,7 +6,8 @@ export const metadata = { title: "עוד" };
 
 const LINKS = [
   { href: "/admin/results", title: "תוצאות מדדים", desc: "צפייה ותיקון ידני של כל התוצאות לחודש" },
-  { href: "/manager/scores", title: "הזנת ציונים", desc: "ציוני שירות, סקרים ושירות טלפוני" },
+  { href: "/admin/qr", title: "קודי QR לסקר לקוחות", desc: "קוד אישי לכל עובד — הסקרים והשירות נכנסים לבד" },
+  { href: "/manager/scores", title: "הזנת ציונים", desc: "תיקון ידני של ציוני שירות, סקרים ושירות טלפוני" },
   { href: "/admin/import", title: "ייבוא CSV", desc: "העלאת קובץ תוצאות עם מיפוי עמודות ותצוגה מקדימה" },
   { href: "/admin/mapping", title: "שיוך עובדים", desc: "שמות ממערכות חיצוניות שלא זוהו אוטומטית" },
   { href: "/admin/employees", title: "עובדים", desc: "הוספה, עריכה, תפקידים ומזהים במערכות" },
