@@ -139,7 +139,7 @@ export async function dispatchDue(db: Client, now: Date = new Date()) {
   const { data, error } = await db
     .from("integrations")
     .select("id, system, frequency, last_sync_at, status")
-    .eq("status", "active")
+    .in("status", ["active", "error"]) // errors keep retrying on schedule
     .neq("frequency", "manual");
   if (error) throw new Error(error.message);
   const due = (data ?? []).filter((i) => isDue(i.frequency as Frequency, i.last_sync_at, now));
