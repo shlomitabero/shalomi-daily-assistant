@@ -1,0 +1,50 @@
+# Local Supabase (supabase start). Production settings live in the dashboard.
+project_id = "zozobra-bonus"
+
+[api]
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+major_version = 17
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
+template = "קוד הכניסה שלך ל-ZOZOBRA: {{ .Code }}"
+max_frequency = "60s"
+
+# Demo team: log in with OTP 123456 (local only — never in production).
+[auth.sms.test_otp]
+972500000001 = "123456"
+972500000002 = "123456"
+972500000003 = "123456"
+972500000004 = "123456"
+972500000008 = "123456"
+972500000011 = "123456"
+
+[auth.sms.twilio]
+enabled = false
+account_sid = "env(TWILIO_ACCOUNT_SID)"
+message_service_sid = "env(TWILIO_MESSAGE_SERVICE_SID)"
+auth_token = "env(TWILIO_AUTH_TOKEN)"
+
+[edge_runtime]
+enabled = true
+policy = "per_worker"
+
+[functions.ingest-webhook]
+verify_jwt = false # authenticated by HMAC signature instead
+
+[functions.sync-dispatch]
+verify_jwt = false # authenticated by x-cron-secret
