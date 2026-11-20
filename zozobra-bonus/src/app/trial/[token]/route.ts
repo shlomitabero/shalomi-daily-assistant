@@ -6,6 +6,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { publicUrl } from "@/lib/public-url";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +36,5 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
   const { error: vErr } = await sb.auth.verifyOtp({ type: "magiclink", token_hash: data.properties.hashed_token });
   if (vErr) return new NextResponse(`שגיאה בכניסה: ${vErr.message}`, { status: 500 });
 
-  const url = req.nextUrl.clone();
-  url.pathname = "/";
-  url.search = "";
-  return NextResponse.redirect(url);
+  return NextResponse.redirect(publicUrl(req, "/"));
 }
