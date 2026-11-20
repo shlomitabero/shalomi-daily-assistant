@@ -51,3 +51,6 @@ verify_jwt = false # authenticated by HMAC signature instead
 
 [functions.sync-dispatch]
 verify_jwt = false # authenticated by x-cron-secret
+
+[functions.zozobra]
+verify_jwt = false # each route authenticates itself (HMAC / cron secret / user JWT via RLS)

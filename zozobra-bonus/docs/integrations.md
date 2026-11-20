@@ -69,7 +69,7 @@ summed into branch-level results (promotions, revenue).
 ## Webhook
 
 ```
-POST {SUPABASE_URL}/functions/v1/ingest-webhook?integration=<id>
+POST {SUPABASE_URL}/functions/v1/zozobra/webhook?integration=<id>
 X-Zozobra-Timestamp: <unix seconds>
 X-Zozobra-Signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>
 Content-Type: application/json
@@ -96,7 +96,7 @@ const sig = "sha256=" + crypto.createHmac("sha256", SECRET).update(`${ts}.${body
 
 ## Schedules
 
-pg_cron calls `sync-dispatch` every 15 minutes. It runs each active (or
+pg_cron calls `zozobra/dispatch` every 15 minutes. It runs each active (or
 errored) integration whose frequency is due: every 15 minutes, hourly, or
 daily at 05:00 Israel time. During the first 3 days of a month it also pulls
 the previous month, to catch late data. Each run is in `sync_log` and on the

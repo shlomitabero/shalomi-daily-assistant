@@ -34,7 +34,7 @@ grant execute on all functions in schema app to authenticated, service_role;
 
 -- ------------------------------------------------------------- utilities
 create or replace function app.touch_updated_at() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = public, pg_temp as $$
 begin
   new.updated_at := now();
   return new;
@@ -295,7 +295,8 @@ create or replace function public.rotate_webhook_secret(p_integration uuid)
 returns text
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-  v_secret text := encode(gen_random_bytes(32), 'hex');
+  -- 2 × uuid v4 = 244 random bits; gen_random_uuid is core Postgres (no extension schema needed)
+  v_secret text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
 begin
   perform public.set_integration_secret(p_integration, v_secret);
   return v_secret;

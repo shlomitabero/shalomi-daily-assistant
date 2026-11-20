@@ -33,7 +33,7 @@ export default async function IntegrationDetail({
   const problems = adapter?.readiness(i.config ?? {}, hasSecret) ?? [];
   const mapBy = new Map((map ?? []).map((m) => [m.metric_id, m]));
   const cp = currentPeriod();
-  const webhookUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ingest-webhook?integration=${i.id}`;
+  const webhookUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/zozobra/webhook?integration=${i.id}`;
 
   return (
     <>

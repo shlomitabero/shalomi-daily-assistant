@@ -1,10 +1,10 @@
--- Row Level Security. Default deny: every table has RLS on and the anon
--- role gets nothing. The service role (edge functions, server-side
+-- Row Level Security. Default deny: every bonus table has RLS on and the
+-- anon role gets nothing. The service role (edge functions, server-side
 -- recalculation) bypasses RLS by design.
+-- Revokes are scoped to this app's tables only: the project may host other
+-- apps whose tables must keep their own grants.
 
-revoke all on all tables in schema public from anon;
-revoke all on all sequences in schema public from anon;
-alter default privileges in schema public revoke all on tables from anon;
+revoke all on public.branches, public.employees, public.employee_external_ids, public.metrics, public.role_metrics, public.metric_targets, public.metric_target_role_amounts, public.integrations, public.metric_source_map, public.metric_results, public.unmatched_rows, public.bonus_payouts, public.sync_log, public.audit_log, public.webhook_receipts from anon;
 
 alter table public.branches enable row level security;
 alter table public.employees enable row level security;
@@ -48,7 +48,7 @@ grant update (first_name, last_name, phone, job_role, app_role, payroll_id, tip_
 
 -- An admin must not be able to lock themself out by demoting their own row.
 create or replace function app.guard_self_demote() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = public, pg_temp as $$
 begin
   if new.auth_user_id = auth.uid() and old.app_role = 'admin'
      and (new.app_role <> 'admin' or not new.active) then

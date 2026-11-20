@@ -1,5 +1,5 @@
 // Inbound webhook: any system can push results to
-//   POST {SUPABASE_URL}/functions/v1/ingest-webhook?integration=<id>
+//   POST {SUPABASE_URL}/functions/v1/zozobra/webhook?integration=<id>
 // Headers:
 //   X-Zozobra-Timestamp: unix seconds
 //   X-Zozobra-Signature: sha256=<hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`)>
